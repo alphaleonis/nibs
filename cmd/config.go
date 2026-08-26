@@ -260,22 +260,41 @@ func runSetPrefix(cmd *cobra.Command, args []string) error {
 // is the completeness bar FOR FRONT MATTER: an id-valued front-matter field left
 // out here is one the rename silently leaves naming a nib that no longer exists.
 //
-// The bar stops at the front matter, and the rest of the store is NOT covered by
-// it: `[[id]]` and `#id` mentions in nib BODIES name ids too, reprefix.Execute
-// re-renders a nib without touching its body, and `nibs check` reports no link
-// issue for them — so a set-prefix does leave every body mention naming the
-// retired id. Extending the rewrite over bodies is tracked as its own work, not
-// covered here.
+// The links come from the FILE's spelling (nib.RawLinks), not from the resolved
+// values the loaded store holds. A short-form link needs no rewriting at all —
+// it carries no prefix, so it resolves by prefix-prepending under the new prefix
+// exactly as it did under the old — but the store canonicalizes `parent: p1` to
+// `nibs-p1` in memory, and reprefix.Execute writes the plan's value over
+// whatever the file said. Planning from the resolved value therefore expands
+// every short link the author wrote, in a command whose contract is that it
+// changes the prefix and nothing else.
+//
+// A nib whose in-memory links have run ahead of its file is safe here: RawLinks
+// answers from the live fields when no file spelling has been recorded, and a
+// recorded spelling always describes the bytes Execute is about to re-read.
+//
+// The bar stops at the front matter because the snapshot is a front-matter view.
+// Body ids are handled a layer down instead: reprefix.Execute retargets every
+// full-form `#<prefix><id>` mention while it re-renders each file, working from
+// the plan's prefix pair rather than from anything this snapshot carries. `#` is
+// the whole mention grammar — nib.ExtractMentionSpans recognizes no other form,
+// and neither does the web renderer, so `[[id]]` in a body is prose that merely
+// looks like a link and is left as written.
+//
+// What still has no coverage anywhere is a body mention naming a nib that does
+// not exist: `nibs check` reports no link issue for one, so a mention broken by
+// some other means stays silent.
 func buildSnapshot(nibs []*nib.Nib) []reprefix.NibSnapshot {
 	out := make([]reprefix.NibSnapshot, len(nibs))
 	for i, b := range nibs {
+		raw := b.RawLinks()
 		out[i] = reprefix.NibSnapshot{
 			ID:        b.ID,
 			Path:      b.Path,
-			Parent:    b.Parent,
-			Milestone: b.Milestone,
-			BlockedBy: b.BlockedBy,
-			Blocking:  b.Blocking,
+			Parent:    raw.Parent,
+			Milestone: raw.Milestone,
+			BlockedBy: raw.BlockedBy,
+			Blocking:  raw.Blocking,
 		}
 	}
 	return out
@@ -285,18 +304,55 @@ func buildSnapshot(nibs []*nib.Nib) []reprefix.NibSnapshot {
 // It mirrors the shape of output.Response (success + message) but adds the
 // rendered plan so scripts can branch on `.success` consistently across the
 // success, error, and dry-run exit paths.
+//
+// BodyMentions is not part of the plan and is not omitempty: it reports the one
+// class of write no FilePlan describes, and that write happens on every run.
 type dryRunResponse struct {
-	Success bool                 `json:"success"`
-	Message string               `json:"message"`
-	Plan    *reprefix.RenamePlan `json:"plan,omitempty"`
+	Success      bool                 `json:"success"`
+	Message      string               `json:"message"`
+	Plan         *reprefix.RenamePlan `json:"plan,omitempty"`
+	BodyMentions bodyMentionPreview   `json:"bodyMentions"`
+}
+
+// bodyMentionPreview is the dry run's account of the prose the real run
+// rewrites. reprefix.Execute retargets every full-form `#<oldPrefix><id>` body
+// mention, driven by the plan's prefix pair rather than by anything a FilePlan
+// carries, so the file list previews none of it.
+//
+// It reports the mention SHAPES rather than a count, and that is a design
+// constraint rather than a shortcut: reprefix.BuildPlan does no disk I/O, so
+// nothing on this path has read a body, and a number here would be a number
+// nobody measured. What an operator needs before an irreversible store-wide run
+// is that prose is in scope at all.
+type bodyMentionPreview struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+	Note string `json:"note"`
+}
+
+// bodyMentionNote is shared by the JSON envelope and the human preview so the
+// two cannot drift into describing the same write differently.
+const bodyMentionNote = "nib bodies are rewritten too; those edits are not itemized, because the plan covers filenames and front matter only"
+
+// previewBodyMentions renders the mention shapes the rewrite moves between.
+// `<id>` is a placeholder, not a literal: the real run retargets whatever id
+// follows the prefix.
+func previewBodyMentions(plan *reprefix.RenamePlan) bodyMentionPreview {
+	return bodyMentionPreview{
+		From: "#" + plan.OldPrefix + "<id>",
+		To:   "#" + plan.NewPrefix + "<id>",
+		Note: bodyMentionNote,
+	}
 }
 
 func printPlan(plan *reprefix.RenamePlan, jsonMode bool) error {
+	bodies := previewBodyMentions(plan)
 	if jsonMode {
 		return output.JSONRaw(dryRunResponse{
-			Success: true,
-			Message: fmt.Sprintf("Would change prefix from %q to %q (%d files)", plan.OldPrefix, plan.NewPrefix, len(plan.Files)),
-			Plan:    plan,
+			Success:      true,
+			Message:      fmt.Sprintf("Would change prefix from %q to %q (%d files)", plan.OldPrefix, plan.NewPrefix, len(plan.Files)),
+			Plan:         plan,
+			BodyMentions: bodies,
 		})
 	}
 	fmt.Printf("Would change prefix from %q to %q\n", plan.OldPrefix, plan.NewPrefix)
@@ -304,6 +360,13 @@ func printPlan(plan *reprefix.RenamePlan, jsonMode bool) error {
 	for _, fp := range plan.Files {
 		fmt.Printf("  %s -> %s\n", stripControlChars(fp.OldPath), stripControlChars(fp.NewPath))
 	}
+	// This list is the operator's only look at a store-wide run with no
+	// rollback, and it stops at filenames. The write class it cannot show is
+	// stated here rather than left to FilePlan's doc comment, which is read by
+	// maintainers and not by the person standing in front of the run. It is a
+	// statement of scope, not a count — see previewBodyMentions.
+	fmt.Printf("Note: %s. Every full-form %q mention in prose becomes %q; mentions inside code spans, code fences, link URLs and HTML blocks are left as written.\n",
+		bodyMentionNote, bodies.From, bodies.To)
 	return nil
 }
 

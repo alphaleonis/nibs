@@ -42,7 +42,7 @@ import (
 type migrateEnv struct {
 	nibsRoot string
 	// serveExcluded records that this run already holds the serve exclusion, so
-	// gateNoLiveServe does not probe a lock the same process is holding.
+	// gateStoreNotHeld does not probe a lock the same process is holding.
 	serveExcluded bool
 	loadCfg       func() (*config.Config, error)
 	git           *gitObservations
@@ -1521,15 +1521,15 @@ func runMigrations(env migrateEnv, log logf) error {
 	// content steps' Core at the new one. Locking the destination is also the
 	// right exclusion: nothing may operate on the pre-layout root, because every
 	// command refuses a store with a pending layout step.
-	// Before the store lock and before every gate: a serve holding nibs in memory
-	// must be gone before the shape changes, and refusing early keeps a run that
-	// cannot proceed from taking the store's write lock at all.
+	// Before the store lock and before every gate: a process holding nibs in
+	// memory must be gone before the shape changes, and refusing early keeps a run
+	// that cannot proceed from taking the store's write lock at all.
 	fence, err := nibcore.AcquireServeExclusion(env.nibsRoot)
 	if err != nil {
 		if errors.Is(err, nibcore.ErrStoreServed) {
-			return errors.New(liveServeRefusal)
+			return errors.New(storeHeldRefusal)
 		}
-		return fmt.Errorf("checking whether a `nibs serve` is running: %w", err)
+		return fmt.Errorf("checking whether another nibs process is holding this store: %w", err)
 	}
 	defer func() { _ = fence.Release() }()
 	env.serveExcluded = true
@@ -1725,7 +1725,7 @@ type migrateGate struct {
 var migrateGates = []migrateGate{
 	{name: "dirty-store", check: gateStoreGitClean},
 	{name: "dirty-legacy-config", check: gateLegacyConfigRecoverable},
-	{name: "live-serve", check: gateNoLiveServe},
+	{name: "held-store", check: gateStoreNotHeld},
 	{name: "foreign-content-dir", check: gateContentDirsAreOurs},
 	{name: "step-plan", check: gatePendingPlans},
 	{name: "unclassifiable-content", check: gateContentClassifiable},
@@ -1834,18 +1834,23 @@ func gateContentClassifiable(env migrateEnv, scan *storeScan) gateResult {
 			len(blocking), describeScanProblems(blocking)))
 }
 
-// olderServeAdvice is what remains for the reader to act on once gateNoLiveServe
-// fences every serve this build can see. Naming the older one specifically is the
-// point: "stop any running `nibs serve`" now overstates the danger for a current
-// serve (which cannot be running — the gate refused) and understates it for an
+// olderHolderAdvice is what remains for the reader to act on once gateStoreNotHeld
+// fences every holder this build can see. Naming the older one specifically is the
+// point: "stop any running nibs process" now overstates the danger for a current
+// one (which cannot be running — the gate refused) and understates it for an
 // older one (which the gate cannot see, because it does not take the lock).
+//
+// A serve is not the only holder it speaks for. `nibs tui` takes the same
+// interlock and carries the same hazard — nibs held in memory across a session
+// and written back afterwards — and a build predating the interlock takes
+// neither side of it, whichever of the two the user is running.
 //
 // The gate, this line and confirmMigration's question have to keep saying the
 // same thing. They are three renderings of one fact.
-const olderServeAdvice = "A `nibs serve` of this release or later cannot run while this migrates. Stop an OLDER `nibs serve` yourself — it does not take the interlock, and can write its pre-migration copy back afterwards."
+const olderHolderAdvice = "A `nibs serve` or `nibs tui` of this release or later cannot run while this migrates. Stop an OLDER one yourself — it does not take the interlock, and can write its pre-migration copy back afterwards."
 
 // confirmMigration pauses before the first change, so migrate's advice about a
-// running serve is something the reader can still act on.
+// holder it cannot see is something the reader can still act on.
 //
 // It used to print "Stop any running `nibs serve` before migrating." immediately
 // BEFORE applying, with no pause and no bypass flag — narration of work already
@@ -1854,9 +1859,9 @@ const olderServeAdvice = "A `nibs serve` of this release or later cannot run whi
 // INTERACTIVE ONLY, and deliberately unlike --force's policy for ambiguous files.
 // --force decides what happens to a user's files, which no script should do
 // silently. This asks whether a process nibs cannot see has been stopped, and
-// every serve this build CAN see is already fenced by gateNoLiveServe — so the
-// residue is an OLDER serve, which is a human-noticing problem and nothing a
-// script can answer. Requiring the flag everywhere would make it the normal case
+// every holder this build CAN see is already fenced by gateStoreNotHeld — so the
+// residue is an OLDER serve or TUI, which is a human-noticing problem and nothing
+// a script can answer. Requiring the flag everywhere would make it the normal case
 // rather than the exception.
 //
 // It runs after the gates, so it never asks about a run that would refuse anyway,
@@ -1878,7 +1883,7 @@ func confirmMigration(env migrateEnv, pending []migrationStep) error {
 		fmt.Printf("%d file(s) carry a title and a known status but not the shape nibs writes, and will be treated as nibs:\n  %s\n",
 			len(assumed), echoedList(sanitizedList(assumed), ""))
 	}
-	fmt.Println(olderServeAdvice)
+	fmt.Println(olderHolderAdvice)
 	fmt.Print("Proceed? [y/N] ")
 	if confirmedYes() {
 		return nil
@@ -1886,7 +1891,7 @@ func confirmMigration(env migrateEnv, pending []migrationStep) error {
 	return errors.New("migration cancelled; nothing has been changed")
 }
 
-// gateNoLiveServe refuses to migrate a store some `nibs serve` is holding.
+// gateStoreNotHeld refuses to migrate a store another nibs process is holding.
 //
 // It replaces guidance that could only ask. AcquireStoreLock excludes cooperating
 // writers for ONE mutation, which is not the dangerous window: a web update
@@ -1899,16 +1904,16 @@ func confirmMigration(env migrateEnv, pending []migrationStep) error {
 // takes the same lock, and the flock is per descriptor, so a run asking this
 // question about a lock it is itself holding would refuse itself — the shape
 // AcquireStoreLock's warning describes.
-func gateNoLiveServe(env migrateEnv, _ *storeScan) gateResult {
+func gateStoreNotHeld(env migrateEnv, _ *storeScan) gateResult {
 	if env.serveExcluded {
 		return gateMet()
 	}
 	fence, err := nibcore.AcquireServeExclusion(env.nibsRoot)
 	if errors.Is(err, nibcore.ErrStoreServed) {
-		return gateRefused(output.ErrConflict, liveServeRefusal)
+		return gateRefused(output.ErrConflict, storeHeldRefusal)
 	}
 	if err != nil {
-		return gateUndecidable(fmt.Sprintf("whether a `nibs serve` is running could not be determined (%v), so it is not previewed here.", err))
+		return gateUndecidable(fmt.Sprintf("whether another nibs process is holding this store could not be determined (%v), so it is not previewed here.", err))
 	}
 	// A probe, not a hold: the run's own acquisition is the authority, and holding
 	// it here would refuse the very run this is previewing for.
@@ -1916,9 +1921,17 @@ func gateNoLiveServe(env migrateEnv, _ *storeScan) gateResult {
 	return gateMet()
 }
 
-// liveServeRefusal is the one wording both the preview and the run use.
-const liveServeRefusal = "a `nibs serve` is running against this store; stop it, then re-run `nibs migrate`. " +
-	"Migrating under a live serve can silently undo the migration: a web update already in flight writes its pre-migration copy back afterwards, and nothing detects it"
+// storeHeldRefusal is the one wording both the preview and the run use.
+//
+// It names what the lock actually answers rather than one holder of it: the lock
+// reports that some other nibs process has the store, never which. Both `nibs
+// serve` and `nibs tui` take the shared side, so a refusal naming only one of them
+// sends half its readers after a process that is not running. Naming both
+// candidates and saying the lock cannot tell them apart is the most this can
+// honestly claim.
+const storeHeldRefusal = "another nibs process is holding this store; stop it, then re-run `nibs migrate`. " +
+	"A `nibs serve` and a `nibs tui` each hold it for as long as they run, and the lock does not say which this is. " +
+	"Migrating under either can silently undo the migration: an edit already in flight writes its pre-migration copy back afterwards, and nothing detects it"
 
 // gateContentDirsAreOurs refuses a PRE-LAYOUT store whose data/ or archive/ holds
 // something this tool would not have put there.
@@ -2205,7 +2218,7 @@ func refuseIfMigrationPending(nibsRoot string) error {
 	for i, step := range pending {
 		names[i] = step.name
 	}
-	return fmt.Errorf("this nibs store needs migration before commands can run (pending: %s); stop any running `nibs serve`, then run `nibs migrate` (preview with `nibs migrate --dry-run`)",
+	return fmt.Errorf("this nibs store needs migration before commands can run (pending: %s); stop any running `nibs serve` or `nibs tui`, then run `nibs migrate` (preview with `nibs migrate --dry-run`)",
 		strings.Join(names, ", "))
 }
 
@@ -2717,7 +2730,7 @@ applied without modifying anything.`,
 			return migrateCmdError(&refusalError{refusals: refusals})
 		}
 
-		ui.Println(olderServeAdvice)
+		ui.Println(olderHolderAdvice)
 		log := func(format string, a ...any) { ui.Printf(format+"\n", a...) }
 		if err := runMigrations(env, log); err != nil {
 			return migrateCmdError(err)
@@ -2833,7 +2846,7 @@ func reportDryRun(env migrateEnv, scan *storeScan) error {
 	for _, why := range undecidable {
 		ui.Printf("Note: %s\n", why)
 	}
-	ui.Println(olderServeAdvice)
+	ui.Println(olderHolderAdvice)
 	return nil
 }
 

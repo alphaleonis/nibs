@@ -131,9 +131,18 @@ type openEditorMsg struct {
 	nibPath string
 }
 
-// editorFinishedMsg is sent when the editor closes
+// editorFinishedMsg is sent when the editor closes, or when it could not be
+// opened at all.
+//
+// started says which of those two happened, and it is a separate field because
+// err cannot answer it. tea.ExecProcess hands its callback whatever went wrong
+// anywhere in the suspend-run-resume sequence, so the terminal's release and
+// restore errors arrive on the same wire as the process's own — meaning "not an
+// *exec.ExitError" is not the same claim as "the editor never ran", and would
+// report a finished editing session as a launch that never happened.
 type editorFinishedMsg struct {
-	err error
+	err     error
+	started bool
 }
 
 // openParentPickerMsg requests opening the parent picker for nib(s)
@@ -719,12 +728,26 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		c := exec.Command(editor, fullPath)
-		return a, tea.ExecProcess(c, func(err error) tea.Msg {
-			return editorFinishedMsg{err: err}
-		})
+		return a, tea.ExecProcess(c, editorFinished(c))
 
 	case editorFinishedMsg:
-		// Editor closed - take what was written back into the store.
+		// An editor that never started is not a session to take back: no text
+		// was written, and the file the write-back would stat is untouched. So
+		// the failure is reported instead — without this the user gets a screen
+		// flicker and no reason for it. The id/mtime pair is consumed here too,
+		// because this msg ends the openEditorMsg that set it and holding it
+		// would let the next editor exit write this nib against a timestamp
+		// taken for a launch that never happened.
+		if msg.err != nil && !msg.started {
+			a.reportFailure(editorLaunchFailure(msg.err))
+			a.editingNibID = ""
+			a.editingNibModTime = time.Time{}
+			return a, nil
+		}
+
+		// Editor closed - take what was written back into the store. A non-zero
+		// exit is not reported: the user chose it, `vi` quit with :cq being the
+		// ordinary way, and what matters is whether the file moved.
 		if a.editingNibID != "" {
 			if err := a.recordExternalEdit(a.editingNibID, a.editingNibModTime); err != nil {
 				a.reportFailure(editorWriteRefusal(a.editingNibID, err))
@@ -1084,12 +1107,46 @@ func editorWriteRefusal(id string, err error) string {
 	return editorTextSafeLead + fmt.Sprintf(" The store did not accept the edit to %s: %v", id, err)
 }
 
-// The two leads editorWriteRefusal picks between. They are named so the sweep
-// that renders them at the geometries the footer actually gets can ask for the
-// real string rather than a copy of it.
+// editorFinished builds the callback tea.ExecProcess invokes once the editor
+// session is over, reading from c the one thing the error it is handed cannot
+// say: whether the editor ran at all. exec records a ProcessState only for a
+// process it started, so a nil one is the launch that never happened.
+//
+// It is a named function because tea.ExecProcess invokes the callback itself,
+// out of reach of a test driving Update — so this is the only seam where the
+// flag's wiring, rather than the handler's use of it, can be checked.
+//
+// Reading c here is safe despite the goroutine tea.Exec sends from: `go
+// p.Send(fn(err))` evaluates fn's call in the goroutine that ran c, not in the
+// new one.
+func editorFinished(c *exec.Cmd) tea.ExecCallback {
+	return func(err error) tea.Msg {
+		return editorFinishedMsg{err: err, started: c.ProcessState != nil}
+	}
+}
+
+// editorLaunchFailure words an $EDITOR that never opened.
+//
+// It shares neither lead with editorWriteRefusal, and the reason is not tone.
+// Both of those speak for a session the user has already typed into: they exist
+// to say where that text ended up, and they prescribe a restart because the
+// store is the thing that may now disagree with the file. Here there is no text,
+// the file was never opened, and the store was never asked for anything — so a
+// restart is a remedy for a problem the user does not have, and the editor
+// lookup is the one they do. That is what the lead carries, since the footer cuts
+// from the end.
+func editorLaunchFailure(err error) string {
+	return editorNotStartedLead + fmt.Sprintf(" The editor could not be started: %v", err)
+}
+
+// The leads the editor's failure messages are built from: the two
+// editorWriteRefusal picks between, and the one editorLaunchFailure uses. They
+// are named so the sweep that renders them at the geometries the footer actually
+// gets can ask for the real string rather than a copy of it.
 const (
 	editorTextSafeLead       = "Your text is still in the file. Restart nibs to re-read the store."
 	editorFileUnreadableLead = "Nothing was recorded; the file cannot be read. Restart nibs to re-read the store."
+	editorNotStartedLead     = "Nothing was opened and nothing changed. Check $VISUAL and $EDITOR."
 )
 
 // getEditor returns the user's preferred editor using the fallback chain:

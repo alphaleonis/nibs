@@ -510,6 +510,50 @@ func TestBuildPlan_OldBlockingNotAliased(t *testing.T) {
 	}
 }
 
+// TestBuildPlan_ShortRefsPassThroughUnchanged pins that a reference with no
+// prefix to cut is planned as a no-op on every link field.
+//
+// A short-form id resolves by having the CONFIGURED prefix prepended, so it
+// names the same nib before and after a prefix change and needs no rewriting.
+// Callers rely on that: it is what lets a planner feed the file's own spelling
+// straight through instead of having to decide which spellings are rewritable.
+func TestBuildPlan_ShortRefsPassThroughUnchanged(t *testing.T) {
+	snapshot := []NibSnapshot{
+		{ID: "tnib-aaa", Path: "tnib-aaa.md"},
+		{
+			ID:        "tnib-bbb",
+			Path:      "tnib-bbb.md",
+			Parent:    "aaa",
+			Milestone: "aaa",
+			BlockedBy: []string{"aaa", "tnib-aaa"},
+			Blocking:  []string{"aaa", "tnib-aaa"},
+		},
+	}
+	plan, err := BuildPlan(snapshot, "tnib-", "new-", stubExists)
+	if err != nil {
+		t.Fatalf("BuildPlan returned error: %v", err)
+	}
+	fp := plan.Files[1]
+	if fp.NewParent != "aaa" {
+		t.Errorf("NewParent = %q, want %q", fp.NewParent, "aaa")
+	}
+	if fp.NewMilestone != "aaa" {
+		t.Errorf("NewMilestone = %q, want %q", fp.NewMilestone, "aaa")
+	}
+	// The full-form entry beside each short one must still be retargeted, so a
+	// planner that rewrote nothing would not pass this.
+	if want := []string{"aaa", "new-aaa"}; !stringSlicesEqual(fp.NewBlockedBy, want) {
+		t.Errorf("NewBlockedBy = %v, want %v", fp.NewBlockedBy, want)
+	}
+	if want := []string{"aaa", "new-aaa"}; !stringSlicesEqual(fp.NewBlocking, want) {
+		t.Errorf("NewBlocking = %v, want %v", fp.NewBlocking, want)
+	}
+	// The nib's own id still changes, so this is not a plan that skipped the row.
+	if fp.NewID != "new-bbb" {
+		t.Errorf("NewID = %q, want %q", fp.NewID, "new-bbb")
+	}
+}
+
 func stringSlicesEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

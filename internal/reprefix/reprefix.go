@@ -51,10 +51,20 @@ func ValidatePrefix(s string) error {
 // Area is a plain path, Documents are repo-relative paths, MilestoneOrder is a
 // fractional index, and Extra is opaque unknown keys.
 //
-// A nib BODY is outside the bar: `[[id]]` and `#id` mentions there are id-valued
-// too, and Execute re-renders a nib without touching its body, so they are left
-// naming the retired id. Extending the rewrite over bodies is tracked as its own
-// work, not covered here.
+// Each link is an id as SOME SOURCE SPELLS IT, and the plan preserves that
+// spelling: only a reference carrying oldPrefix is rewritten, so a short-form id
+// passes through untouched — it names the same nib under either prefix. Callers
+// whose store resolves short ids in memory therefore have to supply the
+// spelling they want written back (see nib.RawLinks), because Execute writes
+// these values over whatever the file said.
+//
+// A nib BODY carries ids too, and they are NOT planned here: Execute rewrites
+// them from the plan's prefix pair while it re-renders each file, because they
+// live in prose this planner never reads and a plan that does no disk I/O cannot
+// describe. The grammar it rewrites is the `#<id>` sigil — the only mention form
+// nib.ExtractMentionSpans recognizes and the only one the web renderer links.
+// `[[id]]` is not a reference to anything; nothing in the codebase reads it, so
+// rewriting it would be inventing a grammar rather than following one.
 type NibSnapshot struct {
 	ID string // e.g. "nibs-abc123"
 	// Path is the forward-slash relative path to the nib file under the nibs
@@ -90,9 +100,14 @@ type RenamePlan struct {
 	Collisions []string // target paths that already exist; non-empty means the plan is not executable
 }
 
-// FilePlan describes the rename and reference updates for a single nib.
-// Equal Old/New values for a link field mean "no change needed" — callers
-// can use HasReferenceUpdates to decide whether to rewrite the file body.
+// FilePlan describes the rename and front-matter reference updates for a single
+// nib. Equal Old/New values for a link field mean "no change needed", and
+// HasReferenceUpdates folds the four fields into that one question.
+//
+// It is not a complete account of what Execute writes to a file: the body
+// rewrite is driven by the plan's prefix pair, not by anything here, so a
+// FilePlan reporting no reference updates can still describe a file whose prose
+// changes.
 //
 // The four link pairs mirror NibSnapshot's; see its doc comment for why those
 // four and no others.

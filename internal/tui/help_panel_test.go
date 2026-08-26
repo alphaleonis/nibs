@@ -321,21 +321,11 @@ func assertFrameFitsTerminal(t *testing.T, content string, width, height int) {
 // is a defect of the view itself — a row too long for the box it is rendered
 // into wraps through the border and pushes the whole frame past the last row,
 // whatever height the box was handed.
-//
-// The detail view is left out, for a reason of its own that this does not
-// guard: its frame is ten rows tall on an eight-row terminal once a status
-// message is up, at every width from 30 to 200. Being width-independent is what
-// says it is not the overrun class this sweep is about, and it reproduces
-// unchanged with the list box's own overruns fixed. The detail view's WIDTH is
-// swept separately by TestTheDetailFrameFitsTheTerminalWidth.
 func TestTheFrameFitsTheTerminalWithHelpClosed(t *testing.T) {
 	for _, refused := range []bool{false, true} {
 		for _, height := range sweepHeights {
 			for _, width := range sweepWidths {
 				for _, view := range expandedHelpViews() {
-					if view.name == "detail" {
-						continue
-					}
 					name := fmt.Sprintf("%s/%dx%d", view.name, width, height)
 					if refused {
 						name += "/refused"
@@ -356,38 +346,39 @@ func TestTheFrameFitsTheTerminalWithHelpClosed(t *testing.T) {
 	}
 }
 
-// The detail view's own width guard, kept apart from the closed-panel sweep
-// because that sweep asserts height too and the detail frame still overruns it.
-// Width is answerable on its own: the compact footer's help row is built from a
-// fixed set of key hints, so without a cap it is the same cells wide at every
-// terminal width.
-func TestTheDetailFrameFitsTheTerminalWidth(t *testing.T) {
-	for _, refused := range []bool{false, true} {
-		for _, height := range sweepHeights {
-			for _, width := range sweepWidths {
-				name := fmt.Sprintf("%dx%d", width, height)
-				if refused {
-					name += "/refused"
+// The detail body is what gives when the frame cannot hold everything: below
+// the height where the header, a box around one viewport row and the footer all
+// fit, the body is not drawn at all. What it gives its rows up for is the
+// refusal and the keys to act on it, so those are the property — a frame that
+// merely fits by dropping the message back off the bottom would be the defect
+// again with a smaller frame.
+//
+// Heights run one at a time rather than over sweepHeights because the threshold
+// is a boundary: the coarse sweep steps from eight straight to twelve, and the
+// message's own cap moves with height/3, so nine through eleven are where an
+// off-by-one lands.
+func TestTheDetailBodyGivesItsRowsToTheRefusal(t *testing.T) {
+	for _, width := range []int{30, 80, 200} {
+		for height := 8; height <= 16; height++ {
+			t.Run(fmt.Sprintf("%dx%d", width, height), func(t *testing.T) {
+				view := detailSweepView(t)
+				app := enterHelpView(t, view, width, height)
+				refuseStatusChange(t, app, view)
+				content := app.View().Content
+
+				assertFrameFitsTerminal(t, content, width, height)
+
+				painted := frameText(content, width, height)
+				if !strings.Contains(painted, "Status change failed") {
+					t.Errorf("the frame does not carry the refusal:\n%s", painted)
 				}
-				t.Run(name, func(t *testing.T) {
-					view := detailSweepView(t)
-					app := enterHelpView(t, view, width, height)
-					if refused {
-						refuseStatusChange(t, app, view)
-					}
-					content := app.View().Content
-					if got := lipgloss.Width(content); got > width {
-						var overflow []string
-						for i, line := range strings.Split(content, "\n") {
-							if w := lipgloss.Width(line); w > width {
-								overflow = append(overflow, fmt.Sprintf("  line %d is %d cells: %q", i, w, ansiSGR.ReplaceAllString(line, "")))
-							}
-						}
-						t.Errorf("detail frame is %d columns wide for a %d-column terminal — the right edge is cut:\n%s",
-							got, width, strings.Join(overflow, "\n"))
-					}
-				})
-			}
+				// The row's leading hint, not its trailing one: the row is a
+				// fixed set of key hints clipped to the terminal, so at thirty
+				// columns q is off the right edge whatever the height.
+				if !strings.Contains(painted, "e edit") {
+					t.Errorf("the frame does not carry the help row the refusal is acted on from:\n%s", painted)
+				}
+			})
 		}
 	}
 }

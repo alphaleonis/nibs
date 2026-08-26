@@ -549,15 +549,15 @@ func migrateGateFixtures() map[string]migrateGateFixture {
 			}
 			return storeDir
 		}},
-		"live-serve": {allowDirty: true, build: func(t *testing.T) string {
+		"held-store": {allowDirty: true, build: func(t *testing.T) string {
 			_, storeDir := writeLegacyStore(t, "nibs:\n  prefix: leg-\n", map[string]string{
 				"leg-a1--one.md": layoutNib,
 			})
 			// Hold the shared side for the test's duration, which is what a live
-			// `nibs serve` does.
+			// `nibs serve` or `nibs tui` does.
 			serving, err := nibcore.AcquireServeLock(storeDir)
 			if err != nil {
-				t.Fatalf("simulating a live serve: %v", err)
+				t.Fatalf("simulating a live holder: %v", err)
 			}
 			t.Cleanup(func() { _ = serving.Release() })
 			return storeDir

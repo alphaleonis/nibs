@@ -162,8 +162,8 @@ func TestServeHoldsTheInterlockWhileItRuns(t *testing.T) {
 // The pause is INTERACTIVE-ONLY, deliberately differing from --force's policy for
 // ambiguous files. --force decides what happens to a user's files, a content
 // judgement no script should make silently. This asks "did you stop a process I
-// cannot see?" — and every serve this build CAN see is already fenced by
-// gateNoLiveServe, so the residue is an older serve, which is a human-noticing
+// cannot see?" — and every holder this build CAN see is already fenced by
+// gateStoreNotHeld, so the residue is an older one, which is a human-noticing
 // problem. A script has no human either way, and requiring --yes on all 105
 // non-interactive migrate invocations would make the flag the normal case.
 func TestMigrateConfirmsBeforeApplying(t *testing.T) {
@@ -255,5 +255,111 @@ func TestMigrateConfirmsBeforeApplying(t *testing.T) {
 		if strings.Contains(out, "[y/N]") {
 			t.Errorf("--dry-run asked to proceed with a run it does not perform:\n%s", out)
 		}
+	})
+}
+
+// The interlock does not answer "a serve is running". It answers that SOME other
+// nibs process has the store, and since `nibs tui` takes the shared side for its
+// whole session, a `nibs tui` is as likely to be the holder as a `nibs serve` —
+// on a machine where no serve exists at all. A refusal that names one of them
+// sends the other's reader hunting for a process that is not running, and
+// nothing else on screen mentions the TUI.
+//
+// So the property is per-surface and mechanical: wherever the refusal path names
+// a `nibs serve`, it names a `nibs tui` beside it. Naming which one holds the
+// store is not on offer — the lock cannot tell, and neither can these strings.
+func TestTheHeldStoreRefusalSpeaksForEveryHolder(t *testing.T) {
+	build := func(t *testing.T) string {
+		t.Helper()
+		t.Cleanup(resetRootPersistentFlags)
+		t.Cleanup(resetMigrateFlags)
+		resetRootPersistentFlags()
+		resetMigrateFlags()
+		_, storeDir := writeLegacyStore(t, "nibs:\n  prefix: leg-\n", map[string]string{
+			"leg-a1--one.md": layoutNib,
+		})
+		return storeDir
+	}
+	// held runs fn with exactly the lock runTUISession takes over the session,
+	// which is the situation the wording has to speak for.
+	held := func(t *testing.T, storeDir string, fn func()) {
+		t.Helper()
+		holding, err := nibcore.AcquireServeLock(storeDir)
+		if err != nil {
+			t.Fatalf("holding the store the way a `nibs tui` session does: %v", err)
+		}
+		defer func() { _ = holding.Release() }()
+		fn()
+	}
+	// assertSpeaksForBoth fails for a surface that names one holder without the
+	// other. Both spellings are asked for because the reader acts on a command,
+	// not on the word "tui" in prose.
+	assertSpeaksForBoth := func(t *testing.T, surface, text string) {
+		t.Helper()
+		if !strings.Contains(text, "`nibs serve`") {
+			return
+		}
+		if !strings.Contains(text, "`nibs tui`") {
+			t.Errorf("%s names `nibs serve` and not `nibs tui`, so a reader whose holder is the TUI is told to stop a process that is not running:\n%s",
+				surface, text)
+		}
+	}
+
+	t.Run("the run's refusal", func(t *testing.T) {
+		storeDir := build(t)
+		held(t, storeDir, func() {
+			out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty")
+			if err == nil {
+				t.Fatalf("migrate ran while the store was held\nout: %s", out)
+			}
+			if strings.Contains(err.Error(), "a `nibs serve` is running") {
+				t.Errorf("the refusal asserts a serve is running, which the lock never said: %v", err)
+			}
+			assertSpeaksForBoth(t, "the run's refusal", err.Error())
+		})
+	})
+
+	t.Run("the dry run's preview", func(t *testing.T) {
+		storeDir := build(t)
+		held(t, storeDir, func() {
+			out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--dry-run")
+			if err != nil {
+				t.Fatalf("--dry-run must preview, not fail: %v\nout: %s", err, out)
+			}
+			if !strings.Contains(out, "will refuse") {
+				t.Fatalf("premise failed: the preview does not predict the refusal:\n%s", out)
+			}
+			assertSpeaksForBoth(t, "the dry run's preview", out)
+		})
+	})
+
+	t.Run("the advice about the holder the gate cannot see", func(t *testing.T) {
+		storeDir := build(t)
+		out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--dry-run")
+		if err != nil {
+			t.Fatalf("--dry-run: %v\nout: %s", err, out)
+		}
+		if !strings.Contains(strings.ToLower(out), "older") {
+			t.Fatalf("premise failed: the preview carries no advice about an older holder:\n%s", out)
+		}
+		assertSpeaksForBoth(t, "the dry run's older-holder advice", out)
+	})
+
+	t.Run("the applied run's advice", func(t *testing.T) {
+		storeDir := build(t)
+		out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty")
+		if err != nil {
+			t.Fatalf("migrate: %v\nout: %s", err, out)
+		}
+		assertSpeaksForBoth(t, "the applied run's older-holder advice", out)
+	})
+
+	t.Run("the refusal every other command prints", func(t *testing.T) {
+		storeDir := build(t)
+		out, err := runRootWith(t, "--nibs-path", storeDir, "list")
+		if err == nil {
+			t.Fatalf("a pending store did not refuse `nibs list`\nout: %s", out)
+		}
+		assertSpeaksForBoth(t, "the pending-migration refusal", err.Error())
 	})
 }
