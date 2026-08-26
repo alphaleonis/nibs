@@ -322,11 +322,12 @@ func assertFrameFitsTerminal(t *testing.T, content string, width, height int) {
 // into wraps through the border and pushes the whole frame past the last row,
 // whatever height the box was handed.
 //
-// The detail view is left out. It overruns this sweep in two ways of its own —
-// a compact footer help row that is a fixed 48 cells at every width, and a
-// frame ten rows tall on an eight-row terminal once a status message is up,
-// at every width from 30 to 200 — and both reproduce unchanged with the list
-// box's own overruns fixed, so neither is a symptom of what this guards.
+// The detail view is left out, for a reason of its own that this does not
+// guard: its frame is ten rows tall on an eight-row terminal once a status
+// message is up, at every width from 30 to 200. Being width-independent is what
+// says it is not the overrun class this sweep is about, and it reproduces
+// unchanged with the list box's own overruns fixed. The detail view's WIDTH is
+// swept separately by TestTheDetailFrameFitsTheTerminalWidth.
 func TestTheFrameFitsTheTerminalWithHelpClosed(t *testing.T) {
 	for _, refused := range []bool{false, true} {
 		for _, height := range sweepHeights {
@@ -353,6 +354,55 @@ func TestTheFrameFitsTheTerminalWithHelpClosed(t *testing.T) {
 			}
 		}
 	}
+}
+
+// The detail view's own width guard, kept apart from the closed-panel sweep
+// because that sweep asserts height too and the detail frame still overruns it.
+// Width is answerable on its own: the compact footer's help row is built from a
+// fixed set of key hints, so without a cap it is the same cells wide at every
+// terminal width.
+func TestTheDetailFrameFitsTheTerminalWidth(t *testing.T) {
+	for _, refused := range []bool{false, true} {
+		for _, height := range sweepHeights {
+			for _, width := range sweepWidths {
+				name := fmt.Sprintf("%dx%d", width, height)
+				if refused {
+					name += "/refused"
+				}
+				t.Run(name, func(t *testing.T) {
+					view := detailSweepView(t)
+					app := enterHelpView(t, view, width, height)
+					if refused {
+						refuseStatusChange(t, app, view)
+					}
+					content := app.View().Content
+					if got := lipgloss.Width(content); got > width {
+						var overflow []string
+						for i, line := range strings.Split(content, "\n") {
+							if w := lipgloss.Width(line); w > width {
+								overflow = append(overflow, fmt.Sprintf("  line %d is %d cells: %q", i, w, ansiSGR.ReplaceAllString(line, "")))
+							}
+						}
+						t.Errorf("detail frame is %d columns wide for a %d-column terminal — the right edge is cut:\n%s",
+							got, width, strings.Join(overflow, "\n"))
+					}
+				})
+			}
+		}
+	}
+}
+
+// detailSweepView returns the detail entry from expandedHelpViews, so this file
+// has one definition of how the detail view is entered.
+func detailSweepView(t *testing.T) expandedHelpView {
+	t.Helper()
+	for _, v := range expandedHelpViews() {
+		if v.name == "detail" {
+			return v
+		}
+	}
+	t.Fatal("premise failed: expandedHelpViews no longer carries a detail view")
+	return expandedHelpView{}
 }
 
 // The box's top line is drawn by hand rather than left to the border style, so

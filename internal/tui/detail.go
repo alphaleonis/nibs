@@ -542,7 +542,10 @@ func (m detailModel) renderFooter() string {
 		// names are how the reader acts on what the message says.
 		footer = renderStatusMessage(m.statusMessage, m.statusKind, m.width, maxStatusFooterLines(m.height)) + "\n" + footer
 	}
-	return footer
+	// The help row is a fixed set of key hints, so it is the same cells wide at
+	// every terminal width and overruns a narrow one on its own. The status
+	// message above it already wraps to the width; this is the row that does not.
+	return clipToWidth(footer, m.width)
 }
 
 // currentHelpHeight returns the help panel height (0 when collapsed).
