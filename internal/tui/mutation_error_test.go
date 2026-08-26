@@ -458,10 +458,18 @@ func queueRefusal() string {
 	}).Error()
 }
 
+// b1 is what makes ms1's detail view draw the links box, which is the tallest
+// thing in that frame and has its own floor. Without a link the geometry sweeps
+// measured a detail view the links box was never part of.
+//
+// It blocks on the milestone rather than parenting under it because a milestone
+// is not a legal parent here; the queue membership t1 already carries is not a
+// link the detail view resolves.
 func queueRefusalNibs() []*nib.Nib {
 	return []*nib.Nib{
 		{ID: "ms1", Title: "Wave one", Type: "milestone", Status: "todo"},
 		{ID: "t1", Title: "Still open", Type: "task", Status: "todo", Milestone: "ms1", MilestoneOrder: "a0"},
+		{ID: "b1", Title: "Waiting on the wave", Type: "task", Status: "todo", BlockedBy: []string{"ms1"}},
 	}
 }
 

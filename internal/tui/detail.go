@@ -127,7 +127,11 @@ func (d linkDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 		},
 	)
 
-	_, _ = fmt.Fprint(w, cursor+labelCol+row)
+	// Clipped, not left to wrap. maxTitleWidth has a floor of ten cells, so on a
+	// narrow terminal the row is wider than the box whatever the title says —
+	// and a wrapped row makes the box taller than the height it was sized to,
+	// which is the one thing everything stacked around it is measured against.
+	_, _ = fmt.Fprint(w, clipToWidth(cursor+labelCol+row, m.Width()))
 }
 
 // detailModel displays a single nib's details
@@ -196,6 +200,55 @@ func newDetailModel(b *nib.Nib, backend Backend, cfg *config.Config, width, heig
 	return m
 }
 
+// linkRows is how many link entries the box shows: all of them, up to a third
+// of the terminal.
+//
+// It is the whole of the list's height. The list draws no title — "Linked Nibs"
+// is redundant beside a list of nibs, and the row it took, plus the padding row
+// beside it, is what held the box's floor at five: taller than an eight-row
+// terminal can spare once the header and the footer have been paid for. The
+// filter input shares that row and is drawn only while there is a filter to
+// read, which is where linksBox adds the row back.
+func (m detailModel) linkRows() int {
+	return min(len(m.links), max(3, m.height/3))
+}
+
+// linksBox renders the bordered links box, or "" when the nib has no links.
+//
+// The border is the only thing on screen that says whether the links pane has
+// focus, so it is drawn whatever the height; what gives instead is the box as a
+// whole, which View drops when the frame cannot hold it.
+//
+// The list is sized on a copy rather than in place: contentFloor renders the
+// box too, and a View that resized the stored list would move the floor the
+// footer region was already measured against.
+func (m detailModel) linksBox() string {
+	if len(m.links) == 0 {
+		return ""
+	}
+
+	l := m.linkList
+	rows := m.linkRows()
+	filtering := l.FilterState() == list.Filtering
+	if filtering {
+		// The filter input is drawn into the row the title used to hold, so the
+		// box grows by it — and only for as long as there is a query to read.
+		rows++
+	}
+	l.SetShowFilter(filtering)
+	l.SetSize(m.width-8, rows)
+
+	borderColor := ui.ColorMuted
+	if m.linksActive {
+		borderColor = ui.ColorPrimary
+	}
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		Width(withBorder(m.width - 4)).
+		Render(l.View())
+}
+
 // createLinkList creates a new list.Model for the links
 func (m detailModel) createLinkList() list.Model {
 	delegate := linkDelegate{
@@ -216,24 +269,15 @@ func (m detailModel) createLinkList() list.Model {
 		}
 	}
 
-	// Calculate list height: show all links up to 1/3 of screen height
-	// Add 2 for the title row and padding
-	maxHeight := max(3, m.height/3)
-	listHeight := min(len(m.links), maxHeight) + 2
-
-	l := list.New(items, delegate, m.width-8, listHeight)
-	l.Title = "Linked Nibs"
+	l := list.New(items, delegate, m.width-8, m.linkRows())
 	l.SetShowStatusBar(false)
 	l.SetShowHelp(false)
 	l.SetShowPagination(false)
+	l.SetShowTitle(false)
 	l.SetFilteringEnabled(true)
 
-	// Style the title bar similar to the detail header title (badge style) but with different color
-	l.Styles.Title = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#fff")).
-		Background(ui.ColorBlue).
-		Padding(0, 1)
+	// The title bar's row is spent on the filter input alone — see linkRows —
+	// so what is styled here is that input's surroundings, not a label.
 	l.Styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 0, 1) // Left padding to align with header title
 	applyFilterStyles(&l.Styles)
 	l.Styles.NoItems = lipgloss.NewStyle()
@@ -268,11 +312,7 @@ func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 		// Update link list delegate with new dimensions
 		m.updateLinkListDelegate()
 
-		// Update link list size: show all links up to 1/3 of screen height
-		// Add 2 for the title row and padding
-		maxHeight := max(3, msg.Height/3)
-		listHeight := min(len(m.links), maxHeight) + 2
-		m.linkList.SetSize(msg.Width-8, listHeight)
+		m.linkList.SetSize(msg.Width-8, m.linkRows())
 
 		headerHeight := m.calculateHeaderHeight()
 		helpHt := m.currentHelpHeight()
@@ -440,30 +480,29 @@ func (m detailModel) View() string {
 	// Header (nib info only, no links)
 	header := m.renderHeader()
 
-	// Links section (if any)
-	var linksSection string
-	if len(m.links) > 0 {
-		linksBorderColor := ui.ColorMuted
-		if m.linksActive {
-			linksBorderColor = ui.ColorPrimary
-		}
-		linksBorder := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(linksBorderColor).
-			Width(withBorder(m.width - 4))
-		linksSection = linksBorder.Render(m.linkList.View())
+	// The links box and the body are drawn into whatever the header and the
+	// footer region leave, and each is dropped when that is less than a box.
+	// The frame is exactly as tall as the terminal, so the rows a wrapped status
+	// message takes have to come from somewhere; measuring the footer first is
+	// what makes their share a budget rather than a guess corrected afterwards.
+	//
+	// The links box takes its rows first, being the pane the view opens focused
+	// on, and below its floor it goes whole rather than showing a box with no
+	// link in it. That floor still does not always fit: on an eight-row terminal
+	// the header, three rows of box and a footer wrapping a refusal across two
+	// rows above its help row come to ten, so something has to go, and it is not
+	// the message or the keys the reader acts on it with.
+	avail := m.height - lipgloss.Height(header) - lipgloss.Height(m.footerRegion())
+	linksSection := m.linksBox()
+	if blockLines(linksSection) > avail {
+		linksSection = ""
 	}
 
-	// The body is drawn into whatever the rest of the frame leaves, and dropped
-	// when that is less than a box. The frame is exactly as tall as the
-	// terminal, so the rows a wrapped status message takes have to come from
-	// somewhere; measuring the footer first is what makes the body's share a
-	// budget rather than a guess corrected afterwards.
 	rows := []string{header}
 	if linksSection != "" {
 		rows = append(rows, linksSection)
 	}
-	avail := m.height - lipgloss.Height(header) - blockLines(linksSection) - lipgloss.Height(m.footerRegion())
+	avail -= blockLines(linksSection)
 
 	// The body is rendered BEFORE the footer even though it is drawn above it,
 	// because rendering it is what sizes the viewport to the height it is
@@ -541,12 +580,13 @@ const minBodyHeight = 3
 // reserves two rows more than it renders: the sizing estimate may be generous,
 // but a hold-back derived from it would narrow the panel for rows that are not
 // actually spoken for.
+//
+// The links box is counted even at the geometries where View ends up dropping
+// it. Whether it is dropped depends on the region's height, which is what this
+// is being measured for, so counting it is the answer that does not chase its
+// own tail — and it errs toward a smaller panel, never a frame that overruns.
 func (m detailModel) contentFloor() int {
-	floor := lipgloss.Height(m.renderHeader()) + minBodyHeight
-	if len(m.links) > 0 {
-		floor += lipgloss.Height(m.linkList.View()) + 2 // the links box's border
-	}
-	return floor
+	return lipgloss.Height(m.renderHeader()) + minBodyHeight + blockLines(m.linksBox())
 }
 
 // renderFooter returns the abbreviated footer for the detail view.
@@ -593,11 +633,8 @@ func (m detailModel) calculateHeaderHeight() int {
 
 	// Add height for links section (separate bordered box)
 	if len(m.links) > 0 {
-		// Links list height + borders (matches createLinkList calculation)
-		// +2 for title row and padding, +3 for borders and spacing
-		maxHeight := max(3, m.height/3)
-		listHeight := min(len(m.links), maxHeight) + 2
-		baseHeight += listHeight + 3
+		// Link entries + 3 for borders and spacing
+		baseHeight += m.linkRows() + 3
 	}
 
 	return baseHeight
