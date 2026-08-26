@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Completing or scrapping a milestone is refused while open work is still assigned to it** — `--move-open-to <milestone>` or `--unassign-open` dispose of the queue, deferring keeps it, and `nibs check` names a milestone already closed over a live one.
 - **Work is placed in an area from a vocabulary the project declares** — an `areas:` block in the store config declares a nested tree, `nibs set --area`/`nibs new --area` place a nib in one, `nibs list --area` reads an area together with everything declared beneath it, and `nibs area list|rename|rm` prints and edits the vocabulary.
 - **`nibs check` names a nib whose area the store does not declare** — the value loads as written, so nothing else reported it; `--fix` refuses, since choosing the right area is not provable intent.
+- **A store is fenced against migration while a `nibs serve` or `nibs tui` holds it** — `nibs migrate` refuses while either is running and either refuses to start while a migration runs, because a session that loaded the store beforehand writes its pre-migration copy back afterwards with nothing to detect it.
 
 ### Changed
 - **BREAKING: moving more than one nib at once now requires `--block`** — `nibs mv <a> <b> --first` is refused instead of quietly reordering a nib you did not name, which is what a mistyped single move produced, since `--first` takes no anchor and a trailing id became a second one; the help and cheat grammars that invited it are corrected too.
@@ -53,6 +54,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`nibs new` no longer names a file under a prefix the store has stopped using** — a create parked behind a `nibs config set-prefix` refuses rather than drawing from the vocabulary it loaded at startup, since a nib's id comes from its filename and cannot be relabeled afterwards.
 - **The TUI no longer draws outside a terminal narrower than 40 columns**, where an over-long row wrapped through the box and pushed the frame past the terminal's last row and column.
 - **The TUI now reports a failed save after an external editor session**, instead of returning to the list as though the edit had been stored when the store had refused it.
+- **A link repair or a nib deletion can no longer recreate a file `nibs config set-prefix` renamed away**, where the two whole-store link sweeps took no cross-process lock and wrote through a creating writer, leaving a second copy of the nib under its retired name.
+- **The TUI now says when an editor could not be started**, instead of returning to the list with no explanation when `$VISUAL` or `$EDITOR` names something that does not exist.
+- **The TUI's detail view no longer draws past the bottom of a short terminal**, where a status message pushed the frame to ten rows on an eight-row one and the scroll percentage was measured against a taller viewport than the one drawn.
+- **`nibs config set-prefix` no longer expands a short-form link to full form** — a nib written `parent: p1` came back `parent: qq-p1`, though a short id carries no prefix to rewrite and names the same nib under either.
+- **`nibs config set-prefix` now retargets full-form `#id` mentions in nib bodies**, which it left naming the id the rename retired.
 
 ## v0.8.3 - 2026-08-13
 
