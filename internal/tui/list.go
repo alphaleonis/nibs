@@ -68,7 +68,10 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	if d.cols.ShowTags {
 		baseWidth += d.cols.Tags
 	}
-	maxTitleWidth := max(0, m.Width()-baseWidth)
+	// Floored at one, not zero: zero is RenderNibRow's "no limit" sentinel, so
+	// the width a full ID column leaves for nothing would come back as a title
+	// under no budget at all.
+	maxTitleWidth := max(1, m.Width()-baseWidth)
 
 	// Check if nib is marked for multi-select
 	var isMarked bool
@@ -104,7 +107,12 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 		},
 	)
 
-	_, _ = fmt.Fprint(w, str)
+	// Clip rather than let the row run long. The columns ahead of the title are
+	// fixed-width, and in wide mode they can outgrow a narrow terminal on their
+	// own — a row wider than the list is wrapped by the bordered box the list is
+	// drawn into, which then renders taller than the height it was handed and
+	// pushes the frame past the terminal's last row.
+	_, _ = fmt.Fprint(w, lipgloss.NewStyle().MaxWidth(m.Width()).Render(str))
 }
 
 // listModel is the model for the nib list view
@@ -982,22 +990,37 @@ func (m listModel) buildBorderTopLine() string {
 		})
 	}
 
-	// Pre-render badges and measure their total width
+	// Everything but the fill has a fixed cost — ╭─, the title, its trailing
+	// space, each badge, and the closing ╮ — so what the width cannot hold has
+	// to be given up here. Appending it anyway does not widen the terminal; it
+	// runs the box's own top edge off the right of the screen, taking the corner
+	// with it.
+	budget := m.width - 5 // ╭─ + space around the title + ╮
+	title := m.borderTitle
+	if lipgloss.Width(title) > budget {
+		title = lipgloss.NewStyle().MaxWidth(budget).Render(title)
+	}
+	titleWidth := 4 + lipgloss.Width(title) // ╭─ + title + space
+
+	// Pre-render the badges that fit, dropping from the right. The leftmost is
+	// the tag filter, which names a state that hides nibs from the list — the
+	// last one a reader should have to infer from an empty box.
 	type renderedBadge struct {
 		open, text, close string
-		width             int // visual width of ┤text├
 	}
 	var renderedBadges []renderedBadge
 	badgesWidth := 0
 	for _, b := range badges {
-		rb := renderedBadge{
+		width := 2 + lipgloss.Width(b.text) + 1 // ─┤ + text + ├
+		if lipgloss.Width(title)+badgesWidth+width > budget {
+			break
+		}
+		renderedBadges = append(renderedBadges, renderedBadge{
 			open:  br("─┤"),
 			text:  b.style.Render(b.text),
 			close: br("├"),
-			width: 2 + lipgloss.Width(b.text) + 1, // ─┤ + text + ├
-		}
-		renderedBadges = append(renderedBadges, rb)
-		badgesWidth += rb.width
+		})
+		badgesWidth += width
 	}
 
 	// Build the line: ╭─ Title ─────...─┤Badge├─┤Badge├╮
@@ -1005,9 +1028,8 @@ func (m listModel) buildBorderTopLine() string {
 
 	// Start + title
 	buf.WriteString(br("╭─ "))
-	buf.WriteString(listTitleStyle.Render(m.borderTitle))
+	buf.WriteString(listTitleStyle.Render(title))
 	buf.WriteString(br(" "))
-	titleWidth := 4 + lipgloss.Width(m.borderTitle) // ╭─ + title + space
 
 	// Fill between title and badges
 	fill := m.width - titleWidth - badgesWidth - 1 // -1 for closing ╮
@@ -1076,7 +1098,11 @@ func (m listModel) Footer() string {
 
 	footer += m.updateIndicator()
 
-	return footer
+	// The help row is a fixed set of key/label pairs — the widest is 54 cells,
+	// at every terminal width — and the update indicator is appended after the
+	// status message has already wrapped to the width. Neither shrinks, so the
+	// row is clipped to what the terminal can hold.
+	return clipToWidth(footer, m.width)
 }
 
 // footerHeight is the number of terminal lines the footer region occupies.

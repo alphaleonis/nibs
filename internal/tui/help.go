@@ -111,16 +111,22 @@ func helpPanelLayout(entries []helpEntry, width, maxRows int) helpLayout {
 
 	keyWidth := helpKeyWidth(entries)
 	natural := helpColWidth(entries)
+	// Every row is " " + cols*colWidth, so the grid has width-1 cells to fill.
+	// The column width is capped to that rather than taken as given: a single
+	// natural column is wider than a narrow terminal on its own, and the panel
+	// is drawn into the same fixed cell grid as the rest of the frame, so a
+	// column past the last one is not narrowed, it is gone. Capping here also
+	// keeps the column count off the leading space — losing a whole column to
+	// one cell is a worse trade than shaving a cell off each of them.
+	avail := width - 1
 	cols := max(1, width/natural)
-	colWidth := natural
+	colWidth := min(natural, avail/cols)
 
 	if maxRows > 0 && helpRows(len(entries), cols) > maxRows {
-		// The leading space each row carries is why the packed width is
-		// measured against width-1: the row is " " + cols*colWidth.
-		widest := max(1, (width-1)/(keyWidth+1+minHelpDescWidth))
+		widest := max(1, avail/(keyWidth+1+minHelpDescWidth))
 		if packed := min(helpRows(len(entries), maxRows), widest); packed > cols {
 			cols = packed
-			colWidth = (width - 1) / cols
+			colWidth = avail / cols
 		}
 	}
 
