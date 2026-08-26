@@ -1521,3 +1521,109 @@ func TestTheEditorRefusalKeepsItsLeadOnScreen(t *testing.T) {
 		}
 	}
 }
+
+// editorLaunchDetailHeights are the heights the detail frame's arithmetic turns
+// on: every short one individually, because the thresholds are boundaries and
+// the coarse sweep steps from eight straight to twelve, then the ordinary sizes.
+var editorLaunchDetailHeights = []int{8, 9, 10, 11, 12, 16, 20, 24, 30}
+
+// detailStatusRegionRows is how many rows the detail view grants its status
+// message at a geometry — maxStatusFooterLines above the help row, and with the
+// panel expanded the region's own budget, which keeps a row for the panel and is
+// floored against the header plus a one-row body box.
+//
+// It is the message's budget, not the frame's: what the region cuts is already
+// gone before the frame is composed. That separation is what keeps the sweep
+// below an assertion about COMPOSITION — everything the region granted has to
+// reach the painted frame — rather than a restatement of the wrap.
+func detailStatusRegionRows(m detailModel, panelOpen bool) int {
+	if !panelOpen {
+		return maxStatusFooterLines(m.height)
+	}
+	return min(maxStatusFooterLines(m.height), max(1, max(1, m.height-m.contentFloor())-1))
+}
+
+// The launch message is raised while the detail view is up as readily as from
+// the list, and the detail frame budgets its rows differently: the body gives
+// its rows to the region, the header is taller, and the expanded panel is held
+// back against a floor of its own. Neither sweep covered the composition —
+// TestTheEditorRefusalKeepsItsLeadOnScreen never enters the detail view, and
+// the detail geometry sweep carries the status-change refusal instead — so a
+// change to either side could lose the remedy with the suite green.
+//
+// What is guaranteed, and what is not:
+//
+//   - the opening clause reaches the reader at every one of these geometries;
+//   - so does the remedy, wherever the status region had the rows to grant it,
+//     which is every geometry at eleven rows and taller;
+//   - below that the region cuts the sentence before the frame sees it. Measured
+//     today: with the panel open the region is one row at eight and nine, so the
+//     remedy is gone at 48 columns and narrower, and two rows at ten, gone at 34
+//     and narrower; with the footer it is two rows at eight, gone at 34 and
+//     narrower. That is renderStatusMessage's documented cut on a 66-column
+//     sentence, not a frame defect — the pre-existing editorTextSafeLead loses
+//     "Restart nibs" the same way at eight and nine, at 40 columns and narrower,
+//     the threshold differing only because what follows its lead is shorter.
+func TestTheLaunchFailureKeepsItsRemedyInTheDetailFrame(t *testing.T) {
+	const (
+		floor  = "Nothing was opened"
+		remedy = "Check $VISUAL and $EDITOR"
+	)
+	for _, panelOpen := range []bool{false, true} {
+		for _, height := range editorLaunchDetailHeights {
+			for _, width := range sweepWidths {
+				name := fmt.Sprintf("%dx%d", width, height)
+				if panelOpen {
+					name += "/help"
+				}
+				t.Run(name, func(t *testing.T) {
+					app, stub := setupTestApp(t, pickerTestNibs())
+					app.Update(tea.WindowSizeMsg{Width: width, Height: height})
+					sendKey(app, tea.KeyPressMsg{Code: tea.KeyEnter})
+					if app.state != viewDetail {
+						t.Fatalf("premise failed: expected the detail view, got state %d", app.state)
+					}
+					if panelOpen {
+						sendKey(app, tea.KeyPressMsg{Code: '?', Text: "?"})
+						if !app.helpExpanded {
+							t.Fatal("premise failed: ? did not expand the help panel")
+						}
+					}
+					editorSession(t, app, stub, "nib-1")
+					_, launchErr := failedEditorLaunch(t)
+
+					_, cmd := app.Update(editorFinishedMsg{err: launchErr})
+					processCmd(app, cmd)
+					if app.detail.statusMessage == "" {
+						t.Fatal("premise failed: the failed launch was not reported to the detail view at all")
+					}
+
+					content := app.View().Content
+					assertFrameFitsTerminal(t, content, width, height)
+					painted := frameText(content, width, height)
+
+					if !strings.Contains(painted, floor) {
+						t.Fatalf("the frame does not carry %q — the reader is left with a keypress that did nothing and no word about it:\n%s",
+							floor, painted)
+					}
+
+					rows := detailStatusRegionRows(app.detail, panelOpen)
+					granted := frameText(statusBlock(app.detail.statusMessage, app.detail.statusKind, width, rows), width, height)
+					if strings.Contains(granted, remedy) {
+						if !strings.Contains(painted, remedy) {
+							t.Errorf("the status region granted %q at %d row(s) and the frame did not paint it — the composition lost what the message is for:\n%s",
+								remedy, rows, painted)
+						}
+						return
+					}
+					// The region cut it. That is only ever the shortest
+					// terminals; anywhere else it is a budget that shrank.
+					if height > 10 {
+						t.Errorf("the status region granted only %d row(s) at %dx%d and cut %q — the remedy is guaranteed from eleven rows up:\n%s",
+							rows, width, height, remedy, painted)
+					}
+				})
+			}
+		}
+	}
+}

@@ -1,9 +1,13 @@
 package tui
 
 import (
+	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/alphaleonis/nibs/internal/config"
@@ -142,5 +146,74 @@ func TestRenderBodyKeepsFirstLineIndent(t *testing.T) {
 	}
 	if strings.HasPrefix(out, "\n") {
 		t.Errorf("renderBody should still strip glamour's leading blank line: %q", out)
+	}
+}
+
+// detailScrollPctRe reads the percentage off a painted frame. The footer's help
+// row is the frame's last line and the percentage is the first thing on it, so
+// the last match is the one the reader sees.
+var detailScrollPctRe = regexp.MustCompile(`(\d+)%`)
+
+func detailScrollPct(t *testing.T, painted string) int {
+	t.Helper()
+	all := detailScrollPctRe.FindAllStringSubmatch(painted, -1)
+	if len(all) == 0 {
+		t.Fatalf("the frame carries no scroll percentage:\n%s", painted)
+	}
+	pct, err := strconv.Atoi(all[len(all)-1][1])
+	if err != nil {
+		t.Fatalf("reading the scroll percentage: %v", err)
+	}
+	return pct
+}
+
+// The percentage the footer paints is what tells the reader whether there is
+// body below the fold, and it has to be measured against the body the frame
+// actually paints. It was measured against the viewport height Update derived
+// instead — an estimate that reserves two rows more of header than renders — so
+// a body entirely on screen reported 0%: the model's viewport was one row
+// shorter than the painted one, which is exactly the "one line still hidden"
+// arithmetic.
+//
+// Both directions are the property. A percentage that is always 100 would be
+// just as wrong, so a body with a line genuinely off-screen has to say so.
+func TestTheDetailFooterMeasuresTheBodyItPaints(t *testing.T) {
+	const width = 100
+	for _, height := range []int{12, 16, 20, 24, 30} {
+		for paras := 1; paras <= 14; paras++ {
+			t.Run(fmt.Sprintf("%dx%d/%dp", width, height, paras), func(t *testing.T) {
+				lines := make([]string, paras)
+				for i := range lines {
+					lines[i] = fmt.Sprintf("L%02d", i)
+				}
+				app, _ := setupTestApp(t, []*nib.Nib{{
+					ID: "nib-1", Title: "Scrolled", Type: "task", Status: "todo", Order: "1",
+					Body: strings.Join(lines, "\n\n"),
+				}})
+				app.Update(tea.WindowSizeMsg{Width: width, Height: height})
+				sendKey(app, tea.KeyPressMsg{Code: tea.KeyEnter})
+				if app.state != viewDetail {
+					t.Fatalf("premise failed: expected the detail view, got state %d", app.state)
+				}
+
+				painted := frameText(app.View().Content, width, height)
+				if !strings.Contains(painted, "L00") {
+					// Below the height where a body box is drawn at all there
+					// is no body on screen for a percentage to describe.
+					t.Skip("no body row is painted at this geometry")
+				}
+				pct := detailScrollPct(t, painted)
+				if strings.Contains(painted, lines[paras-1]) {
+					if pct != 100 {
+						t.Errorf("every body line is on screen but the footer reads %d%% — it says there is more below the fold when there is not:\n%s",
+							pct, painted)
+					}
+					return
+				}
+				if pct == 100 {
+					t.Errorf("the footer reads 100%% while %q is off screen:\n%s", lines[paras-1], painted)
+				}
+			})
+		}
 	}
 }

@@ -459,13 +459,23 @@ func (m detailModel) View() string {
 	// terminal, so the rows a wrapped status message takes have to come from
 	// somewhere; measuring the footer first is what makes the body's share a
 	// budget rather than a guess corrected afterwards.
-	footer := m.footerRegion()
 	rows := []string{header}
 	if linksSection != "" {
 		rows = append(rows, linksSection)
 	}
-	avail := m.height - lipgloss.Height(header) - blockLines(linksSection) - lipgloss.Height(footer)
-	if body := m.renderBodyBox(avail); body != "" {
+	avail := m.height - lipgloss.Height(header) - blockLines(linksSection) - lipgloss.Height(m.footerRegion())
+
+	// The body is rendered BEFORE the footer even though it is drawn above it,
+	// because rendering it is what sizes the viewport to the height it is
+	// painted at, and the footer's scroll percentage has to describe the body
+	// the reader is looking at. Update's height is only an estimate — it
+	// reserves for a header taller than the one that renders — so a percentage
+	// taken against it says there is more below the fold when the whole body is
+	// on screen. Measuring the footer above and painting it here are the same
+	// rows either way: nothing in its height depends on the viewport.
+	body := m.renderBodyBox(avail)
+	footer := m.footerRegion()
+	if body != "" {
 		rows = append(rows, body)
 	}
 	return strings.Join(append(rows, footer), "\n")
@@ -480,7 +490,12 @@ func (m detailModel) View() string {
 // in the row or two that would be left anyway. Taking the rows from the message
 // instead would cut a refusal down to its first line, which is the defect the
 // footer was taught to wrap for.
-func (m detailModel) renderBodyBox(avail int) string {
+//
+// The receiver is a pointer so the height it gives the viewport outlives the
+// call: View renders the footer afterwards, and the percentage there has to be
+// measured against the body that was actually painted. The model View was
+// called on is untouched — View's own receiver is a copy.
+func (m *detailModel) renderBodyBox(avail int) string {
 	if avail < minBodyHeight {
 		return ""
 	}
