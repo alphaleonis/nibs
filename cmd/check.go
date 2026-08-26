@@ -11,6 +11,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
+	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/store"
 	"github.com/alphaleonis/nibs/internal/ui"
 	"github.com/spf13/cobra"
@@ -242,7 +243,18 @@ func runCheck(app *App) (int, error) {
 	if checkFix && (len(linkResult.BrokenLinks) > 0 || len(linkResult.SelfLinks) > 0 || len(linkResult.BrokenDocuments) > 0) {
 		fixedCount, err := app.Core.FixBrokenLinks()
 		if err != nil {
-			return 0, fmt.Errorf("fixing broken links: %w", err)
+			// This is runCheck's ONE error return, and it has to carry a code
+			// like every other command's: --json is a machine surface, and a
+			// bare error left it printing nothing at all beside a non-zero
+			// status — no envelope for a consumer to read the failure off.
+			//
+			// FILE_ERROR unconditionally, because every way this sweep fails is
+			// a store write it could not complete: the write lock, the render,
+			// or the atomic replace refusing a path that went stale. That is
+			// the class mutationErrCode gives the same failures on the mutating
+			// commands, and it maps to the exit status this return already
+			// produced through reportExitError's isIOError fallback.
+			return 0, reportErr(checkJSON, output.ErrFileError, fmt.Errorf("fixing broken links: %w", err))
 		}
 		fixed = fixedCount
 

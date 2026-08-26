@@ -1,16 +1,21 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nibcore"
+	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/spf13/pflag"
 )
 
@@ -1178,4 +1183,169 @@ func TestCheckReportsUndeclaredArea(t *testing.T) {
 			t.Errorf("undeclared_areas = %+v, want none for a milestone", got.NibIssues.UndeclaredAreas)
 		}
 	})
+}
+
+// setupCheckFixWriteFailure builds a store `check --fix` has something to write
+// and then moves that file, so the fix sweep holds a path nothing is at.
+//
+// The rename is the realistic shape of the failure rather than a contrived
+// permission trick: the sweep writes each nib back to the path its in-memory
+// copy carried at load, and AtomicUpdateFileDeferDirSync refuses a stale one —
+// recreating it would leave a second copy of the nib behind. chk-link1 is the
+// only nib with anything to fix, so it is the only file the sweep writes.
+func setupCheckFixWriteFailure(t *testing.T) *App {
+	t.Helper()
+	app, nibsDir := setupCheckTest(t, map[string]string{
+		"chk-good1--ok.md":     chkValidNib,
+		"chk-link1--broken.md": chkBrokenLinkNib,
+	})
+	checkFix = true
+	if err := os.Rename(dataPath(nibsDir, "chk-link1--broken.md"), dataPath(nibsDir, "chk-link1--moved.md")); err != nil {
+		t.Fatalf("renaming the loaded nib away: %v", err)
+	}
+	return app
+}
+
+// TestCheckFixWriteFailureIsCoded pins runCheck's one error return — the fix
+// sweep failing, reachable only under --fix — to the CLI's structured error
+// convention.
+//
+// It returned bare, so nothing carried a code: --json printed no envelope at
+// all for it, leaving a consumer parsing stdout with an empty document and a
+// non-zero status, and the exit status came from reportExitError's isIOError
+// fallback rather than from a class the command declared. FILE_ERROR is the
+// class mutationErrCode gives the same store-write failures on the mutating
+// commands, and it maps to the exit status the fallback already produced.
+func TestCheckFixWriteFailureIsCoded(t *testing.T) {
+	t.Run("--json emits the error envelope and nothing else", func(t *testing.T) {
+		app := setupCheckFixWriteFailure(t)
+		checkJSON = true
+
+		var runErr error
+		out := captureStdout(t, func() { _, runErr = runCheck(app) })
+		if runErr == nil {
+			t.Fatalf("runCheck() error = nil, want the fix sweep's failure\noutput:\n%s", out)
+		}
+
+		var env map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(out), &env); err != nil {
+			t.Fatalf("stdout is not one JSON document: %v\nraw: %q", err, out)
+		}
+		if _, ok := env["error"]; !ok {
+			t.Fatalf("stdout carries no error envelope; keys = %v\nraw: %s", envKeys(env), out)
+		}
+
+		var body struct {
+			Error struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(out), &body); err != nil {
+			t.Fatalf("unmarshal envelope: %v\nraw: %s", err, out)
+		}
+		if body.Error.Code != output.ErrFileError {
+			t.Errorf("envelope error.code = %q, want %q", body.Error.Code, output.ErrFileError)
+		}
+		if !strings.Contains(body.Error.Message, "fixing broken links") {
+			t.Errorf("envelope error.message = %q, want it to name the failed sweep", body.Error.Message)
+		}
+
+		// Reported on stdout, so the boundary must not repeat it on stderr —
+		// one parseable document is the whole point of the --json contract.
+		if !errors.Is(runErr, output.ErrAlreadyReported) {
+			t.Errorf("--json error does not satisfy ErrAlreadyReported: %v", runErr)
+		}
+		var stderr bytes.Buffer
+		if got := reportExitError(&stderr, runErr); got != output.ExitIO {
+			t.Errorf("exit status = %d, want %d", got, output.ExitIO)
+		}
+		if stderr.Len() != 0 {
+			t.Errorf("--json run also wrote to stderr: %q", stderr.String())
+		}
+	})
+
+	t.Run("text mode keeps the stderr report and the exit status", func(t *testing.T) {
+		app := setupCheckFixWriteFailure(t)
+
+		var runErr error
+		out := captureStdout(t, func() { _, runErr = runCheck(app) })
+		if runErr == nil {
+			t.Fatalf("runCheck() error = nil, want the fix sweep's failure\noutput:\n%s", out)
+		}
+		if strings.Contains(out, `"code"`) {
+			t.Errorf("text mode wrote a JSON envelope to stdout:\n%s", out)
+		}
+
+		var ce *output.CodedError
+		if !errors.As(runErr, &ce) {
+			t.Fatalf("runCheck() error = %v, want an *output.CodedError", runErr)
+		}
+		if ce.Code != output.ErrFileError {
+			t.Errorf("CodedError.Code = %q, want %q", ce.Code, output.ErrFileError)
+		}
+		// The cause survives the text path's wrap, so errors.Is still answers
+		// for a caller that keys on it rather than on the code.
+		if !errors.Is(runErr, fs.ErrNotExist) {
+			t.Errorf("text-mode error lost its fs.ErrNotExist cause: %v", runErr)
+		}
+
+		var stderr bytes.Buffer
+		if got := reportExitError(&stderr, runErr); got != output.ExitIO {
+			t.Errorf("exit status = %d, want %d", got, output.ExitIO)
+		}
+		if !strings.Contains(stderr.String(), "fixing broken links") {
+			t.Errorf("stderr = %q, want it to name the failed sweep", stderr.String())
+		}
+	})
+
+	// A consumer reads one stream and has to tell the two --json outcomes
+	// apart. They are disjoint at the top level — the report never carries
+	// `error`, the envelope never carries `success` — so the key alone decides
+	// it, with no need to inspect a value that may legitimately be false.
+	t.Run("the success report and the error envelope share no top-level key", func(t *testing.T) {
+		app, _ := setupCheckTest(t, map[string]string{"chk-good1--ok.md": chkValidNib})
+		checkJSON = true
+		var runErr error
+		okOut := captureStdout(t, func() { _, runErr = runCheck(app) })
+		if runErr != nil {
+			t.Fatalf("runCheck() on a clean store: %v", runErr)
+		}
+
+		failApp := setupCheckFixWriteFailure(t)
+		checkJSON = true
+		failOut := captureStdout(t, func() { _, runErr = runCheck(failApp) })
+		if runErr == nil {
+			t.Fatal("runCheck() error = nil, want the fix sweep's failure")
+		}
+
+		var okEnv, failEnv map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(okOut), &okEnv); err != nil {
+			t.Fatalf("unmarshal success report: %v\nraw: %s", err, okOut)
+		}
+		if err := json.Unmarshal([]byte(failOut), &failEnv); err != nil {
+			t.Fatalf("unmarshal error envelope: %v\nraw: %s", err, failOut)
+		}
+		for k := range failEnv {
+			if _, clash := okEnv[k]; clash {
+				t.Errorf("both --json outcomes carry the top-level key %q", k)
+			}
+		}
+		if _, ok := okEnv["success"]; !ok {
+			t.Errorf("success report has no `success` key; keys = %v", envKeys(okEnv))
+		}
+		if _, ok := failEnv["error"]; !ok {
+			t.Errorf("error envelope has no `error` key; keys = %v", envKeys(failEnv))
+		}
+	})
+}
+
+// envKeys names a decoded envelope's top-level keys for a failure message.
+func envKeys(env map[string]json.RawMessage) []string {
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
