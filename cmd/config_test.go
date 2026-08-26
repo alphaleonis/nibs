@@ -201,6 +201,32 @@ func TestSetPrefix_HappyPath_RenamesFilesAndUpdatesReferences(t *testing.T) {
 	}
 }
 
+// TestSetPrefix_RewritesFullFormBodyMentions pins the whole command over a
+// store whose prose mentions the renamed nibs: a full-form `#<prefix><id>`
+// mention names a nib the rename retires, so it moves with it, while a
+// short-form mention names the same nib under either prefix and is left as the
+// author wrote it.
+func TestSetPrefix_RewritesFullFormBodyMentions(t *testing.T) {
+	body := "Blocked on #tnib-bbb; see #tnib-bbb again.\n\nShort form #bbb stays.\n\n`#tnib-bbb` is literal.\n\n```\n#tnib-bbb\n```"
+	_, nibsDir, cfgPath := setupSetPrefixTest(t, "tnib-",
+		testNibSpec{filename: "tnib-aaa--root.md", id: "tnib-aaa", body: body},
+		testNibSpec{filename: "tnib-bbb--child.md", id: "tnib-bbb", parent: "tnib-aaa"},
+	)
+
+	if err := runSetPrefixCmd(t, cfgPath, nibsDir, "new-", "--json"); err != nil {
+		t.Fatalf("set-prefix failed: %v", err)
+	}
+
+	got := parseNibFile(t, dataPath(nibsDir, "new-aaa--root.md")).Body
+	// Render writes a blank line between the front matter and a body that
+	// does not already start with one, and Parse hands that separator back
+	// as part of the body — so the round-tripped body leads with "\n".
+	want := "\nBlocked on #new-bbb; see #new-bbb again.\n\nShort form #bbb stays.\n\n`#tnib-bbb` is literal.\n\n```\n#tnib-bbb\n```"
+	if got != want {
+		t.Fatalf("rewritten body =\n%q\nwant\n%q", got, want)
+	}
+}
+
 func TestSetPrefix_InvalidNewPrefix_Rejected(t *testing.T) {
 	_, nibsDir, cfgPath := setupSetPrefixTest(t, "tnib-",
 		testNibSpec{filename: "tnib-aaa--only.md", id: "tnib-aaa"},
@@ -394,6 +420,111 @@ func TestSetPrefixDryRunJSONReportsTheFilesOwnSpelling(t *testing.T) {
 	if ff.OldMilestone != "tnib-aaa" || ff.NewMilestone != "new-aaa" {
 		t.Errorf("full nib milestone = old %q new %q, want %q -> %q", ff.OldMilestone, ff.NewMilestone, "tnib-aaa", "new-aaa")
 	}
+}
+
+// The dry run is the operator's only preview of a store-wide rewrite with no
+// rollback, and reprefix.Execute retargets body mentions that no FilePlan
+// describes — a nib whose only reference is in prose plans with every reference
+// field empty. Both output modes must therefore say prose is in scope. It is a
+// statement rather than a count on purpose: reprefix.BuildPlan does no disk I/O,
+// so nothing on this path has read a body.
+//
+// The two modes are separate tests rather than subtests because the set-prefix
+// flag vars are package-level and only reset by setupSetPrefixTest's cleanup, so
+// a --json run inside the same test leaves the next run in JSON mode.
+func TestSetPrefixDryRunJSONAnnouncesTheBodyRewriteItCannotItemize(t *testing.T) {
+	_, nibsDir, cfgPath := setupBodyMentionOnlyStore(t)
+
+	var runErr error
+	out := captureStdout(t, func() {
+		runErr = runSetPrefixCmd(t, cfgPath, nibsDir, "new-", "--dry-run", "--json")
+	})
+	if runErr != nil {
+		t.Fatalf("dry-run failed: %v", runErr)
+	}
+
+	var env struct {
+		Success      bool `json:"success"`
+		BodyMentions struct {
+			From string `json:"from"`
+			To   string `json:"to"`
+			Note string `json:"note"`
+		} `json:"bodyMentions"`
+		Plan struct {
+			Files []struct {
+				OldID        string   `json:"OldID"`
+				OldParent    string   `json:"OldParent"`
+				NewParent    string   `json:"NewParent"`
+				OldMilestone string   `json:"OldMilestone"`
+				NewMilestone string   `json:"NewMilestone"`
+				OldBlockedBy []string `json:"OldBlockedBy"`
+				NewBlockedBy []string `json:"NewBlockedBy"`
+			} `json:"Files"`
+		} `json:"plan"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("envelope is not JSON: %v\n%s", err, out)
+	}
+	if !env.Success {
+		t.Fatalf("envelope reports success=false: %s", out)
+	}
+
+	for _, c := range []struct{ field, got, want string }{
+		{"from", env.BodyMentions.From, "#tnib-<id>"},
+		{"to", env.BodyMentions.To, "#new-<id>"},
+		{"note", env.BodyMentions.Note, bodyMentionNote},
+	} {
+		if c.got != c.want {
+			t.Errorf("bodyMentions.%s = %q, want %q", c.field, c.got, c.want)
+		}
+	}
+
+	// The plan itself must still report nothing for this file, or the note
+	// would be pinned against a case that did not need it.
+	var found bool
+	for _, f := range env.Plan.Files {
+		if f.OldID != "tnib-aaa" {
+			continue
+		}
+		found = true
+		if f.OldParent != "" || f.NewParent != "" || f.OldMilestone != "" || f.NewMilestone != "" ||
+			len(f.OldBlockedBy) != 0 || len(f.NewBlockedBy) != 0 {
+			t.Errorf("tnib-aaa reports reference updates %+v; this fixture references only from prose", f)
+		}
+	}
+	if !found {
+		t.Fatalf("plan has no entry for tnib-aaa: %s", out)
+	}
+}
+
+func TestSetPrefixDryRunTextAnnouncesTheBodyRewriteItCannotItemize(t *testing.T) {
+	_, nibsDir, cfgPath := setupBodyMentionOnlyStore(t)
+
+	var runErr error
+	out := captureStdout(t, func() {
+		runErr = runSetPrefixCmd(t, cfgPath, nibsDir, "new-", "--dry-run")
+	})
+	if runErr != nil {
+		t.Fatalf("dry-run failed: %v", runErr)
+	}
+
+	for _, want := range []string{bodyMentionNote, `"#tnib-<id>"`, `"#new-<id>"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("text dry-run output does not mention %s:\n%s", want, out)
+		}
+	}
+}
+
+// setupBodyMentionOnlyStore builds a store whose tnib-aaa references tnib-bbb
+// from its body and from no front-matter field, so its FilePlan carries no
+// reference updates at all — the asymmetry the dry run's body-mention note
+// exists to cover.
+func setupBodyMentionOnlyStore(t *testing.T) (projectDir, nibsDir, cfgPath string) {
+	t.Helper()
+	return setupSetPrefixTest(t, "tnib-",
+		testNibSpec{filename: "tnib-aaa--root.md", id: "tnib-aaa", body: "Blocked on #tnib-bbb; see #tnib-bbb again."},
+		testNibSpec{filename: "tnib-bbb--other.md", id: "tnib-bbb"},
+	)
 }
 
 func TestSetPrefix_SamePrefix_Rejected(t *testing.T) {

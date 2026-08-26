@@ -1,6 +1,7 @@
 package reprefix
 
 import (
+	"bytes"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -539,4 +540,183 @@ func TestExecute_RewritesMilestoneAndBlocking(t *testing.T) {
 	if !strings.Contains(b.Body, "enqueued body") {
 		t.Errorf("body lost during rewrite: got %q", b.Body)
 	}
+}
+
+// TestRewriteBodyMentions pins the body-mention rewrite in isolation: which
+// mentions move, which are left exactly as the author wrote them, and that a
+// body with nothing to rewrite comes back unchanged.
+func TestRewriteBodyMentions(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"empty body", "", ""},
+		{"no mention at all", "plain prose with a # and an old- prefix in text", "plain prose with a # and an old- prefix in text"},
+		{"full form is retargeted", "see #old-abc for details", "see #new-abc for details"},
+		{
+			// A short id carries no prefix and resolves to the same nib under
+			// either one, so rewriting it would invent a spelling the author
+			// did not write.
+			name: "short form is untouched",
+			body: "see #abc for details",
+			want: "see #abc for details",
+		},
+		{
+			// The token scan deduplicates; a rewrite that inherited that would
+			// move only the first occurrence.
+			name: "every occurrence is retargeted",
+			body: "#old-abc and #old-abc and #old-abc",
+			want: "#new-abc and #new-abc and #new-abc",
+		},
+		{"at the very start of the body", "#old-abc leads", "#new-abc leads"},
+		{"at the very end of the body", "trailing #old-abc", "trailing #new-abc"},
+		{"adjacent to punctuation", "(#old-abc), then #old-def.", "(#new-abc), then #new-def."},
+		{"inline code span", "run `#old-abc` verbatim", "run `#old-abc` verbatim"},
+		{"fenced code block", "```\n#old-abc\n```", "```\n#old-abc\n```"},
+		{"link destination", "[text](#old-abc)", "[text](#old-abc)"},
+		{"word-like byte before the sigil", "email#old-abc", "email#old-abc"},
+		{
+			name: "mixed forms in one body",
+			body: "#old-abc, #abc, `#old-abc`, #old-abc",
+			want: "#new-abc, #abc, `#old-abc`, #new-abc",
+		},
+		{
+			// The new prefix is longer than the old one, so every splice moves
+			// the offsets of the text after it.
+			name: "many mentions under a longer prefix",
+			body: "#old-a x #old-b y #old-c z #old-d",
+			want: "#much-longer-a x #much-longer-b y #much-longer-c z #much-longer-d",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			newPrefix := "new-"
+			if strings.Contains(tt.want, "much-longer-") {
+				newPrefix = "much-longer-"
+			}
+			if got := rewriteBodyMentions(tt.body, "old-", newPrefix); got != tt.want {
+				t.Fatalf("rewriteBodyMentions(%q) = %q, want %q", tt.body, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestRewriteBodyMentionsRefusesAnEmptyOldPrefix pins the local guard against
+// the worst input this function can be handed. strings.CutPrefix succeeds
+// against "" for every token, so without the guard an empty old prefix
+// retargets every SHORT-form mention in every body — and Execute re-renders the
+// whole store in one pass with no rollback. BuildPlan refuses the empty prefix,
+// but it is a function Execute never calls and both types are exported, so this
+// pins the defense at the site that would do the damage.
+func TestRewriteBodyMentionsRefusesAnEmptyOldPrefix(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"short forms only", "#a #b #c"},
+		{"one short form", "#anything"},
+		{"short and full form together", "see #abc and #old-abc here"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := rewriteBodyMentions(tt.body, "", "new-"); got != tt.body {
+				t.Fatalf("rewriteBodyMentions(%q, \"\", \"new-\") = %q, want the body unchanged", tt.body, got)
+			}
+		})
+	}
+}
+
+// TestExecute_RewritesFullFormBodyMentions runs the whole executor over a store
+// whose bodies mention the renamed nibs, and pins that the file on disk carries
+// the retargeted prose.
+func TestExecute_RewritesFullFormBodyMentions(t *testing.T) {
+	root := t.TempDir()
+
+	body := "Blocked on #tnib-bbb; see #tnib-bbb again.\n\nShort form #bbb stays.\n\n`#tnib-bbb` is literal.\n\n```\n#tnib-bbb\n```\n"
+	newTestNib(t, root, "tnib-aaa--root.md", "tnib-aaa", "", nil, body)
+	newTestNib(t, root, "tnib-bbb--child.md", "tnib-bbb", "tnib-aaa", nil, "child body with no mentions")
+
+	snapshot := []NibSnapshot{
+		{ID: "tnib-aaa", Path: "tnib-aaa--root.md"},
+		{ID: "tnib-bbb", Path: "tnib-bbb--child.md", Parent: "tnib-aaa"},
+	}
+	plan, err := BuildPlan(snapshot, "tnib-", "new-", stubExists)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if err := Execute(plan, root); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	got := readNib(t, root, "new-aaa--root.md").Body
+	// Render writes a blank line between the front matter and a body that
+	// does not already start with one, and Parse hands that separator back
+	// as part of the body — so the round-tripped body leads with "\n".
+	want := "\nBlocked on #new-bbb; see #new-bbb again.\n\nShort form #bbb stays.\n\n`#tnib-bbb` is literal.\n\n```\n#tnib-bbb\n```"
+	if got != want {
+		t.Fatalf("rewritten body =\n%q\nwant\n%q", got, want)
+	}
+}
+
+// TestExecute_MentionFreeBodyIsUnchangedByTheRewrite pins that the body-mention
+// rewrite contributes nothing when it has nothing to move. Execute re-renders
+// every file in one pass with no rollback, so a rewrite bug would corrupt prose
+// store-wide; this is the guard that the splice is a no-op on a body with no
+// full-form mention.
+//
+// It is deliberately NOT a claim that Execute preserves body bytes in general —
+// it does not. nib.Parse trims one trailing "\n" and nib.Render appends one, so
+// any body ending in a blank line loses that line on every re-render, this
+// command's included. That asymmetry is pre-existing and lives in nib, not here;
+// the fixture below ends in exactly one "\n" (a Render fixed point) so the
+// comparison isolates the rewrite instead of measuring that normalization.
+func TestExecute_MentionFreeBodyIsUnchangedByTheRewrite(t *testing.T) {
+	root := t.TempDir()
+
+	// Deliberately awkward prose: a bare sigil, an old-prefix string that is
+	// not a mention, a code fence, an HTML block, trailing spaces and a table.
+	body := "# Heading\n\nA bare # sigil, and the literal text tnib-aaa with no sigil.\n\n" +
+		"| a | b |\n| - | - |\n| 1 | 2 |\n\n" +
+		"<div class=\"x\">#tnib-aaa</div>\n\n" +
+		"```go\nfmt.Println(\"#tnib-aaa\")\n```\n\n" +
+		"trailing spaces here   \n\nemail#tnib-aaa is not a mention.\n"
+	newTestNib(t, root, "tnib-aaa--root.md", "tnib-aaa", "", nil, body)
+
+	before, err := os.ReadFile(filepath.Join(root, "tnib-aaa--root.md"))
+	if err != nil {
+		t.Fatalf("read before: %v", err)
+	}
+
+	plan, err := BuildPlan([]NibSnapshot{{ID: "tnib-aaa", Path: "tnib-aaa--root.md"}}, "tnib-", "new-", stubExists)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if err := Execute(plan, root); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	after, err := os.ReadFile(filepath.Join(root, "new-aaa--root.md"))
+	if err != nil {
+		t.Fatalf("read after: %v", err)
+	}
+
+	if gotBody, wantBody := bodyBytes(t, after), bodyBytes(t, before); !bytes.Equal(gotBody, wantBody) {
+		t.Fatalf("the rewrite changed a body holding no full-form mention:\nbefore %q\nafter  %q", wantBody, gotBody)
+	}
+}
+
+// bodyBytes returns everything after a rendered nib's closing front-matter
+// fence, so a test can compare body bytes without the front matter the rename
+// is supposed to change.
+func bodyBytes(t *testing.T, file []byte) []byte {
+	t.Helper()
+	const closing = "\n---\n"
+	idx := bytes.Index(file, []byte(closing))
+	if idx < 0 {
+		t.Fatalf("rendered nib has no closing front-matter fence: %q", file)
+	}
+	return file[idx+len(closing):]
 }

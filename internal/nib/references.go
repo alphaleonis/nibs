@@ -2,6 +2,7 @@ package nib
 
 import (
 	"regexp"
+	"slices"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
@@ -19,9 +20,85 @@ const MentionIDPattern = `[a-z0-9](?:[a-z0-9-]*[a-z0-9])?`
 // Captured group 1 is the id (short or full form), without the leading `#`.
 var mentionPattern = regexp.MustCompile(`#(` + MentionIDPattern + `)`)
 
+// MentionSpan locates one occurrence of a `#<id>` mention in a body.
+//
+// Start is the offset of the `#` sigil and Stop is one past the last byte of
+// the id, so body[Start:Stop] is exactly the text `#`+Token. Both are byte
+// offsets into the body the span was extracted from, not rune indices.
+type MentionSpan struct {
+	Token string
+	Start int
+	Stop  int
+}
+
+// ExtractMentionSpans scans a nib body and returns every occurrence of a
+// `#<id>` mention, located by byte offset and ordered by ascending Start.
+//
+// It is the located, un-deduplicated form of ExtractMentionTokens, which is
+// built on it — see that function for the full node-skipping and token rules,
+// which are shared because there is one walk behind both.
+//
+// Two properties are what callers that REWRITE a body depend on, and neither is
+// incidental:
+//
+//   - Every occurrence is reported. A body may mention the same id repeatedly,
+//     and a rewrite driven by the deduplicated token list would move only the
+//     first.
+//   - Spans ascend by Start and never overlap, so a caller splicing the body
+//     right-to-left (highest offset first) keeps the offsets it has not reached
+//     yet valid against the string it is editing.
+func ExtractMentionSpans(body string) []MentionSpan {
+	if body == "" {
+		return nil
+	}
+
+	source := []byte(body)
+	parser := goldmark.DefaultParser()
+	doc := parser.Parse(text.NewReader(source))
+
+	var out []MentionSpan
+
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+
+		switch n.(type) {
+		case *ast.CodeSpan,
+			*ast.CodeBlock,
+			*ast.FencedCodeBlock,
+			*ast.Link,
+			*ast.AutoLink,
+			*ast.Image,
+			*ast.RawHTML,
+			*ast.HTMLBlock:
+			return ast.WalkSkipChildren, nil
+		}
+
+		t, ok := n.(*ast.Text)
+		if !ok {
+			return ast.WalkContinue, nil
+		}
+
+		out = scanMentions(source, t.Segment.Start, t.Segment.Stop, out)
+		return ast.WalkContinue, nil
+	})
+
+	// The AST walk visits text leaves in document order, so this sort is a
+	// no-op today. It stays because the ascending-offset guarantee is what a
+	// right-to-left body rewrite rests on, and inheriting it from goldmark's
+	// traversal order would make it a property of a dependency rather than of
+	// this function. The cost is bounded by the mention count, not body length.
+	slices.SortFunc(out, func(a, b MentionSpan) int { return a.Start - b.Start })
+
+	return out
+}
+
 // ExtractMentionTokens scans a nib body and returns the list of mention tokens
 // referenced via the `#<id>` sigil convention. Tokens are returned in the order
-// of their first appearance in document order and deduplicated.
+// of their first appearance in document order and deduplicated. Callers that
+// need every occurrence, or the offsets, use ExtractMentionSpans — this is that
+// list with repeats dropped.
 //
 // Parsing is delegated to a CommonMark parser (goldmark). Mentions are
 // extracted from *text* leaves only; the following node types are skipped
@@ -31,7 +108,8 @@ var mentionPattern = regexp.MustCompile(`#(` + MentionIDPattern + `)`)
 //   - Inline code spans (including multi-backtick spans)
 //   - Link text and link URLs (inline, reference, and autolinks)
 //   - Image alt text and URLs
-//   - Raw HTML (inline and block)
+//   - HTML blocks, and raw inline HTML tags — only the TAG is raw HTML, so the
+//     text between `<b>` and `</b>` is an ordinary text leaf and is scanned
 //
 // Heading text is walked normally — a mention inside a heading (e.g.
 // `## Related: #abc`) produces a token. The leading `#` run that marks the
@@ -62,48 +140,26 @@ var mentionPattern = regexp.MustCompile(`#(` + MentionIDPattern + `)`)
 // regex scan per text leaf. Callers may pass arbitrarily large bodies
 // without quadratic blowup.
 func ExtractMentionTokens(body string) []string {
-	if body == "" {
+	spans := ExtractMentionSpans(body)
+	if len(spans) == 0 {
 		return nil
 	}
 
-	source := []byte(body)
-	parser := goldmark.DefaultParser()
-	doc := parser.Parse(text.NewReader(source))
-
-	var out []string
-	seen := make(map[string]struct{})
-
-	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
-		if !entering {
-			return ast.WalkContinue, nil
+	out := make([]string, 0, len(spans))
+	seen := make(map[string]struct{}, len(spans))
+	for _, s := range spans {
+		if _, dup := seen[s.Token]; dup {
+			continue
 		}
-
-		switch n.(type) {
-		case *ast.CodeSpan,
-			*ast.CodeBlock,
-			*ast.FencedCodeBlock,
-			*ast.Link,
-			*ast.AutoLink,
-			*ast.Image,
-			*ast.RawHTML,
-			*ast.HTMLBlock:
-			return ast.WalkSkipChildren, nil
-		}
-
-		t, ok := n.(*ast.Text)
-		if !ok {
-			return ast.WalkContinue, nil
-		}
-
-		scanMentions(source, t.Segment.Start, t.Segment.Stop, &out, seen)
-		return ast.WalkContinue, nil
-	})
-
+		seen[s.Token] = struct{}{}
+		out = append(out, s.Token)
+	}
 	return out
 }
 
 // scanMentions runs the mention regex over a text segment of source (bounded
-// by [segStart, segStop)) and appends unique tokens to out.
+// by [segStart, segStop)) and appends a span per match to out, returning the
+// grown slice.
 //
 // It enforces the left-side word-boundary rule: a `#` preceded by a word-like
 // byte (see isWordChar) is ignored. Because goldmark splits inline text at
@@ -111,7 +167,7 @@ func ExtractMentionTokens(body string) []string {
 // the previous byte in the underlying source is still word-like (e.g.
 // `name_#bar` splits so the `#bar` segment starts at the `#`). The peek must
 // be against the absolute source offset, not the segment-local index.
-func scanMentions(source []byte, segStart, segStop int, out *[]string, seen map[string]struct{}) {
+func scanMentions(source []byte, segStart, segStop int, out []MentionSpan) []MentionSpan {
 	chunk := source[segStart:segStop]
 	for _, match := range mentionPattern.FindAllSubmatchIndex(chunk, -1) {
 		// match[0] is start of full match (the `#`) within chunk,
@@ -127,13 +183,13 @@ func scanMentions(source []byte, segStart, segStop int, out *[]string, seen map[
 				continue
 			}
 		}
-		token := string(chunk[match[2]:match[3]])
-		if _, dup := seen[token]; dup {
-			continue
-		}
-		seen[token] = struct{}{}
-		*out = append(*out, token)
+		out = append(out, MentionSpan{
+			Token: string(chunk[match[2]:match[3]]),
+			Start: absSigil,
+			Stop:  segStart + match[1],
+		})
 	}
+	return out
 }
 
 // isWordChar is intentionally broader than the mention-id regex character class.

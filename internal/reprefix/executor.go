@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/alphaleonis/nibs/internal/fsutil"
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -15,7 +16,8 @@ import (
 // Operation order:
 //  1. Pre-flight: refuse if plan.Collisions is non-empty
 //  2. Rename every FilePlan.OldPath -> FilePlan.NewPath
-//  3. Rewrite every renamed file: read, update ID + every link field, write
+//  3. Rewrite every renamed file: read, update ID + every link field + every
+//     full-form `#<id>` body mention, write
 //
 // Execute does NOT:
 //   - Update the project config (<store>/config.yml) — callers do that AFTER Execute
@@ -56,7 +58,7 @@ func Execute(plan *RenamePlan, root string) error {
 	if err := renameAll(plan.Files, root, &pending); err != nil {
 		return err
 	}
-	if err := rewriteAll(plan.Files, root, &pending); err != nil {
+	if err := rewriteAll(plan, root, &pending); err != nil {
 		return err
 	}
 	return nil
@@ -90,9 +92,17 @@ func renameAll(files []FilePlan, root string, pending *fsutil.DirSyncBatch) erro
 	return nil
 }
 
-// rewriteAll updates the in-file ID and link fields for every renamed nib.
-// Runs over every file plan, not just those with reference updates, so the
-// in-file `# <id>` comment is always re-rendered to match the new ID.
+// rewriteAll updates the in-file ID, link fields and body mentions for every
+// renamed nib. Runs over every file plan, not just those with reference
+// updates, so the in-file `# <id>` comment is always re-rendered to match the
+// new ID.
+//
+// It takes the whole plan rather than plan.Files because the body rewrite needs
+// the prefix pair, which is a property of the plan and not of any one file.
+// Copying the pair onto every FilePlan would store one fact N times for Execute
+// to then trust is consistent, and the alternative of precomputing each new body
+// in the plan is closed off by design: BuildPlan does no disk I/O, so it has no
+// body to compute from.
 //
 // Each write defers its directory flush to the caller's batch, so N rewrites
 // into one directory pay a single fsync instead of N identical ones. What the
@@ -108,10 +118,10 @@ func renameAll(files []FilePlan, root string, pending *fsutil.DirSyncBatch) erro
 // about, and because the redundancy holds only while rewritePath touches the
 // basename alone. Anything that moved a nib between directories would make this
 // line load-bearing with nothing to notice it had been dropped.
-func rewriteAll(files []FilePlan, root string, pending *fsutil.DirSyncBatch) error {
-	for _, fp := range files {
+func rewriteAll(plan *RenamePlan, root string, pending *fsutil.DirSyncBatch) error {
+	for _, fp := range plan.Files {
 		absPath := filepath.Join(root, filepath.FromSlash(fp.NewPath))
-		dir, err := rewriteOne(absPath, fp)
+		dir, err := rewriteOne(absPath, fp, plan.OldPrefix, plan.NewPrefix)
 		pending.Add(dir)
 		if err != nil {
 			return err
@@ -120,14 +130,14 @@ func rewriteAll(files []FilePlan, root string, pending *fsutil.DirSyncBatch) err
 	return nil
 }
 
-// rewriteOne reads a single renamed nib, updates its ID and link fields, and
-// writes it back. All errors are wrapped with the file's new relative path
-// so callers can pinpoint partial-failure locations.
+// rewriteOne reads a single renamed nib, updates its ID, link fields and body
+// mentions, and writes it back. All errors are wrapped with the file's new
+// relative path so callers can pinpoint partial-failure locations.
 //
 // It returns the directory the write landed in, whose entry is not yet
 // flushed — the caller owes it to an fsutil.DirSyncBatch — and the empty string on
 // error, since a failed write never reached its rename.
-func rewriteOne(absPath string, fp FilePlan) (string, error) {
+func rewriteOne(absPath string, fp FilePlan, oldPrefix, newPrefix string) (string, error) {
 	b, mode, err := readNibForRewrite(absPath, fp)
 	if err != nil {
 		return "", err
@@ -137,6 +147,7 @@ func rewriteOne(absPath string, fp FilePlan) (string, error) {
 	b.Milestone = fp.NewMilestone
 	b.BlockedBy = fp.NewBlockedBy
 	b.Blocking = fp.NewBlocking
+	b.Body = rewriteBodyMentions(b.Body, oldPrefix, newPrefix)
 	data, err := b.Render()
 	if err != nil {
 		return "", fmt.Errorf("reprefix.Execute: render %s: %w", fp.NewPath, err)
@@ -178,4 +189,53 @@ func readNibForRewrite(absPath string, fp FilePlan) (*nib.Nib, os.FileMode, erro
 		return nil, 0, fmt.Errorf("reprefix.Execute: parse %s: %w", fp.NewPath, err)
 	}
 	return b, info.Mode().Perm(), nil
+}
+
+// rewriteBodyMentions retargets every full-form `#<oldPrefix><rest>` mention in
+// a nib body to newPrefix, and returns the body unchanged when there is nothing
+// to move.
+//
+// Only the `#` sigil form is a mention: it is the grammar nib.ExtractMentionSpans
+// recognizes and the only one the web renderer links, so `[[id]]` and a markdown
+// link URL are prose that merely looks like a reference and are left alone.
+// Which text is a mention at all is decided entirely by that scan, so a mention
+// inside a code span, a code fence, a link or an HTML block is skipped here
+// because it is skipped there. Inline HTML is the narrower case and the one
+// worth stating: only the TAG is raw HTML, so `#<id>` between `<b>` and `</b>`
+// sits in an ordinary text leaf and is rewritten like any other prose.
+//
+// A SHORT-form mention is deliberately untouched: it carries no prefix, so it
+// names the same nib under either one, and rewriting it would invent a spelling
+// the author did not write — the same rule the front-matter link fields follow.
+//
+// The splice runs right-to-left, highest offset first. Every replacement changes
+// the length of everything after it, so patching in ascending order would apply
+// each later span's offsets to a string those offsets no longer describe, and
+// Execute re-renders the whole store in one pass with no rollback — the damage
+// would be every body at once. Cost is one copy per mention actually moved, so a
+// body with no full-form mention is returned without being rebuilt at all.
+func rewriteBodyMentions(body, oldPrefix, newPrefix string) string {
+	// Defended here rather than trusted from the caller: strings.CutPrefix
+	// succeeds against "" for every token, so an empty oldPrefix retargets every
+	// SHORT-form mention in every body — and this runs inside a one-pass
+	// re-render of the whole store with no rollback. BuildPlan already refuses
+	// an empty old prefix for exactly that reason, but it is a function Execute
+	// never calls, and RenamePlan and Execute are both exported with exported
+	// fields, so nothing but this branch stands between a hand-built plan and
+	// store-wide prose damage.
+	if oldPrefix == "" {
+		return body
+	}
+
+	spans := nib.ExtractMentionSpans(body)
+	out := body
+	for i := len(spans) - 1; i >= 0; i-- {
+		s := spans[i]
+		rest, ok := strings.CutPrefix(s.Token, oldPrefix)
+		if !ok {
+			continue
+		}
+		out = out[:s.Start] + "#" + newPrefix + rest + out[s.Stop:]
+	}
+	return out
 }

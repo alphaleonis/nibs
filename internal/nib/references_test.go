@@ -533,3 +533,140 @@ func FuzzExtractMentionTokens(f *testing.F) {
 		assertValidOutput(t, body, got)
 	})
 }
+
+// TestExtractMentionSpans pins the located form of the mention scan: every
+// occurrence (not the deduplicated set), in ascending offset order, with
+// offsets that slice the body back to the exact `#<id>` text.
+//
+// The non-ASCII rows are the only place the type's byte-offset contract
+// (MentionSpan's doc: "byte offsets ... not rune indices") has a case where
+// bytes and runes diverge. Their expected offsets are hand-computed byte
+// counts, so a scanner that started reporting rune indices would fail them
+// while every ASCII row stayed green.
+func TestExtractMentionSpans(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want []MentionSpan
+	}{
+		{"empty body", "", nil},
+		{"single full-form mention", "see #old-abc for details", []MentionSpan{{Token: "old-abc", Start: 4, Stop: 12}}},
+		{
+			// The token API deduplicates; the span API must not, or a rewrite
+			// built on it would patch only the first occurrence.
+			name: "same mention twice yields two spans",
+			body: "#old-abc and #old-abc",
+			want: []MentionSpan{{Token: "old-abc", Start: 0, Stop: 8}, {Token: "old-abc", Start: 13, Stop: 21}},
+		},
+		{"at the very start", "#old-abc leads", []MentionSpan{{Token: "old-abc", Start: 0, Stop: 8}}},
+		{"at the very end", "trailing #old-abc", []MentionSpan{{Token: "old-abc", Start: 9, Stop: 17}}},
+		{
+			name: "adjacent to punctuation",
+			body: "(#old-abc), #old-def.",
+			want: []MentionSpan{{Token: "old-abc", Start: 1, Stop: 9}, {Token: "old-def", Start: 12, Stop: 20}},
+		},
+		{"inline code span", "see `#old-abc` here", nil},
+		{"fenced code block", "```\n#old-abc\n```", nil},
+		{"link destination", "[text](#old-abc)", nil},
+		{"word-like byte before the sigil", "email#old-abc", nil},
+		{
+			name: "short and full form together",
+			body: "#abc then #old-abc",
+			want: []MentionSpan{{Token: "abc", Start: 0, Stop: 4}, {Token: "old-abc", Start: 10, Stop: 18}},
+		},
+		{
+			// "caf\u00e9" is 5 bytes / 4 runes, so the sigil sits at byte 6 and
+			// rune 5. Written with an escape rather than a literal so the byte
+			// count cannot drift with the file's normalization.
+			name: "multi-byte before the sigil",
+			body: "caf\u00e9 #old-abc",
+			want: []MentionSpan{{Token: "old-abc", Start: 6, Stop: 14}},
+		},
+		{
+			// A combining mark: "e" + U+0301 is 3 bytes across 2 runes, so an
+			// implementation counting runes would report 2 rather than 4.
+			name: "combining mark before the sigil",
+			body: "e\u0301 #old-abc",
+			want: []MentionSpan{{Token: "old-abc", Start: 4, Stop: 12}},
+		},
+		{
+			name: "CJK on both sides of the mention",
+			body: "\u65e5\u672c\u8a9e #old-abc \u30c6\u30ad\u30b9\u30c8",
+			want: []MentionSpan{{Token: "old-abc", Start: 10, Stop: 18}},
+		},
+		{
+			// One astral-plane rune: 4 bytes, 1 rune, 2 UTF-16 units.
+			name: "emoji before the sigil",
+			body: "\U0001F389 #old-abc",
+			want: []MentionSpan{{Token: "old-abc", Start: 5, Stop: 13}},
+		},
+		{
+			// A ZWJ sequence renders as one glyph but is 25 bytes over 7 runes,
+			// which is where a byte/rune mix-up is worst: splicing at a rune
+			// index here would cut the sequence and emit invalid UTF-8.
+			name: "ZWJ sequence before the sigil",
+			body: "\U0001F468\u200d\U0001F469\u200d\U0001F467\u200d\U0001F466 #old-abc x",
+			want: []MentionSpan{{Token: "old-abc", Start: 26, Stop: 34}},
+		},
+		{
+			// Two mentions with multi-byte text between them, so the second
+			// span's offset is only right if the first segment was counted in
+			// bytes.
+			name: "multi-byte between two mentions",
+			body: "#old-abc \u65e5\u672c\u8a9e #old-def",
+			want: []MentionSpan{{Token: "old-abc", Start: 0, Stop: 8}, {Token: "old-def", Start: 19, Stop: 27}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ExtractMentionSpans(tt.body)
+
+			// The offsets must slice the body back to the mention they
+			// describe, and must be ascending — a rewrite splicing
+			// right-to-left depends on both. These run BEFORE the whole-slice
+			// comparison and report with t.Errorf: behind the DeepEqual's
+			// t.Fatalf they would execute only once `got` already equalled
+			// `want`, i.e. never on the failure they exist to diagnose.
+			prev := -1
+			for _, s := range got {
+				if s.Start <= prev {
+					t.Errorf("span %+v is not after offset %d — spans must ascend", s, prev)
+				}
+				prev = s.Start
+				if s.Start < 0 || s.Start > s.Stop || s.Stop > len(tt.body) {
+					t.Errorf("span %+v does not address a %d-byte body", s, len(tt.body))
+					continue
+				}
+				if slice := tt.body[s.Start:s.Stop]; slice != "#"+s.Token {
+					t.Errorf("body[%d:%d] = %q, want %q", s.Start, s.Stop, slice, "#"+s.Token)
+				}
+			}
+
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("ExtractMentionSpans(%q) = %+v, want %+v", tt.body, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestExtractMentionTokensMatchesSpans pins that the deduplicated token list is
+// the span list with repeats dropped, so the two APIs cannot drift.
+func TestExtractMentionTokensMatchesSpans(t *testing.T) {
+	body := "#old-abc, #abc, #old-abc again, `#old-skipped`, #old-def"
+
+	var want []string
+	seen := map[string]bool{}
+	for _, s := range ExtractMentionSpans(body) {
+		if seen[s.Token] {
+			continue
+		}
+		seen[s.Token] = true
+		want = append(want, s.Token)
+	}
+
+	got := ExtractMentionTokens(body)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ExtractMentionTokens = %v, want %v (the span list deduplicated)", got, want)
+	}
+}
