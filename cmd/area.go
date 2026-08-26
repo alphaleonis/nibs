@@ -203,6 +203,31 @@ func joinAreaPathForDisplay(parent, name string) string {
 func runAreaRename(cmd *cobra.Command, args []string) error {
 	app := getApp(cmd)
 	path, newName := args[0], args[1]
+	parent, oldName := splitAreaPath(path)
+
+	// Answered BEFORE the lock, because the two arguments alone answer it and no
+	// vocabulary can change that answer. AcquireStoreLock is a blocking flock
+	// with no timeout and prints nothing while it waits, so asking a pure
+	// argument question afterwards makes a typo sit silent for as long as any
+	// other cooperating writer holds the store — a whole `nibs migrate` run.
+	//
+	// PRINTING it early is the separate question, and the startup snapshot
+	// settles it. Two of these refusals speak about the node at `path` — one
+	// asserts it "is already named" the name given, the other prescribes a
+	// runnable `nibs area rename` for it — so over a path the store does not
+	// declare they answer about a node that is not there, and the prescription
+	// is a command the tool then refuses. Held rather than printed, the refusal
+	// waits behind requireDeclaredArea and the caller reads the typo first.
+	//
+	// The snapshot decides only WHICH of two refusals is printed, never whether
+	// the store is written, so a stale answer costs a sentence — the same terms
+	// areaRetiredWhileWaiting is consulted on. A path it declares takes the fast
+	// exit; one it does not is the case where the extra information is worth the
+	// wait, since the caller has to fix the path before the name matters.
+	argErr := validateAreaRenameArgument(areaRenameJSON, path, parent, oldName, newName)
+	if argErr != nil && areaDeclaredAtStartup(app, path) {
+		return argErr
+	}
 
 	// Every decision below is made from cfg, the vocabulary re-read under the
 	// lock, and never from app.Config() — see beginAreaEdit.
@@ -218,8 +243,13 @@ func runAreaRename(cmd *cobra.Command, args []string) error {
 	if err := requireDeclaredArea(cfg, areaRenameJSON, path, "rename"); err != nil {
 		return err
 	}
-	parent, oldName := splitAreaPath(path)
-	if err := validateNewAreaName(cfg, areaRenameJSON, path, parent, oldName, newName); err != nil {
+	// The path is declared, so the held refusal now speaks about a node that is
+	// there. It comes before requireAreaNameFree: a name too malformed to keep
+	// is not a name to go looking for a sibling collision on.
+	if argErr != nil {
+		return argErr
+	}
+	if err := requireAreaNameFree(cfg, areaRenameJSON, path, parent, newName); err != nil {
 		return err
 	}
 	newPath := joinAreaPathForDisplay(parent, newName)
@@ -270,16 +300,25 @@ func runAreaRename(cmd *cobra.Command, args []string) error {
 	return reportAreaEdit(app, areaRenameJSON, msg, staleLink, cfg)
 }
 
-// validateNewAreaName refuses every new name the vocabulary could not hold, in
-// the order a caller can act on: the shape of the name first, then whether it
-// changes anything, then whether a sibling already answers to it.
+// validateAreaRenameArgument refuses every new name the two arguments rule out
+// on their own, in the order a caller can act on: the shape of the name first,
+// then whether it changes anything.
+//
+// All four read `path` and `newName` and nothing else — no `cfg`, no store — so
+// no vocabulary can change their answer and runAreaRename asks them before the
+// write lock. The vocabulary question a rename also has — does a sibling already
+// answer to the new name? — is requireAreaNameFree's, under the lock.
+//
+// Two of the four nonetheless SPEAK about the node at `path`, so the refusal
+// they return is only correct over a path the store declares; when to print it
+// is runAreaRename's call and not this function's.
 //
 // config.PlanRenameStoredArea re-checks the RESULT before it hands back an edit
 // to write, so none of this is what keeps a broken vocabulary off disk. What it
 // buys is the message: that backstop can only say the edit would leave the file
-// unusable, where these can name the sibling, the runnable spelling, or the fact
-// that nothing would change.
-func validateNewAreaName(cfg *config.Config, jsonMode bool, path, parent, oldName, newName string) error {
+// unusable, where these can name the runnable spelling, or the fact that nothing
+// would change.
+func validateAreaRenameArgument(jsonMode bool, path, parent, oldName, newName string) error {
 	if newName == "" {
 		return cmdError(jsonMode, output.ErrValidation,
 			"area %s needs a name to be renamed to, and the new name is empty", quotedArea(path))
@@ -305,6 +344,13 @@ func validateNewAreaName(cfg *config.Config, jsonMode bool, path, parent, oldNam
 			"area %s is already named %s, so the rename would change nothing",
 			quotedArea(path), quotedArea(newName))
 	}
+	return nil
+}
+
+// requireAreaNameFree refuses a rename onto a name a sibling already holds. It
+// is the one rename check that reads the vocabulary, so it is asked under the
+// lock against the vocabulary that is actually there — see beginAreaEdit.
+func requireAreaNameFree(cfg *config.Config, jsonMode bool, path, parent, newName string) error {
 	if sibling := joinAreaPathForDisplay(parent, newName); cfg.IsValidArea(sibling) {
 		return cmdError(jsonMode, output.ErrValidation,
 			"cannot rename area %s to %s: this store already declares %s, and two siblings with one name make one path mean two nodes",
@@ -539,6 +585,30 @@ func beginAreaEdit(app *App, jsonMode bool) (*nibcore.StoreLock, *config.Config,
 		return nil, nil, cmdError(jsonMode, output.ErrFileError,
 			"nothing was written: re-reading this store's areas vocabulary under its write lock failed: %v", err)
 	}
+	// Absence is carried in the config itself rather than re-observed on the
+	// path, the same way Core.mintingVocabulary carries it: config.loadRaw
+	// answers a MISSING file with an empty config and a nil error, so a
+	// config.yml that vanished between this process starting and the lock being
+	// granted arrives here declaring nothing — indistinguishable from a
+	// concurrent `area rm` having retired every node, which is the cause
+	// areaRetiredWhileWaiting would then name. `.nibs` is its own git repository
+	// in this project, so a `git -C .nibs checkout` under a waiting command is
+	// the ordinary way in.
+	//
+	// It takes BOTH halves to say the file vanished, and only that shape is
+	// refused here. A store that never had a config.yml reaches this line with
+	// the same empty vocabulary and is a legitimate shape — the store-resolution
+	// evidence rule accepts a real directory named `.nibs`, and `nibs list` and
+	// `nibs area list` both serve it — so refusing it would name a file to
+	// restore that never existed, and would reclassify an undamaged store from
+	// VALIDATION to FILE_ERROR. It falls through to requireDeclaredArea, whose
+	// "declares no areas" is both the true cause and the reachable remedy.
+	if configWasLoadedAtStartup(app) && !cfg.LoadedFromFile() {
+		_ = lock.Release()
+		return nil, nil, cmdError(jsonMode, output.ErrFileError,
+			"nothing was written: this store's areas vocabulary could not be read under its write lock — %s does not exist; restore it before editing the areas it declares",
+			sanitizeFilePath(cfg.Layout().ConfigPath()))
+	}
 	return lock, cfg, nil
 }
 
@@ -558,8 +628,25 @@ func beginAreaEdit(app *App, jsonMode bool) (*nibcore.StoreLock, *config.Config,
 // refusal to speak: with nothing loaded there is no earlier state to have
 // diverged from.
 func areaRetiredWhileWaiting(app *App, cfg *config.Config, path string) bool {
+	return areaDeclaredAtStartup(app, path) && !cfg.IsValidArea(path)
+}
+
+// areaDeclaredAtStartup reports that path was in the vocabulary this process
+// loaded. It is the startup half of every question a verb asks about what moved
+// under it, and never on its own grounds for a write: a snapshot cannot say what
+// the store declares NOW.
+func areaDeclaredAtStartup(app *App, path string) bool {
 	loaded := app.Config()
-	return path != "" && loaded != nil && loaded.IsValidArea(path) && !cfg.IsValidArea(path)
+	return path != "" && loaded != nil && loaded.IsValidArea(path)
+}
+
+// configWasLoadedAtStartup reports that this process read a config FILE when it
+// opened the store — the evidence that separates a config.yml which vanished
+// under the lock from a store that never had one. A Core built without a config
+// answers false, the same way areaDeclaredAtStartup treats it.
+func configWasLoadedAtStartup(app *App) bool {
+	loaded := app.Config()
+	return loaded != nil && loaded.LoadedFromFile()
 }
 
 // refuseAreaRetiredWhileWaiting refuses the node a verb was told to rename or

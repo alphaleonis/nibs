@@ -257,8 +257,15 @@ func runSetPrefix(cmd *cobra.Command, args []string) error {
 
 // buildSnapshot projects loaded nibs onto the minimal view the reprefix planner
 // consumes. The link fields it copies are exactly nib.LinkSpelling's four, which
-// is the completeness bar: an id-valued front-matter field left out here is one
-// the rename silently leaves naming a nib that no longer exists.
+// is the completeness bar FOR FRONT MATTER: an id-valued front-matter field left
+// out here is one the rename silently leaves naming a nib that no longer exists.
+//
+// The bar stops at the front matter, and the rest of the store is NOT covered by
+// it: `[[id]]` and `#id` mentions in nib BODIES name ids too, reprefix.Execute
+// re-renders a nib without touching its body, and `nibs check` reports no link
+// issue for them — so a set-prefix does leave every body mention naming the
+// retired id. Extending the rewrite over bodies is tracked as its own work, not
+// covered here.
 func buildSnapshot(nibs []*nib.Nib) []reprefix.NibSnapshot {
 	out := make([]reprefix.NibSnapshot, len(nibs))
 	for i, b := range nibs {

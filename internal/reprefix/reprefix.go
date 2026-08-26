@@ -45,11 +45,16 @@ func ValidatePrefix(s string) error {
 // It decouples reprefix from nibcore.
 //
 // The link fields below are exactly nib.LinkSpelling's four, and that is the
-// completeness bar: an id-valued front-matter field missing here is a reference
-// left naming a nib the rename retired. The other path-shaped fields are
-// deliberately absent because none of them holds an id — Area is a plain path,
-// Documents are repo-relative paths, MilestoneOrder is a fractional index, and
-// Extra is opaque unknown keys.
+// completeness bar FOR FRONT MATTER: an id-valued front-matter field missing
+// here is a reference left naming a nib the rename retired. The other
+// path-shaped fields are deliberately absent because none of them holds an id —
+// Area is a plain path, Documents are repo-relative paths, MilestoneOrder is a
+// fractional index, and Extra is opaque unknown keys.
+//
+// A nib BODY is outside the bar: `[[id]]` and `#id` mentions there are id-valued
+// too, and Execute re-renders a nib without touching its body, so they are left
+// naming the retired id. Extending the rewrite over bodies is tracked as its own
+// work, not covered here.
 type NibSnapshot struct {
 	ID string // e.g. "nibs-abc123"
 	// Path is the forward-slash relative path to the nib file under the nibs

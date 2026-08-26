@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -726,9 +727,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Editor closed - take what was written back into the store.
 		if a.editingNibID != "" {
 			if err := a.recordExternalEdit(a.editingNibID, a.editingNibModTime); err != nil {
-				a.reportFailure(fmt.Sprintf(
-					"Store did not accept the edit to %s: %v. Your text is still in the file; restart nibs to re-read the store.",
-					a.editingNibID, err))
+				a.reportFailure(editorWriteRefusal(a.editingNibID, err))
 			}
 			// Cleared whether or not the store took the edit. The pair is a
 			// one-shot guard for the session that just ended, so holding it
@@ -1040,7 +1039,7 @@ func (a *App) recordExternalEdit(id string, since time.Time) error {
 	}
 	info, err := os.Stat(filepath.Join(a.backend.Root(), n.Path))
 	if err != nil {
-		return err
+		return &nibFileUnreadableError{err: err}
 	}
 	if !info.ModTime().After(since) {
 		return nil
@@ -1048,6 +1047,50 @@ func (a *App) recordExternalEdit(id string, since time.Time) error {
 	_, err = a.backend.ReloadAfterEdit(id)
 	return err
 }
+
+// nibFileUnreadableError marks the one leg of an $EDITOR write-back where the
+// file the store says the nib lives in could not be read at all. It is a type
+// of its own because the reassurance the other legs carry — that the user's
+// text is sitting safely in that file — is the one claim this leg cannot make.
+type nibFileUnreadableError struct{ err error }
+
+func (e *nibFileUnreadableError) Error() string { return e.err.Error() }
+
+func (e *nibFileUnreadableError) Unwrap() error { return e.err }
+
+// editorWriteRefusal words an $EDITOR session the store did not record.
+//
+// The lead carries the whole of what the user has to act on — where their text
+// is and what to do next — and the detail follows it. renderStatusMessage caps
+// the footer at height/3 rows and cuts the overflow with an ellipsis, which on
+// an eight-row terminal is two rows of message: whatever the sentence ends with
+// is the half the user does not get, so what ends it has to be the half they can
+// afford to lose.
+//
+// The lead is not one sentence for every leg. A stat that failed says the file
+// the store points at could not be read, so the text the other legs correctly
+// promise is in it cannot be promised at all.
+//
+// Nor can the opposite be claimed. The stat fails on paths where the text is
+// perfectly safe — a concurrent `nibs config set-prefix` renames the file while
+// the TUI is suspended under tea.ExecProcess, and the stale Path the store hands
+// back stats ENOENT over an intact file — so the unreadable lead reports what
+// the store did and leaves the text's fate to the restart it prescribes.
+func editorWriteRefusal(id string, err error) string {
+	var unreadable *nibFileUnreadableError
+	if errors.As(err, &unreadable) {
+		return editorFileUnreadableLead + fmt.Sprintf(" The file recorded for %s could not be read: %v", id, err)
+	}
+	return editorTextSafeLead + fmt.Sprintf(" The store did not accept the edit to %s: %v", id, err)
+}
+
+// The two leads editorWriteRefusal picks between. They are named so the sweep
+// that renders them at the geometries the footer actually gets can ask for the
+// real string rather than a copy of it.
+const (
+	editorTextSafeLead       = "Your text is still in the file. Restart nibs to re-read the store."
+	editorFileUnreadableLead = "Nothing was recorded; the file cannot be read. Restart nibs to re-read the store."
+)
 
 // getEditor returns the user's preferred editor using the fallback chain:
 // $VISUAL -> $EDITOR -> vi -> nano

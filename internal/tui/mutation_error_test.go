@@ -1022,8 +1022,8 @@ func TestRefusedEditorWriteReachesTheListFooter(t *testing.T) {
 	_, cmd := app.Update(editorFinishedMsg{})
 	processCmd(app, cmd)
 
-	want := "Store did not accept the edit to nib-1: nib-1: updating /store/data/nib-1.md: file does not exist. " +
-		"Your text is still in the file; restart nibs to re-read the store."
+	want := editorTextSafeLead +
+		" The store did not accept the edit to nib-1: nib-1: updating /store/data/nib-1.md: file does not exist"
 	if got := app.list.statusMessage; got != want {
 		t.Errorf("list footer message = %q, want %q", got, want)
 	}
@@ -1049,8 +1049,7 @@ func TestRefusedEditorWriteReachesTheDetailFooter(t *testing.T) {
 	_, cmd := app.Update(editorFinishedMsg{})
 	processCmd(app, cmd)
 
-	want := "Store did not accept the edit to nib-1: " + refusalReason +
-		". Your text is still in the file; restart nibs to re-read the store."
+	want := editorTextSafeLead + " The store did not accept the edit to nib-1: " + refusalReason
 	if got := app.detail.statusMessage; got != want {
 		t.Errorf("detail footer message = %q, want %q", got, want)
 	}
@@ -1072,12 +1071,12 @@ func TestEditedNibMissingFromTheStoreIsReported(t *testing.T) {
 		{
 			name:    "lookup refused",
 			arrange: func(stub *StubBackend) { stub.GetErr = errors.New("store is unreadable") },
-			want:    "Store did not accept the edit to nib-1: store is unreadable. Your text is still in the file; restart nibs to re-read the store.",
+			want:    editorTextSafeLead + " The store did not accept the edit to nib-1: store is unreadable",
 		},
 		{
 			name:    "id no longer resolves",
 			arrange: func(stub *StubBackend) { delete(stub.Nibs, "nib-1") },
-			want:    "Store did not accept the edit to nib-1: nib-1 is no longer in the store. Your text is still in the file; restart nibs to re-read the store.",
+			want:    editorTextSafeLead + " The store did not accept the edit to nib-1: nib-1 is no longer in the store",
 		},
 	}
 	for _, tt := range tests {
@@ -1170,13 +1169,138 @@ func TestUnreadableNibFileAfterEditingIsReported(t *testing.T) {
 	_, cmd := app.Update(editorFinishedMsg{})
 	processCmd(app, cmd)
 
-	const prefix = "Store did not accept the edit to nib-1: stat "
-	const suffix = ". Your text is still in the file; restart nibs to re-read the store."
+	// The file is gone, so the reassurance the other legs carry would be a lie
+	// here: this leg gets a lead of its own.
+	prefix := editorFileUnreadableLead + " The file recorded for nib-1 could not be read: stat "
 	got := app.list.statusMessage
-	if !strings.HasPrefix(got, prefix) || !strings.HasSuffix(got, suffix) {
-		t.Errorf("list footer message = %q, want %q...%q", got, prefix, suffix)
+	if !strings.HasPrefix(got, prefix) {
+		t.Errorf("list footer message = %q, want it to start %q", got, prefix)
+	}
+	// Neither claim about the user's text is this leg's to make. A stat that
+	// failed cannot promise the text is sitting in the file — and it cannot say
+	// the text is gone either: a concurrent `nibs config set-prefix` renames the
+	// file while the TUI is suspended, and the stale Path the store hands back
+	// stats ENOENT over a file holding every word the user wrote.
+	for _, unwanted := range []string{"Your text is still in the file", "Nothing was saved"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("list footer message = %q — %q settles what became of the user's text, which a failed stat does not establish", got, unwanted)
+		}
 	}
 	if app.list.statusKind != statusWarn {
 		t.Errorf("statusKind = %v, want statusWarn", app.list.statusKind)
+	}
+}
+
+// editorRefusalGeometries is where an $EDITOR refusal has to survive being cut.
+// renderStatusMessage caps the footer at height/3 rows and drops the overflow
+// with an ellipsis, so the narrow-and-short corner is where a sentence that ends
+// with its remedy ends up saying only that something went wrong.
+var (
+	editorRefusalWidths  = []int{30, 34, 38, 80}
+	editorRefusalHeights = []int{8, 12, 16, 24}
+)
+
+// statusRegionIsOneLine reports the geometries where the footer grants the
+// status message a single row: height/3 is one, or — with the help panel open —
+// the region is two rows and the panel keeps one of them for itself.
+func statusRegionIsOneLine(panelOpen bool, height int) bool {
+	if !panelOpen {
+		return maxStatusFooterLines(height) == 1
+	}
+	return min(maxStatusFooterLines(height), max(1, max(1, height-listBoxFloor)-1)) == 1
+}
+
+// An $EDITOR session the store did not record has two things to say — where the
+// user's text is, and what to do next — and reaching app.list.statusMessage is
+// not either of them. The message is cut to the footer's row budget with a
+// trailing ellipsis, so a remedy at the end of the sentence is exactly what the
+// user does not get: at eight, twelve and sixteen rows the old wording left the
+// store's error text on screen and nothing at all about the file.
+//
+// Below forty columns a single-row region cannot carry both clauses whatever
+// they say — twenty-five cells survive the wrap there — so those geometries pin
+// the weaker property that still separates this wording from the old one: the
+// row spends itself on the LEAD rather than on the store's error text.
+func TestTheEditorRefusalKeepsItsLeadOnScreen(t *testing.T) {
+	legs := []struct {
+		name    string
+		arrange func(t *testing.T, stub *StubBackend)
+		want    []string
+		floor   []string
+	}{
+		{
+			name:    "the store refused the write",
+			arrange: func(_ *testing.T, stub *StubBackend) { stub.ReloadErr = errors.New(refusalReason) },
+			want:    []string{"Your text is still in the file", "Restart nibs"},
+			floor:   []string{"Your text is still in"},
+		},
+		{
+			name:    "the lookup was refused",
+			arrange: func(_ *testing.T, stub *StubBackend) { stub.GetErr = errors.New("store is unreadable") },
+			want:    []string{"Your text is still in the file", "Restart nibs"},
+			floor:   []string{"Your text is still in"},
+		},
+		{
+			name:    "the id no longer resolves",
+			arrange: func(_ *testing.T, stub *StubBackend) { delete(stub.Nibs, "nib-1") },
+			want:    []string{"Your text is still in the file", "Restart nibs"},
+			floor:   []string{"Your text is still in"},
+		},
+		{
+			name: "the file cannot be read",
+			arrange: func(t *testing.T, stub *StubBackend) {
+				if err := os.Remove(filepath.Join(stub.RootDir, "data", "nib-1.md")); err != nil {
+					t.Fatalf("removing the nib file: %v", err)
+				}
+			},
+			want:  []string{"Nothing was recorded", "the file cannot be read", "Restart nibs"},
+			floor: []string{"Nothing was recorded"},
+		},
+	}
+
+	for _, leg := range legs {
+		for _, panelOpen := range []bool{false, true} {
+			for _, height := range editorRefusalHeights {
+				for _, width := range editorRefusalWidths {
+					name := fmt.Sprintf("%s/%dx%d", leg.name, width, height)
+					if panelOpen {
+						name += "/help"
+					}
+					t.Run(name, func(t *testing.T) {
+						app, stub := setupTestApp(t, pickerTestNibs())
+						app.Update(tea.WindowSizeMsg{Width: width, Height: height})
+						if panelOpen {
+							sendKey(app, tea.KeyPressMsg{Code: '?', Text: "?"})
+							if !app.helpExpanded {
+								t.Fatal("premise failed: ? did not expand the help panel")
+							}
+						}
+						editorSession(t, app, stub, "nib-1")
+						leg.arrange(t, stub)
+
+						_, cmd := app.Update(editorFinishedMsg{})
+						processCmd(app, cmd)
+						if app.list.statusMessage == "" {
+							t.Fatal("premise failed: the editor session was not reported at all")
+						}
+
+						content := app.View().Content
+						assertFrameFitsTerminal(t, content, width, height)
+						painted := frameText(content, width, height)
+
+						want := leg.want
+						if statusRegionIsOneLine(panelOpen, height) && width < lipgloss.Width(editorTextSafeLead) {
+							want = leg.floor
+						}
+						for _, fragment := range want {
+							if !strings.Contains(painted, fragment) {
+								t.Errorf("the frame does not carry %q — the user is told the store refused the edit and nothing about what happened to their text:\n%s",
+									fragment, painted)
+							}
+						}
+					})
+				}
+			}
+		}
 	}
 }

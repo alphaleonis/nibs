@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nibcore"
@@ -768,6 +769,235 @@ func TestAreaEditsCascadeThroughAreasDeclaredUnderTheLock(t *testing.T) {
 			}
 			if got := areaVocabulary(t, nibsPath); !slices.Equal(got, tt.wantVocabulary) {
 				t.Errorf("vocabulary = %v, want %v", got, tt.wantVocabulary)
+			}
+		})
+	}
+}
+
+// A refusal the two arguments alone decide must not queue behind the store's
+// write lock. AcquireStoreLock is a blocking flock with no timeout and prints
+// nothing while it waits, so `nibs area rename web ""` behind a long-running
+// writer sat silent for the whole of that writer's run before printing an error
+// about the empty string it was handed.
+//
+// The lock is held for the length of each case, so a check that moved back under
+// it does not fail an assertion — it never returns, and the deadline below is
+// what reports that.
+func TestAreaRenameRefusesABadNameWithoutTakingTheStoreLock(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "an empty new name", args: []string{"web", ""}, want: "needs a name"},
+		{name: "a new name that is only whitespace padding", args: []string{"web", " frontend"}, want: "whitespace"},
+		{name: "a path where a name belongs", args: []string{"web/dashboard", "web/panel"}, want: "not a name"},
+		{name: "the name the node already has", args: []string{"api/webhooks", "webhooks"}, want: "already named"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nibsPath := setupAreaCLITest(t)
+			app := staleAreaApp(t, nibsPath)
+
+			lock, err := nibcore.AcquireStoreLock(nibsPath)
+			if err != nil {
+				t.Fatalf("holding the store's write lock: %v", err)
+			}
+			defer func() { _ = lock.Release() }()
+
+			resetCommandTreeFlags(rootCmd)
+			t.Cleanup(func() {
+				resetCommandTreeFlags(rootCmd)
+				areaRenameCmd.SetContext(context.Background())
+			})
+			areaRenameCmd.SetContext(withApp(context.Background(), app))
+
+			done := make(chan error, 1)
+			go func() { done <- runAreaRename(areaRenameCmd, tt.args) }()
+
+			select {
+			case err := <-done:
+				if err == nil {
+					t.Fatalf("expected a refusal over %v, got nil", tt.args)
+				}
+				if !strings.Contains(err.Error(), tt.want) {
+					t.Errorf("error = %q, want substring %q", err.Error(), tt.want)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatalf("`area rename %v` is still waiting for the store's write lock — the two arguments alone refuse it, and nothing is printed while it waits", tt.args)
+			}
+		})
+	}
+}
+
+// A store whose config.yml vanished while a verb waited for the write lock is
+// not a store whose areas were retired. config.loadRaw answers a missing file
+// with an empty config and a NIL error, so absence arrives at the verb looking
+// exactly like a concurrent `nibs area rm` — and the refusal then names a
+// process that never ran and prescribes `nibs area list`, which goes on to print
+// "this store declares no areas". `.nibs` is its own git repository here, so a
+// `git -C .nibs checkout` rewriting that file under a running command is the
+// ordinary way in.
+func TestAreaEditRefusesAVanishedConfigRatherThanBlamingAnotherProcess(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(t *testing.T, app *App) error
+	}{
+		{
+			name: "rename",
+			run: func(t *testing.T, app *App) error {
+				return runStaleAreaVerb(t, app, areaRenameCmd, runAreaRename, nil, "auth", "identity")
+			},
+		},
+		{
+			name: "rm",
+			run: func(t *testing.T, app *App) error {
+				return runStaleAreaVerb(t, app, areaRmCmd, runAreaRm, nil, "auth")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nibsPath := setupAreaCLITest(t)
+			app := staleAreaApp(t, nibsPath)
+
+			if err := os.Remove(filepath.Join(nibsPath, "config.yml")); err != nil {
+				t.Fatalf("removing the store config: %v", err)
+			}
+
+			err := tt.run(t, app)
+			if err == nil {
+				t.Fatal("expected a refusal over a store with no config, got nil")
+			}
+			if code := areaErrCode(t, err); code != output.ErrFileError {
+				t.Errorf("code = %q (exit %d), want %q (exit %d)",
+					code, output.ExitCode(code), output.ErrFileError, output.ExitCode(output.ErrFileError))
+			}
+			for _, want := range []string{"config.yml", "does not exist"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error = %q, want substring %q", err.Error(), want)
+				}
+			}
+			// The diagnosis this replaces: a cause that did not happen, and a
+			// remedy that answers "this store declares no areas".
+			for _, unwanted := range []string{"another nibs process", "nibs area list"} {
+				if strings.Contains(err.Error(), unwanted) {
+					t.Errorf("error = %q — an absent config is reported as a concurrent retire, and %q sends the reader nowhere", err.Error(), unwanted)
+				}
+			}
+		})
+	}
+}
+
+// The other reading of an absent config.yml: a store that never had one. That
+// is a legitimate shape here — the evidence rule accepts a real directory named
+// `.nibs`, `nibs list` serves it and `nibs area list` prints "this store
+// declares no areas" — so the vanished-config refusal must not reach it. It
+// names a file to restore that never existed, and reclassifies an undamaged
+// store from VALIDATION to FILE_ERROR, which an agent branching on $? reads as
+// the filesystem being broken.
+func TestAreaEditOnAStoreThatNeverHadAConfigRefusesAsUndeclaredAreas(t *testing.T) {
+	tests := []struct {
+		name string
+		verb string
+		run  func(t *testing.T, app *App) error
+	}{
+		{
+			name: "rename",
+			verb: "rename",
+			run: func(t *testing.T, app *App) error {
+				return runStaleAreaVerb(t, app, areaRenameCmd, runAreaRename, nil, "auth", "identity")
+			},
+		},
+		{
+			name: "rm",
+			verb: "retire",
+			run: func(t *testing.T, app *App) error {
+				return runStaleAreaVerb(t, app, areaRmCmd, runAreaRm, nil, "auth")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nibsPath := setupAreaCLITest(t)
+			// Removed BEFORE the App is built, so this process never loaded one
+			// — the difference between this store and the vanished-config one.
+			if err := os.Remove(filepath.Join(nibsPath, "config.yml")); err != nil {
+				t.Fatalf("removing the store config: %v", err)
+			}
+			app := staleAreaApp(t, nibsPath)
+			if app.Config().LoadedFromFile() {
+				t.Fatal("premise failed: the App loaded a config file from a store that has none")
+			}
+
+			err := tt.run(t, app)
+			if err == nil {
+				t.Fatal("expected a refusal over a store that declares no areas, got nil")
+			}
+			if code := areaErrCode(t, err); code != output.ErrValidation {
+				t.Errorf("code = %q (exit %d), want %q (exit %d) — the store is undamaged, so this is bad input and not a broken filesystem",
+					code, output.ExitCode(code), output.ErrValidation, output.ExitCode(output.ErrValidation))
+			}
+			for _, want := range []string{"declares no areas", "there is none to " + tt.verb, "`areas:` block"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error = %q, want substring %q", err.Error(), want)
+				}
+			}
+			// The vanished-config wording, which names a file to put back that
+			// this store never had.
+			if strings.Contains(err.Error(), "does not exist") {
+				t.Errorf("error = %q — it prescribes restoring a config.yml this store never had", err.Error())
+			}
+		})
+	}
+}
+
+// A path the store does not declare is the first thing the caller has to hear,
+// whatever else is wrong with the arguments. The four argument-shape checks run
+// before the store's write lock is taken — deliberately, so a typo does not sit
+// silent behind a competing writer — but asked first they answer over a node
+// that is not there: `nibs area rename api/hooks hooks` asserted the nonexistent
+// area "is already named hooks", and the separator branch prescribed
+// `nibs area rename api/hooks other`, a command the tool then refuses.
+func TestAreaRenameReportsAnUndeclaredPathBeforeTheNameShape(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		unwanted string
+	}{
+		{name: "the name the path's last segment already has", args: []string{"api/hooks", "hooks"}, unwanted: "already named"},
+		{name: "a path where a name belongs", args: []string{"api/hooks", "api/other"}, unwanted: "is not a name"},
+		{name: "an empty new name", args: []string{"api/hooks", ""}, unwanted: "needs a name"},
+		{name: "a new name that is only whitespace padding", args: []string{"api/hooks", " hooks"}, unwanted: "whitespace"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nibsPath := setupAreaCLITest(t)
+			app := staleAreaApp(t, nibsPath)
+
+			err := runStaleAreaVerb(t, app, areaRenameCmd, runAreaRename, nil, tt.args...)
+			if err == nil {
+				t.Fatalf("expected a refusal over %v, got nil", tt.args)
+			}
+			if code := areaErrCode(t, err); code != output.ErrValidation {
+				t.Errorf("code = %q, want %q", code, output.ErrValidation)
+			}
+			for _, want := range []string{`no area "api/hooks"`, "the declared areas are"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error = %q, want substring %q — the typo in the path is what the caller has to see", err.Error(), want)
+				}
+			}
+			if strings.Contains(err.Error(), tt.unwanted) {
+				t.Errorf("error = %q — it answers about the name over an area this store does not declare", err.Error())
+			}
+			// The separator branch's prescription is the sharpest form: a
+			// runnable command the tool refuses the moment it is run.
+			if strings.Contains(err.Error(), "nibs area rename api/hooks") {
+				t.Errorf("error = %q — it prescribes a command that refuses with this same message", err.Error())
 			}
 		})
 	}

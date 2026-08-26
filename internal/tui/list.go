@@ -943,6 +943,32 @@ func (m listModel) viewContent(innerHeight int) string {
 	return topLine + "\n" + lines[1]
 }
 
+// badgeWidth is the cells one badge costs on the border's top line: its own
+// ─┤ and ├ around the text.
+func badgeWidth(text string) int { return 2 + lipgloss.Width(text) + 1 }
+
+// truncateBorderTitle fits a title into budget cells, marking a cut with an
+// ellipsis. The mark is the point: a project name cut in silence reads as a
+// whole one, and nothing distinguishes `Nibs - sample-` from a project actually
+// called that.
+//
+// The trailing space MaxWidth pads a shortened cell run with is dropped, so the
+// title's measured width is what is painted and the fill either side of it stays
+// exact.
+func truncateBorderTitle(title string, budget int) string {
+	if budget <= 0 {
+		return ""
+	}
+	if lipgloss.Width(title) <= budget {
+		return title
+	}
+	if budget == 1 {
+		return "…"
+	}
+	cut := strings.TrimRight(lipgloss.NewStyle().MaxWidth(budget-1).Render(title), " ")
+	return cut + "…"
+}
+
 // buildBorderTopLine constructs the top border line with title and badges embedded.
 // Format: ╭─ Title ─│Badge1│─│Badge2│──────╮
 func (m listModel) buildBorderTopLine() string {
@@ -962,14 +988,21 @@ func (m listModel) buildBorderTopLine() string {
 	type badge struct {
 		text  string
 		style lipgloss.Style
+		// outranksTitle marks a badge worth more cells than the project name.
+		// Only a state the reader turned on that can empty the box qualifies:
+		// without the badge the list looks empty for no reason, where the title
+		// only names where they already are. The default states do not — a badge
+		// the reader sees on every launch is not news worth a cut project name.
+		outranksTitle bool
 	}
 	var badges []badge
 
 	// Tag filter badge
 	if m.tagFilter != "" {
 		badges = append(badges, badge{
-			text:  fmt.Sprintf("tag: %s", m.tagFilter),
-			style: lipgloss.NewStyle().Foreground(ui.ColorPrimary),
+			text:          fmt.Sprintf("tag: %s", m.tagFilter),
+			style:         lipgloss.NewStyle().Foreground(ui.ColorPrimary),
+			outranksTitle: true,
 		})
 	}
 
@@ -996,22 +1029,35 @@ func (m listModel) buildBorderTopLine() string {
 	// runs the box's own top edge off the right of the screen, taking the corner
 	// with it.
 	budget := m.width - 5 // ╭─ + space around the title + ╮
-	title := m.borderTitle
-	if lipgloss.Width(title) > budget {
-		title = lipgloss.NewStyle().MaxWidth(budget).Render(title)
+
+	// A badge that outranks the title is paid for BEFORE it, and the title is
+	// measured against what is left. Badges are dropped from the right, so the
+	// leftmost is the only one a reservation can save, and charging the title
+	// first let an ordinary project name eat the whole budget and drop every
+	// badge — including the tag filter, whose absence leaves an emptied list with
+	// nothing on screen saying why.
+	//
+	// It is conditioned on the badge and not merely on there being one, because
+	// the cells come out of the project name and most badges are not worth them:
+	// `No completed` is on by default, so an unconditional reservation shortened
+	// the name on an ordinary launch to announce a state the reader never chose.
+	titleBudget := budget
+	if len(badges) > 0 && badges[0].outranksTitle {
+		if first := badgeWidth(badges[0].text); first < budget {
+			titleBudget = budget - first
+		}
 	}
+	title := truncateBorderTitle(m.borderTitle, titleBudget)
 	titleWidth := 4 + lipgloss.Width(title) // ╭─ + title + space
 
-	// Pre-render the badges that fit, dropping from the right. The leftmost is
-	// the tag filter, which names a state that hides nibs from the list — the
-	// last one a reader should have to infer from an empty box.
+	// Pre-render the badges that fit, dropping from the right.
 	type renderedBadge struct {
 		open, text, close string
 	}
 	var renderedBadges []renderedBadge
 	badgesWidth := 0
 	for _, b := range badges {
-		width := 2 + lipgloss.Width(b.text) + 1 // ─┤ + text + ├
+		width := badgeWidth(b.text)
 		if lipgloss.Width(title)+badgesWidth+width > budget {
 			break
 		}

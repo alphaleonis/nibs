@@ -385,6 +385,106 @@ func TestTheBorderTopLineFillsTheTerminalExactly(t *testing.T) {
 	}
 }
 
+// The tag filter names a state that hides nibs from the list: press g t on a
+// tag nothing carries and the box goes empty, with the badge as the only thing
+// on screen saying why. Badges are dropped from the right, so it is the leftmost
+// and the last to go — but the title was charged against the budget first, so an
+// ordinary project name consumed it and every badge went at once.
+//
+// Twenty and twenty-four columns are left out: the badge alone is twenty cells
+// and the budget there is fifteen and nineteen, so no ordering saves it.
+func TestTheTagFilterBadgeOutlivesTheTitle(t *testing.T) {
+	titles := map[string]string{
+		"short":  "Nibs - Nibs",
+		"medium": "Nibs - sample-project",
+		"long":   "Nibs - " + strings.Repeat("a-long-project-name/", 4),
+	}
+	for name, title := range titles {
+		for _, width := range []int{30, 34, 38, 46, 80, 200} {
+			t.Run(fmt.Sprintf("%s/%d", name, width), func(t *testing.T) {
+				m := listModel{
+					width:         width,
+					borderTitle:   title,
+					tagFilter:     "needs-triage",
+					hideCompleted: true,
+					wideMode:      true,
+				}
+				line := ansiSGR.ReplaceAllString(m.buildBorderTopLine(), "")
+				if !strings.Contains(line, "tag: needs-triage") {
+					t.Errorf("the tag filter badge is absent at %d columns, so a filtered list has nothing on screen saying it is filtered: %q",
+						width, line)
+				}
+				if got := lipgloss.Width(line); got != width {
+					t.Errorf("top line is %d cells for a %d-column terminal: %q", got, width, line)
+				}
+			})
+		}
+	}
+}
+
+// The reservation that keeps the tag-filter badge on screen buys it with cells
+// taken from the project name, and only the tag filter is worth that price: it
+// names a state the reader turned on that can empty the box for no visible
+// reason. `No completed` is the DEFAULT — config.HideCompleted is true unless a
+// store says otherwise — so charging the title for it shortened the project name
+// on an ordinary launch, and `Nibs - sample-` names a different project than
+// `Nibs - sample-project`. `Wide` hides nothing at all.
+func TestTheDefaultBadgesNeverCostTheProjectName(t *testing.T) {
+	const title = "Nibs - sample-project"
+	for _, width := range []int{30, 34, 38, 40, 46, 80, 200} {
+		for _, wide := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%d/wide=%v", width, wide), func(t *testing.T) {
+				m := listModel{width: width, borderTitle: title, hideCompleted: true, wideMode: wide}
+				line := ansiSGR.ReplaceAllString(m.buildBorderTopLine(), "")
+				if !strings.Contains(line, title) {
+					t.Errorf("the project name is cut at %d columns to make room for a badge naming the default state: %q",
+						width, line)
+				}
+				if got := lipgloss.Width(line); got != width {
+					t.Errorf("top line is %d cells for a %d-column terminal: %q", got, width, line)
+				}
+			})
+		}
+	}
+}
+
+// A title the border cannot hold is cut, and the cut has to be visible: a
+// silently shortened project name reads as a whole one, and the reader has no
+// way to tell `Nibs - sample-` from a project actually called that.
+func TestATruncatedBorderTitleSaysItWasTruncated(t *testing.T) {
+	tests := []struct {
+		name      string
+		model     listModel
+		wantWhole string
+	}{
+		{
+			name:      "no badge reserves anything, the title alone outruns the width",
+			model:     listModel{width: 30, borderTitle: "Nibs - " + strings.Repeat("long-name/", 4)},
+			wantWhole: "Nibs - long-name/long-name/long-name/long-name/",
+		},
+		{
+			name:      "the tag filter badge is paid for out of the title",
+			model:     listModel{width: 34, borderTitle: "Nibs - sample-project", tagFilter: "needs-triage"},
+			wantWhole: "Nibs - sample-project",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			line := ansiSGR.ReplaceAllString(tt.model.buildBorderTopLine(), "")
+			if strings.Contains(line, tt.wantWhole) {
+				t.Fatalf("premise failed: the whole title fits at %d columns, so nothing is truncated: %q",
+					tt.model.width, line)
+			}
+			if !strings.Contains(line, "…") {
+				t.Errorf("the title was cut with nothing on screen to say so, so the shortened name reads as the whole one: %q", line)
+			}
+			if got := lipgloss.Width(line); got != tt.model.width {
+				t.Errorf("top line is %d cells for a %d-column terminal: %q", got, tt.model.width, line)
+			}
+		})
+	}
+}
+
 // widestVocabularyNibs is the vocabulary at its widest: the longest status name
 // beside the longest type name. Wide mode pads both columns to twelve cells
 // whatever the terminal is, so rows carrying these values outrun a narrow box
