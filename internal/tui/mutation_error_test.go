@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"image/color"
@@ -9,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -666,5 +668,639 @@ func TestAnOverlongRefusalIsCappedRatherThanEatingTheView(t *testing.T) {
 				t.Errorf("the truncated refusal carries no ellipsis, so nothing says it was cut:\n%s", got)
 			}
 		})
+	}
+}
+
+// selectParent drives the open parent picker down to the named nib and
+// confirms it, the way a user does.
+func selectParent(t *testing.T, app *App, parentID string) {
+	t.Helper()
+	for i := 0; i < 20; i++ {
+		if item, ok := app.parentPicker.list.SelectedItem().(parentItem); ok && item.nib.ID == parentID {
+			sendKey(app, tea.KeyPressMsg{Code: tea.KeyEnter})
+			return
+		}
+		sendKey(app, tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	t.Fatalf("could not reach parent %q in the picker", parentID)
+}
+
+// toggleBlockingTarget drives the open blocking picker down to the named nib
+// and marks it, which is what the picker later confirms as a diff.
+func toggleBlockingTarget(t *testing.T, app *App, targetID string) {
+	t.Helper()
+	for i := 0; i < 20; i++ {
+		if item, ok := app.blockingPicker.list.SelectedItem().(blockingItem); ok && item.nib.ID == targetID {
+			sendKey(app, tea.KeyPressMsg{Code: ' ', Text: " "})
+			return
+		}
+		sendKey(app, tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	t.Fatalf("could not reach target %q in the picker", targetID)
+}
+
+// pickerHostView is one of the two views a picker is opened over. Each has its
+// own footer, and the report has to reach the one on screen.
+type pickerHostView struct {
+	name   string
+	enter  func(t *testing.T, app *App)
+	footer func(app *App) (string, statusKind)
+}
+
+func pickerHostViews() []pickerHostView {
+	return []pickerHostView{
+		{
+			name:   "list",
+			footer: func(app *App) (string, statusKind) { return app.list.statusMessage, app.list.statusKind },
+		},
+		{
+			name: "detail",
+			enter: func(t *testing.T, app *App) {
+				t.Helper()
+				sendKey(app, tea.KeyPressMsg{Code: tea.KeyEnter})
+				if app.state != viewDetail {
+					t.Fatalf("premise failed: expected the detail view, got state %d", app.state)
+				}
+			},
+			footer: func(app *App) (string, statusKind) { return app.detail.statusMessage, app.detail.statusKind },
+		},
+	}
+}
+
+// expandHelp opens the help panel, which replaces the footer's help keys and
+// takes rows the message has to be budgeted around.
+func expandHelp(t *testing.T, app *App) {
+	t.Helper()
+	sendKey(app, tea.KeyPressMsg{Code: '?', Text: "?"})
+	if !app.helpExpanded {
+		t.Fatal("premise failed: ? did not expand the help panel")
+	}
+}
+
+// reparentRefusalNibs is a move the parent picker offers and the write path
+// refuses. The picker filters candidates by ValidParentTypes, and a task under
+// a feature is a legal shape, so nothing there can pre-empt it; assignment
+// exclusivity is what refuses, because t1 and f1 both hold a place in ms1's
+// queue and a nib is never assigned alongside its own ancestor.
+func reparentRefusalNibs() []*nib.Nib {
+	return []*nib.Nib{
+		{ID: "ms1", Title: "Wave one", Type: "milestone", Status: "todo"},
+		{ID: "f1", Title: "Sync engine", Type: "feature", Status: "todo", Milestone: "ms1", MilestoneOrder: "a0"},
+		{ID: "t1", Title: "Wire the queue", Type: "task", Status: "todo", Milestone: "ms1", MilestoneOrder: "a1"},
+	}
+}
+
+// Spelled out rather than built by calling the resolver: an expectation
+// produced by re-running the production code asserts only that it is
+// deterministic.
+const reparentRefusal = "cannot move t1 under f1: t1 is assigned to milestone ms1 and f1 is assigned to milestone ms1 (a nib and its ancestor are never both assigned)"
+
+// Unlike the type picker — which pre-filters through validTypesForNib, so a
+// hierarchy-illegal flip is never offered — the parent picker can present a
+// target the write path rejects. A refusal it drops leaves the picker closed,
+// the list refreshed, and nothing said.
+func TestReparentRefusalReachesTheFooter(t *testing.T) {
+	const termWidth, termHeight = 160, 40
+	want := "Parent change failed: " + reparentRefusal
+
+	for _, helpOpen := range []bool{false, true} {
+		for _, view := range pickerHostViews() {
+			name := view.name
+			if helpOpen {
+				name += "/help-open"
+			}
+			t.Run(name, func(t *testing.T) {
+				app := setupRealBackendApp(t, reparentRefusalNibs())
+				if !focusOn(app, "t1") {
+					t.Fatal("premise failed: could not focus the task")
+				}
+				if view.enter != nil {
+					view.enter(t, app)
+				}
+				if helpOpen {
+					expandHelp(t, app)
+				}
+
+				sendKey(app, tea.KeyPressMsg{Code: 'p', Text: "p"})
+				if app.state != viewParentPicker {
+					t.Fatalf("premise failed: expected the parent picker to open, got state %d", app.state)
+				}
+				selectParent(t, app, "f1")
+
+				got, kind := view.footer(app)
+				if got != want {
+					t.Errorf("footer message = %q, want %q", got, want)
+				}
+				if kind != statusWarn {
+					t.Errorf("statusKind = %v, want statusWarn — the refusal would render in the success color", kind)
+				}
+				if painted := frameText(app.View().Content, termWidth, termHeight); !strings.Contains(painted, want) {
+					t.Errorf("the painted frame does not carry the refusal.\nwant: %q\ngot:  %q", want, painted)
+				}
+			})
+		}
+	}
+}
+
+// t2 is already blocked by t1, so marking t1 in t2's picker asks for the edge
+// back. The picker offers every nib but the subject, which is what lets it
+// present this refusal.
+func blockingCycleNibs() []*nib.Nib {
+	return []*nib.Nib{
+		{ID: "t1", Title: "Ship the parser", Type: "task", Status: "todo"},
+		{ID: "t2", Title: "Ship the writer", Type: "task", Status: "todo", BlockedBy: []string{"t1"}},
+	}
+}
+
+const blockingCycleRefusal = "would create cycle: [t1 t2 t1]"
+
+func TestBlockingRefusalReachesTheFooter(t *testing.T) {
+	const termWidth, termHeight = 160, 40
+	want := "Blocking change failed: " + blockingCycleRefusal
+
+	for _, helpOpen := range []bool{false, true} {
+		for _, view := range pickerHostViews() {
+			name := view.name
+			if helpOpen {
+				name += "/help-open"
+			}
+			t.Run(name, func(t *testing.T) {
+				app := setupRealBackendApp(t, blockingCycleNibs())
+				if !focusOn(app, "t2") {
+					t.Fatal("premise failed: could not focus the blocked nib")
+				}
+				if view.enter != nil {
+					view.enter(t, app)
+				}
+				if helpOpen {
+					expandHelp(t, app)
+				}
+
+				sendKey(app, tea.KeyPressMsg{Code: 'b', Text: "b"})
+				if app.state != viewBlockingPicker {
+					t.Fatalf("premise failed: expected the blocking picker to open, got state %d", app.state)
+				}
+				toggleBlockingTarget(t, app, "t1")
+				sendKey(app, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+				got, kind := view.footer(app)
+				if got != want {
+					t.Errorf("footer message = %q, want %q", got, want)
+				}
+				if kind != statusWarn {
+					t.Errorf("statusKind = %v, want statusWarn — the refusal would render in the success color", kind)
+				}
+				if painted := frameText(app.View().Content, termWidth, termHeight); !strings.Contains(painted, want) {
+					t.Errorf("the painted frame does not carry the refusal.\nwant: %q\ngot:  %q", want, painted)
+				}
+			})
+		}
+	}
+}
+
+// One picker confirmation carries both an add list and a remove list, and the
+// footer holds one message — so the two loops report through a single call
+// rather than the second overwriting the first. The stub is what makes the
+// remove side refusable at all: RemoveBlocking's only refusal is a write
+// failure, so the real backend cannot be driven into one from the picker.
+func TestBlockingFailuresFromBothLoopsAreReportedTogether(t *testing.T) {
+	addRefusal := errors.New("would create cycle: [nib-2 nib-1 nib-2]")
+	removeRefusal := errors.New("write refused: etag mismatch")
+
+	tests := []struct {
+		name      string
+		addErr    error
+		removeErr error
+		want      string
+	}{
+		{
+			name:   "the add loop names its reason",
+			addErr: addRefusal,
+			want:   "Blocking change failed: " + addRefusal.Error(),
+		},
+		{
+			name:      "the remove loop names its reason",
+			removeErr: removeRefusal,
+			want:      "Blocking change failed: " + removeRefusal.Error(),
+		},
+		{
+			name:      "both loops feed one count",
+			addErr:    addRefusal,
+			removeErr: removeRefusal,
+			want:      "Blocking change failed for 2 link(s)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app, stub := setupTestApp(t, pickerTestNibs())
+			_, cmd := app.Update(openBlockingPickerMsg{nibID: "nib-1", nibTitle: "First", currentBlocking: []string{"nib-3"}})
+			processCmd(app, cmd)
+			if app.state != viewBlockingPicker {
+				t.Fatalf("premise failed: expected the blocking picker to open, got state %d", app.state)
+			}
+			stub.AddBlockingErr = tt.addErr
+			stub.RemoveBlockingErr = tt.removeErr
+
+			_, cmd = app.Update(blockingConfirmedMsg{nibID: "nib-1", toAdd: []string{"nib-2"}, toRemove: []string{"nib-3"}})
+			processCmd(app, cmd)
+
+			if got := app.list.statusMessage; got != tt.want {
+				t.Errorf("list footer message = %q, want %q", got, tt.want)
+			}
+			if app.list.statusKind != statusWarn {
+				t.Errorf("statusKind = %v, want statusWarn", app.list.statusKind)
+			}
+		})
+	}
+}
+
+// A refused batch of moves is reported by count, and the nibs that were not
+// refused are still moved — a refusal must not abort the rest.
+func TestBatchReparentFailureIsReportedByCount(t *testing.T) {
+	app, stub := setupTestApp(t, []*nib.Nib{
+		{ID: "epic-1", Title: "Umbrella", Type: "epic", Status: "todo", Order: "1"},
+		{ID: "nib-1", Title: "First", Type: "task", Status: "todo", Order: "2"},
+		{ID: "nib-2", Title: "Second", Type: "task", Status: "todo", Order: "3"},
+		{ID: "nib-3", Title: "Third", Type: "task", Status: "todo", Order: "4"},
+	})
+	ids := []string{"nib-1", "nib-2", "nib-3"}
+	_, cmd := app.Update(openParentPickerMsg{
+		nibIDs:   ids,
+		nibTitle: "3 selected nibs",
+		nibTypes: []string{"task", "task", "task"},
+	})
+	processCmd(app, cmd)
+	if app.state != viewParentPicker {
+		t.Fatalf("premise failed: expected the parent picker to open, got state %d", app.state)
+	}
+	stub.SetParentErrByID = map[string]error{
+		"nib-1": errors.New(reparentRefusal),
+		"nib-3": errors.New("some other refusal"),
+	}
+
+	_, cmd = app.Update(parentSelectedMsg{nibIDs: ids, parentID: "epic-1"})
+	processCmd(app, cmd)
+
+	want := "Parent change failed for 2 nib(s)"
+	if got := app.list.statusMessage; got != want {
+		t.Errorf("list footer message = %q, want %q", got, want)
+	}
+	if app.list.statusKind != statusWarn {
+		t.Errorf("statusKind = %v, want statusWarn", app.list.statusKind)
+	}
+	var moved []string
+	for _, call := range stub.SetParentCalls {
+		moved = append(moved, call.ID)
+	}
+	if len(moved) != 1 || moved[0] != "nib-2" {
+		t.Errorf("applied moves = %v, want only nib-2 — a refusal must not abort the rest", moved)
+	}
+}
+
+// A re-parent that goes through leaves the footer alone, so the report cannot
+// degrade into a message shown on every move. The move is read back afterwards
+// so this cannot pass by nothing having happened.
+func TestSuccessfulReparentReportsNothing(t *testing.T) {
+	app := setupRealBackendApp(t, []*nib.Nib{
+		{ID: "e1", Title: "Umbrella", Type: "epic", Status: "todo"},
+		{ID: "t1", Title: "Wire the queue", Type: "task", Status: "todo"},
+	})
+	if !focusOn(app, "t1") {
+		t.Fatal("premise failed: could not focus the task")
+	}
+	sendKey(app, tea.KeyPressMsg{Code: 'p', Text: "p"})
+	if app.state != viewParentPicker {
+		t.Fatalf("premise failed: expected the parent picker to open, got state %d", app.state)
+	}
+	selectParent(t, app, "e1")
+
+	moved, err := app.backend.GetNib(context.Background(), "t1")
+	if err != nil || moved == nil || moved.Parent != "e1" {
+		t.Fatalf("premise failed: the move did not land (parent=%v, err=%v)", moved, err)
+	}
+	if got := app.list.statusMessage; got != "" {
+		t.Errorf("list footer message = %q, want empty after an accepted move", got)
+	}
+	if app.list.statusKind != statusOK {
+		t.Errorf("statusKind = %v, want statusOK", app.list.statusKind)
+	}
+}
+
+// editorSession puts the app in the state an $EDITOR exit lands in: a nib whose
+// file exists under the store root with an mtime later than the one recorded
+// when the editor launched, which is what makes the app take the edit in.
+func editorSession(t *testing.T, app *App, stub *StubBackend, id string) {
+	t.Helper()
+	root := t.TempDir()
+	stub.RootDir = root
+	rel := filepath.Join("data", id+".md")
+	if err := os.MkdirAll(filepath.Join(root, "data"), 0o755); err != nil {
+		t.Fatalf("creating the store's data directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, rel), []byte("edited by hand\n"), 0o644); err != nil {
+		t.Fatalf("writing the nib file: %v", err)
+	}
+	n, ok := stub.Nibs[id]
+	if !ok {
+		t.Fatalf("premise failed: %s is not in the stub store", id)
+	}
+	n.Path = filepath.ToSlash(rel)
+	app.editingNibID = id
+	app.editingNibModTime = time.Now().Add(-time.Hour)
+}
+
+// The write that follows an $EDITOR session is a write, and a refused one has
+// to say so. The user's text is already on disk, so the message must name the
+// store as what turned it down rather than reporting a failed "reload" — which
+// would read as the edit being safely in and merely not shown.
+func TestRefusedEditorWriteReachesTheListFooter(t *testing.T) {
+	app, stub := setupTestApp(t, pickerTestNibs())
+	editorSession(t, app, stub, "nib-1")
+	stub.ReloadErr = errors.New("nib-1: updating /store/data/nib-1.md: file does not exist")
+
+	_, cmd := app.Update(editorFinishedMsg{})
+	processCmd(app, cmd)
+
+	want := editorTextSafeLead +
+		" The store did not accept the edit to nib-1: nib-1: updating /store/data/nib-1.md: file does not exist"
+	if got := app.list.statusMessage; got != want {
+		t.Errorf("list footer message = %q, want %q", got, want)
+	}
+	if app.list.statusKind != statusWarn {
+		t.Errorf("statusKind = %v, want statusWarn — it would render in the success color", app.list.statusKind)
+	}
+	if got := frameText(app.View().Content, 120, 40); !strings.Contains(got, want) {
+		t.Errorf("the frame does not carry the refusal:\n%s", got)
+	}
+}
+
+// The same refusal raised while the detail view is up has to land in the detail
+// footer; the list footer is not on screen there.
+func TestRefusedEditorWriteReachesTheDetailFooter(t *testing.T) {
+	app, stub := setupTestApp(t, pickerTestNibs())
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if app.state != viewDetail {
+		t.Fatalf("premise failed: expected the detail view, got state %d", app.state)
+	}
+	editorSession(t, app, stub, "nib-1")
+	stub.ReloadErr = errors.New(refusalReason)
+
+	_, cmd := app.Update(editorFinishedMsg{})
+	processCmd(app, cmd)
+
+	want := editorTextSafeLead + " The store did not accept the edit to nib-1: " + refusalReason
+	if got := app.detail.statusMessage; got != want {
+		t.Errorf("detail footer message = %q, want %q", got, want)
+	}
+	if app.detail.statusKind != statusWarn {
+		t.Errorf("detail statusKind = %v, want statusWarn", app.detail.statusKind)
+	}
+}
+
+// The read that locates the nib is the first thing `nibs config set-prefix`
+// running in another process breaks: the id this session opened the editor with
+// no longer answers. Swallowing that leaves the edit unrecorded with nothing on
+// screen — the same silence, one call earlier — so it is reported too.
+func TestEditedNibMissingFromTheStoreIsReported(t *testing.T) {
+	tests := []struct {
+		name    string
+		arrange func(stub *StubBackend)
+		want    string
+	}{
+		{
+			name:    "lookup refused",
+			arrange: func(stub *StubBackend) { stub.GetErr = errors.New("store is unreadable") },
+			want:    editorTextSafeLead + " The store did not accept the edit to nib-1: store is unreadable",
+		},
+		{
+			name:    "id no longer resolves",
+			arrange: func(stub *StubBackend) { delete(stub.Nibs, "nib-1") },
+			want:    editorTextSafeLead + " The store did not accept the edit to nib-1: nib-1 is no longer in the store",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app, stub := setupTestApp(t, pickerTestNibs())
+			editorSession(t, app, stub, "nib-1")
+			tt.arrange(stub)
+
+			_, cmd := app.Update(editorFinishedMsg{})
+			processCmd(app, cmd)
+
+			if got := app.list.statusMessage; got != tt.want {
+				t.Errorf("list footer message = %q, want %q", got, tt.want)
+			}
+			if app.list.statusKind != statusWarn {
+				t.Errorf("statusKind = %v, want statusWarn", app.list.statusKind)
+			}
+		})
+	}
+}
+
+// A warning that is always up says nothing. An accepted write must leave the
+// footer alone, and an untouched file must not be written back at all — the
+// mtime taken before the editor launched is what tells the two apart.
+func TestAcceptedEditorSessionSaysNothing(t *testing.T) {
+	tests := []struct {
+		name      string
+		touch     bool
+		wantWrite bool
+	}{
+		{name: "file saved", touch: true, wantWrite: true},
+		{name: "editor quit without saving", touch: false, wantWrite: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app, stub := setupTestApp(t, pickerTestNibs())
+			editorSession(t, app, stub, "nib-1")
+			if !tt.touch {
+				// The recorded mtime is the file's own, so nothing looks newer.
+				info, err := os.Stat(filepath.Join(stub.RootDir, "data", "nib-1.md"))
+				if err != nil {
+					t.Fatalf("stat: %v", err)
+				}
+				app.editingNibModTime = info.ModTime()
+			}
+
+			_, cmd := app.Update(editorFinishedMsg{})
+			processCmd(app, cmd)
+
+			if got := len(stub.ReloadCalls) > 0; got != tt.wantWrite {
+				t.Errorf("write attempted = %v, want %v (calls: %v)", got, tt.wantWrite, stub.ReloadCalls)
+			}
+			if app.list.statusMessage != "" {
+				t.Errorf("footer message = %q, want none", app.list.statusMessage)
+			}
+		})
+	}
+}
+
+// The editor state is a one-shot guard for the session that just ended. Holding
+// it past a refusal would make the NEXT editor exit write this nib again,
+// against a timestamp from a different session.
+func TestEditorStateIsClearedAfterARefusal(t *testing.T) {
+	app, stub := setupTestApp(t, pickerTestNibs())
+	editorSession(t, app, stub, "nib-1")
+	stub.ReloadErr = errors.New(refusalReason)
+
+	_, cmd := app.Update(editorFinishedMsg{})
+	processCmd(app, cmd)
+
+	if app.editingNibID != "" {
+		t.Errorf("editingNibID = %q after a refusal, want it cleared", app.editingNibID)
+	}
+	if !app.editingNibModTime.IsZero() {
+		t.Errorf("editingNibModTime = %v after a refusal, want the zero time", app.editingNibModTime)
+	}
+}
+
+// The file the store says the nib lives in is the one the mtime comparison asks
+// about, so a nib whose file is gone cannot be compared and cannot be taken in.
+// That is the third way an editor session ends without the store recording it,
+// and it is as silent as the other two were.
+func TestUnreadableNibFileAfterEditingIsReported(t *testing.T) {
+	app, stub := setupTestApp(t, pickerTestNibs())
+	editorSession(t, app, stub, "nib-1")
+	if err := os.Remove(filepath.Join(stub.RootDir, "data", "nib-1.md")); err != nil {
+		t.Fatalf("removing the nib file: %v", err)
+	}
+
+	_, cmd := app.Update(editorFinishedMsg{})
+	processCmd(app, cmd)
+
+	// The file is gone, so the reassurance the other legs carry would be a lie
+	// here: this leg gets a lead of its own.
+	prefix := editorFileUnreadableLead + " The file recorded for nib-1 could not be read: stat "
+	got := app.list.statusMessage
+	if !strings.HasPrefix(got, prefix) {
+		t.Errorf("list footer message = %q, want it to start %q", got, prefix)
+	}
+	// Neither claim about the user's text is this leg's to make. A stat that
+	// failed cannot promise the text is sitting in the file — and it cannot say
+	// the text is gone either: a concurrent `nibs config set-prefix` renames the
+	// file while the TUI is suspended, and the stale Path the store hands back
+	// stats ENOENT over a file holding every word the user wrote.
+	for _, unwanted := range []string{"Your text is still in the file", "Nothing was saved"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("list footer message = %q — %q settles what became of the user's text, which a failed stat does not establish", got, unwanted)
+		}
+	}
+	if app.list.statusKind != statusWarn {
+		t.Errorf("statusKind = %v, want statusWarn", app.list.statusKind)
+	}
+}
+
+// editorRefusalGeometries is where an $EDITOR refusal has to survive being cut.
+// renderStatusMessage caps the footer at height/3 rows and drops the overflow
+// with an ellipsis, so the narrow-and-short corner is where a sentence that ends
+// with its remedy ends up saying only that something went wrong.
+var (
+	editorRefusalWidths  = []int{30, 34, 38, 80}
+	editorRefusalHeights = []int{8, 12, 16, 24}
+)
+
+// statusRegionIsOneLine reports the geometries where the footer grants the
+// status message a single row: height/3 is one, or — with the help panel open —
+// the region is two rows and the panel keeps one of them for itself.
+func statusRegionIsOneLine(panelOpen bool, height int) bool {
+	if !panelOpen {
+		return maxStatusFooterLines(height) == 1
+	}
+	return min(maxStatusFooterLines(height), max(1, max(1, height-listBoxFloor)-1)) == 1
+}
+
+// An $EDITOR session the store did not record has two things to say — where the
+// user's text is, and what to do next — and reaching app.list.statusMessage is
+// not either of them. The message is cut to the footer's row budget with a
+// trailing ellipsis, so a remedy at the end of the sentence is exactly what the
+// user does not get: at eight, twelve and sixteen rows the old wording left the
+// store's error text on screen and nothing at all about the file.
+//
+// Below forty columns a single-row region cannot carry both clauses whatever
+// they say — twenty-five cells survive the wrap there — so those geometries pin
+// the weaker property that still separates this wording from the old one: the
+// row spends itself on the LEAD rather than on the store's error text.
+func TestTheEditorRefusalKeepsItsLeadOnScreen(t *testing.T) {
+	legs := []struct {
+		name    string
+		arrange func(t *testing.T, stub *StubBackend)
+		want    []string
+		floor   []string
+	}{
+		{
+			name:    "the store refused the write",
+			arrange: func(_ *testing.T, stub *StubBackend) { stub.ReloadErr = errors.New(refusalReason) },
+			want:    []string{"Your text is still in the file", "Restart nibs"},
+			floor:   []string{"Your text is still in"},
+		},
+		{
+			name:    "the lookup was refused",
+			arrange: func(_ *testing.T, stub *StubBackend) { stub.GetErr = errors.New("store is unreadable") },
+			want:    []string{"Your text is still in the file", "Restart nibs"},
+			floor:   []string{"Your text is still in"},
+		},
+		{
+			name:    "the id no longer resolves",
+			arrange: func(_ *testing.T, stub *StubBackend) { delete(stub.Nibs, "nib-1") },
+			want:    []string{"Your text is still in the file", "Restart nibs"},
+			floor:   []string{"Your text is still in"},
+		},
+		{
+			name: "the file cannot be read",
+			arrange: func(t *testing.T, stub *StubBackend) {
+				if err := os.Remove(filepath.Join(stub.RootDir, "data", "nib-1.md")); err != nil {
+					t.Fatalf("removing the nib file: %v", err)
+				}
+			},
+			want:  []string{"Nothing was recorded", "the file cannot be read", "Restart nibs"},
+			floor: []string{"Nothing was recorded"},
+		},
+	}
+
+	for _, leg := range legs {
+		for _, panelOpen := range []bool{false, true} {
+			for _, height := range editorRefusalHeights {
+				for _, width := range editorRefusalWidths {
+					name := fmt.Sprintf("%s/%dx%d", leg.name, width, height)
+					if panelOpen {
+						name += "/help"
+					}
+					t.Run(name, func(t *testing.T) {
+						app, stub := setupTestApp(t, pickerTestNibs())
+						app.Update(tea.WindowSizeMsg{Width: width, Height: height})
+						if panelOpen {
+							sendKey(app, tea.KeyPressMsg{Code: '?', Text: "?"})
+							if !app.helpExpanded {
+								t.Fatal("premise failed: ? did not expand the help panel")
+							}
+						}
+						editorSession(t, app, stub, "nib-1")
+						leg.arrange(t, stub)
+
+						_, cmd := app.Update(editorFinishedMsg{})
+						processCmd(app, cmd)
+						if app.list.statusMessage == "" {
+							t.Fatal("premise failed: the editor session was not reported at all")
+						}
+
+						content := app.View().Content
+						assertFrameFitsTerminal(t, content, width, height)
+						painted := frameText(content, width, height)
+
+						want := leg.want
+						if statusRegionIsOneLine(panelOpen, height) && width < lipgloss.Width(editorTextSafeLead) {
+							want = leg.floor
+						}
+						for _, fragment := range want {
+							if !strings.Contains(painted, fragment) {
+								t.Errorf("the frame does not carry %q — the user is told the store refused the edit and nothing about what happened to their text:\n%s",
+									fragment, painted)
+							}
+						}
+					})
+				}
+			}
+		}
 	}
 }

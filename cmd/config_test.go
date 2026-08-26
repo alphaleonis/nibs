@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -8,9 +9,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/fsutil"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/testskip"
 )
@@ -22,7 +26,9 @@ type testNibSpec struct {
 	filename  string
 	id        string
 	parent    string
+	milestone string
 	blockedBy []string
+	blocking  []string
 	body      string
 }
 
@@ -75,7 +81,9 @@ func setupSetPrefixTest(t *testing.T, prefix string, nibs ...testNibSpec) (strin
 			Type:      "task",
 			Body:      spec.body,
 			Parent:    spec.parent,
+			Milestone: spec.milestone,
 			BlockedBy: spec.blockedBy,
+			Blocking:  spec.blocking,
 		}
 		data, err := b.Render()
 		if err != nil {
@@ -133,7 +141,14 @@ func TestSetPrefix_HappyPath_RenamesFilesAndUpdatesReferences(t *testing.T) {
 	_, nibsDir, cfgPath := setupSetPrefixTest(t, "tnib-",
 		testNibSpec{filename: "tnib-aaa--root.md", id: "tnib-aaa"},
 		testNibSpec{filename: "tnib-bbb--child.md", id: "tnib-bbb", parent: "tnib-aaa", body: "child body"},
-		testNibSpec{filename: "tnib-ccc--blocked.md", id: "tnib-ccc", parent: "tnib-aaa", blockedBy: []string{"tnib-bbb"}},
+		testNibSpec{
+			filename:  "tnib-ccc--blocked.md",
+			id:        "tnib-ccc",
+			parent:    "tnib-aaa",
+			milestone: "tnib-aaa",
+			blockedBy: []string{"tnib-bbb"},
+			blocking:  []string{"tnib-bbb"},
+		},
 	)
 
 	if err := runSetPrefixCmd(t, cfgPath, nibsDir, "new-", "--json"); err != nil {
@@ -163,13 +178,20 @@ func TestSetPrefix_HappyPath_RenamesFilesAndUpdatesReferences(t *testing.T) {
 		t.Errorf("child body lost during rewrite: got %q", child.Body)
 	}
 
-	// Blocked nib's parent + blocked_by must be updated.
+	// Every id-valued front-matter field on the blocked nib must be retargeted:
+	// one left behind names a nib that no longer exists.
 	blocked := parseNibFile(t, dataPath(nibsDir, "new-ccc--blocked.md"))
 	if blocked.Parent != "new-aaa" {
 		t.Errorf("blocked parent = %q, want %q", blocked.Parent, "new-aaa")
 	}
+	if blocked.Milestone != "new-aaa" {
+		t.Errorf("blocked milestone = %q, want %q", blocked.Milestone, "new-aaa")
+	}
 	if len(blocked.BlockedBy) != 1 || blocked.BlockedBy[0] != "new-bbb" {
 		t.Errorf("blocked blocked_by = %v, want [new-bbb]", blocked.BlockedBy)
+	}
+	if len(blocked.Blocking) != 1 || blocked.Blocking[0] != "new-bbb" {
+		t.Errorf("blocked blocking = %v, want [new-bbb]", blocked.Blocking)
 	}
 
 	// Config must be rewritten with the new prefix.
@@ -774,4 +796,405 @@ extra: true
 	if _, statErr := os.Stat(dataPath(nibsDir, "tnib-aaa--root.md")); statErr != nil {
 		t.Errorf("the refused edit renamed a nib file anyway: %v", statErr)
 	}
+}
+
+// writeNibFileForTest renders one nib into the store's data/ directory, the way
+// another nibs process creating a nib would leave it.
+func writeNibFileForTest(t *testing.T, nibsDir, filename, id string) {
+	t.Helper()
+	b := &nib.Nib{ID: id, Version: 2, Title: id, Status: "todo", Type: "task"}
+	data, err := b.Render()
+	if err != nil {
+		t.Fatalf("render %s: %v", id, err)
+	}
+	if err := os.WriteFile(dataPath(nibsDir, filename), data, 0o644); err != nil {
+		t.Fatalf("write nib %s: %v", id, err)
+	}
+}
+
+// TestSetPrefixRenamesANibThatAppearedAfterTheSnapshot is the re-derivation
+// guard for the rename plan.
+//
+// The plan used to be built from the store snapshot this process loaded at
+// startup, dozens of lines before it took the store lock. A `nibs new` landing
+// in that window created a file the plan never saw, and the run left it under
+// the OLD prefix while every other file and the config carried the new one — an
+// id no vocabulary in the store declares.
+//
+// gitIsDirtyFn is the injection point because of WHERE it runs: inside the
+// locked section, and it is the last thing the command does before it derives
+// what it will rename. A file that appears there is the latest a concurrent
+// create can possibly be, so a plan that includes it was derived at the last
+// read before the first write.
+func TestSetPrefixRenamesANibThatAppearedAfterTheSnapshot(t *testing.T) {
+	_, nibsDir, cfgPath := setupSetPrefixTest(t, "tnib-",
+		testNibSpec{filename: "tnib-aaa--root.md", id: "tnib-aaa"},
+	)
+
+	gitIsDirtyFn = func(string, ...string) (bool, error) {
+		writeNibFileForTest(t, nibsDir, "tnib-zzz--late.md", "tnib-zzz")
+		return false, nil
+	}
+
+	if err := runSetPrefixCmd(t, cfgPath, nibsDir, "new-", "--json"); err != nil {
+		t.Fatalf("set-prefix failed: %v", err)
+	}
+
+	if _, err := os.Stat(dataPath(nibsDir, "new-zzz--late.md")); err != nil {
+		t.Errorf("the nib that appeared after the snapshot was not renamed: %v", err)
+	}
+	if _, err := os.Stat(dataPath(nibsDir, "tnib-zzz--late.md")); !os.IsNotExist(err) {
+		t.Errorf("a file under the old prefix survived a completed set-prefix, stat err=%v", err)
+	}
+	if cfg := loadCfg(t, cfgPath); cfg.Nibs.Prefix != "new-" {
+		t.Errorf("cfg prefix = %q, want %q", cfg.Nibs.Prefix, "new-")
+	}
+}
+
+// TestSetPrefixRefusesAStoreWhoseIdsMovedUnderIt is the other direction of the
+// re-derivation, and the one it does NOT paper over: a second `nibs config
+// set-prefix` completing inside the window leaves every id under ITS new prefix,
+// which the rebuilt plan refuses by name. The refusal lands while the store is
+// still untouched, because the re-derivation runs before the first rename.
+func TestSetPrefixRefusesAStoreWhoseIdsMovedUnderIt(t *testing.T) {
+	_, nibsDir, cfgPath := setupSetPrefixTest(t, "tnib-",
+		testNibSpec{filename: "tnib-aaa--root.md", id: "tnib-aaa"},
+	)
+
+	gitIsDirtyFn = func(string, ...string) (bool, error) {
+		if err := os.Rename(dataPath(nibsDir, "tnib-aaa--root.md"), dataPath(nibsDir, "other-aaa--root.md")); err != nil {
+			t.Fatalf("simulating the rename another set-prefix made: %v", err)
+		}
+		return false, nil
+	}
+
+	err := runSetPrefixCmd(t, cfgPath, nibsDir, "new-", "--json")
+	if err == nil {
+		t.Fatal("expected a refusal over a store whose ids no longer carry the old prefix, got nil")
+	}
+	if !strings.Contains(err.Error(), "other-aaa") || !strings.Contains(err.Error(), "tnib-") {
+		t.Errorf("error = %q, want it to name the id it found and the prefix it expected", err)
+	}
+	if _, statErr := os.Stat(dataPath(nibsDir, "other-aaa--root.md")); statErr != nil {
+		t.Errorf("the refusal renamed a file anyway: %v", statErr)
+	}
+	if _, statErr := os.Stat(dataPath(nibsDir, "new-aaa--root.md")); !os.IsNotExist(statErr) {
+		t.Errorf("the refusal renamed a file anyway, stat err=%v", statErr)
+	}
+	if cfg := loadCfg(t, cfgPath); cfg.Nibs.Prefix != "tnib-" {
+		t.Errorf("cfg prefix = %q, want unchanged %q", cfg.Nibs.Prefix, "tnib-")
+	}
+}
+
+// reprefixOnDiskForTest stands in for another `nibs config set-prefix`
+// completing: every nib file renamed and the config rewritten, with nothing in
+// this process told about it.
+func reprefixOnDiskForTest(t *testing.T, nibsDir, cfgPath, oldPrefix, newPrefix string) {
+	t.Helper()
+	entries, err := os.ReadDir(storeDataDir(nibsDir))
+	if err != nil {
+		t.Fatalf("read data dir: %v", err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasPrefix(name, oldPrefix) {
+			continue
+		}
+		renamed := newPrefix + strings.TrimPrefix(name, oldPrefix)
+		if err := os.Rename(dataPath(nibsDir, name), dataPath(nibsDir, renamed)); err != nil {
+			t.Fatalf("rename %s: %v", name, err)
+		}
+	}
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read cfg: %v", err)
+	}
+	rewritten := strings.Replace(string(raw), "prefix: "+oldPrefix, "prefix: "+newPrefix, 1)
+	if rewritten == string(raw) {
+		t.Fatalf("the config does not declare prefix %q:\n%s", oldPrefix, raw)
+	}
+	if err := os.WriteFile(cfgPath, []byte(rewritten), 0o644); err != nil {
+		t.Fatalf("write cfg: %v", err)
+	}
+}
+
+// setPrefixOverAStoreThatMoved runs `config set-prefix` the way the lock window
+// leaves it: the command's Core carries the snapshot it loaded before another
+// process renamed every file and rewrote the config, and disk carries what that
+// process left. runSetPrefix is driven directly because the move has to land
+// between the startup load and the command body, which is the one seam the
+// Cobra pipeline does not expose — and with --force there is no injection point
+// inside the locked section at all, since the git guard it skips is the only
+// call the command makes there.
+func setPrefixOverAStoreThatMoved(t *testing.T, nibsDir, cfgPath, newPrefix string, force bool) error {
+	t.Helper()
+	cfg, err := config.LoadFromStore(nibsDir)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	core := nibcore.New(nibsDir, cfg)
+	core.SetWarnWriter(nil)
+	if err := core.Load(); err != nil {
+		t.Fatalf("load store: %v", err)
+	}
+
+	reprefixOnDiskForTest(t, nibsDir, cfgPath, "tnib-", "zz-")
+
+	setPrefixForce = force
+	cmd := &cobra.Command{}
+	cmd.SetContext(withApp(context.Background(), &App{Core: core}))
+	return runSetPrefix(cmd, []string{newPrefix})
+}
+
+// TestSetPrefixStoreMovedRefusalNamesARerunThatWorks is the remedy half of the
+// re-derivation's refusal.
+//
+// The re-derivation is what makes a second `set-prefix` completing in the lock
+// window detectable at all, and the refusal it raises used to surface
+// BuildPlan's own wording — "snapshot contains nib …", this command's
+// bookkeeping — with nothing said about what happened or what to do, unlike
+// every sibling refusal here. The message is now the one thing a printed remedy
+// has to be: runnable. This runs it, against the store the refusal left behind.
+//
+// --force is carried into the rerun because the winner just renamed every file:
+// in a git-tracked store the bare form then meets the dirtiness guard and exits
+// 2, so the flag is part of what is asserted rather than cosmetic.
+func TestSetPrefixStoreMovedRefusalNamesARerunThatWorks(t *testing.T) {
+	tests := []struct {
+		name      string
+		force     bool
+		wantRerun string
+	}{
+		{
+			name:      "the rerun is the bare command",
+			wantRerun: "nibs config set-prefix new-",
+		},
+		{
+			name:      "a forced run prescribes a forced rerun",
+			force:     true,
+			wantRerun: "nibs config set-prefix new- --force",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, nibsDir, cfgPath := setupSetPrefixTest(t, "tnib-",
+				testNibSpec{filename: "tnib-aaa--root.md", id: "tnib-aaa"},
+				testNibSpec{filename: "tnib-bbb--leaf.md", id: "tnib-bbb", parent: "tnib-aaa"},
+			)
+
+			err := setPrefixOverAStoreThatMoved(t, nibsDir, cfgPath, "new-", tt.force)
+			if err == nil {
+				t.Fatal("expected a refusal over a store that moved under the lock, got nil")
+			}
+			if !strings.Contains(err.Error(), "waited for its write lock") {
+				t.Errorf("the refusal does not say what happened: %q", err)
+			}
+
+			cmds := diagnosticNibsCommands(err.Error())
+			if len(cmds) != 1 {
+				t.Fatalf("the refusal names %d `nibs …` commands, want exactly 1: %q", len(cmds), err)
+			}
+			if got := "nibs " + strings.Join(cmds[0], " "); got != tt.wantRerun {
+				t.Errorf("the refusal prescribes %q, want %q", got, tt.wantRerun)
+			}
+
+			// A fresh process is what the rerun means: it resolves the store
+			// from disk, so it reads the prefix the winner left rather than the
+			// one the refused run held.
+			if err := runDiagnosticCommand(t, nibsDir, cmds[0]); err != nil {
+				t.Fatalf("the rerun this refusal prescribes fails when run: %v", err)
+			}
+
+			for _, name := range []string{"new-aaa--root.md", "new-bbb--leaf.md"} {
+				if _, statErr := os.Stat(dataPath(nibsDir, name)); statErr != nil {
+					t.Errorf("the prescribed rerun left %s unwritten: %v", name, statErr)
+				}
+			}
+			if cfg := loadCfg(t, cfgPath); cfg.Nibs.Prefix != "new-" {
+				t.Errorf("after the prescribed rerun the config declares %q, want %q", cfg.Nibs.Prefix, "new-")
+			}
+		})
+	}
+}
+
+// TestSetPrefixLeavesAnAlreadyLoadedStoreRefusingRatherThanResurrecting is the
+// cross-process half of Core.Update's stale-path guard, against the real command
+// that moves the files.
+//
+// A write verb loads the store, a `nibs config set-prefix` renames every nib
+// file underneath it, and only then does the first process write its edit. The
+// path it holds names nothing, and a creating write would put the edit in a
+// second file under the retired prefix while the live nib kept the old value —
+// and exit 0.
+func TestSetPrefixLeavesAnAlreadyLoadedStoreRefusingRatherThanResurrecting(t *testing.T) {
+	_, nibsDir, cfgPath := setupSetPrefixTest(t, "tnib-",
+		testNibSpec{filename: "tnib-aaa--root.md", id: "tnib-aaa"},
+	)
+
+	// The store as the other process already holds it: loaded before the rename,
+	// and with no watcher to refresh it afterwards.
+	core := nibcore.New(nibsDir, loadCfg(t, cfgPath))
+	core.SetWarnWriter(nil)
+	if err := core.Load(); err != nil {
+		t.Fatalf("load core: %v", err)
+	}
+
+	if err := runSetPrefixCmd(t, cfgPath, nibsDir, "new-", "--json"); err != nil {
+		t.Fatalf("set-prefix failed: %v", err)
+	}
+
+	edit, err := core.GetForUpdate("tnib-aaa")
+	if err != nil {
+		t.Fatalf("GetForUpdate: %v", err)
+	}
+	edit.Title = "Edited After The Rename"
+
+	err = core.Update(edit, nil)
+	if err == nil {
+		t.Fatal("the already-loaded store wrote its edit to a renamed-away path instead of refusing")
+	}
+	if !strings.HasPrefix(err.Error(), "tnib-aaa: ") {
+		t.Errorf("error = %q, want it to LEAD with the nib it could not write; the path "+
+			"fsutil formats already begins with the id, so mere containment is satisfied "+
+			"without Update naming it at all", err)
+	}
+
+	// The class the CLI reports for it. The store's files moved under a loaded
+	// process, so the repair is to re-read the store — not to fix an argument,
+	// which is what the VALIDATION_ERROR fallback would claim.
+	code, ok := mutationErrCode(err)
+	if !ok || code != output.ErrFileError {
+		t.Errorf("mutationErrCode() = %q (classified=%v), want %q", code, ok, output.ErrFileError)
+	}
+	var coded *output.CodedError
+	if !errors.As(setMutationError(false, err), &coded) {
+		t.Fatalf("setMutationError() = %v, want *output.CodedError", err)
+	}
+	if got := output.ExitCode(coded.Code); got != output.ExitIO {
+		t.Errorf("exit status = %d for code %q, want %d (io/filesystem)", got, coded.Code, output.ExitIO)
+	}
+
+	if _, statErr := os.Stat(dataPath(nibsDir, "tnib-aaa--root.md")); !os.IsNotExist(statErr) {
+		t.Errorf("a file under the retired prefix was resurrected, stat err=%v", statErr)
+	}
+	if got := parseNibFile(t, dataPath(nibsDir, "new-aaa--root.md")).Title; got == "Edited After The Rename" {
+		t.Error("the refused edit reached the live file")
+	}
+}
+
+// TestSetPrefixLeavesAnAlreadyLoadedStoreRefusingToMint is the cross-process
+// half of Core.Create's config re-read, against the real command that changes
+// the vocabulary.
+//
+// `nibs new` takes the store's write lock; `nibs config set-prefix` holds it for
+// the whole of its rename-plus-config-rewrite. A create that parked behind one
+// therefore resumes into a store that already declares the new prefix, and
+// neither answer it could give on its own is safe: drawing from the config it
+// loaded names the new file under the retired prefix, and drawing from the store
+// draws in an id space c.nibs — still keyed by the pre-rename ids — indexes
+// nothing of, so the collision guard cannot see the nib a draw would land on.
+// It refuses, and a rerun reads the store as the winner left it.
+//
+// The wait is not simulated; only its outcome is, by running set-prefix to
+// completion against a store another Core already holds open.
+func TestSetPrefixLeavesAnAlreadyLoadedStoreRefusingToMint(t *testing.T) {
+	_, nibsDir, cfgPath := setupSetPrefixTest(t, "tnib-",
+		testNibSpec{filename: "tnib-aaa--root.md", id: "tnib-aaa"},
+	)
+
+	// The store as the parked process already holds it: loaded before the
+	// rename, with no watcher to refresh it afterwards.
+	core := nibcore.New(nibsDir, loadCfg(t, cfgPath))
+	core.SetWarnWriter(nil)
+	if err := core.Load(); err != nil {
+		t.Fatalf("load core: %v", err)
+	}
+
+	if err := runSetPrefixCmd(t, cfgPath, nibsDir, "new-", "--json"); err != nil {
+		t.Fatalf("set-prefix failed: %v", err)
+	}
+
+	minted := &nib.Nib{Title: "Minted After The Rename", Slug: "minted-after-the-rename", Status: "todo", Type: "task"}
+	err := core.Create(minted)
+	if err == nil {
+		t.Fatalf("the already-loaded store minted %q at %q instead of refusing", minted.ID, minted.Path)
+	}
+	var rePrefixed *nibcore.StoreRePrefixedError
+	if !errors.As(err, &rePrefixed) {
+		t.Fatalf("Create error = %v, want a *StoreRePrefixedError", err)
+	}
+	if rePrefixed.Loaded != "tnib-" || rePrefixed.Declared != "new-" {
+		t.Errorf("refusal names loaded %q / declared %q, want tnib- / new-", rePrefixed.Loaded, rePrefixed.Declared)
+	}
+
+	// The class the CLI reports for it — `nibs new` passes this code straight to
+	// cmdError. The store's files moved under a loaded process, so the repair is
+	// to re-read the store, not to fix an argument.
+	code, ok := mutationErrCode(err)
+	if !ok || code != output.ErrFileError {
+		t.Errorf("mutationErrCode() = %q (classified=%v), want %q", code, ok, output.ErrFileError)
+	}
+	if got := output.ExitCode(code); got != output.ExitIO {
+		t.Errorf("exit status = %d for code %q, want %d (io/filesystem)", got, code, output.ExitIO)
+	}
+
+	entries, rerr := os.ReadDir(storeDataDir(nibsDir))
+	if rerr != nil {
+		t.Fatalf("reading the data directory: %v", rerr)
+	}
+	if len(entries) != 1 || entries[0].Name() != "new-aaa--root.md" {
+		names := make([]string, len(entries))
+		for i, e := range entries {
+			names[i] = e.Name()
+		}
+		t.Errorf("data/ holds %v after the refusal, want only the renamed nib", names)
+	}
+}
+
+// TestSetPrefixNamesALiveServe is the operator's half of the refusal above.
+//
+// The store's prefix is read ONCE, at startup, by every nibs process — no
+// watcher reloads config.yml — so a rename that lands under a live `nibs serve`
+// or `nibs tui` leaves it working from a vocabulary no file in the store carries:
+// its creates refuse (nibcore.StoreRePrefixedError) and every short id it is
+// asked to resolve is prepended the retired prefix. Nothing that process can do
+// clears it, and the reader who caused it is looking at this line and no other.
+func TestSetPrefixNamesALiveServe(t *testing.T) {
+	const note = "restart it"
+
+	t.Run("with no other process holding the store", func(t *testing.T) {
+		_, nibsDir, cfgPath := setupSetPrefixTest(t, "tnib-",
+			testNibSpec{filename: "tnib-aaa--root.md", id: "tnib-aaa"},
+		)
+		out := captureStdout(t, func() {
+			if err := runSetPrefixCmd(t, cfgPath, nibsDir, "new-"); err != nil {
+				t.Fatalf("set-prefix failed: %v", err)
+			}
+		})
+		if strings.Contains(out, note) {
+			t.Errorf("output claims a process is holding the store when none is:\n%s", out)
+		}
+	})
+
+	t.Run("with a serve holding the store", func(t *testing.T) {
+		_, nibsDir, cfgPath := setupSetPrefixTest(t, "tnib-",
+			testNibSpec{filename: "tnib-aaa--root.md", id: "tnib-aaa"},
+		)
+		// The shared side is what `nibs serve` holds for its whole lifetime.
+		serving, err := nibcore.AcquireServeLock(nibsDir)
+		if err != nil {
+			t.Fatalf("AcquireServeLock: %v", err)
+		}
+		defer func() { _ = serving.Release() }()
+
+		out := captureStdout(t, func() {
+			if err := runSetPrefixCmd(t, cfgPath, nibsDir, "new-"); err != nil {
+				t.Fatalf("set-prefix failed: %v", err)
+			}
+		})
+		if !strings.Contains(out, note) {
+			t.Errorf("output does not name the holder whose creates this rename just started refusing:\n%s", out)
+		}
+	})
 }

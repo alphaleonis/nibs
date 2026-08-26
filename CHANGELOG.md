@@ -49,6 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`nibs config set-prefix` now edits only the prefix key of your config file**, instead of rewriting it from the merged read model — which discarded the file's comments, baked user-level settings into the project, and dropped any key this build does not model; a config holding a second YAML document is refused rather than rewritten from the first one alone.
 - **The roadmap's Unscheduled group now shows exactly the work outside every milestone** — items under a milestone hidden by a `--status` filter no longer leak into the backlog, and a work item whose parent link names no nib now appears there instead of vanishing from the roadmap entirely.
 - **`nibs new` no longer silently shadows an existing nib when a generated id collides** — a colliding draw is redrawn, and a caller-supplied duplicate id is refused as a conflict instead of leaving two files claiming one id.
+- **An edit racing a `nibs config set-prefix` is no longer reported as saved when it was not** — every write verb wrote to the path it loaded at startup, leaving the edit on a resurrected copy under the nib's old name while the live file kept the old value, and exiting 0.
+- **`nibs new` no longer names a file under a prefix the store has stopped using** — a create parked behind a `nibs config set-prefix` refuses rather than drawing from the vocabulary it loaded at startup, since a nib's id comes from its filename and cannot be relabeled afterwards.
+- **The TUI no longer draws outside a terminal narrower than 40 columns**, where an over-long row wrapped through the box and pushed the frame past the terminal's last row and column.
+- **The TUI now reports a failed save after an external editor session**, instead of returning to the list as though the edit had been stored when the store had refused it.
 
 ## v0.8.3 - 2026-08-13
 

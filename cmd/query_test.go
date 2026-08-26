@@ -1952,9 +1952,8 @@ func TestExecuteQueryBatchHalfCommitsDurably(t *testing.T) {
 	// the id prefix rather than reading the Path the store reports, because
 	// asking the store where to look would be asking the store — the very thing
 	// these assertions exist to avoid. Globbing also stays correct if a write
-	// ever does relocate a file; today none does, since saveToDisk rebuilds a
-	// filename only when Path is empty and a nib from GetForUpdate always
-	// carries one.
+	// ever does relocate a file; today none does, since Update writes the path
+	// the store already holds for the nib.
 	nibFiles := func(t *testing.T, root, id string) []string {
 		t.Helper()
 		matches, err := filepath.Glob(dataPath(root, id+"*.md"))

@@ -18,7 +18,7 @@ import (
 // successfully when the executor reads the file back.
 func newTestNib(t *testing.T, root, relPath, id, parent string, blockedBy []string, body string) {
 	t.Helper()
-	b := &nib.Nib{
+	writeTestNib(t, root, relPath, &nib.Nib{
 		ID:        id,
 		Title:     id,
 		Status:    "todo",
@@ -26,10 +26,17 @@ func newTestNib(t *testing.T, root, relPath, id, parent string, blockedBy []stri
 		Parent:    parent,
 		BlockedBy: blockedBy,
 		Body:      body,
-	}
+	})
+}
+
+// writeTestNib renders b and writes it to root/relPath, creating parent
+// directories as needed. Callers that need link fields beyond parent/blocked_by
+// build the nib themselves and use this instead of newTestNib.
+func writeTestNib(t *testing.T, root, relPath string, b *nib.Nib) {
+	t.Helper()
 	data, err := b.Render()
 	if err != nil {
-		t.Fatalf("rendering test nib %q: %v", id, err)
+		t.Fatalf("rendering test nib %q: %v", b.ID, err)
 	}
 	abs := filepath.Join(root, filepath.FromSlash(relPath))
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
@@ -335,7 +342,9 @@ func snapshotFromDisk(t *testing.T, nibsPath string) []NibSnapshot {
 			ID:        id,
 			Path:      filepath.ToSlash(rel),
 			Parent:    b.Parent,
+			Milestone: b.Milestone,
 			BlockedBy: b.BlockedBy,
+			Blocking:  b.Blocking,
 		})
 		return nil
 	})
@@ -409,6 +418,51 @@ func TestExecute_SampleProjectEndToEnd(t *testing.T) {
 		t.Errorf("spot-check parent: file %q parent %q should start with demo-", spot.NewPath, bSpot.Parent)
 	}
 
+	// Same spot-check for milestone, the other single-valued link field. A
+	// milestone left under the old prefix names a nib that no longer exists,
+	// which is exactly the dangling-assignment defect this covers.
+	var spotMilestone *FilePlan
+	for i := range plan.Files {
+		if plan.Files[i].NewMilestone != "" {
+			spotMilestone = &plan.Files[i]
+			break
+		}
+	}
+	if spotMilestone == nil {
+		t.Fatal("expected at least one nib with a milestone in the sample-project fixture")
+		return
+	}
+	bMilestone := readNib(t, nibsPath, spotMilestone.NewPath)
+	if !strings.HasPrefix(bMilestone.Milestone, "demo-") {
+		t.Errorf("spot-check milestone: file %q milestone %q should start with demo-", spotMilestone.NewPath, bMilestone.Milestone)
+	}
+
+	// No link field anywhere may still name the retired prefix. The four fields
+	// checked are nib.LinkSpelling's — every id-valued key a nib file can carry.
+	for _, fp := range plan.Files {
+		b := readNib(t, nibsPath, fp.NewPath)
+		var stale []string
+		if strings.HasPrefix(b.Parent, "tnib-") {
+			stale = append(stale, "parent:"+b.Parent)
+		}
+		if strings.HasPrefix(b.Milestone, "tnib-") {
+			stale = append(stale, "milestone:"+b.Milestone)
+		}
+		for _, id := range b.BlockedBy {
+			if strings.HasPrefix(id, "tnib-") {
+				stale = append(stale, "blocked_by:"+id)
+			}
+		}
+		for _, id := range b.Blocking {
+			if strings.HasPrefix(id, "tnib-") {
+				stale = append(stale, "blocking:"+id)
+			}
+		}
+		if len(stale) > 0 {
+			t.Errorf("file %q still links to the retired prefix: %v", fp.NewPath, stale)
+		}
+	}
+
 	// Loading a fresh Core pointed at the renamed project must succeed.
 	cfg := config.Default()
 	cfg.Nibs.Prefix = "demo-"
@@ -420,5 +474,69 @@ func TestExecute_SampleProjectEndToEnd(t *testing.T) {
 	}
 	if got := len(core.All()); got == 0 {
 		t.Errorf("core.All() = 0 after post-rename load, want > 0")
+	}
+}
+
+// TestExecute_RewritesMilestoneAndBlocking covers the two id-valued front-matter
+// fields the sample-project fixture cannot: it has no `blocking:` key at all,
+// and its milestone assignments are only exercised end-to-end above.
+func TestExecute_RewritesMilestoneAndBlocking(t *testing.T) {
+	root := t.TempDir()
+	writeTestNib(t, root, "tnib-m01--release.md", &nib.Nib{
+		ID:      "tnib-m01",
+		Title:   "release",
+		Status:  "todo",
+		Type:    "milestone",
+		Version: 1,
+		Body:    "milestone body",
+	})
+	writeTestNib(t, root, "tnib-aaa--enqueued.md", &nib.Nib{
+		ID:      "tnib-aaa",
+		Title:   "enqueued",
+		Status:  "todo",
+		Version: 1,
+		// Blocking is the legacy v0 spelling; Render still re-emits it, so a
+		// file carrying one must be retargeted rather than left dangling.
+		Milestone:      "tnib-m01",
+		MilestoneOrder: "b",
+		Blocking:       []string{"tnib-m01"},
+		Area:           "web/ui",
+		Body:           "enqueued body",
+	})
+
+	snapshot := []NibSnapshot{
+		{ID: "tnib-m01", Path: "tnib-m01--release.md"},
+		{
+			ID:        "tnib-aaa",
+			Path:      "tnib-aaa--enqueued.md",
+			Milestone: "tnib-m01",
+			Blocking:  []string{"tnib-m01"},
+		},
+	}
+	plan, err := BuildPlan(snapshot, "tnib-", "new-", stubExists)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if err := Execute(plan, root); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	b := readNib(t, root, "new-aaa--enqueued.md")
+	if b.Milestone != "new-m01" {
+		t.Errorf("milestone = %q, want %q", b.Milestone, "new-m01")
+	}
+	if len(b.Blocking) != 1 || b.Blocking[0] != "new-m01" {
+		t.Errorf("blocking = %v, want [new-m01]", b.Blocking)
+	}
+	// MilestoneOrder is a fractional index and Area is a plain path — neither is
+	// id-valued, so neither may be touched by a prefix change.
+	if b.MilestoneOrder != "b" {
+		t.Errorf("milestone_order = %q, want %q — it is a fractional index, not an id", b.MilestoneOrder, "b")
+	}
+	if b.Area != "web/ui" {
+		t.Errorf("area = %q, want %q — it is a path, not an id", b.Area, "web/ui")
+	}
+	if !strings.Contains(b.Body, "enqueued body") {
+		t.Errorf("body lost during rewrite: got %q", b.Body)
 	}
 }

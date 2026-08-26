@@ -465,22 +465,62 @@ func (m detailModel) View() string {
 		Width(withBorder(m.width - 4))
 	body := bodyBorder.Render(m.viewport.View())
 
-	// When expanded, the panel includes esc/q/? and replaces the footer entirely
-	if m.helpExpanded {
-		panel := renderHelpPanel(detailExpandedEntries(), m.width)
-		return header + "\n" + linksSection + body + "\n" + panel
-	}
-
-	// A wrapped status message makes the footer taller than the one line the
-	// viewport was sized against; the body gives those rows back, since the
-	// frame is exactly as tall as the terminal and whatever runs past its last
-	// row is dropped — the footer's own last line first.
-	footer := m.renderFooter()
-	if extra := lipgloss.Height(footer) - 1; extra > 0 {
+	// A wrapped status message makes the footer region taller than the height
+	// the viewport was sized against at the last resize; the body gives those
+	// rows back, since the frame is exactly as tall as the terminal and
+	// whatever runs past its last row is dropped — the region's last line first.
+	footer := m.footerRegion()
+	if extra := lipgloss.Height(footer) - m.sizedFooterHeight(); extra > 0 {
 		m.viewport.SetHeight(max(1, m.viewport.Height()-extra))
 		body = bodyBorder.Render(m.viewport.View())
 	}
 	return header + "\n" + linksSection + body + "\n" + footer
+}
+
+// footerRegion is everything drawn below the body: the compact footer, or —
+// when the help panel is expanded — the status message with the panel beneath.
+//
+// The expanded panel carries esc/q/? and so replaces the footer's help row, but
+// not its status message: a refusal the user cannot read is the defect the
+// footer was taught to wrap for in the first place.
+func (m detailModel) footerRegion() string {
+	if !m.helpExpanded {
+		return m.renderFooter()
+	}
+	return expandedFooterRegion(detailExpandedEntries(), m.statusMessage, m.statusKind, m.width, m.height, m.contentFloor())
+}
+
+// minBodyHeight is the fewest rows the body occupies: its border, around a
+// viewport both Update and View floor at one row.
+const minBodyHeight = 3
+
+// contentFloor is the fewest rows the frame occupies above the footer region —
+// the header, the links box when there is one, and the body. None of them gives
+// a row back to a taller region, so this is what the help panel's budget is held
+// back for.
+//
+// The header is measured rather than taken from calculateHeaderHeight, which
+// reserves two rows more than it renders: the sizing estimate may be generous,
+// but a hold-back derived from it would narrow the panel for rows that are not
+// actually spoken for.
+func (m detailModel) contentFloor() int {
+	floor := lipgloss.Height(m.renderHeader()) + minBodyHeight
+	if len(m.links) > 0 {
+		floor += lipgloss.Height(m.linkList.View()) + 2 // the links box's border
+	}
+	return floor
+}
+
+// sizedFooterHeight is the footer height the viewport was last sized against —
+// one row for the compact footer, or the panel's rows with no message above it.
+// That is one row less than Update(WindowSizeMsg) reserves, which counts the
+// "\n" separator too; View compares footer content against footer content, and
+// both sides leave the separator out, so the difference is the message's rows.
+func (m detailModel) sizedFooterHeight() int {
+	if h := m.currentHelpHeight(); h > 0 {
+		return h
+	}
+	return 1
 }
 
 // renderFooter returns the abbreviated footer for the detail view.
@@ -510,7 +550,7 @@ func (m detailModel) currentHelpHeight() int {
 	if !m.helpExpanded {
 		return 0
 	}
-	return helpPanelHeight(detailExpandedEntries(), m.width)
+	return helpPanelHeight(detailExpandedEntries(), m.width, helpRowBudget(m.height, m.contentFloor(), 0))
 }
 
 func (m detailModel) calculateHeaderHeight() int {

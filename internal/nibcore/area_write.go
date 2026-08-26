@@ -13,10 +13,18 @@ import (
 // It is the cascade half of `nibs area rename` and `nibs area rm`: renaming a
 // declared node moves the paths of every nib assigned to it or to anything below
 // it, and retiring one has to dispose of its members before the declaration can
-// go. Both are bulk writes, so they go through saveToDiskDeferDirSync and one
-// fsutil.DirSyncBatch — one directory flush per DIRECTORY, and deferred, because
-// an aborted cascade has already committed every rename before the failure and
-// still owes those entries a flush.
+// go. Both are bulk writes, so they go through one fsutil.DirSyncBatch — one
+// directory flush per DIRECTORY, and deferred, because an aborted cascade has
+// already committed every rename before the failure and still owes those entries
+// a flush.
+//
+// The write is the NON-CREATING one (updateOnDiskDeferDirSync). Every target is
+// a nib already on disk, so a path this cascade cannot find is a path that went
+// stale — and a creating write answers that by writing the nib back under its
+// pre-rename name, leaving the store one file heavier under a prefix its config
+// no longer declares. The caller re-derives its paths under the lock so this
+// does not arise; the refusal is what makes a caller that forgot fail loudly
+// instead of duplicating the store.
 //
 // CONCURRENCY: lock is PROOF-OF-LOCK — the *StoreLock the caller received from
 // AcquireStoreLock, held across the whole verb (see MigrateV0ToV1, which takes
@@ -91,7 +99,7 @@ func (c *Core) RewriteAreaAssignments(lock *StoreLock, rewrite func(area string)
 		clone := c.nibs[t.id].Clone()
 		clone.Area = t.area
 
-		dir, err := c.saveToDiskDeferDirSync(clone)
+		dir, err := c.updateOnDiskDeferDirSync(clone)
 		pending.Add(dir)
 		if err != nil {
 			return written, fmt.Errorf("%s: %w", t.id, err)

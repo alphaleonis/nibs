@@ -1708,3 +1708,61 @@ func TestConfigReadsRefuseAnIrregularFile(t *testing.T) {
 		}
 	}
 }
+
+// TestLoadedFromFileSeparatesAnAbsentConfigFromAnEmptyOne pins the distinction
+// Load's return value cannot carry on its own.
+//
+// Every load path applies the system defaults on the way out, so a store with no
+// config.yml and a store whose config.yml declares nothing come back as the same
+// fully-defaulted Config. That is right for a reader that only wants values, and
+// wrong for the one that compares what the store declares against what it loaded
+// earlier — there, "declares nothing" is not evidence of a change on disk and
+// "declares this" may be. See nibcore.Core.mintingVocabulary.
+func TestLoadedFromFileSeparatesAnAbsentConfigFromAnEmptyOne(t *testing.T) {
+	tests := []struct {
+		name  string
+		write string // "" means write no file at all
+		want  bool
+	}{
+		{name: "a store with no config file", want: false},
+		{name: "a config file declaring nothing", write: "\n", want: true},
+		{name: "a config file declaring a prefix", write: "nibs:\n  prefix: emb-\n", want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			storeDir := filepath.Join(t.TempDir(), store.DirName)
+			if err := os.MkdirAll(storeDir, 0o755); err != nil {
+				t.Fatalf("creating the store: %v", err)
+			}
+			if tt.write != "" {
+				if err := os.WriteFile(store.NewLayout(storeDir).ConfigPath(), []byte(tt.write), 0o644); err != nil {
+					t.Fatalf("writing the store config: %v", err)
+				}
+			}
+
+			cfg, err := LoadFromStore(storeDir)
+			if err != nil {
+				t.Fatalf("LoadFromStore: %v", err)
+			}
+			if got := cfg.LoadedFromFile(); got != tt.want {
+				t.Errorf("LoadedFromFile() = %v, want %v", got, tt.want)
+			}
+			// The values are identical across the first two rows, which is the
+			// reason the flag has to carry the answer.
+			if got := cfg.Nibs.IDLength; got != 4 {
+				t.Errorf("IDLength = %d, want the system default 4 either way", got)
+			}
+		})
+	}
+}
+
+// TestLoadedFromFileIsFalseForAnInMemoryConfig pins the other constructor: a
+// Config nobody read off disk declares nothing about any store.
+func TestLoadedFromFileIsFalseForAnInMemoryConfig(t *testing.T) {
+	if Default().LoadedFromFile() {
+		t.Error("Default().LoadedFromFile() = true, want false")
+	}
+	if DefaultWithPrefix("emb-").LoadedFromFile() {
+		t.Error("DefaultWithPrefix().LoadedFromFile() = true, want false")
+	}
+}

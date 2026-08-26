@@ -43,6 +43,18 @@ func ValidatePrefix(s string) error {
 
 // NibSnapshot is a minimal view of a loaded nib — just what the builder needs.
 // It decouples reprefix from nibcore.
+//
+// The link fields below are exactly nib.LinkSpelling's four, and that is the
+// completeness bar FOR FRONT MATTER: an id-valued front-matter field missing
+// here is a reference left naming a nib the rename retired. The other
+// path-shaped fields are deliberately absent because none of them holds an id —
+// Area is a plain path, Documents are repo-relative paths, MilestoneOrder is a
+// fractional index, and Extra is opaque unknown keys.
+//
+// A nib BODY is outside the bar: `[[id]]` and `#id` mentions there are id-valued
+// too, and Execute re-renders a nib without touching its body, so they are left
+// naming the retired id. Extending the rewrite over bodies is tracked as its own
+// work, not covered here.
 type NibSnapshot struct {
 	ID string // e.g. "nibs-abc123"
 	// Path is the forward-slash relative path to the nib file under the nibs
@@ -50,7 +62,18 @@ type NibSnapshot struct {
 	// for ID "tnib-abc". BuildPlan enforces this invariant.
 	Path      string
 	Parent    string   // empty if no parent
+	Milestone string   // empty if not enqueued in a milestone
 	BlockedBy []string // empty/nil if no blockers
+	// Blocking is the legacy v0 spelling of the blocked-by edge. v1+ derives
+	// blocking from other nibs' BlockedBy and never writes it, but nib.Render
+	// re-emits whatever a v0 file carries, so a store with the v0→v1 migration
+	// still deferred has real `blocking:` ids that must be retargeted too.
+	//
+	// It is retargeted rather than dropped: clearing the field belongs to that
+	// migration, which transfers each edge onto its target first (see
+	// nibcore's v0→v1 step and the same stance in nibcore/link_health.go).
+	// A rename dropping it would destroy edges no other field records yet.
+	Blocking []string
 }
 
 // TargetExistsFunc reports whether a relative path already exists under the
@@ -68,8 +91,11 @@ type RenamePlan struct {
 }
 
 // FilePlan describes the rename and reference updates for a single nib.
-// Equal Old/New values for parent/blocked_by mean "no change needed" — callers
+// Equal Old/New values for a link field mean "no change needed" — callers
 // can use HasReferenceUpdates to decide whether to rewrite the file body.
+//
+// The four link pairs mirror NibSnapshot's; see its doc comment for why those
+// four and no others.
 type FilePlan struct {
 	OldPath string
 	NewPath string
@@ -78,25 +104,22 @@ type FilePlan struct {
 
 	OldParent    string
 	NewParent    string
+	OldMilestone string
+	NewMilestone string
 	OldBlockedBy []string
 	NewBlockedBy []string
+	OldBlocking  []string
+	NewBlocking  []string
 }
 
 // HasReferenceUpdates reports whether any of the nib's cross-references
-// (parent or blocked_by) need to be rewritten under the new prefix.
+// (parent, milestone, blocked_by or legacy blocking) need to be rewritten
+// under the new prefix.
 func (fp FilePlan) HasReferenceUpdates() bool {
-	if fp.OldParent != fp.NewParent {
-		return true
-	}
-	if len(fp.OldBlockedBy) != len(fp.NewBlockedBy) {
-		return true
-	}
-	for i := range fp.OldBlockedBy {
-		if fp.OldBlockedBy[i] != fp.NewBlockedBy[i] {
-			return true
-		}
-	}
-	return false
+	return fp.OldParent != fp.NewParent ||
+		fp.OldMilestone != fp.NewMilestone ||
+		!slices.Equal(fp.OldBlockedBy, fp.NewBlockedBy) ||
+		!slices.Equal(fp.OldBlocking, fp.NewBlocking)
 }
 
 // BuildPlan computes a RenamePlan from a snapshot of nibs plus old/new prefix.
@@ -160,8 +183,12 @@ func BuildPlan(snapshot []NibSnapshot, oldPrefix, newPrefix string, targetExists
 			NewID:        rewriteID(n.ID, oldPrefix, newPrefix),
 			OldParent:    n.Parent,
 			NewParent:    rewriteRef(n.Parent, oldPrefix, newPrefix),
+			OldMilestone: n.Milestone,
+			NewMilestone: rewriteRef(n.Milestone, oldPrefix, newPrefix),
 			OldBlockedBy: slices.Clone(n.BlockedBy),
 			NewBlockedBy: rewriteRefs(n.BlockedBy, oldPrefix, newPrefix),
+			OldBlocking:  slices.Clone(n.Blocking),
+			NewBlocking:  rewriteRefs(n.Blocking, oldPrefix, newPrefix),
 		}
 		plan.Files = append(plan.Files, fp)
 		if targetExists(fp.NewPath) {

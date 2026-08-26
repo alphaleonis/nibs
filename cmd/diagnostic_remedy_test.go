@@ -910,6 +910,15 @@ func remedySurfaces() []remedySurface {
 			wantCommands: 0,
 		},
 		{
+			name:  "a store that moved under set-prefix's lock names the rerun",
+			store: remedyStore(nil),
+			// The one refusal here that is nobody's mistake: the remedy is the
+			// same command again, and the gate is what keeps that claim honest.
+			diagnose:     remedySetPrefixStoreMoved,
+			mustName:     []string{"waited for its write lock"},
+			wantCommands: 1,
+		},
+		{
 			name:  "check names an illegal nest (unchanged sibling, the control)",
 			store: remedyStore(nestFiles),
 			diagnose: func(t *testing.T, nibsDir string) string {
@@ -1034,6 +1043,30 @@ func remedyAreaConfigWriteFailure(args []string) func(t *testing.T, nibsDir stri
 		defer disarm()
 		return remedyAreaRetireRefusal(args)(t, nibsDir)
 	}
+}
+
+// remedySetPrefixStoreMoved returns the refusal `nibs config set-prefix` raises
+// when another `set-prefix` completed while this one waited for the store's
+// write lock. It is the only refusal enrolled here that the caller did nothing
+// to cause, which is exactly why its remedy — the same command again — has to
+// be run rather than trusted.
+func remedySetPrefixStoreMoved(t *testing.T, nibsDir string) string {
+	t.Helper()
+	t.Cleanup(func() {
+		setPrefixDryRun = false
+		setPrefixForce = false
+		setPrefixJSON = false
+		gitIsDirtyFn = realGitIsDirty
+	})
+	setPrefixDryRun = false
+	setPrefixJSON = false
+	gitIsDirtyFn = func(string, ...string) (bool, error) { return false, nil }
+
+	err := setPrefixOverAStoreThatMoved(t, nibsDir, filepath.Join(nibsDir, "config.yml"), "new-", true)
+	if err == nil {
+		t.Fatal("a set-prefix whose store moved under the lock must be refused, got nil")
+	}
+	return err.Error()
 }
 
 // remedyCloseRefusal returns the refusal `nibs close` raises when a queue

@@ -3,7 +3,9 @@ package graph
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"sync/atomic"
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/membership"
@@ -170,6 +172,15 @@ func resolvedMilestoneID(b *nib.Nib, reader NibReader) string {
 type Orderer struct {
 	reader NibReader
 	writer NibWriter
+
+	// warnedStalePath latches the "a nib's file is not where the store says it
+	// is" warning to ONE line for this Orderer's lifetime. The condition is
+	// store-wide and nothing this engine does clears it, so an unlatched warning
+	// is emitted once per unkeyed sibling per read — see backfillKeys.
+	//
+	// Atomic because `nibs serve` builds one Orderer at startup (App.newResolver,
+	// called once there) and serves every request through it concurrently.
+	warnedStalePath atomic.Bool
 }
 
 // NewOrderer creates an Orderer with the given reader and writer.
@@ -379,6 +390,7 @@ func (o *Orderer) backfillKeys(scope Scope, members []*nib.Nib) {
 		//     RETURNS this error instead of logging it, so suppressing here means the
 		//     read path emits no warning at all (no orderer line, no nibcore
 		//     double-log, no flood).
+		// fs.ErrNotExist is LATCHED rather than suppressed — see the arm below.
 		// Warn only on a genuinely unexpected write failure (disk I/O, etc.) so a
 		// real problem stays diagnosable (matches activateParentChain's stderr
 		// warning). Propagating is not an option: Members returns no error and has
@@ -387,7 +399,11 @@ func (o *Orderer) backfillKeys(scope Scope, members []*nib.Nib) {
 			var etagMismatch *nibcore.ETagMismatchError
 			var unparseable *nibcore.OnDiskUnparseableError
 			var undeclaredArea *config.AreaError
-			if !errors.As(err, &etagMismatch) && !errors.As(err, &unparseable) && !errors.As(err, &undeclaredArea) {
+			switch {
+			case errors.As(err, &etagMismatch), errors.As(err, &unparseable), errors.As(err, &undeclaredArea):
+			case errors.Is(err, fs.ErrNotExist):
+				o.warnStalePathOnce(b.ID, err)
+			default:
 				fmt.Fprintf(os.Stderr, "warning: could not backfill order key for %s: %v — this sibling stays unordered (falls back to title sort) until the next successful write\n", b.ID, err)
 			}
 			continue
@@ -397,6 +413,45 @@ func (o *Orderer) backfillKeys(scope Scope, members []*nib.Nib) {
 		// pointer.
 		members[i] = clone
 	}
+}
+
+// warnStalePathOnce reports, at most once per Orderer, that a backfill could not
+// reach a nib's file because nothing is at the path the loaded store recorded.
+//
+// The condition is that the nib's FILE is not where the store says it is.
+// Core.Update replaces a file rather than creating one, so a path this process
+// cannot re-derive — `nibs config set-prefix` renames every file in the store —
+// refuses there instead of leaving a second copy of the nib under the retired
+// name. The refusal lands in a best-effort arm that cannot propagate (Members
+// returns no error), so the only question left is how loudly to say it.
+//
+// Once, because the condition is store-wide rather than per-nib: unlatched, one
+// read of one parent warns once per unkeyed sibling and every later read repeats
+// the whole set, which is 4 identical lines across 4 reads of a single-sibling
+// fixture and unbounded on a real tree. Nothing this loop can do clears it
+// either — the computed key is discarded and the sibling falls back to title
+// sort, exactly as for a stable etag divergence.
+//
+// But not zero, which is what suppressing it outright would give. Two conditions
+// reach this arm and only one of them self-heals: a set-prefix rename is
+// store-wide and leaves c.nibs when a watcher observes it, while a hand-deleted
+// nib file or a removed data/ subdirectory is neither store-wide nor transient —
+// and errors.Is matches the whole chain, so fsutil's bare os.Lstat miss arrives
+// here for any absent target. A reader browsing through `nibs serve` or the TUI
+// triggers no mutation, so the write-boundary diagnostic (cmd/set.go's
+// FILE_ERROR on an explicit mutation of the same nib) never fires for them; where
+// StartWatching FAILED — serve treats that as a warning, not a fatal — nothing
+// refreshes the store either, and this line is the only signal that exists.
+func (o *Orderer) warnStalePathOnce(id string, err error) {
+	if o.warnedStalePath.Swap(true) {
+		return
+	}
+	// Only a re-read is prescribed, and deliberately nothing else: a fresh
+	// process never loads a nib whose file is gone, so `nibs check` reports this
+	// condition not at all (executed against the sample fixture with one nib
+	// file removed: "✓ All nib files loaded"). This process is the only one that
+	// can still see it.
+	fmt.Fprintf(os.Stderr, "warning: could not backfill order key for %s: %v — nothing is at the path this process recorded for it, so it stays unordered (falls back to title sort); the file was renamed or removed after this process loaded the store, and only a re-read sees that (restart a running `nibs serve`/`nibs tui`). Further occurrences are not reported.\n", id, err)
 }
 
 // positionAfter places b after the target member. The two error tiers: an

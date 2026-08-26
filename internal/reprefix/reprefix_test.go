@@ -88,6 +88,38 @@ func TestFilePlan_HasReferenceUpdates(t *testing.T) {
 			},
 			want: true,
 		},
+		{
+			name: "milestone rewritten",
+			fp: FilePlan{
+				OldID:        "tnib-e",
+				NewID:        "new-e",
+				OldMilestone: "tnib-m",
+				NewMilestone: "new-m",
+			},
+			want: true,
+		},
+		{
+			name: "legacy blocking rewritten",
+			fp: FilePlan{
+				OldID:       "tnib-f",
+				NewID:       "new-f",
+				OldBlocking: []string{"tnib-a"},
+				NewBlocking: []string{"new-a"},
+			},
+			want: true,
+		},
+		{
+			// Mirrors the blocked_by length case: defensive against
+			// hand-constructed FilePlan values.
+			name: "legacy blocking length changes",
+			fp: FilePlan{
+				OldID:       "tnib-g",
+				NewID:       "new-g",
+				OldBlocking: []string{"tnib-a", "tnib-b"},
+				NewBlocking: []string{"new-a"},
+			},
+			want: true,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -422,6 +454,59 @@ func TestBuildPlan_TracerBullet_ThreeNibHierarchy(t *testing.T) {
 			t.Errorf("Files[%d] blockedBy: got (old=%v new=%v) want (old=%v new=%v)",
 				i, got.OldBlockedBy, got.NewBlockedBy, w.OldBlockedBy, w.NewBlockedBy)
 		}
+	}
+}
+
+func TestBuildPlan_RewritesMilestoneAndBlocking(t *testing.T) {
+	snapshot := []NibSnapshot{
+		{ID: "tnib-m01", Path: "tnib-m01--release.md"},
+		{
+			ID:        "tnib-aaa",
+			Path:      "tnib-aaa--enqueued.md",
+			Milestone: "tnib-m01",
+			Blocking:  []string{"tnib-m01"},
+		},
+	}
+	plan, err := BuildPlan(snapshot, "tnib-", "new-", stubExists)
+	if err != nil {
+		t.Fatalf("BuildPlan returned error: %v", err)
+	}
+	fp := plan.Files[1]
+	if fp.OldMilestone != "tnib-m01" || fp.NewMilestone != "new-m01" {
+		t.Errorf("milestone: got (old=%q new=%q) want (old=%q new=%q)",
+			fp.OldMilestone, fp.NewMilestone, "tnib-m01", "new-m01")
+	}
+	if !stringSlicesEqual(fp.OldBlocking, []string{"tnib-m01"}) {
+		t.Errorf("OldBlocking = %v, want [tnib-m01]", fp.OldBlocking)
+	}
+	if !stringSlicesEqual(fp.NewBlocking, []string{"new-m01"}) {
+		t.Errorf("NewBlocking = %v, want [new-m01]", fp.NewBlocking)
+	}
+	if !fp.HasReferenceUpdates() {
+		t.Error("HasReferenceUpdates() = false for a nib whose milestone and blocking both moved, want true")
+	}
+	// The milestone nib itself carries no links, so nothing may be invented for it.
+	if plan.Files[0].HasReferenceUpdates() {
+		t.Error("HasReferenceUpdates() = true for a link-free nib, want false")
+	}
+}
+
+func TestBuildPlan_OldBlockingNotAliased(t *testing.T) {
+	targets := []string{"tnib-aaa", "tnib-bbb"}
+	snapshot := []NibSnapshot{
+		{ID: "tnib-aaa", Path: "tnib-aaa.md"},
+		{ID: "tnib-bbb", Path: "tnib-bbb.md"},
+		{ID: "tnib-ccc", Path: "tnib-ccc.md", Blocking: targets},
+	}
+	plan, err := BuildPlan(snapshot, "tnib-", "new-", stubExists)
+	if err != nil {
+		t.Fatalf("BuildPlan returned error: %v", err)
+	}
+	// Mutate the caller's slice after BuildPlan returns.
+	targets[0] = "MUTATED"
+	if plan.Files[2].OldBlocking[0] != "tnib-aaa" {
+		t.Errorf("plan.Files[2].OldBlocking was aliased to caller slice: got %q, want %q",
+			plan.Files[2].OldBlocking[0], "tnib-aaa")
 	}
 }
 

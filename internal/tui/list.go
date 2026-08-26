@@ -68,7 +68,10 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	if d.cols.ShowTags {
 		baseWidth += d.cols.Tags
 	}
-	maxTitleWidth := max(0, m.Width()-baseWidth)
+	// Floored at one, not zero: zero is RenderNibRow's "no limit" sentinel, so
+	// the width a full ID column leaves for nothing would come back as a title
+	// under no budget at all.
+	maxTitleWidth := max(1, m.Width()-baseWidth)
 
 	// Check if nib is marked for multi-select
 	var isMarked bool
@@ -104,7 +107,12 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 		},
 	)
 
-	_, _ = fmt.Fprint(w, str)
+	// Clip rather than let the row run long. The columns ahead of the title are
+	// fixed-width, and in wide mode they can outgrow a narrow terminal on their
+	// own — a row wider than the list is wrapped by the bordered box the list is
+	// drawn into, which then renders taller than the height it was handed and
+	// pushes the frame past the terminal's last row.
+	_, _ = fmt.Fprint(w, lipgloss.NewStyle().MaxWidth(m.Width()).Render(str))
 }
 
 // listModel is the model for the nib list view
@@ -880,15 +888,34 @@ func (m listModel) View() string {
 	}
 
 	// Inner height: total - border(2) - "\n"(1) - footer/panel height
-	innerHeight := m.height - 3 - m.footerHeight()
-	content := m.viewContent(innerHeight)
-
-	if m.helpExpanded {
-		panel := renderHelpPanel(m.expandedHelpEntries(), m.width)
-		return content + "\n" + panel
-	}
-	return content + "\n" + m.Footer()
+	footer := m.footerRegion()
+	innerHeight := m.height - 3 - max(1, lipgloss.Height(footer))
+	return m.viewContent(innerHeight) + "\n" + footer
 }
+
+// footerRegion is everything drawn below the list box: the compact footer, or —
+// when the help panel is expanded — the status message with the panel beneath.
+//
+// The panel replaces the footer's help keys, not its status message: the
+// message is the outcome of the action the user just took, and a panel drawn
+// over it leaves a refused edit silent — the whole reason the footer learned to
+// carry a refusal. It sits above the panel rather than below because that end
+// of the region is furthest from the clip edge, and because the detail footer
+// already puts a message above its help row.
+func (m listModel) footerRegion() string {
+	if !m.helpExpanded {
+		return m.Footer()
+	}
+	return expandedFooterRegion(m.expandedHelpEntries(), m.statusMessage, m.statusKind, m.width, m.height, listBoxFloor)
+}
+
+// listBoxFloor is the fewest rows the list box ever occupies. viewContent draws
+// a border sized to the innerHeight it is handed, and lipgloss pads a shorter
+// render out to that height rather than truncating a taller one — six lines is
+// where the padding stops shrinking, at innerHeight 4 and every value below it.
+// A footer region taller than height-listBoxFloor therefore does not buy itself
+// room from the box; it runs past the terminal's last row instead.
+const listBoxFloor = 6
 
 // viewContent renders just the bordered list without footer.
 // innerHeight is the content height inside the border (not including border lines).
@@ -916,6 +943,32 @@ func (m listModel) viewContent(innerHeight int) string {
 	return topLine + "\n" + lines[1]
 }
 
+// badgeWidth is the cells one badge costs on the border's top line: its own
+// ─┤ and ├ around the text.
+func badgeWidth(text string) int { return 2 + lipgloss.Width(text) + 1 }
+
+// truncateBorderTitle fits a title into budget cells, marking a cut with an
+// ellipsis. The mark is the point: a project name cut in silence reads as a
+// whole one, and nothing distinguishes `Nibs - sample-` from a project actually
+// called that.
+//
+// The trailing space MaxWidth pads a shortened cell run with is dropped, so the
+// title's measured width is what is painted and the fill either side of it stays
+// exact.
+func truncateBorderTitle(title string, budget int) string {
+	if budget <= 0 {
+		return ""
+	}
+	if lipgloss.Width(title) <= budget {
+		return title
+	}
+	if budget == 1 {
+		return "…"
+	}
+	cut := strings.TrimRight(lipgloss.NewStyle().MaxWidth(budget-1).Render(title), " ")
+	return cut + "…"
+}
+
 // buildBorderTopLine constructs the top border line with title and badges embedded.
 // Format: ╭─ Title ─│Badge1│─│Badge2│──────╮
 func (m listModel) buildBorderTopLine() string {
@@ -935,14 +988,21 @@ func (m listModel) buildBorderTopLine() string {
 	type badge struct {
 		text  string
 		style lipgloss.Style
+		// outranksTitle marks a badge worth more cells than the project name.
+		// Only a state the reader turned on that can empty the box qualifies:
+		// without the badge the list looks empty for no reason, where the title
+		// only names where they already are. The default states do not — a badge
+		// the reader sees on every launch is not news worth a cut project name.
+		outranksTitle bool
 	}
 	var badges []badge
 
 	// Tag filter badge
 	if m.tagFilter != "" {
 		badges = append(badges, badge{
-			text:  fmt.Sprintf("tag: %s", m.tagFilter),
-			style: lipgloss.NewStyle().Foreground(ui.ColorPrimary),
+			text:          fmt.Sprintf("tag: %s", m.tagFilter),
+			style:         lipgloss.NewStyle().Foreground(ui.ColorPrimary),
+			outranksTitle: true,
 		})
 	}
 
@@ -963,22 +1023,50 @@ func (m listModel) buildBorderTopLine() string {
 		})
 	}
 
-	// Pre-render badges and measure their total width
+	// Everything but the fill has a fixed cost — ╭─, the title, its trailing
+	// space, each badge, and the closing ╮ — so what the width cannot hold has
+	// to be given up here. Appending it anyway does not widen the terminal; it
+	// runs the box's own top edge off the right of the screen, taking the corner
+	// with it.
+	budget := m.width - 5 // ╭─ + space around the title + ╮
+
+	// A badge that outranks the title is paid for BEFORE it, and the title is
+	// measured against what is left. Badges are dropped from the right, so the
+	// leftmost is the only one a reservation can save, and charging the title
+	// first let an ordinary project name eat the whole budget and drop every
+	// badge — including the tag filter, whose absence leaves an emptied list with
+	// nothing on screen saying why.
+	//
+	// It is conditioned on the badge and not merely on there being one, because
+	// the cells come out of the project name and most badges are not worth them:
+	// `No completed` is on by default, so an unconditional reservation shortened
+	// the name on an ordinary launch to announce a state the reader never chose.
+	titleBudget := budget
+	if len(badges) > 0 && badges[0].outranksTitle {
+		if first := badgeWidth(badges[0].text); first < budget {
+			titleBudget = budget - first
+		}
+	}
+	title := truncateBorderTitle(m.borderTitle, titleBudget)
+	titleWidth := 4 + lipgloss.Width(title) // ╭─ + title + space
+
+	// Pre-render the badges that fit, dropping from the right.
 	type renderedBadge struct {
 		open, text, close string
-		width             int // visual width of ┤text├
 	}
 	var renderedBadges []renderedBadge
 	badgesWidth := 0
 	for _, b := range badges {
-		rb := renderedBadge{
+		width := badgeWidth(b.text)
+		if lipgloss.Width(title)+badgesWidth+width > budget {
+			break
+		}
+		renderedBadges = append(renderedBadges, renderedBadge{
 			open:  br("─┤"),
 			text:  b.style.Render(b.text),
 			close: br("├"),
-			width: 2 + lipgloss.Width(b.text) + 1, // ─┤ + text + ├
-		}
-		renderedBadges = append(renderedBadges, rb)
-		badgesWidth += rb.width
+		})
+		badgesWidth += width
 	}
 
 	// Build the line: ╭─ Title ─────...─┤Badge├─┤Badge├╮
@@ -986,9 +1074,8 @@ func (m listModel) buildBorderTopLine() string {
 
 	// Start + title
 	buf.WriteString(br("╭─ "))
-	buf.WriteString(listTitleStyle.Render(m.borderTitle))
+	buf.WriteString(listTitleStyle.Render(title))
 	buf.WriteString(br(" "))
-	titleWidth := 4 + lipgloss.Width(m.borderTitle) // ╭─ + title + space
 
 	// Fill between title and badges
 	fill := m.width - titleWidth - badgesWidth - 1 // -1 for closing ╮
@@ -1057,7 +1144,11 @@ func (m listModel) Footer() string {
 
 	footer += m.updateIndicator()
 
-	return footer
+	// The help row is a fixed set of key/label pairs — the widest is 54 cells,
+	// at every terminal width — and the update indicator is appended after the
+	// status message has already wrapped to the width. Neither shrinks, so the
+	// row is clipped to what the terminal can hold.
+	return clipToWidth(footer, m.width)
 }
 
 // footerHeight is the number of terminal lines the footer region occupies.
@@ -1067,10 +1158,7 @@ func (m listModel) Footer() string {
 // exactly as tall as the terminal, so rows the footer takes without being
 // granted are rows clipped off the bottom, the footer's own last line first.
 func (m listModel) footerHeight() int {
-	if h := m.currentHelpHeight(); h > 0 {
-		return h
-	}
-	return max(1, lipgloss.Height(m.Footer()))
+	return max(1, lipgloss.Height(m.footerRegion()))
 }
 
 // updateIndicator returns an unobtrusive trailing "update available" hint for
@@ -1095,14 +1183,6 @@ func (m listModel) expandedHelpEntries() []helpEntry {
 	}
 	entries = append(entries, helpEntry{"?", "less"}, helpEntry{"q", "quit"})
 	return entries
-}
-
-// currentHelpHeight returns the help panel height (0 when collapsed).
-func (m listModel) currentHelpHeight() int {
-	if !m.helpExpanded {
-		return 0
-	}
-	return helpPanelHeight(m.expandedHelpEntries(), m.width)
 }
 
 // updateTitle rebuilds the border title from the project name.

@@ -74,8 +74,6 @@ func runSetPrefix(cmd *cobra.Command, args []string) error {
 	oldPrefix := cfg.Nibs.Prefix
 	root := app.Core.Root()
 
-	snapshot := buildSnapshot(app.Core.All())
-
 	targetExists := func(relPath string) bool {
 		_, err := os.Stat(filepath.Join(root, filepath.FromSlash(relPath)))
 		if err == nil {
@@ -89,15 +87,31 @@ func runSetPrefix(cmd *cobra.Command, args []string) error {
 		return true
 	}
 
-	plan, err := reprefix.BuildPlan(snapshot, oldPrefix, newPrefix, targetExists)
-	if err != nil {
-		return cmdError(setPrefixJSON, output.ErrValidation, "%v", err)
+	// Derives the rename plan from whatever the loaded store holds RIGHT NOW, so
+	// it can be run a second time once the store lock is held.
+	//
+	// It hands its refusal back unwrapped, with the exit code that belongs to
+	// it, because the two calls have DIFFERENT things to say about the same two
+	// failures: at the first, a store the plan does not fit is one the caller
+	// typed the wrong prefix for; at the second, it is a store that moved while
+	// this command waited. cmdError cannot be applied twice — in JSON mode it
+	// reports the envelope on stdout as it builds it — so the sentence has to be
+	// chosen before the error is made, not wrapped afterwards.
+	buildPlan := func() (*reprefix.RenamePlan, string, error) {
+		plan, err := reprefix.BuildPlan(buildSnapshot(app.Core.All()), oldPrefix, newPrefix, targetExists)
+		if err != nil {
+			return nil, output.ErrValidation, err
+		}
+		if len(plan.Collisions) > 0 {
+			return nil, output.ErrConflict, fmt.Errorf("cannot proceed: %d target path(s) would collide: %v",
+				len(plan.Collisions), plan.Collisions)
+		}
+		return plan, "", nil
 	}
 
-	if len(plan.Collisions) > 0 {
-		return cmdError(setPrefixJSON, output.ErrConflict,
-			"cannot proceed: %d target path(s) would collide: %v",
-			len(plan.Collisions), plan.Collisions)
+	plan, code, err := buildPlan()
+	if err != nil {
+		return cmdError(setPrefixJSON, code, "%v", err)
 	}
 
 	if setPrefixDryRun {
@@ -113,12 +127,9 @@ func runSetPrefix(cmd *cobra.Command, args []string) error {
 	// nib file renamed and a config still declaring the old prefix.
 	//
 	// The dry run above stays outside: it is read-only, and holding a write lock
-	// to print a plan would block writers for nothing. So is the rename plan,
-	// which is built from the snapshot this process loaded at startup — a nib
-	// another process writes after that read is not in the plan and keeps the old
-	// prefix, which this lock does not reach. Executed: a `nibs new` racing this
-	// command leaves a `tnib-` file in a store whose every other file, and whose
-	// config, say the new prefix.
+	// to print a plan would block writers for nothing. The plan it printed is
+	// discarded for a real run — see the re-derivation below, which is what makes
+	// the lock reach the rename at all.
 	//
 	// It blocks rather than refusing, matching every other store mutation: the
 	// other holder is another nibs process finishing one operation.
@@ -143,6 +154,51 @@ func runSetPrefix(cmd *cobra.Command, args []string) error {
 				"the nibs store at %s has uncommitted git changes — commit or stash them, or pass --force to proceed anyway",
 				root)
 		}
+	}
+
+	// THE PLAN IS DERIVED HERE, at the last read before the first rename, and
+	// that placement is the whole point of the lock above: a `nibs new` waits on
+	// it (Core.Create takes the same lock), so a plan built now cannot be missing
+	// a file that process is about to write. Built from the snapshot loaded at
+	// startup instead — before the lock — it misses whatever landed in that
+	// window, and the run leaves that nib under the OLD prefix while every other
+	// file and the config carry the new one: an id no vocabulary in the store
+	// declares. A concurrent create is an ordinary event, so it is included
+	// rather than refused over.
+	//
+	// oldPrefix is still the one this process read at startup, and that is a
+	// refusal rather than a hole: another set-prefix completing in the window
+	// leaves every id under ITS new prefix, which BuildPlan rejects by name —
+	// over an untouched store, since nothing below has run yet.
+	if err := app.Core.Load(); err != nil {
+		return cmdError(setPrefixJSON, output.ErrFileError,
+			"nothing was renamed: re-reading the store under its write lock failed: %v", err)
+	}
+	plan, code, err = buildPlan()
+	if err != nil {
+		// A plan that fitted the store before the lock and does not fit it after
+		// can only mean the store moved in between, so this is the one refusal
+		// here that is nobody's mistake — and a rerun is the whole of the
+		// repair: a fresh process reads the prefix the winner left and plans
+		// from that. Naming it matters more than usual, because BuildPlan's own
+		// wording ("snapshot contains nib …") describes this command's
+		// bookkeeping rather than anything the caller did.
+		//
+		// newPrefix is safe to interpolate into a command: reaching here means
+		// the FIRST buildPlan succeeded, and BuildPlan runs it through
+		// reprefix.ValidatePrefix.
+		//
+		// --force is carried over rather than dropped, because the winner just
+		// renamed every file in the store: in a git-tracked store the rerun
+		// meets the dirtiness guard the caller already answered, and prescribing
+		// the bare form would be prescribing a refusal.
+		rerun := "nibs config set-prefix " + newPrefix
+		if setPrefixForce {
+			rerun += " --force"
+		}
+		return cmdError(setPrefixJSON, code,
+			"nothing was renamed: another nibs process changed this store while this command waited for its write lock (%v), so the plan rebuilt under the lock no longer fits it — rerun `%s` to plan against the store as it now stands",
+			err, rerun)
 	}
 
 	// The config edit is resolved BEFORE the first file is renamed: a rename is
@@ -185,6 +241,13 @@ func runSetPrefix(cmd *cobra.Command, args []string) error {
 		msg += fmt.Sprintf("\nNote: %s was a symlink to %s and is now a regular file; %s still holds the old prefix, so update or remove it",
 			cfg.Layout().ConfigPath(), stripControlChars(staleLink), stripControlChars(staleLink))
 	}
+	// A holder that loaded this store before the renames is now working under a
+	// vocabulary no file in it carries, and nothing it can do clears that: its
+	// creates refuse (nibcore.StoreRePrefixedError) and every short id it is
+	// asked to resolve is prepended the retired prefix. The operator who caused
+	// it is the only one positioned to act, and this is the only moment they are
+	// looking.
+	msg += liveServeNote(app, "\nNote: another nibs process is holding this store. A running `nibs serve` reads the id prefix once at startup, so restart it — until then it refuses every nib it is asked to create and resolves no short id against the renamed files.")
 	if setPrefixJSON {
 		return output.SuccessMessage(msg)
 	}
@@ -192,6 +255,17 @@ func runSetPrefix(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// buildSnapshot projects loaded nibs onto the minimal view the reprefix planner
+// consumes. The link fields it copies are exactly nib.LinkSpelling's four, which
+// is the completeness bar FOR FRONT MATTER: an id-valued front-matter field left
+// out here is one the rename silently leaves naming a nib that no longer exists.
+//
+// The bar stops at the front matter, and the rest of the store is NOT covered by
+// it: `[[id]]` and `#id` mentions in nib BODIES name ids too, reprefix.Execute
+// re-renders a nib without touching its body, and `nibs check` reports no link
+// issue for them — so a set-prefix does leave every body mention naming the
+// retired id. Extending the rewrite over bodies is tracked as its own work, not
+// covered here.
 func buildSnapshot(nibs []*nib.Nib) []reprefix.NibSnapshot {
 	out := make([]reprefix.NibSnapshot, len(nibs))
 	for i, b := range nibs {
@@ -199,7 +273,9 @@ func buildSnapshot(nibs []*nib.Nib) []reprefix.NibSnapshot {
 			ID:        b.ID,
 			Path:      b.Path,
 			Parent:    b.Parent,
+			Milestone: b.Milestone,
 			BlockedBy: b.BlockedBy,
+			Blocking:  b.Blocking,
 		}
 	}
 	return out

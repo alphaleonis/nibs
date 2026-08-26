@@ -213,8 +213,8 @@ func TestBulkWriteFlushesDirectoriesWhenTheLoopAbortsEarly(t *testing.T) {
 
 // TestSingleWriteSyncsItsDirectory pins the acceptance criterion the batching
 // must not cost: a single write still flushes its directory before it returns.
-// saveToDisk now reaches the disk through the deferred-sync writer, so the flush
-// it owes is its own — no test below it can catch its loss.
+// Both single-write entry points reach the disk through a deferred-sync writer,
+// so the flush each owes is its own — no test below it can catch its loss.
 func TestSingleWriteSyncsItsDirectory(t *testing.T) {
 	core, nibsDir := setupTestCore(t)
 	dataDir := store.NewLayout(nibsDir).DataDir()

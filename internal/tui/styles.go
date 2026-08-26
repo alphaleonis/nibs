@@ -23,6 +23,22 @@ func withBorder(content int) int { return content + 2 }
 // so a terminal narrower than that breaks words instead of every message.
 const minStatusWrapWidth = 24
 
+// clipToWidth cuts every line of s to width display cells. Zero or less means
+// no terminal size is known yet, and nothing is clipped.
+//
+// Clipping is what the alt screen already does to a line running past its last
+// column — Bubbletea draws the frame with wrapping off — so this takes nothing
+// off the screen that was on it. What it takes away is the frame's own claim to
+// be wider than the terminal: everything stacked around a block is measured
+// against it, and a block that overstates its width makes every width derived
+// from it wrong.
+func clipToWidth(s string, width int) string {
+	if width <= 0 {
+		return s
+	}
+	return lipgloss.NewStyle().MaxWidth(width).Render(s)
+}
+
 // maxStatusFooterLines caps how much of the screen a wrapped status message may
 // take. The footer borrows its rows from the content above it, so an unbounded
 // message — a queue refusal naming two hundred nibs — would push the view it is
@@ -65,6 +81,45 @@ func renderStatusMessage(msg string, kind statusKind, width, maxLines int) strin
 	return strings.Join(lines, "\n")
 }
 
+// statusBlock renders a footer status message in at most maxLines rows, or ""
+// when there is none.
+func statusBlock(msg string, kind statusKind, width, maxLines int) string {
+	if msg == "" {
+		return ""
+	}
+	return renderStatusMessage(msg, kind, width, maxLines)
+}
+
+// blockLines is lipgloss.Height for a block that may be absent. An empty string
+// paints nothing, where lipgloss.Height still counts it as one row — and a row
+// charged to a block that is not drawn is a row the view above never gets back.
+func blockLines(block string) int {
+	if block == "" {
+		return 0
+	}
+	return lipgloss.Height(block)
+}
+
+// helpRowBudget is how many rows the expanded help panel may take on a
+// height-row terminal, once holdBack rows are kept for the view the panel
+// describes and a statusLines-row status block above it is paid for.
+//
+// holdBack is that view's own floor — the fewest rows it occupies however small
+// a height it is handed, which is not the same quantity for the list box as for
+// the detail view's header. A view does not shrink below its floor to pay for a
+// taller region: the frame is exactly as tall as the terminal, so the region
+// runs past the last row instead and its own bottom is what disappears, taking
+// the rows naming ? and q with it. The panel is not exempt from the budget the
+// status message keeps either: before it had one, the list's keybindings at 80
+// columns laid out as a single column of 24 rows and ran off a 24-row terminal.
+//
+// Zero or less means the region has no room for the panel at all: on a terminal
+// short enough that the message alone fills it, the message wins, because it is
+// what the user's last keystroke produced.
+func helpRowBudget(height, holdBack, statusLines int) int {
+	return max(1, height-holdBack) - statusLines
+}
+
 // applyFilterStyles paints a list's filter input in the primary color.
 //
 // The prompt is set on both focus states because a list keeps showing the
@@ -93,6 +148,11 @@ var (
 	// Help text style
 	helpStyle = lipgloss.NewStyle().
 			Foreground(ui.ColorMuted)
+
+	// Marker for the keybindings the help panel's row budget could not hold
+	helpHiddenStyle = lipgloss.NewStyle().
+			Foreground(ui.ColorWarning).
+			Italic(true)
 
 	// Help key style
 	helpKeyStyle = lipgloss.NewStyle().

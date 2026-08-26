@@ -38,6 +38,38 @@ func (e *IDExistsError) Error() string {
 	return fmt.Sprintf("nib id %q already exists — creating it again would shadow the existing nib", e.ID)
 }
 
+// StoreRePrefixedError reports a Create refused because the store's config
+// declares a different id prefix than the one this process loaded, which means
+// `nibs config set-prefix` completed while this create waited for the store's
+// write lock. Every id this process holds is retired by that rename, so nothing
+// it could write would be named against the store as it now stands — see
+// Core.mintingVocabulary for why following the store is not on the table.
+// Classified FILE_ERROR by the CLI, like every other refusal over a store the
+// filesystem has moved out from under.
+type StoreRePrefixedError struct {
+	// Loaded is the prefix this process read at startup; Declared is the one
+	// the store's config carries now.
+	Loaded   string
+	Declared string
+
+	// LongLived selects the remedy, because the two kinds of holder have
+	// different ones and only one of them is a rerun. See Core.longLived.
+	LongLived bool
+}
+
+func (e *StoreRePrefixedError) Error() string {
+	// A process that exits after this command reloads the config by starting
+	// over; one that outlives it never reloads at all (c.config is fixed at
+	// construction and no watcher reads config.yml), so prescribing a rerun
+	// there prescribes an identical failure for the rest of its life.
+	remedy := "rerun to work against the store as it now stands"
+	if e.LongLived {
+		remedy = "restart the nibs process holding this store — it read the prefix once at startup and nothing reloads it, so every later create refuses the same way"
+	}
+	return fmt.Sprintf("nothing was created: this store's prefix changed from %q to %q while this create waited for the store's write lock, so every id this process loaded is retired — %s",
+		e.Loaded, e.Declared, remedy)
+}
+
 // ETagMismatchError is returned when an ETag validation fails.
 // This allows callers to distinguish concurrency conflicts from other errors.
 type ETagMismatchError struct {
@@ -118,12 +150,42 @@ type Core struct {
 	unparseableFiles []UnparseableFile
 	duplicateIDs     []DuplicateID
 
+	// loadWarned is every load-time warning THIS PROCESS has already put on the
+	// warn writer, guarded by c.mu alongside the diagnostics above. A load is
+	// idempotent, so a second one over an unchanged store has nothing new to say
+	// — and three verbs now re-read the store under the write lock, which
+	// otherwise printed the whole set a second time and spent a second copy of
+	// the per-load budget. Keyed by the RENDERED message so a warning about a
+	// file that only went bad between the two reads still reaches the reader.
+	//
+	// Deliberately fed by the warnings the budget SUPPRESSED as well as the ones
+	// it emitted: the first load's elision line already spoke for those and sent
+	// the reader to `nibs check`, so re-reading the store is not the event that
+	// makes them worth printing.
+	//
+	// The watcher's batches keep their own un-deduplicated budget: there a
+	// repeated warning means the file broke again, which is news.
+	loadWarned map[string]struct{}
+
 	// Search index (optional, lazy-initialized)
 	searchIndex SearchIndex
 
 	// File watching (optional)
 	watching bool
 	done     chan struct{}
+
+	// longLived records that this process asked to watch the store, which only
+	// a holder outliving a single command does (`nibs serve`, `nibs tui`).
+	// Guarded by c.mu alongside c.watching.
+	//
+	// It is deliberately NOT c.watching. StartWatching sets it before it can
+	// fail, and StopWatching never clears it, because what it answers is "will
+	// this process still be here, holding what it loaded, after this command
+	// returns" — and a serve whose watcher failed to start (cmd/serve.go treats
+	// that as a warning and continues) is the stalest holder of all, not the
+	// least. It is read only to choose which remedy a refusal prescribes; a
+	// wrong answer costs a sentence, never a write.
+	longLived bool
 
 	// Event subscribers (for channel-based API). Two kinds share subMu and the
 	// nextSubID counter but live in separate maps: payload subscribers receive
@@ -237,9 +299,25 @@ type warnBudget struct {
 	c          *Core
 	emitted    int
 	suppressed int
+	// seen, when non-nil, is the across-batches set a repeat is measured
+	// against — Core.loadWarned for a store load, nil for a watcher batch. A
+	// warning already in it costs nothing: it is neither emitted nor counted as
+	// suppressed, so it cannot push a genuinely new one out of the budget or
+	// raise an elision line of its own.
+	seen map[string]struct{}
 }
 
 func (w *warnBudget) warn(format string, args ...any) {
+	if w.seen != nil {
+		// Rendered rather than keyed on the format string: the format is shared
+		// by every file of one kind, and it is the FILE that makes a warning
+		// new.
+		msg := fmt.Sprintf(format, args...)
+		if _, repeat := w.seen[msg]; repeat {
+			return
+		}
+		w.seen[msg] = struct{}{}
+	}
 	if w.emitted >= maxWarningsPerBatch {
 		w.suppressed++
 		return
@@ -314,8 +392,13 @@ func (c *Core) loadFromDisk() error {
 
 	// Every per-file warning below spends this budget; the retained diagnostics
 	// above do not, so `nibs check` still answers for the whole store however
-	// little of it reached stderr (see warnBudget).
-	warns := &warnBudget{c: c}
+	// little of it reached stderr (see warnBudget). The budget is fresh per load
+	// while c.loadWarned outlives it, so a reload pays for what it newly finds
+	// and says nothing twice (see the field).
+	if c.loadWarned == nil {
+		c.loadWarned = make(map[string]struct{})
+	}
+	warns := &warnBudget{c: c, seen: c.loadWarned}
 
 	// Walk the store's CONTENT directories — data/ and archive/, dot
 	// directories pruned (see WalkStoreContent). cmd/migrate's scans walk the
@@ -1034,13 +1117,9 @@ func (c *Core) Create(b *nib.Nib) error {
 	// odds. The bound turns a broken generator into an error instead of a
 	// hang; at any sane density it is never approached.
 	if b.ID == "" {
-		prefix := ""
-		length := 4
-		if c.config != nil {
-			prefix = c.config.Nibs.Prefix
-			if c.config.Nibs.IDLength > 0 {
-				length = c.config.Nibs.IDLength
-			}
+		prefix, length, err := c.mintingVocabulary()
+		if err != nil {
+			return err
 		}
 		for range 100 {
 			id := newNibID(prefix, length)
@@ -1121,6 +1200,139 @@ func (c *Core) Create(b *nib.Nib) error {
 	}
 
 	return nil
+}
+
+// mintingVocabulary is the prefix and id length a NEW nib id is drawn under, or
+// a StoreRePrefixedError when the store's declared prefix moved under this
+// process. It re-reads the store's config from disk rather than trusting
+// c.config, which this process loaded before it took the store's write lock.
+//
+// `nibs config set-prefix` renames every nib file and rewrites nibs.prefix while
+// holding that same lock, so a `nibs new` that parked behind one resumes into a
+// store whose config already declares the new prefix — and minting from the
+// loaded copy there writes a nib under a prefix the store no longer declares. A
+// nib's id derives from its filename, so that is a permanent misnaming rather
+// than a stale label. Called with c.mu and the write lock held, so nothing can
+// supersede the value between this read and the file the create writes.
+//
+// Drawing under the re-read prefix instead is why a divergence is REFUSED rather
+// than followed. c.nibs is keyed by the ids this process loaded, every one of
+// them retired by the rename, so a draw in the new id space is checked against
+// an index that holds nothing of it: Create's collision guard and its redraw
+// loop (nibs-kafe) go blind exactly there, and a draw landing on a renamed nib
+// leaves a second file claiming its id — or, when the slug matches too, renames
+// over it and destroys it. The rest of the create is stale in the same way: the
+// parent, blocking and anchor ids the caller named are the retired spellings,
+// and canonicalizeLinksInMap resolves this nib's links under the retired prefix.
+// It is the same answer set-prefix gives when its own plan stops fitting the
+// store it took the lock over.
+//
+// Re-anchoring the predicate on the INDEX rather than the config — refusing only
+// while c.nibs still holds ids under the retired prefix, so a watcher that
+// observes the renames clears it — was considered and rejected. The staleness a
+// re-prefix leaves is process-wide, not create-local: Get, GetSnapshot and
+// NormalizeID all resolve a short id by prepending c.config.Nibs.Prefix, so a
+// holder whose index has moved to the new prefix while its config has not
+// answers `nibs show aaaa` with not-found and resolves no parent the caller
+// names. Self-healing the draw would leave that process minting correctly named
+// nibs into a store it can no longer address, which is a quieter wrongness than
+// the refusal rather than a smaller one. Whoever can act on it is told so
+// instead — see StoreRePrefixedError.LongLived, and the note runSetPrefix prints
+// to the operator who caused it.
+//
+// Only a MINTED id comes through here — a caller-supplied one is checked against
+// the same stale index, unchanged by this, because there the caller named the id
+// and following the store was never on the table.
+//
+// The re-read is deliberately LOCAL to this one decision, and c.config is left
+// alone. c.config is read OFF-LOCK in around thirty places (ValidateArea,
+// ValidateEnums, configPrefix and its callers) and handed out raw by Config() to
+// cmd/, internal/graph/ and internal/tui/, all resting on the pointer being
+// fixed at construction; swapping or mutating it here would be a data race
+// against every one of those readers, which the -race gate on this package
+// exists to catch.
+//
+// It reads <root>/config.yml with the user config layered underneath — the same
+// derivation resolveCLIStore uses, so what it returns is what a fresh process
+// would have loaded. --config, the only route that names a config file rather
+// than deriving it, must name a store's config.yml and resolves the store as
+// that file's containing directory, so it names this very file; no route pairs a
+// store with a config from anywhere else.
+//
+// A config that is ABSENT leaves the loaded values in place. A store need not
+// have one — the CLI reads defaults for it, and an embedder passes its
+// vocabulary to New — so there is nothing on disk that could have changed under
+// this process, and adopting Load's defaults would silently discard the caller's
+// prefix (and its id length, which applySystemDefaults fills in for a store with
+// no file).
+//
+// Absence is read off the LOAD, via Config.LoadedFromFile, and never off a stat
+// of this function's own. Load answers a missing file with an empty config and a
+// nil error, so a separate stat used to carry the absence decision — and the two
+// syscalls are not the same observation: a config.yml removed between them (an
+// ordinary `git -C .nibs checkout` unlinks and rewrites it) passed the stat,
+// read as absent, and arrived at the comparison below declaring the empty
+// prefix. Every create in that window refused, naming a re-prefix to "" that
+// never happened. One read, one answer, and no window between them.
+//
+// A config that DECLARES no prefix is not a re-prefix either, whether that is a
+// file with no `nibs.prefix` key or one that sets it empty. Nothing that empties
+// this field renames a file: `nibs config set-prefix` appends the separator dash
+// to its argument and validates the result against reprefix.ValidatePrefix,
+// which requires at least one character plus that dash. So an empty declared
+// prefix retires no id, c.nibs is still keyed the way this process loaded it,
+// and the loaded prefix stands. (A hand-rename paired with a hand-edited config
+// could reach the same state honestly; this whole re-read is scoped to what
+// set-prefix does under the lock, and a hand-moved store is outside it.)
+//
+// A config that EXISTS but cannot be read or parsed also leaves them in place,
+// with a warning. A failed read is evidence of nothing — least of all that the
+// prefix changed — while the loaded copy is the vocabulary the rest of this
+// create is already validating against, so falling back keeps one create
+// coherent. Refusing would trade a misnaming the read failure gives no reason to
+// expect for a hard failure of the most-used command in the CLI on a transient
+// error.
+//
+// A Core holding NO config adopts the stored vocabulary rather than refusing,
+// because it has no loaded prefix to have diverged FROM: the local prefix is
+// still its zero value, so comparing it against any declared one would refuse
+// every create against a perfectly unchanged store. What makes that safe rather
+// than merely necessary is that c.nibs is keyed by ids read off the filenames,
+// so a draw lands in the space the guard below actually checks.
+func (c *Core) mintingVocabulary() (string, int, error) {
+	prefix := ""
+	length := 4
+	if c.config != nil {
+		prefix = c.config.Nibs.Prefix
+		if c.config.Nibs.IDLength > 0 {
+			length = c.config.Nibs.IDLength
+		}
+	}
+
+	configPath := c.layout.ConfigPath()
+	stored, err := config.LoadStoreWithUserConfig(c.root)
+	if err != nil {
+		// Every failure that is not absence lands here — unreadable, over
+		// MaxConfigBytes, unparseable, a malformed area vocabulary. None of them
+		// is evidence the prefix changed, and a silent fallback would be
+		// indistinguishable from the misnaming this whole re-read exists to
+		// catch, so it says so.
+		c.logWarn("could not re-read %s while minting a nib id (%v); using the prefix %q and id length %d this process loaded", configPath, err, prefix, length)
+		return prefix, length, nil
+	}
+	if !stored.LoadedFromFile() {
+		return prefix, length, nil
+	}
+	if stored.Nibs.Prefix != "" {
+		if c.config != nil && stored.Nibs.Prefix != prefix {
+			return "", 0, &StoreRePrefixedError{Loaded: prefix, Declared: stored.Nibs.Prefix, LongLived: c.longLived}
+		}
+		prefix = stored.Nibs.Prefix
+	}
+	if stored.Nibs.IDLength > 0 {
+		length = stored.Nibs.IDLength
+	}
+	return prefix, length, nil
 }
 
 // CurrentETag returns the canonical ETag for the nib's on-disk content — a hash
@@ -1355,32 +1567,45 @@ func copyStamp(stamp *time.Time) *time.Time {
 // If ifMatch is provided, validates the current on-disk version's etag matches before updating.
 // This provides optimistic concurrency control to prevent lost updates.
 //
-// THE STALE-CLONE CHAIN, and why it is closed a process apart rather than here:
-// the caller's b was built from a snapshot taken BEFORE this call, and Update
+// THE CALLER'S b IS A SNAPSHOT taken BEFORE this call, and two things about it
+// can be stale by the time the write happens — its PATH and its CONTENT. They
+// get different answers.
+//
+// The PATH is re-derived under the lock: the write goes to the path the STORE
+// holds for this id, not the one the snapshot carries. Every writer that moves a
+// nib's file does so under this same c.mu — the in-place Path writers the
+// canonical live-pointer invariant enumerates (see NibReader.GetSnapshot in
+// internal/graph/interfaces.go), plus the watcher's slug-rename branch, which
+// installs a fresh pointer carrying the new Path — so the store's answer is
+// current and the snapshot's may not be. And the writer is the non-creating one,
+// so a path that went stale in a way no process in this one can re-derive —
+// `nibs config set-prefix` renames every file in the store — is reported rather
+// than turned into a second copy of the nib at its old name, holding the user's
+// edit while the live file keeps the old value.
+//
+// The CONTENT cannot be re-derived here, and that is the residual. This method
 // takes c.mu and then parks on the store flock while holding it. If a migration
 // holds that flock (AcquireStoreLock), the whole wait happens with c.mu held —
 // so the watcher, which needs c.mu, cannot refresh c.nibs with the migrated
 // files first. When the migration releases, an Update WITH ifMatch fails safe
 // (the stored etag no longer matches), but one with NO ifMatch writes b's
-// pre-migration render straight back, erasing e.g. a freshly transferred
-// blocked_by edge; the source file is already stamped v1, so no migration
-// detect ever fires again and the loss is silent and permanent.
+// pre-migration render straight back over the same file, erasing e.g. a freshly
+// transferred blocked_by edge; the source file is already stamped v1, so no
+// migration detect ever fires again and the loss is silent and permanent. No
+// lock ordering inside this method makes a pre-migration clone current again, so
+// that chain is broken one level up: AcquireServeExclusion fences a migration
+// out of a live serve entirely (servelock.go), so the flock this method parks on
+// cannot be held by one. What remains is a serve from a release that predates
+// that interlock, which does not take the lock and so cannot be fenced; `nibs
+// migrate` names exactly that case before it applies.
 //
-// Nothing inside this method can see that, which is why the fix is not here: by
-// the time Update runs, the snapshot it is asked to write is already stale, and
-// no lock ordering makes a pre-migration clone current again. So the chain is
-// broken one level up — AcquireServeExclusion fences a migration out of a live
-// serve entirely (servelock.go), so the flock this method parks on cannot be
-// held by one. What remains is a serve from a release that predates that
-// interlock, which does not take the lock and so cannot be fenced; `nibs migrate`
-// names exactly that case before it applies.
+// The second guard against it is the caller's: an ifMatch makes this fail safe
+// whatever the process arrangement, and the web UI's batch mutations send one.
 //
-// The second guard is the caller's: an ifMatch makes this fail safe whatever the
-// process arrangement. The web UI's batch mutations now send one, which they did
-// not when this note was first written.
-//
-// Note the residual is THIS stale-in-memory-clone chain, not the watcher or any
-// layout move — the watcher is a bystander that c.mu keeps parked.
+// The watcher is a bystander to THAT chain — c.mu keeps it parked while this
+// method runs. It is no bystander to the PATH: under a live serve it is the
+// commonest mover of a nib's file, which is what the re-derivation above picks
+// up.
 func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -1439,9 +1664,22 @@ func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 	now := time.Now().UTC().Truncate(time.Second)
 	b.UpdatedAt = &now
 
-	// Write to disk
-	if err := c.saveToDisk(b); err != nil {
-		return err
+	// The file to write is the one the STORE says this nib lives in, not the one
+	// the caller's clone remembers: every writer that moves a nib's file does so
+	// under this same c.mu (the doc comment above names them), so a clone taken
+	// before one of them ran names a file that has since moved. Assigning it also
+	// keeps the entry installed below agreeing with the disk.
+	b.Path = storedNib.Path
+
+	// Write to disk. Non-creating: this is a REPLACEMENT of a file the store
+	// already has, and the stored path is only current for as long as no other
+	// PROCESS moves the file — `nibs config set-prefix` renames every one of them.
+	// A creating write answers that by leaving a second copy of the nib at the old
+	// path, which then holds the user's edit while the live file keeps the old
+	// value. Refusing is the only honest answer a path this process cannot re-derive
+	// has.
+	if err := c.updateOnDisk(b); err != nil {
+		return fmt.Errorf("%s: %w", b.ID, err)
 	}
 
 	// Update in-memory map
@@ -1479,16 +1717,7 @@ func (c *Core) saveToDisk(b *nib.Nib) error {
 // fsutil.DirSyncBatch — see fsutil.AtomicWriteFileDeferDirSync for the weaker
 // guarantee that holds until the flush.
 func (c *Core) saveToDiskDeferDirSync(b *nib.Nib) (string, error) {
-	// Determine the file path. A nib with no Path yet is new, and new nibs are
-	// written into the store's data/ directory — the store root holds
-	// directories and the config, never nib files.
-	var path string
-	if b.Path != "" {
-		path = filepath.Join(c.root, b.Path)
-	} else {
-		b.Path = c.layout.DataRel(nib.BuildFilename(b.ID, b.Slug))
-		path = filepath.Join(c.root, b.Path)
-	}
+	path := c.nibFilePath(b)
 
 	// Ensure parent directory exists
 	dir := filepath.Dir(path)
@@ -1496,7 +1725,57 @@ func (c *Core) saveToDiskDeferDirSync(b *nib.Nib) (string, error) {
 		return "", fmt.Errorf("creating directory: %w", err)
 	}
 
-	// Render and write
+	return c.renderAndWriteDeferDirSync(b, path, fsutil.AtomicWriteFileDeferDirSync)
+}
+
+// updateOnDisk is saveToDisk for a caller REPLACING a nib's existing file: it
+// refuses a path nothing is at, and flushes the directory entry before
+// returning, so a single write is as durable as fsutil.AtomicWriteFile makes it.
+// A caller replacing MANY files wants updateOnDiskDeferDirSync plus an
+// fsutil.DirSyncBatch instead — see it for why the refusal is the right answer
+// to a path that went stale.
+func (c *Core) updateOnDisk(b *nib.Nib) error {
+	dir, err := c.updateOnDiskDeferDirSync(b)
+	if err != nil {
+		return err
+	}
+	fsutil.SyncDir(dir)
+	return nil
+}
+
+// updateOnDiskDeferDirSync is saveToDiskDeferDirSync for a caller that is
+// REPLACING a nib's existing file rather than deciding where a nib lives: it
+// refuses a path nothing is at instead of creating one there.
+//
+// The distinction is the difference between a stale path being reported and a
+// nib being duplicated. A bulk rewrite holds the path each nib carried when this
+// process loaded the store, and `nibs config set-prefix` renames every one of
+// them; a creating write turns the leftover path into a second copy of the nib,
+// under a prefix the config no longer declares. See
+// fsutil.AtomicUpdateFileDeferDirSync for what that refusal does and does not
+// promise.
+//
+// It does NOT MkdirAll: an existing file's directory exists, and creating one
+// for a path the write is about to refuse would leave an empty directory behind.
+func (c *Core) updateOnDiskDeferDirSync(b *nib.Nib) (string, error) {
+	return c.renderAndWriteDeferDirSync(b, c.nibFilePath(b), fsutil.AtomicUpdateFileDeferDirSync)
+}
+
+// nibFilePath resolves the absolute file a nib's bytes belong in. A nib with no
+// Path yet is new, and new nibs are written into the store's data/ directory —
+// the store root holds directories and the config, never nib files — so this
+// also ASSIGNS that Path.
+func (c *Core) nibFilePath(b *nib.Nib) string {
+	if b.Path == "" {
+		b.Path = c.layout.DataRel(nib.BuildFilename(b.ID, b.Slug))
+	}
+	return filepath.Join(c.root, b.Path)
+}
+
+// renderAndWriteDeferDirSync renders a nib and commits it through write, which
+// is one of fsutil's two deferred-flush writers — the creating one for a save,
+// the refusing one for an update.
+func (c *Core) renderAndWriteDeferDirSync(b *nib.Nib, path string, write func(string, []byte, os.FileMode) (string, error)) (string, error) {
 	content, err := b.Render()
 	if err != nil {
 		return "", err
@@ -1505,7 +1784,7 @@ func (c *Core) saveToDiskDeferDirSync(b *nib.Nib) (string, error) {
 	// Write atomically (temp file + rename) so a crash or a concurrent reader
 	// never observes a half-written nib — a torn file would fail nib.Parse on the
 	// next snapshot build and surface as an OnDiskUnparseableError.
-	unflushedDir, err := fsutil.AtomicWriteFileDeferDirSync(path, content, 0644)
+	unflushedDir, err := write(path, content, 0644)
 	if err != nil {
 		return "", fmt.Errorf("writing file: %w", err)
 	}
@@ -1820,7 +2099,7 @@ func (c *Core) GetFromArchive(id string) (*nib.Nib, error) {
 // Archive's comment records. On this path the destination flush arrives anyway:
 // both callers (`nibs set` and `nibs body`, falling back to the archive when the id
 // is not in the active set) write the nib immediately afterwards, and that write's
-// saveToDisk flushes data/ — the directory this rename moved the file INTO.
+// updateOnDisk flushes data/ — the directory this rename moved the file INTO.
 func (c *Core) LoadAndUnarchive(id string) (*nib.Nib, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

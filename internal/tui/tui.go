@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -217,10 +218,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.list.helpExpanded = a.helpExpanded
 		a.detail.helpExpanded = a.helpExpanded
 
-		// Resize list to account for help panel height
+		// Resize list to account for the footer region (help panel or footer)
 		if a.helpExpanded {
-			helpHt := a.list.currentHelpHeight()
-			footerH := max(1, helpHt)
+			footerH := a.list.footerHeight()
 			if a.isTwoColumnMode() {
 				leftWidth, _ := calculatePaneWidths(a.width)
 				contentHeight := a.height - footerH
@@ -281,8 +281,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.helpExpanded = !a.helpExpanded
 				if a.state == viewList {
 					a.list.helpExpanded = a.helpExpanded
-					helpHt := a.list.currentHelpHeight()
-					footerH := max(1, helpHt)
+					footerH := a.list.footerHeight()
 					if a.isTwoColumnMode() {
 						leftWidth, _ := calculatePaneWidths(a.width)
 						contentHeight := a.height - footerH
@@ -433,7 +432,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.detail = a.initDetailModel(updatedNib)
 			}
 		}
-		a.reportMutationFailures("Status change", errs)
+		a.reportMutationFailures("Status change", "nib", errs)
 		return a, a.list.loadNibs
 
 	case openCreateTypePickerMsg:
@@ -482,7 +481,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.detail = a.initDetailModel(updatedNib)
 			}
 		}
-		a.reportMutationFailures("Type change", errs)
+		a.reportMutationFailures("Type change", "nib", errs)
 		return a, a.list.loadNibs
 
 	case createTypeSelectedMsg:
@@ -523,7 +522,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.detail = a.initDetailModel(updatedNib)
 			}
 		}
-		a.reportMutationFailures("Priority change", errs)
+		a.reportMutationFailures("Priority change", "nib", errs)
 		return a, a.list.loadNibs
 
 	case openEstimatePickerMsg:
@@ -554,7 +553,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.detail = a.initDetailModel(updatedNib)
 			}
 		}
-		a.reportMutationFailures("Estimate change", errs)
+		a.reportMutationFailures("Estimate change", "nib", errs)
 		return a, a.list.loadNibs
 
 	case openBlockingPickerMsg:
@@ -569,19 +568,20 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.list.loadNibs
 
 	case blockingConfirmedMsg:
-		// Apply all blocking changes via backend mutations
+		// Apply all blocking changes via backend mutations. Both loops report
+		// through one call: the footer holds a single message, so a second
+		// report would overwrite the first and re-hide whatever it named.
+		var errs []error
 		for _, targetID := range msg.toAdd {
 			_, err := a.backend.AddBlocking(context.Background(), msg.nibID, targetID)
 			if err != nil {
-				// Continue with other changes even if one fails
-				continue
+				errs = append(errs, err)
 			}
 		}
 		for _, targetID := range msg.toRemove {
 			_, err := a.backend.RemoveBlocking(context.Background(), msg.nibID, targetID)
 			if err != nil {
-				// Continue with other changes even if one fails
-				continue
+				errs = append(errs, err)
 			}
 		}
 		// Return to previous view and refresh
@@ -592,6 +592,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.detail = a.initDetailModel(updatedNib)
 			}
 		}
+		a.reportMutationFailures("Blocking change", "link", errs)
 		return a, a.list.loadNibs
 
 	case reorderNibMsg:
@@ -723,16 +724,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		})
 
 	case editorFinishedMsg:
-		// Editor closed - check if file was modified and reload if so
+		// Editor closed - take what was written back into the store.
 		if a.editingNibID != "" {
-			if n, err := a.backend.GetNib(context.Background(), a.editingNibID); err == nil && n != nil {
-				fullPath := filepath.Join(a.backend.Root(), n.Path)
-				if info, err := os.Stat(fullPath); err == nil {
-					if info.ModTime().After(a.editingNibModTime) {
-						_, _ = a.backend.ReloadAfterEdit(a.editingNibID)
-					}
-				}
+			if err := a.recordExternalEdit(a.editingNibID, a.editingNibModTime); err != nil {
+				a.reportFailure(editorWriteRefusal(a.editingNibID, err))
 			}
+			// Cleared whether or not the store took the edit. The pair is a
+			// one-shot guard for the session that just ended, so holding it
+			// past a refusal would make the NEXT editor exit write this nib
+			// again, against a timestamp from a different session — and there
+			// is nothing here to retry with anyway: the file already holds the
+			// user's text, which is why the id goes into the message instead.
 			a.editingNibID = ""
 			a.editingNibModTime = time.Time{}
 		}
@@ -744,11 +746,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.parentID != "" {
 			parentID = &msg.parentID
 		}
+		var errs []error
 		for _, nibID := range msg.nibIDs {
 			_, err := a.backend.SetParent(context.Background(), nibID, parentID, nil)
 			if err != nil {
-				// Continue with other nibs even if one fails
-				continue
+				errs = append(errs, err)
 			}
 		}
 		// Return to the previous view and refresh
@@ -762,6 +764,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.detail = a.initDetailModel(updatedNib)
 			}
 		}
+		a.reportMutationFailures("Parent change", "nib", errs)
 		return a, a.list.loadNibs
 
 	case clearFilterMsg:
@@ -869,18 +872,10 @@ func (a *App) collectTagsWithCounts() []tagWithCount {
 func (a *App) renderTwoColumnView() string {
 	leftWidth, rightWidth := calculatePaneWidths(a.width)
 
-	// Calculate help panel dimensions
-	helpHt := 0
-	var helpPanel string
-	if a.helpExpanded {
-		entries := a.list.expandedHelpEntries()
-		helpPanel = renderHelpPanel(entries, a.width)
-		helpHt = helpPanelHeight(entries, a.width)
-	}
-
-	// Footer/panel height: the expanded panel, or the compact footer — which is
-	// one line unless a status message wrapped onto more.
-	contentHeight := a.height - max(a.list.footerHeight(), helpHt)
+	// Footer region: the expanded panel with any status message above it, or the
+	// compact footer — one line unless a status message wrapped onto more.
+	footer := a.list.footerRegion()
+	contentHeight := a.height - max(1, lipgloss.Height(footer))
 
 	// Render left pane (list) with constrained width, no footer
 	leftPane := a.list.ViewConstrained(leftWidth, contentHeight)
@@ -893,11 +888,7 @@ func (a *App) renderTwoColumnView() string {
 	// Compose columns
 	columns := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
 
-	// When expanded, the panel includes esc/?/q — no separate footer
-	if helpPanel != "" {
-		return columns + "\n" + helpPanel
-	}
-	return columns + "\n" + a.list.Footer()
+	return columns + "\n" + footer
 }
 
 // View renders the current view
@@ -980,14 +971,41 @@ func (a *App) initDetailModel(n *nib.Nib) detailModel {
 // guard's refusals wrap to six lines at 80 columns, a quarter of the screen, and
 // the count is the part that says the batch did not apply whole. Re-applying to
 // one nib at a time is what shows each reason.
-func (a *App) reportMutationFailures(action string, errs []error) {
+//
+// unit names what ONE error is about, because that is not the same thing at
+// every caller: the status, type, priority, estimate and parent pickers collect
+// one error per nib they were applying to, while the blocking picker confirms
+// one subject's diff and collects one error per LINK in it. Counting links as
+// nibs would tell a user that two nibs refused when one did.
+func (a *App) reportMutationFailures(action, unit string, errs []error) {
 	if len(errs) == 0 {
 		return
 	}
-	message := fmt.Sprintf("%s failed for %d nib(s)", action, len(errs))
+	message := fmt.Sprintf("%s failed for %d %s(s)", action, len(errs), unit)
 	if len(errs) == 1 {
 		message = fmt.Sprintf("%s failed: %v", action, errs[0])
 	}
+	a.reportFailure(message)
+}
+
+// reportFailure writes an already-composed refusal into the footer of whichever
+// view is on screen, warning-colored. Callers whose failure is not a picker's
+// "<action> failed: <reason>" compose their own sentence and come here directly:
+// the editor path's is a write over a file the user has ALREADY saved, and the
+// picker phrasing would name it a reload and imply the text is safely in.
+//
+// The same ordering rule applies — call it AFTER any detail-model rebuild.
+//
+// READS are deliberately not routed here, and the discarded ones left in this
+// file are an accepted silence rather than an oversight: the GetNib refreshes
+// that rebuild the detail model after a picker's write, and the ListNibs behind
+// the tag picker's counts. Each re-reads state the store already holds, so
+// failing leaves the value the view loaded a moment ago on screen — stale, not
+// wrong — while the write that preceded it is reported here and the list reload
+// each of those cases returns re-reads regardless. Spending the footer's one row
+// on a condition the user cannot act on would cost the row a refusal needs. A
+// discarded WRITE is the opposite and belongs here.
+func (a *App) reportFailure(message string) {
 	if a.state == viewDetail {
 		a.detail.statusMessage = message
 		a.detail.statusKind = statusWarn
@@ -996,6 +1014,83 @@ func (a *App) reportMutationFailures(action string, errs []error) {
 	a.list.statusMessage = message
 	a.list.statusKind = statusWarn
 }
+
+// recordExternalEdit takes an $EDITOR session's file back into the store: the
+// nib is re-read and its updated_at bumped, because a file-level edit bypasses
+// the mutation layer that would otherwise set it. Despite the backend method's
+// name this is a WRITE, and the store can turn it down.
+//
+// The lookup that locates the nib is reported alongside the write, unlike this
+// file's other reads. After `nibs config set-prefix` has run in another process
+// the nib no longer answers to the id this session opened the editor with, and
+// that is exactly the case the user has to hear about — swallowing it would
+// leave the edit unrecorded with nothing on screen, the same silence one call
+// earlier.
+//
+// An unchanged file is not an edit: since is the mtime taken before the editor
+// launched, and no write is attempted when the file has not moved past it.
+func (a *App) recordExternalEdit(id string, since time.Time) error {
+	n, err := a.backend.GetNib(context.Background(), id)
+	if err != nil {
+		return err
+	}
+	if n == nil {
+		return fmt.Errorf("%s is no longer in the store", id)
+	}
+	info, err := os.Stat(filepath.Join(a.backend.Root(), n.Path))
+	if err != nil {
+		return &nibFileUnreadableError{err: err}
+	}
+	if !info.ModTime().After(since) {
+		return nil
+	}
+	_, err = a.backend.ReloadAfterEdit(id)
+	return err
+}
+
+// nibFileUnreadableError marks the one leg of an $EDITOR write-back where the
+// file the store says the nib lives in could not be read at all. It is a type
+// of its own because the reassurance the other legs carry — that the user's
+// text is sitting safely in that file — is the one claim this leg cannot make.
+type nibFileUnreadableError struct{ err error }
+
+func (e *nibFileUnreadableError) Error() string { return e.err.Error() }
+
+func (e *nibFileUnreadableError) Unwrap() error { return e.err }
+
+// editorWriteRefusal words an $EDITOR session the store did not record.
+//
+// The lead carries the whole of what the user has to act on — where their text
+// is and what to do next — and the detail follows it. renderStatusMessage caps
+// the footer at height/3 rows and cuts the overflow with an ellipsis, which on
+// an eight-row terminal is two rows of message: whatever the sentence ends with
+// is the half the user does not get, so what ends it has to be the half they can
+// afford to lose.
+//
+// The lead is not one sentence for every leg. A stat that failed says the file
+// the store points at could not be read, so the text the other legs correctly
+// promise is in it cannot be promised at all.
+//
+// Nor can the opposite be claimed. The stat fails on paths where the text is
+// perfectly safe — a concurrent `nibs config set-prefix` renames the file while
+// the TUI is suspended under tea.ExecProcess, and the stale Path the store hands
+// back stats ENOENT over an intact file — so the unreadable lead reports what
+// the store did and leaves the text's fate to the restart it prescribes.
+func editorWriteRefusal(id string, err error) string {
+	var unreadable *nibFileUnreadableError
+	if errors.As(err, &unreadable) {
+		return editorFileUnreadableLead + fmt.Sprintf(" The file recorded for %s could not be read: %v", id, err)
+	}
+	return editorTextSafeLead + fmt.Sprintf(" The store did not accept the edit to %s: %v", id, err)
+}
+
+// The two leads editorWriteRefusal picks between. They are named so the sweep
+// that renders them at the geometries the footer actually gets can ask for the
+// real string rather than a copy of it.
+const (
+	editorTextSafeLead       = "Your text is still in the file. Restart nibs to re-read the store."
+	editorFileUnreadableLead = "Nothing was recorded; the file cannot be read. Restart nibs to re-read the store."
+)
 
 // getEditor returns the user's preferred editor using the fallback chain:
 // $VISUAL -> $EDITOR -> vi -> nano

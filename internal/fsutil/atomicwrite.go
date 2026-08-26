@@ -5,7 +5,9 @@
 package fsutil
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 )
@@ -114,6 +116,43 @@ func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 // a batch that aborts midway has already committed every rename before the
 // failure. Everything else in AtomicWriteFile's contract holds unchanged.
 func AtomicWriteFileDeferDirSync(path string, data []byte, perm os.FileMode) (string, error) {
+	return writeAndRename(path, data, perm)
+}
+
+// AtomicUpdateFileDeferDirSync is AtomicWriteFileDeferDirSync's non-creating
+// sibling: it REFUSES, wrapping fs.ErrNotExist, when nothing is at path, and
+// creates neither the file nor a temp file on that path.
+//
+// It exists for a caller that believes it is UPDATING a file it read earlier —
+// nibcore's area cascade, which writes each nib back to the path its in-memory
+// copy carries. Both writers here end in a rename, and a rename creates
+// unconditionally, so a path gone stale (another process renamed every nib file
+// under a new prefix) silently yields a SECOND copy of the nib at its old path
+// instead of an error. Refusing turns that into a failure the caller reports,
+// which is the only answer a stale path has.
+//
+// WHAT THE REFUSAL IS AND IS NOT: the check and the rename are separate steps,
+// so this is not an atomic test-and-set — a writer that removes path in between
+// still gets a created file. That window is the caller's to close, and nibcore's
+// is: it holds the store lock across the whole verb. What no lock can detect is
+// a caller whose OWN path is stale, and that is what this catches.
+//
+// The check is an Lstat, so a SYMLINK at path counts as present — the rename
+// replaces the entry, and the entry is what the check asks about. Everything
+// else in AtomicWriteFileDeferDirSync's contract holds unchanged, including the
+// caller's obligation to hand the returned directory to SyncDir and the empty
+// string returned with any error.
+func AtomicUpdateFileDeferDirSync(path string, data []byte, perm os.FileMode) (string, error) {
+	// Ahead of the temp file rather than beside the rename: a stale path has
+	// often lost its DIRECTORY too, and there os.CreateTemp fails first with an
+	// error about a temp file the caller never asked for, burying the one fact
+	// it needs — that the file it meant to update is not there.
+	if _, err := os.Lstat(path); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("updating %s: %w", path, fs.ErrNotExist)
+		}
+		return "", fmt.Errorf("checking %s before updating it: %w", path, err)
+	}
 	return writeAndRename(path, data, perm)
 }
 
