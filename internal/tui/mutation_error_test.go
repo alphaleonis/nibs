@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"image/color"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -1191,6 +1193,196 @@ func TestUnreadableNibFileAfterEditingIsReported(t *testing.T) {
 	}
 }
 
+// failedEditorLaunch produces the error a launch that never happened hands back,
+// by attempting one. Building it rather than hand-rolling an error keeps the
+// message these tests assert on the one a user would actually be shown.
+func failedEditorLaunch(t *testing.T) (*exec.Cmd, error) {
+	t.Helper()
+	c := exec.Command(filepath.Join(t.TempDir(), "nibs-no-such-editor"))
+	c.Stdout, c.Stderr = io.Discard, io.Discard
+	err := c.Run()
+	if err == nil {
+		t.Fatal("premise failed: running a nonexistent editor succeeded")
+	}
+	if c.ProcessState != nil {
+		t.Fatalf("premise failed: ProcessState = %v after a launch that never happened, want nil", c.ProcessState)
+	}
+	return c, err
+}
+
+// nonZeroEditorExit produces the error a process that ran and chose its own
+// status hands back — `vi` quit with :cq. A bogus flag makes the test binary
+// itself the stand-in, which needs no shell and so works on every platform.
+func nonZeroEditorExit(t *testing.T) (*exec.Cmd, error) {
+	t.Helper()
+	c := exec.Command(os.Args[0], "-test.nibs-no-such-flag")
+	c.Stdout, c.Stderr = io.Discard, io.Discard
+	err := c.Run()
+	if err == nil {
+		t.Fatal("premise failed: the stand-in editor exited zero")
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("premise failed: err = %T %v, want an *exec.ExitError", err, err)
+	}
+	if c.ProcessState == nil {
+		t.Fatal("premise failed: ProcessState = nil after a process that ran")
+	}
+	return c, err
+}
+
+// The handler reads whether the editor RAN, not what kind of error came back,
+// and this pins both halves of that: the observation it rests on — exec.Cmd
+// records a ProcessState only for a process it managed to start — and the
+// callback that reads it, which tea.ExecProcess invokes out of reach of any test
+// driving Update.
+//
+// The error alone cannot carry the distinction. tea.ExecProcess hands the
+// callback the terminal's release and restore errors too, so "not an
+// *exec.ExitError" would also cover a restore that failed after the editor ran
+// perfectly well — reporting a finished editing session, whose file is now
+// waiting to be taken back in, as a launch that never happened.
+func TestTheEditorCallbackReadsWhetherTheProcessRan(t *testing.T) {
+	tests := []struct {
+		name        string
+		arrange     func(t *testing.T) (*exec.Cmd, error)
+		wantStarted bool
+	}{
+		{name: "the editor never started", arrange: failedEditorLaunch, wantStarted: false},
+		{name: "the editor ran and exited non-zero", arrange: nonZeroEditorExit, wantStarted: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, err := tt.arrange(t)
+
+			msg, ok := editorFinished(c)(err).(editorFinishedMsg)
+			if !ok {
+				t.Fatalf("callback returned %T, want an editorFinishedMsg", editorFinished(c)(err))
+			}
+			if msg.started != tt.wantStarted {
+				t.Errorf("started = %v, want %v", msg.started, tt.wantStarted)
+			}
+			if msg.err != err {
+				t.Errorf("err = %v, want %v", msg.err, err)
+			}
+		})
+	}
+}
+
+// An $EDITOR that never started is a screen flicker and nothing else unless it
+// is reported: no editor opened, so the user has no error text of their own to
+// read, and nothing on screen changed to say the keypress landed.
+func TestFailedEditorLaunchIsReported(t *testing.T) {
+	app, stub := setupTestApp(t, pickerTestNibs())
+	editorSession(t, app, stub, "nib-1")
+	_, launchErr := failedEditorLaunch(t)
+
+	_, cmd := app.Update(editorFinishedMsg{err: launchErr})
+	processCmd(app, cmd)
+
+	want := editorNotStartedLead + " The editor could not be started: " + launchErr.Error()
+	if got := app.list.statusMessage; got != want {
+		t.Errorf("list footer message = %q, want %q", got, want)
+	}
+	if app.list.statusKind != statusWarn {
+		t.Errorf("statusKind = %v, want statusWarn — it would render in the success color", app.list.statusKind)
+	}
+	if got := frameText(app.View().Content, 120, 40); !strings.Contains(got, want) {
+		t.Errorf("the frame does not carry the launch failure:\n%s", got)
+	}
+	// Nothing was edited, so nothing is taken back in: a write here would bump
+	// updated_at for an editing session that never happened.
+	if len(stub.ReloadCalls) > 0 {
+		t.Errorf("write attempted after a launch that never happened: %v", stub.ReloadCalls)
+	}
+	// The id/mtime pair is a one-shot guard for the launch this msg ends. Held
+	// past a failed launch it would make the NEXT editor exit write this nib.
+	if app.editingNibID != "" {
+		t.Errorf("editingNibID = %q after a failed launch, want it cleared", app.editingNibID)
+	}
+	if !app.editingNibModTime.IsZero() {
+		t.Errorf("editingNibModTime = %v after a failed launch, want the zero time", app.editingNibModTime)
+	}
+}
+
+// The same failure raised while the detail view is up has to land in the detail
+// footer; the list footer is not on screen there.
+func TestFailedEditorLaunchReachesTheDetailFooter(t *testing.T) {
+	app, stub := setupTestApp(t, pickerTestNibs())
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if app.state != viewDetail {
+		t.Fatalf("premise failed: expected the detail view, got state %d", app.state)
+	}
+	editorSession(t, app, stub, "nib-1")
+	_, launchErr := failedEditorLaunch(t)
+
+	_, cmd := app.Update(editorFinishedMsg{err: launchErr})
+	processCmd(app, cmd)
+
+	want := editorNotStartedLead + " The editor could not be started: " + launchErr.Error()
+	if got := app.detail.statusMessage; got != want {
+		t.Errorf("detail footer message = %q, want %q", got, want)
+	}
+	if app.detail.statusKind != statusWarn {
+		t.Errorf("detail statusKind = %v, want statusWarn", app.detail.statusKind)
+	}
+}
+
+// The launch failure makes none of the claims the write-back's two leads make,
+// because none of them is true here: there is no text of the user's to account
+// for, no file was opened, and the store was never asked for anything — so
+// restarting nibs to re-read it, which both of those leads prescribe, changes
+// nothing about why the keypress did not open an editor.
+func TestTheLaunchFailureBorrowsNeitherWriteBackLead(t *testing.T) {
+	app, stub := setupTestApp(t, pickerTestNibs())
+	editorSession(t, app, stub, "nib-1")
+	_, launchErr := failedEditorLaunch(t)
+
+	_, cmd := app.Update(editorFinishedMsg{err: launchErr})
+	processCmd(app, cmd)
+
+	got := app.list.statusMessage
+	if got == "" {
+		t.Fatal("premise failed: the failed launch was not reported at all")
+	}
+	for _, unwanted := range []string{editorTextSafeLead, editorFileUnreadableLead, "Restart nibs"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("list footer message = %q — %q speaks for a finished editor session, which this is not", got, unwanted)
+		}
+	}
+}
+
+// An editor that RAN chose its own exit status, and the user is usually the one
+// who chose it: quitting `vi` with :cq exits non-zero on purpose, so a warning
+// there would fire on an ordinary keystroke. Either way the file it may have
+// saved is still taken back into the store.
+func TestAnEditorThatRanIsTakenInWhateverItsExitStatus(t *testing.T) {
+	_, exitErr := nonZeroEditorExit(t)
+	tests := []struct {
+		name string
+		msg  editorFinishedMsg
+	}{
+		{name: "exited zero", msg: editorFinishedMsg{}},
+		{name: "quit with :cq", msg: editorFinishedMsg{err: exitErr, started: true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app, stub := setupTestApp(t, pickerTestNibs())
+			editorSession(t, app, stub, "nib-1")
+
+			_, cmd := app.Update(tt.msg)
+			processCmd(app, cmd)
+
+			if app.list.statusMessage != "" {
+				t.Errorf("footer message = %q, want none", app.list.statusMessage)
+			}
+			if len(stub.ReloadCalls) == 0 {
+				t.Error("the saved file was not taken back into the store")
+			}
+		})
+	}
+}
+
 // editorRefusalGeometries is where an $EDITOR refusal has to survive being cut.
 // renderStatusMessage caps the footer at height/3 rows and drops the overflow
 // with an ellipsis, so the narrow-and-short corner is where a sentence that ends
@@ -1221,33 +1413,43 @@ func statusRegionIsOneLine(panelOpen bool, height int) bool {
 // they say — twenty-five cells survive the wrap there — so those geometries pin
 // the weaker property that still separates this wording from the old one: the
 // row spends itself on the LEAD rather than on the store's error text.
+//
+// The launch failure is swept alongside them because it is cut hardest: the
+// error it ends with is a whole filesystem path, so a lead that came second
+// would leave the user reading the tail of a temp path and nothing else.
 func TestTheEditorRefusalKeepsItsLeadOnScreen(t *testing.T) {
 	legs := []struct {
-		name    string
-		arrange func(t *testing.T, stub *StubBackend)
-		want    []string
-		floor   []string
+		name     string
+		lead     string
+		arrange  func(t *testing.T, stub *StubBackend)
+		finished func(t *testing.T) editorFinishedMsg
+		want     []string
+		floor    []string
 	}{
 		{
 			name:    "the store refused the write",
+			lead:    editorTextSafeLead,
 			arrange: func(_ *testing.T, stub *StubBackend) { stub.ReloadErr = errors.New(refusalReason) },
 			want:    []string{"Your text is still in the file", "Restart nibs"},
 			floor:   []string{"Your text is still in"},
 		},
 		{
 			name:    "the lookup was refused",
+			lead:    editorTextSafeLead,
 			arrange: func(_ *testing.T, stub *StubBackend) { stub.GetErr = errors.New("store is unreadable") },
 			want:    []string{"Your text is still in the file", "Restart nibs"},
 			floor:   []string{"Your text is still in"},
 		},
 		{
 			name:    "the id no longer resolves",
+			lead:    editorTextSafeLead,
 			arrange: func(_ *testing.T, stub *StubBackend) { delete(stub.Nibs, "nib-1") },
 			want:    []string{"Your text is still in the file", "Restart nibs"},
 			floor:   []string{"Your text is still in"},
 		},
 		{
 			name: "the file cannot be read",
+			lead: editorFileUnreadableLead,
 			arrange: func(t *testing.T, stub *StubBackend) {
 				if err := os.Remove(filepath.Join(stub.RootDir, "data", "nib-1.md")); err != nil {
 					t.Fatalf("removing the nib file: %v", err)
@@ -1255,6 +1457,17 @@ func TestTheEditorRefusalKeepsItsLeadOnScreen(t *testing.T) {
 			},
 			want:  []string{"Nothing was recorded", "the file cannot be read", "Restart nibs"},
 			floor: []string{"Nothing was recorded"},
+		},
+		{
+			name:    "the editor never started",
+			lead:    editorNotStartedLead,
+			arrange: func(_ *testing.T, _ *StubBackend) {},
+			finished: func(t *testing.T) editorFinishedMsg {
+				_, err := failedEditorLaunch(t)
+				return editorFinishedMsg{err: err}
+			},
+			want:  []string{"Nothing was opened and nothing changed", "Check $VISUAL"},
+			floor: []string{"Nothing was opened"},
 		},
 	}
 
@@ -1277,8 +1490,12 @@ func TestTheEditorRefusalKeepsItsLeadOnScreen(t *testing.T) {
 						}
 						editorSession(t, app, stub, "nib-1")
 						leg.arrange(t, stub)
+						finished := editorFinishedMsg{}
+						if leg.finished != nil {
+							finished = leg.finished(t)
+						}
 
-						_, cmd := app.Update(editorFinishedMsg{})
+						_, cmd := app.Update(finished)
 						processCmd(app, cmd)
 						if app.list.statusMessage == "" {
 							t.Fatal("premise failed: the editor session was not reported at all")
@@ -1289,12 +1506,12 @@ func TestTheEditorRefusalKeepsItsLeadOnScreen(t *testing.T) {
 						painted := frameText(content, width, height)
 
 						want := leg.want
-						if statusRegionIsOneLine(panelOpen, height) && width < lipgloss.Width(editorTextSafeLead) {
+						if statusRegionIsOneLine(panelOpen, height) && width < lipgloss.Width(leg.lead) {
 							want = leg.floor
 						}
 						for _, fragment := range want {
 							if !strings.Contains(painted, fragment) {
-								t.Errorf("the frame does not carry %q — the user is told the store refused the edit and nothing about what happened to their text:\n%s",
+								t.Errorf("the frame does not carry %q — what reaches the user is the error text and nothing about what became of their edit:\n%s",
 									fragment, painted)
 							}
 						}
