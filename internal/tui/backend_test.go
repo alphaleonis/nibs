@@ -31,6 +31,7 @@ type StubBackend struct {
 	ReorderCalls        []stubReorderCall
 	ArchiveCalls        []string
 	DeleteCalls         []string
+	ReloadCalls         []string
 
 	// Blocking status
 	Blocked  map[string]bool
@@ -60,6 +61,11 @@ type StubBackend struct {
 	// the result does not read back — none of which the picker can drive, since
 	// it offers only links the store already holds.
 	RemoveBlockingErr error
+	// ReloadErr is what makes the write behind an $EDITOR session refusable.
+	// ReloadAfterEdit is a write, not the re-read its name suggests, so the
+	// store can turn it down — a path another process re-prefixed out from
+	// under this one is the case the TUI has to say something about.
+	ReloadErr error
 }
 
 type stubUpdateCall struct {
@@ -228,8 +234,12 @@ func (s *StubBackend) Root() string {
 	return s.RootDir
 }
 
-func (s *StubBackend) ReloadAfterEdit(_ string) (*nib.Nib, error) {
-	return nil, nil
+func (s *StubBackend) ReloadAfterEdit(id string) (*nib.Nib, error) {
+	if s.ReloadErr != nil {
+		return nil, s.ReloadErr
+	}
+	s.ReloadCalls = append(s.ReloadCalls, id)
+	return s.Nibs[id], nil
 }
 
 func (s *StubBackend) StartWatching() error {

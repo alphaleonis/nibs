@@ -723,16 +723,19 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		})
 
 	case editorFinishedMsg:
-		// Editor closed - check if file was modified and reload if so
+		// Editor closed - take what was written back into the store.
 		if a.editingNibID != "" {
-			if n, err := a.backend.GetNib(context.Background(), a.editingNibID); err == nil && n != nil {
-				fullPath := filepath.Join(a.backend.Root(), n.Path)
-				if info, err := os.Stat(fullPath); err == nil {
-					if info.ModTime().After(a.editingNibModTime) {
-						_, _ = a.backend.ReloadAfterEdit(a.editingNibID)
-					}
-				}
+			if err := a.recordExternalEdit(a.editingNibID, a.editingNibModTime); err != nil {
+				a.reportFailure(fmt.Sprintf(
+					"Store did not accept the edit to %s: %v. Your text is still in the file; restart nibs to re-read the store.",
+					a.editingNibID, err))
 			}
+			// Cleared whether or not the store took the edit. The pair is a
+			// one-shot guard for the session that just ended, so holding it
+			// past a refusal would make the NEXT editor exit write this nib
+			// again, against a timestamp from a different session — and there
+			// is nothing here to retry with anyway: the file already holds the
+			// user's text, which is why the id goes into the message instead.
 			a.editingNibID = ""
 			a.editingNibModTime = time.Time{}
 		}
@@ -983,6 +986,27 @@ func (a *App) reportMutationFailures(action, unit string, errs []error) {
 	if len(errs) == 1 {
 		message = fmt.Sprintf("%s failed: %v", action, errs[0])
 	}
+	a.reportFailure(message)
+}
+
+// reportFailure writes an already-composed refusal into the footer of whichever
+// view is on screen, warning-colored. Callers whose failure is not a picker's
+// "<action> failed: <reason>" compose their own sentence and come here directly:
+// the editor path's is a write over a file the user has ALREADY saved, and the
+// picker phrasing would name it a reload and imply the text is safely in.
+//
+// The same ordering rule applies — call it AFTER any detail-model rebuild.
+//
+// READS are deliberately not routed here, and the discarded ones left in this
+// file are an accepted silence rather than an oversight: the GetNib refreshes
+// that rebuild the detail model after a picker's write, and the ListNibs behind
+// the tag picker's counts. Each re-reads state the store already holds, so
+// failing leaves the value the view loaded a moment ago on screen — stale, not
+// wrong — while the write that preceded it is reported here and the list reload
+// each of those cases returns re-reads regardless. Spending the footer's one row
+// on a condition the user cannot act on would cost the row a refusal needs. A
+// discarded WRITE is the opposite and belongs here.
+func (a *App) reportFailure(message string) {
 	if a.state == viewDetail {
 		a.detail.statusMessage = message
 		a.detail.statusKind = statusWarn
@@ -990,6 +1014,39 @@ func (a *App) reportMutationFailures(action, unit string, errs []error) {
 	}
 	a.list.statusMessage = message
 	a.list.statusKind = statusWarn
+}
+
+// recordExternalEdit takes an $EDITOR session's file back into the store: the
+// nib is re-read and its updated_at bumped, because a file-level edit bypasses
+// the mutation layer that would otherwise set it. Despite the backend method's
+// name this is a WRITE, and the store can turn it down.
+//
+// The lookup that locates the nib is reported alongside the write, unlike this
+// file's other reads. After `nibs config set-prefix` has run in another process
+// the nib no longer answers to the id this session opened the editor with, and
+// that is exactly the case the user has to hear about — swallowing it would
+// leave the edit unrecorded with nothing on screen, the same silence one call
+// earlier.
+//
+// An unchanged file is not an edit: since is the mtime taken before the editor
+// launched, and no write is attempted when the file has not moved past it.
+func (a *App) recordExternalEdit(id string, since time.Time) error {
+	n, err := a.backend.GetNib(context.Background(), id)
+	if err != nil {
+		return err
+	}
+	if n == nil {
+		return fmt.Errorf("%s is no longer in the store", id)
+	}
+	info, err := os.Stat(filepath.Join(a.backend.Root(), n.Path))
+	if err != nil {
+		return err
+	}
+	if !info.ModTime().After(since) {
+		return nil
+	}
+	_, err = a.backend.ReloadAfterEdit(id)
+	return err
 }
 
 // getEditor returns the user's preferred editor using the fallback chain:

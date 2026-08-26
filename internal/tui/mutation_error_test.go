@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -983,5 +984,199 @@ func TestSuccessfulReparentReportsNothing(t *testing.T) {
 	}
 	if app.list.statusKind != statusOK {
 		t.Errorf("statusKind = %v, want statusOK", app.list.statusKind)
+	}
+}
+
+// editorSession puts the app in the state an $EDITOR exit lands in: a nib whose
+// file exists under the store root with an mtime later than the one recorded
+// when the editor launched, which is what makes the app take the edit in.
+func editorSession(t *testing.T, app *App, stub *StubBackend, id string) {
+	t.Helper()
+	root := t.TempDir()
+	stub.RootDir = root
+	rel := filepath.Join("data", id+".md")
+	if err := os.MkdirAll(filepath.Join(root, "data"), 0o755); err != nil {
+		t.Fatalf("creating the store's data directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, rel), []byte("edited by hand\n"), 0o644); err != nil {
+		t.Fatalf("writing the nib file: %v", err)
+	}
+	n, ok := stub.Nibs[id]
+	if !ok {
+		t.Fatalf("premise failed: %s is not in the stub store", id)
+	}
+	n.Path = filepath.ToSlash(rel)
+	app.editingNibID = id
+	app.editingNibModTime = time.Now().Add(-time.Hour)
+}
+
+// The write that follows an $EDITOR session is a write, and a refused one has
+// to say so. The user's text is already on disk, so the message must name the
+// store as what turned it down rather than reporting a failed "reload" — which
+// would read as the edit being safely in and merely not shown.
+func TestRefusedEditorWriteReachesTheListFooter(t *testing.T) {
+	app, stub := setupTestApp(t, pickerTestNibs())
+	editorSession(t, app, stub, "nib-1")
+	stub.ReloadErr = errors.New("nib-1: updating /store/data/nib-1.md: file does not exist")
+
+	_, cmd := app.Update(editorFinishedMsg{})
+	processCmd(app, cmd)
+
+	want := "Store did not accept the edit to nib-1: nib-1: updating /store/data/nib-1.md: file does not exist. " +
+		"Your text is still in the file; restart nibs to re-read the store."
+	if got := app.list.statusMessage; got != want {
+		t.Errorf("list footer message = %q, want %q", got, want)
+	}
+	if app.list.statusKind != statusWarn {
+		t.Errorf("statusKind = %v, want statusWarn — it would render in the success color", app.list.statusKind)
+	}
+	if got := frameText(app.View().Content, 120, 40); !strings.Contains(got, want) {
+		t.Errorf("the frame does not carry the refusal:\n%s", got)
+	}
+}
+
+// The same refusal raised while the detail view is up has to land in the detail
+// footer; the list footer is not on screen there.
+func TestRefusedEditorWriteReachesTheDetailFooter(t *testing.T) {
+	app, stub := setupTestApp(t, pickerTestNibs())
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if app.state != viewDetail {
+		t.Fatalf("premise failed: expected the detail view, got state %d", app.state)
+	}
+	editorSession(t, app, stub, "nib-1")
+	stub.ReloadErr = errors.New(refusalReason)
+
+	_, cmd := app.Update(editorFinishedMsg{})
+	processCmd(app, cmd)
+
+	want := "Store did not accept the edit to nib-1: " + refusalReason +
+		". Your text is still in the file; restart nibs to re-read the store."
+	if got := app.detail.statusMessage; got != want {
+		t.Errorf("detail footer message = %q, want %q", got, want)
+	}
+	if app.detail.statusKind != statusWarn {
+		t.Errorf("detail statusKind = %v, want statusWarn", app.detail.statusKind)
+	}
+}
+
+// The read that locates the nib is the first thing `nibs config set-prefix`
+// running in another process breaks: the id this session opened the editor with
+// no longer answers. Swallowing that leaves the edit unrecorded with nothing on
+// screen — the same silence, one call earlier — so it is reported too.
+func TestEditedNibMissingFromTheStoreIsReported(t *testing.T) {
+	tests := []struct {
+		name    string
+		arrange func(stub *StubBackend)
+		want    string
+	}{
+		{
+			name:    "lookup refused",
+			arrange: func(stub *StubBackend) { stub.GetErr = errors.New("store is unreadable") },
+			want:    "Store did not accept the edit to nib-1: store is unreadable. Your text is still in the file; restart nibs to re-read the store.",
+		},
+		{
+			name:    "id no longer resolves",
+			arrange: func(stub *StubBackend) { delete(stub.Nibs, "nib-1") },
+			want:    "Store did not accept the edit to nib-1: nib-1 is no longer in the store. Your text is still in the file; restart nibs to re-read the store.",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app, stub := setupTestApp(t, pickerTestNibs())
+			editorSession(t, app, stub, "nib-1")
+			tt.arrange(stub)
+
+			_, cmd := app.Update(editorFinishedMsg{})
+			processCmd(app, cmd)
+
+			if got := app.list.statusMessage; got != tt.want {
+				t.Errorf("list footer message = %q, want %q", got, tt.want)
+			}
+			if app.list.statusKind != statusWarn {
+				t.Errorf("statusKind = %v, want statusWarn", app.list.statusKind)
+			}
+		})
+	}
+}
+
+// A warning that is always up says nothing. An accepted write must leave the
+// footer alone, and an untouched file must not be written back at all — the
+// mtime taken before the editor launched is what tells the two apart.
+func TestAcceptedEditorSessionSaysNothing(t *testing.T) {
+	tests := []struct {
+		name      string
+		touch     bool
+		wantWrite bool
+	}{
+		{name: "file saved", touch: true, wantWrite: true},
+		{name: "editor quit without saving", touch: false, wantWrite: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app, stub := setupTestApp(t, pickerTestNibs())
+			editorSession(t, app, stub, "nib-1")
+			if !tt.touch {
+				// The recorded mtime is the file's own, so nothing looks newer.
+				info, err := os.Stat(filepath.Join(stub.RootDir, "data", "nib-1.md"))
+				if err != nil {
+					t.Fatalf("stat: %v", err)
+				}
+				app.editingNibModTime = info.ModTime()
+			}
+
+			_, cmd := app.Update(editorFinishedMsg{})
+			processCmd(app, cmd)
+
+			if got := len(stub.ReloadCalls) > 0; got != tt.wantWrite {
+				t.Errorf("write attempted = %v, want %v (calls: %v)", got, tt.wantWrite, stub.ReloadCalls)
+			}
+			if app.list.statusMessage != "" {
+				t.Errorf("footer message = %q, want none", app.list.statusMessage)
+			}
+		})
+	}
+}
+
+// The editor state is a one-shot guard for the session that just ended. Holding
+// it past a refusal would make the NEXT editor exit write this nib again,
+// against a timestamp from a different session.
+func TestEditorStateIsClearedAfterARefusal(t *testing.T) {
+	app, stub := setupTestApp(t, pickerTestNibs())
+	editorSession(t, app, stub, "nib-1")
+	stub.ReloadErr = errors.New(refusalReason)
+
+	_, cmd := app.Update(editorFinishedMsg{})
+	processCmd(app, cmd)
+
+	if app.editingNibID != "" {
+		t.Errorf("editingNibID = %q after a refusal, want it cleared", app.editingNibID)
+	}
+	if !app.editingNibModTime.IsZero() {
+		t.Errorf("editingNibModTime = %v after a refusal, want the zero time", app.editingNibModTime)
+	}
+}
+
+// The file the store says the nib lives in is the one the mtime comparison asks
+// about, so a nib whose file is gone cannot be compared and cannot be taken in.
+// That is the third way an editor session ends without the store recording it,
+// and it is as silent as the other two were.
+func TestUnreadableNibFileAfterEditingIsReported(t *testing.T) {
+	app, stub := setupTestApp(t, pickerTestNibs())
+	editorSession(t, app, stub, "nib-1")
+	if err := os.Remove(filepath.Join(stub.RootDir, "data", "nib-1.md")); err != nil {
+		t.Fatalf("removing the nib file: %v", err)
+	}
+
+	_, cmd := app.Update(editorFinishedMsg{})
+	processCmd(app, cmd)
+
+	const prefix = "Store did not accept the edit to nib-1: stat "
+	const suffix = ". Your text is still in the file; restart nibs to re-read the store."
+	got := app.list.statusMessage
+	if !strings.HasPrefix(got, prefix) || !strings.HasSuffix(got, suffix) {
+		t.Errorf("list footer message = %q, want %q...%q", got, prefix, suffix)
+	}
+	if app.list.statusKind != statusWarn {
+		t.Errorf("statusKind = %v, want statusWarn", app.list.statusKind)
 	}
 }
