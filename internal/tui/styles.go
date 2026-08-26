@@ -23,6 +23,22 @@ func withBorder(content int) int { return content + 2 }
 // so a terminal narrower than that breaks words instead of every message.
 const minStatusWrapWidth = 24
 
+// clipToWidth cuts every line of s to width display cells. Zero or less means
+// no terminal size is known yet, and nothing is clipped.
+//
+// Clipping is what the alt screen already does to a line running past its last
+// column — Bubbletea draws the frame with wrapping off — so this takes nothing
+// off the screen that was on it. What it takes away is the frame's own claim to
+// be wider than the terminal: everything stacked around a block is measured
+// against it, and a block that overstates its width makes every width derived
+// from it wrong.
+func clipToWidth(s string, width int) string {
+	if width <= 0 {
+		return s
+	}
+	return lipgloss.NewStyle().MaxWidth(width).Render(s)
+}
+
 // maxStatusFooterLines caps how much of the screen a wrapped status message may
 // take. The footer borrows its rows from the content above it, so an unbounded
 // message — a queue refusal naming two hundred nibs — would push the view it is

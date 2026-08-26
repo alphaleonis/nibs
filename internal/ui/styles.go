@@ -453,6 +453,16 @@ func CalculateResponsiveColumns(totalWidth int, hasTags bool) ResponsiveColumns 
 	return cols
 }
 
+// truncateCells cuts s to at most width display cells, leaving it whole when it
+// already fits. Terminal layout is measured in cells, so a rune is kept or
+// dropped entire rather than sliced through.
+func truncateCells(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	return lipgloss.NewStyle().MaxWidth(width).Render(s)
+}
+
 // RenderNibRow renders a nib as a single row with ID, Type, Status, Tags (optional), Title
 func RenderNibRow(id, status, typeName, title string, cfg NibRowConfig) string {
 	// Column styles - use responsive widths if provided
@@ -586,17 +596,31 @@ func RenderNibRow(id, status, typeName, title string, cfg NibRowConfig) string {
 		indicatorCol = strings.Repeat(" ", indicatorColWidth-indicatorWidth) + indicatorCol
 	}
 
-	// Title (truncate if needed, always accounting for fixed indicator column)
+	// Title (truncate if needed, always accounting for fixed indicator column).
+	//
+	// Whether to truncate at all is decided on the caller's own MaxTitleWidth,
+	// not on what survives subtracting the indicator column: zero is the
+	// documented "no limit" sentinel, so a budget the indicators exhaust would
+	// otherwise come back out as unlimited. A caller with no room left is the
+	// one that most needs the cut — the over-long row it gets instead is wrapped
+	// by whatever box it is rendered into, which grows that box past the height
+	// it was handed.
+	//
+	// Cuts are measured in display cells rather than bytes: a byte count places
+	// the cut wrong for a non-ASCII title and can split a rune in half.
 	displayTitle := title
 	titleColWidth := cfg.MaxTitleWidth // Save original for padding
-	maxWidth := cfg.MaxTitleWidth
-	if maxWidth > 0 {
-		maxWidth -= indicatorColWidth
-	}
-	if maxWidth > 3 && len(title) > maxWidth {
-		displayTitle = title[:maxWidth-3] + "..."
-	} else if maxWidth > 0 && maxWidth <= 3 && len(title) > maxWidth {
-		displayTitle = title[:maxWidth]
+	if cfg.MaxTitleWidth > 0 {
+		maxWidth := cfg.MaxTitleWidth - indicatorColWidth
+		switch {
+		case maxWidth <= 0:
+			displayTitle = ""
+		case maxWidth <= 3:
+			// No room for the "..." marker, so the cut goes unmarked.
+			displayTitle = truncateCells(title, maxWidth)
+		case lipgloss.Width(title) > maxWidth:
+			displayTitle = truncateCells(title, maxWidth-3) + "..."
+		}
 	}
 
 	// Cursor and title styling
@@ -625,7 +649,7 @@ func RenderNibRow(id, status, typeName, title string, cfg NibRowConfig) string {
 
 	if cfg.ShowTags {
 		// Pad title column to fixed width so tags align in a column
-		titleLen := len(displayTitle) + indicatorColWidth
+		titleLen := lipgloss.Width(displayTitle) + indicatorColWidth
 		padding := ""
 		if titleColWidth > titleLen {
 			padding = strings.Repeat(" ", titleColWidth-titleLen)

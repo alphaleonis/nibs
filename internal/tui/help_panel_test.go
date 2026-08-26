@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/alphaleonis/nibs/internal/nib"
 )
 
 // helpEntryOnScreen is how an entry reads once the frame is collapsed to single
@@ -75,10 +76,9 @@ func expandedHelpViews() []expandedHelpView {
 	}
 }
 
-// openExpandedHelp drives the real key path into one composition with the help
-// panel open, and refuses a status change first when refused is set, so the
-// model is holding a message the region has to find room for.
-func openExpandedHelp(t *testing.T, view expandedHelpView, width, height int, refused bool) *App {
+// enterHelpView drives the real key path into one composition at a given
+// terminal size, leaving the help panel as it found it.
+func enterHelpView(t *testing.T, view expandedHelpView, width, height int) *App {
 	t.Helper()
 	app := setupRealBackendApp(t, queueRefusalNibs())
 	app.Update(tea.WindowSizeMsg{Width: width, Height: height})
@@ -88,20 +88,36 @@ func openExpandedHelp(t *testing.T, view expandedHelpView, width, height int, re
 	if view.enter != nil {
 		view.enter(t, app, width)
 	}
+	return app
+}
+
+// refuseStatusChange drives a status change the model refuses, so the view is
+// holding a message the footer region has to find room for.
+func refuseStatusChange(t *testing.T, app *App, view expandedHelpView) {
+	t.Helper()
+	sendKey(app, tea.KeyPressMsg{Code: 's', Text: "s"})
+	selectStatus(t, app, "completed")
+	held := app.list.statusMessage
+	if view.name == "detail" {
+		held = app.detail.statusMessage
+	}
+	if want := "Status change failed: " + queueRefusal(); held != want {
+		t.Fatalf("premise failed: the model is not holding the refusal, got %q", held)
+	}
+}
+
+// openExpandedHelp drives the real key path into one composition with the help
+// panel open, and refuses a status change first when refused is set, so the
+// model is holding a message the region has to find room for.
+func openExpandedHelp(t *testing.T, view expandedHelpView, width, height int, refused bool) *App {
+	t.Helper()
+	app := enterHelpView(t, view, width, height)
 	sendKey(app, tea.KeyPressMsg{Code: '?', Text: "?"})
 	if !app.helpExpanded {
 		t.Fatal("premise failed: ? did not expand the help panel")
 	}
 	if refused {
-		sendKey(app, tea.KeyPressMsg{Code: 's', Text: "s"})
-		selectStatus(t, app, "completed")
-		held := app.list.statusMessage
-		if view.name == "detail" {
-			held = app.detail.statusMessage
-		}
-		if want := "Status change failed: " + queueRefusal(); held != want {
-			t.Fatalf("premise failed: the model is not holding the refusal, got %q", held)
-		}
+		refuseStatusChange(t, app, view)
 	}
 	return app
 }
@@ -233,15 +249,12 @@ func assertHelpPanelAccountsForEveryKey(t *testing.T, frame string, entries []he
 // the bottom of the frame, and the panel's last keybindings go with it.
 //
 // This sweeps the geometries that arithmetic turns on: heights short enough for
-// each floor to bind, and widths from where the panel starts packing to where it
-// stops. Widths below 40 are left out deliberately — there the list box renders
-// taller than its floor whatever it is handed, wrapped content pushed through
-// the border, and the frame already overruns a 24-row terminal with the panel
-// closed, so nothing here governs it.
+// each floor to bind, and widths from the narrowest terminal the views claim to
+// draw into up to where the panel stops packing.
 func TestTheExpandedFooterRegionFitsTheTerminal(t *testing.T) {
 	for _, refused := range []bool{false, true} {
-		for _, height := range []int{8, 12, 16, 20, 24, 30} {
-			for _, width := range []int{40, 46, 48, 80, 100, 120, 160, 200} {
+		for _, height := range sweepHeights {
+			for _, width := range sweepWidths {
 				for _, view := range expandedHelpViews() {
 					name := fmt.Sprintf("%s/%dx%d", view.name, width, height)
 					if refused {
@@ -251,10 +264,7 @@ func TestTheExpandedFooterRegionFitsTheTerminal(t *testing.T) {
 						app := openExpandedHelp(t, view, width, height, refused)
 						content := app.View().Content
 
-						if got := lipgloss.Height(content); got > height {
-							t.Errorf("frame is %d lines tall for a %d-line terminal — the bottom is clipped:\n%s",
-								got, height, frameText(content, width, height))
-						}
+						assertFrameFitsTerminal(t, content, width, height)
 
 						painted := frameText(content, width, height)
 						assertHelpPanelAccountsForEveryKey(t, painted, view.entries(app))
@@ -268,6 +278,137 @@ func TestTheExpandedFooterRegionFitsTheTerminal(t *testing.T) {
 					})
 				}
 			}
+		}
+	}
+}
+
+// The geometries the frame arithmetic turns on. Widths start at 30 because that
+// is where the narrow-terminal defects live: a row too long for its column, a
+// footer built from a fixed set of key/label pairs, and a border title line
+// whose badges are appended whether or not the width can hold them.
+var (
+	sweepWidths  = []int{30, 34, 38, 40, 46, 48, 80, 100, 120, 160, 200}
+	sweepHeights = []int{8, 12, 16, 20, 24, 30}
+)
+
+// assertFrameFitsTerminal fails for a frame that does not fit the cell grid the
+// alt screen paints it into.
+//
+// Width is measured on the RAW content, not on what frameText reads back: that
+// helper clips each line with MaxWidth, which is exactly what the terminal does
+// to the overflow — so reading the painted frame would hide every column that
+// ran off the right edge.
+func assertFrameFitsTerminal(t *testing.T, content string, width, height int) {
+	t.Helper()
+	if got := lipgloss.Height(content); got > height {
+		t.Errorf("frame is %d lines tall for a %d-line terminal — the bottom is clipped:\n%s",
+			got, height, frameText(content, width, height))
+	}
+	if got := lipgloss.Width(content); got > width {
+		var overflow []string
+		for i, line := range strings.Split(content, "\n") {
+			if w := lipgloss.Width(line); w > width {
+				overflow = append(overflow, fmt.Sprintf("  line %d is %d cells: %q", i, w, ansiSGR.ReplaceAllString(line, "")))
+			}
+		}
+		t.Errorf("frame is %d columns wide for a %d-column terminal — the right edge is cut:\n%s",
+			got, width, strings.Join(overflow, "\n"))
+	}
+}
+
+// The frame has to fit the terminal with the help panel closed too. The panel
+// is drawn out of the rows below the view, so a frame that overruns without it
+// is a defect of the view itself — a row too long for the box it is rendered
+// into wraps through the border and pushes the whole frame past the last row,
+// whatever height the box was handed.
+//
+// The detail view is left out. It overruns this sweep in two ways of its own —
+// a compact footer help row that is a fixed 48 cells at every width, and a
+// frame ten rows tall on an eight-row terminal once a status message is up,
+// at every width from 30 to 200 — and both reproduce unchanged with the list
+// box's own overruns fixed, so neither is a symptom of what this guards.
+func TestTheFrameFitsTheTerminalWithHelpClosed(t *testing.T) {
+	for _, refused := range []bool{false, true} {
+		for _, height := range sweepHeights {
+			for _, width := range sweepWidths {
+				for _, view := range expandedHelpViews() {
+					if view.name == "detail" {
+						continue
+					}
+					name := fmt.Sprintf("%s/%dx%d", view.name, width, height)
+					if refused {
+						name += "/refused"
+					}
+					t.Run(name, func(t *testing.T) {
+						app := enterHelpView(t, view, width, height)
+						if refused {
+							refuseStatusChange(t, app, view)
+						}
+						if app.helpExpanded {
+							t.Fatal("premise failed: the help panel is open, so this is not the closed-panel geometry")
+						}
+						assertFrameFitsTerminal(t, app.View().Content, width, height)
+					})
+				}
+			}
+		}
+	}
+}
+
+// The box's top line is drawn by hand rather than left to the border style, so
+// nothing downstream keeps it inside the terminal. Both of the things it
+// carries are open-ended: the project name comes from the config, and each
+// badge appears whenever its state is on.
+func TestTheBorderTopLineFillsTheTerminalExactly(t *testing.T) {
+	titles := map[string]string{
+		"short": "Nibs - Nibs",
+		"long":  "Nibs - " + strings.Repeat("a-long-project-name/", 4),
+	}
+	for name, title := range titles {
+		for _, width := range []int{20, 24, 30, 34, 38, 46, 80, 200} {
+			t.Run(fmt.Sprintf("%s/%d", name, width), func(t *testing.T) {
+				// Every badge on, which is the widest the line gets.
+				m := listModel{
+					width:         width,
+					borderTitle:   title,
+					tagFilter:     "needs-triage",
+					hideCompleted: true,
+					wideMode:      true,
+				}
+				line := m.buildBorderTopLine()
+				if got := lipgloss.Width(line); got != width {
+					t.Errorf("top line is %d cells for a %d-column terminal: %q",
+						got, width, ansiSGR.ReplaceAllString(line, ""))
+				}
+			})
+		}
+	}
+}
+
+// widestVocabularyNibs is the vocabulary at its widest: the longest status name
+// beside the longest type name. Wide mode pads both columns to twelve cells
+// whatever the terminal is, so rows carrying these values outrun a narrow box
+// with no title in them at all.
+func widestVocabularyNibs() []*nib.Nib {
+	return []*nib.Nib{
+		{ID: "ms1", Title: "Wave one", Type: "milestone", Status: "in-progress"},
+		{ID: "t1", Title: "Still open", Type: "task", Status: "in-progress", Milestone: "ms1", MilestoneOrder: "a0"},
+	}
+}
+
+// A title budget is not the whole of what makes a row fit. The columns ahead of
+// it are fixed-width and independent of the terminal, so a row can be wider than
+// the box with its title already cut to nothing — and the box wraps that surplus
+// through its own border rather than dropping it, rendering taller than the
+// height it was handed.
+func TestTheListBoxHoldsARowWiderThanItself(t *testing.T) {
+	for _, height := range sweepHeights {
+		for _, width := range sweepWidths {
+			t.Run(fmt.Sprintf("%dx%d", width, height), func(t *testing.T) {
+				app := setupRealBackendApp(t, widestVocabularyNibs())
+				app.Update(tea.WindowSizeMsg{Width: width, Height: height})
+				assertFrameFitsTerminal(t, app.View().Content, width, height)
+			})
 		}
 	}
 }
