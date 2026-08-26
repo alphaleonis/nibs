@@ -2,10 +2,13 @@ package nibcore
 
 import (
 	"crypto/sha256"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -1271,6 +1274,142 @@ func TestCoreReleasesDependentsPredicate(t *testing.T) {
 				if got := releasesDependents(tt.status); got != tt.want {
 					t.Errorf("releasesDependentsPredicate()(%q) = %v, want %v", tt.status, got, tt.want)
 				}
+			}
+		})
+	}
+}
+
+// linkSweeper names one of the two whole-store link sweeps and the fixture that
+// makes it rewrite exactly one nib, so the resurrection and lock guards below
+// can drive both from one table.
+type linkSweeper struct {
+	name string
+	// seed creates the single nib the sweep will rewrite and returns its id.
+	seed func(t *testing.T, core *Core) string
+	// sweep runs the sweep under test.
+	sweep func(core *Core) (int, error)
+}
+
+func linkSweepers() []linkSweeper {
+	return []linkSweeper{
+		{
+			name: "RemoveLinksTo",
+			seed: func(t *testing.T, core *Core) string {
+				t.Helper()
+				for _, b := range []*nib.Nib{
+					{ID: "tgt01", Title: "Target", Status: "todo"},
+					{ID: "lnk01", Title: "Linker", Status: "todo", Parent: "tgt01"},
+				} {
+					if err := core.Create(b); err != nil {
+						t.Fatalf("Create(%s): %v", b.ID, err)
+					}
+				}
+				return "lnk01"
+			},
+			sweep: func(core *Core) (int, error) { return core.RemoveLinksTo("tgt01") },
+		},
+		{
+			name: "FixBrokenLinks",
+			seed: func(t *testing.T, core *Core) string {
+				t.Helper()
+				// Create does not validate parent existence, so this lands a
+				// broken link for the sweep to clear.
+				if err := core.Create(&nib.Nib{ID: "brk01", Title: "Broken", Status: "todo", Parent: "ghost"}); err != nil {
+					t.Fatalf("Create: %v", err)
+				}
+				return "brk01"
+			},
+			sweep: func(core *Core) (int, error) { return core.FixBrokenLinks() },
+		},
+	}
+}
+
+// TestLinkSweepsRefuseAStalePathRatherThanRecreatingIt is the resurrection
+// guard, and it is the same one RewriteAreaAssignments carries (see
+// TestRewriteAreaAssignmentsRefusesAStalePathRatherThanRecreatingIt).
+//
+// Both sweeps write each rewritten nib back to the path its in-memory copy
+// carries, and that path was read when this process loaded the store. A
+// `nibs config set-prefix` that ran in between renames every file, so the
+// recorded path names nothing — and a write that ends in a rename CREATES
+// unconditionally, which turns the stale path into a second copy of the nib
+// under a prefix the config no longer declares. The non-creating writer makes
+// it an error instead.
+func TestLinkSweepsRefuseAStalePathRatherThanRecreatingIt(t *testing.T) {
+	for _, sw := range linkSweepers() {
+		t.Run(sw.name, func(t *testing.T) {
+			core, nibsDir := setupTestCore(t)
+			id := sw.seed(t, core)
+
+			stale, err := core.Get(id)
+			if err != nil {
+				t.Fatalf("Get(%s): %v", id, err)
+			}
+			stalePath := filepath.Join(nibsDir, filepath.FromSlash(stale.Path))
+			moved := filepath.Join(filepath.Dir(stalePath), "moved-"+filepath.Base(stalePath))
+			if err := os.Rename(stalePath, moved); err != nil {
+				t.Fatalf("simulating the rename another process made: %v", err)
+			}
+
+			if _, err := sw.sweep(core); err == nil {
+				t.Fatal("the sweep wrote to a path that no longer exists instead of refusing")
+			} else if !errors.Is(err, fs.ErrNotExist) {
+				// The CLI classifies this refusal as FILE_ERROR (exit 5) off the
+				// sentinel alone — see mutationErrCode in cmd/set.go and
+				// isIOError in cmd/root.go — so the chain has to carry it.
+				t.Errorf("error = %v, want one wrapping fs.ErrNotExist", err)
+			}
+			if _, statErr := os.Lstat(stalePath); !errors.Is(statErr, fs.ErrNotExist) {
+				t.Errorf("the sweep resurrected %s at its pre-rename path", stale.Path)
+			}
+		})
+	}
+}
+
+// TestLinkSweepsAcquireWriteLock proves both sweeps participate in the
+// cross-process advisory lock: while another holder owns it they block, and
+// they proceed once it is released. Without the per-op lock the first select
+// observes an immediate completion — which is what let either sweep recreate a
+// file `nibs config set-prefix` was in the middle of renaming away.
+//
+// Modeled on TestUpdateAcquiresWriteLock, which pins the same property for the
+// single-nib write path.
+func TestLinkSweepsAcquireWriteLock(t *testing.T) {
+	for _, sw := range linkSweepers() {
+		t.Run(sw.name, func(t *testing.T) {
+			core, _ := setupTestCore(t)
+			sw.seed(t, core)
+
+			// Hold the Core's write lock externally, as a second process would.
+			release, err := acquireFileLock(core.lockPath)
+			if err != nil {
+				t.Fatalf("external acquire: %v", err)
+			}
+
+			done := make(chan error, 1)
+			go func() {
+				_, err := sw.sweep(core)
+				done <- err
+			}()
+
+			select {
+			case err := <-done:
+				t.Fatalf("the sweep completed while the write lock was held externally (err=%v)", err)
+			case <-time.After(150 * time.Millisecond):
+				// Expected: the sweep is blocked on the lock.
+			}
+
+			if err := release(); err != nil {
+				t.Fatalf("external release: %v", err)
+			}
+
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("sweep after lock release: %v", err)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("the sweep did not complete after the write lock was released")
 			}
 		})
 	}
