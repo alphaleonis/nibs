@@ -54,7 +54,7 @@ READ   get <id…>          nib document (default); -f/--view id|ref|card|full; 
        rel <id> [--rel R] related nibs, same envelope. R (default %s): parent,children,siblings,blocking,
                           blocked-by,mentions-out/in,ancestors,descendants,*-transitive,neighbours[-active]
        context [id]       project context summary
-       plan <id>          plan view: a parent nib and its children
+       plan <id>          plan view: a milestone's queue, or any other nib's children
        roadmap            Markdown roadmap from milestones and epics
        next               %s
                           (having nothing to do is an answer: exit 0 either way — branch on --json's null action)

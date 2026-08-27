@@ -57,8 +57,8 @@ func SortByKey(nibs []*Nib, key func(*Nib) string) {
 
 // CompareByKey is SortByKey's element comparison — keyed before unkeyed, key
 // order first, then the title-then-ID tiebreak — exported so a consumer
-// ordering a WRAPPER slice keyed by an embedded nib (the roadmap's epic
-// groups) applies the exact rule the nib-slice sorts do.
+// ordering a WRAPPER slice keyed by an embedded nib applies the exact rule the
+// nib-slice sorts do.
 func CompareByKey(a, b *Nib, key func(*Nib) string) int {
 	aKey, bKey := key(a), key(b)
 	aHas := aKey != ""

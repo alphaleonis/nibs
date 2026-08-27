@@ -38,29 +38,69 @@ type roadmapData struct {
 	Unscheduled *unscheduledGroup `json:"unscheduled,omitempty"`
 }
 
-// unscheduledGroup represents items not assigned to any milestone.
+// unscheduledGroup is the backlog: the work no milestone holds, rendered under
+// the `## Unplanned` heading whenever there are milestone sections to separate
+// it from. Its queue is ONE ordered list because a backlog epic and a backlog
+// root item are siblings in the same root `order` scope: two arrays would put
+// every epic ahead of every item, which is an arrangement nobody made.
 type unscheduledGroup struct {
-	Epics []epicGroup `json:"epics,omitempty"`
-	Other []*nib.Nib  `json:"other,omitempty"`
+	Queue []queueEntry `json:"queue,omitempty"`
 }
 
-// milestoneGroup represents a milestone and its contents. Progress is the
-// canonical child-completion rollup over the milestone's DIRECT children
+// milestoneGroup represents a milestone and its queue. Progress is the
+// canonical child-completion rollup over the milestone's DIRECT members
 // (progress.ByCount) — the same value `nibs get <milestone> -f progress`
-// reports — computed over every real child, independent of the display filters.
+// reports — computed over every real member, independent of the display
+// filters.
 type milestoneGroup struct {
 	Milestone *nib.Nib        `json:"milestone"`
 	Progress  progress.Rollup `json:"progress"`
-	Epics     []epicGroup     `json:"epics,omitempty"`
-	Other     []*nib.Nib      `json:"other,omitempty"`
+	// Queue is the milestone's direct members in milestone_order: ONE ordered
+	// list, epics and loose work standing wherever their keys put them. The
+	// JSON carries that single list rather than an epics/other split for the
+	// same reason the Markdown reads as one queue — two arrays do not express
+	// an interleaving on their own. A consumer could re-merge them on each
+	// nib's milestone_order, which does ship in the payload, but only by
+	// re-implementing this renderer's sort rule (keyed before unkeyed, then the
+	// title-then-ID tiebreak), which is not a published contract — and an
+	// unkeyed member ships no key at all.
+	Queue []queueEntry `json:"queue,omitempty"`
 }
 
-// epicGroup represents an epic and its child items. Progress is the canonical
-// child-completion rollup over the epic's direct children.
-type epicGroup struct {
-	Epic     *nib.Nib        `json:"epic"`
-	Progress progress.Rollup `json:"progress"`
-	Items    []*nib.Nib      `json:"items,omitempty"`
+// queueEntry is one position in an ordered list of members — a milestone's
+// queue, or the backlog. Nib is the member standing there and is ALWAYS
+// present; a member that expands into a decomposition also carries that
+// decomposition and the canonical child-completion rollup over it.
+//
+// One flat shape rather than a union of "epic entry" and "item entry": the
+// list is a list of members, some of which expand, so an entry has a member
+// either way. A union would make a consumer branch on which key is present,
+// and would nest the member a level deeper here than the same object sits
+// elsewhere in the same payload. cmd/next.go and cmd/check.go are the local
+// precedent for the principle this follows — branch on a field's value, not on
+// whether the field is there — reached by an always-present field and a `kind`
+// tag respectively; neither is a union this shape has to imitate.
+//
+// Build entries through queueItem and queueContainer. Progress and Items are
+// set together or not at all, and the Markdown branch that reads Progress
+// trusts that pairing.
+type queueEntry struct {
+	Nib      *nib.Nib         `json:"nib"`
+	Progress *progress.Rollup `json:"progress,omitempty"`
+	Items    []*nib.Nib       `json:"items,omitempty"`
+}
+
+// queueItem builds the entry for a member that stands alone at its position.
+func queueItem(b *nib.Nib) queueEntry {
+	return queueEntry{Nib: b}
+}
+
+// queueContainer builds the entry for a member that expands into its
+// decomposition. items is non-empty at every call site: a container holding no
+// outstanding scope leaves the list rather than standing in it empty, so the
+// rendered block never opens on nothing.
+func queueContainer(b *nib.Nib, rollup progress.Rollup, items []*nib.Nib) queueEntry {
+	return queueEntry{Nib: b, Progress: &rollup, Items: items}
 }
 
 var roadmapCmd = &cobra.Command{
@@ -128,7 +168,7 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 		group := buildMilestoneGroup(m, view, includeDone, cfg)
 		// A milestone earns its place by holding outstanding scope — the same
 		// rule as epics, one level up.
-		if len(group.Epics) > 0 || len(group.Other) > 0 {
+		if len(group.Queue) > 0 {
 			milestoneGroups = append(milestoneGroups, group)
 		}
 	}
@@ -140,44 +180,36 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 	// that would be a deliberate policy change, not a default.)
 	rem := view.Unscheduled()
 
-	var unscheduledEpics []epicGroup
+	// The backlog is the tree, filtered (decision 2.5). Its epics and its
+	// root-level items are SIBLINGS in the same root `order` scope, so they
+	// collect into one list and sort once by that scope's key — the tree's own
+	// arrangement, rather than one the renderer invented by ranking epics
+	// ahead of everything else.
+	var backlog []queueEntry
 	for _, eg := range rem.Epics {
-		// Build the epic group if it still holds outstanding scope.
+		// An epic earns its place by still holding outstanding scope, the same
+		// rule its milestone-queue counterpart takes.
 		epicItems := filterChildren(eg.Items, includeDone, cfg)
-		if len(epicItems) > 0 {
-			sortByTypeThenStatus(epicItems, cfg)
-			unscheduledEpics = append(unscheduledEpics, epicGroup{
-				Epic:     eg.Epic,
-				Progress: progress.ByCount(childStatuses(eg.Items)),
-				Items:    epicItems,
-			})
+		if len(epicItems) == 0 {
+			continue
 		}
+		nib.SortByOrder(epicItems)
+		backlog = append(backlog, queueContainer(eg.Epic, progress.ByCount(childStatuses(eg.Items)), epicItems))
 	}
-
-	// Sort unscheduled epics by title
-	sort.Slice(unscheduledEpics, func(i, j int) bool {
-		return unscheduledEpics[i].Epic.Title < unscheduledEpics[j].Epic.Title
-	})
-
-	// Orphan items: root-level work, kept while it stays on the roadmap.
-	var orphanItems []*nib.Nib
 	for _, b := range rem.Other {
 		if !staysOnRoadmap(b.Status, includeDone, cfg) {
 			continue
 		}
-		orphanItems = append(orphanItems, b)
+		backlog = append(backlog, queueItem(b))
 	}
-
-	// Sort orphan items
-	sortByTypeThenStatus(orphanItems, cfg)
+	slices.SortStableFunc(backlog, func(a, b queueEntry) int {
+		return nib.CompareByKey(a.Nib, b.Nib, func(n *nib.Nib) string { return n.Order })
+	})
 
 	// Build unscheduled group if there's content
 	var unscheduled *unscheduledGroup
-	if len(unscheduledEpics) > 0 || len(orphanItems) > 0 {
-		unscheduled = &unscheduledGroup{
-			Epics: unscheduledEpics,
-			Other: orphanItems,
-		}
+	if len(backlog) > 0 {
+		unscheduled = &unscheduledGroup{Queue: backlog}
 	}
 
 	return &roadmapData{
@@ -186,52 +218,47 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 	}
 }
 
-// buildMilestoneGroup builds a milestone group with its epics and other items.
+// buildMilestoneGroup builds a milestone's section: the progress rollup over
+// its assigned set, and its queue.
 func buildMilestoneGroup(m *nib.Nib, view *membership.View, includeDone bool, cfg *config.Config) milestoneGroup {
-	tree := view.Grouped(m.ID)
+	members := view.DirectMembers(m.ID)
 	group := milestoneGroup{
 		Milestone: m,
 		// % complete over the milestone's real direct members (epics + direct
 		// items), computed over the full member set regardless of includeDone.
-		Progress: progress.ByCount(childStatuses(view.DirectMembers(m.ID))),
+		Progress: progress.ByCount(childStatuses(members)),
 	}
 
-	// Build epic groups
-	for _, eg := range tree.Epics {
-		epicItems := filterChildren(eg.Items, includeDone, cfg)
-		// Include epics that still hold outstanding scope. An epic that closed
-		// over a deferred child keeps rendering it — closing the parent does not
-		// resolve the child.
-		if len(epicItems) > 0 {
-			sortByTypeThenStatus(epicItems, cfg)
-			group.Epics = append(group.Epics, epicGroup{
-				Epic:     eg.Epic,
-				Progress: progress.ByCount(childStatuses(eg.Items)),
-				Items:    epicItems,
-			})
+	// The queue is the whole direct-member set in ONE order, and milestone_order
+	// is the only key that expresses it: an assignee's `order` is a live
+	// position in a DIFFERENT scope — its structural sibling group, or the root
+	// group — so ordering the queue by it would render an arrangement nobody
+	// made. Sorting the epics apart from the rest would do the same. Unkeyed
+	// members fall to the title tiebreak.
+	nib.SortByMilestoneOrder(members)
+
+	for _, member := range members {
+		if member.EffectiveType() == "epic" {
+			// An epic's items are its decomposition, a different axis from the
+			// queue the epic itself stands in — so they take the parent-scope
+			// order key.
+			decomposition := view.DirectMembers(member.ID)
+			items := filterChildren(decomposition, includeDone, cfg)
+			// An epic earns its place by still holding outstanding scope. One
+			// that closed over a deferred child keeps rendering it — closing the
+			// parent does not resolve the child.
+			if len(items) == 0 {
+				continue
+			}
+			nib.SortByOrder(items)
+			group.Queue = append(group.Queue, queueContainer(member, progress.ByCount(childStatuses(decomposition)), items))
+			continue
 		}
-	}
-
-	// Build "Other" list: the milestone's direct non-epic members
-	// (With single parent enforcement, items can't be both under an epic and directly under the milestone)
-	var other []*nib.Nib
-	for _, child := range tree.Other {
-		if staysOnRoadmap(child.Status, includeDone, cfg) {
-			other = append(other, child)
+		if !staysOnRoadmap(member.Status, includeDone, cfg) {
+			continue
 		}
+		group.Queue = append(group.Queue, queueItem(member))
 	}
-
-	// Sort epics by their position in the milestone's queue: assignees carry
-	// milestone_order, not the parent-scope order key (which they lack), and a
-	// title sort here would shuffle the queue the user arranged. Unkeyed epics
-	// fall to the title tiebreak.
-	slices.SortStableFunc(group.Epics, func(a, b epicGroup) int {
-		return nib.CompareByKey(a.Epic, b.Epic, func(n *nib.Nib) string { return n.MilestoneOrder })
-	})
-
-	// Sort other items
-	sortByTypeThenStatus(other, cfg)
-	group.Other = other
 
 	return group
 }
@@ -299,36 +326,6 @@ func sortByStatusThenCreated(nibs []*nib.Nib, cfg interface{ StatusNames() []str
 	})
 }
 
-// sortByTypeThenStatus sorts nibs by type order, then status order, then by ID.
-func sortByTypeThenStatus(nibs []*nib.Nib, cfg interface {
-	StatusNames() []string
-	TypeNames() []string
-}) {
-	statusOrder := make(map[string]int)
-	for i, s := range cfg.StatusNames() {
-		statusOrder[s] = i
-	}
-	typeOrder := make(map[string]int)
-	for i, t := range cfg.TypeNames() {
-		typeOrder[t] = i
-	}
-
-	sort.Slice(nibs, func(i, j int) bool {
-		// First by type (EffectiveType so a type-less nib sorts as "task", not at
-		// the zero-value/first slot).
-		ti, tj := typeOrder[nibs[i].EffectiveType()], typeOrder[nibs[j].EffectiveType()]
-		if ti != tj {
-			return ti < tj
-		}
-		// Then by status
-		si, sj := statusOrder[nibs[i].Status], statusOrder[nibs[j].Status]
-		if si != sj {
-			return si < sj
-		}
-		return nibs[i].ID < nibs[j].ID
-	})
-}
-
 // renderRoadmapMarkdown renders the roadmap as Markdown using the template.
 func renderRoadmapMarkdown(data *roadmapData, links bool, linkPrefix string) string {
 	// Create template with closures that capture link settings
@@ -336,6 +333,7 @@ func renderRoadmapMarkdown(data *roadmapData, links bool, linkPrefix string) str
 		template.New("roadmap").Funcs(template.FuncMap{
 			"firstParagraph": firstParagraph,
 			"typeBadge":      typeBadge,
+			"headsRun":       headsRun,
 			"nibRef": func(b *nib.Nib) string {
 				return renderNibRef(b, links, linkPrefix)
 			},
@@ -347,6 +345,21 @@ func renderRoadmapMarkdown(data *roadmapData, links bool, linkPrefix string) str
 		panic(err)
 	}
 	return sb.String()
+}
+
+// headsRun reports whether the entry at index i follows an expanded block. It
+// asks only about entry i-1: the template calls it from the branch that has
+// already established entry i is a bare member, and a bare bullet directly
+// after a block would read as one more of that block's items, so the Markdown
+// heads the run it opens. Called from anywhere else it answers a narrower
+// question than its name suggests.
+//
+// This is rendering state, not roadmap data: it is a property of the whole
+// list rather than of one entry, and it is only ever correct for the exact
+// slice it is asked about — so it lives behind the renderer's FuncMap seam and
+// stays out of the JSON, where the queue is the ordered list and nothing else.
+func headsRun(queue []queueEntry, i int) bool {
+	return i > 0 && len(queue[i-1].Items) > 0
 }
 
 // renderNibRef renders a nib ID, optionally as a markdown link.

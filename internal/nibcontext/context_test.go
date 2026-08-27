@@ -764,3 +764,62 @@ func nibRefIDs(refs []*NibRef) []string {
 	}
 	return ids
 }
+
+// TestBuildSummary_ActivePhaseUsesTheContainersOwnKey pins the detail mode's
+// end of the seam TestSortDirectMembers pins at the unit: a rooted summary
+// picks its active phase through sortDirectMembers, so a MILESTONE root reads
+// the queue key (milestone_order) and any other container reads the
+// decomposition key (order). Each case gives its two candidates keys that
+// disagree across the axes, so reading the wrong one produces the reverse
+// answer rather than the same one by luck — and their ids and titles rank the
+// opposite way from the expected winner, leaving the key as the only rule that
+// yields it.
+func TestBuildSummary_ActivePhaseUsesTheContainersOwnKey(t *testing.T) {
+	tests := []struct {
+		name      string
+		container *nib.Nib
+		// members are attached to the container on the axis its type owns.
+		members []*nib.Nib
+		wantID  string
+	}{
+		{
+			name:      "a milestone root reads the queue key",
+			container: makeNib("ms", "milestone", "in-progress", "", ""),
+			members: []*nib.Nib{
+				keyed(makeQueued("epic-a", "epic", "in-progress", "", "ms"), "a2", "a1"),
+				keyed(makeQueued("epic-z", "epic", "in-progress", "", "ms"), "a1", "a2"),
+			},
+			wantID: "epic-z",
+		},
+		{
+			name:      "any other container reads the decomposition key",
+			container: makeNib("ep", "epic", "in-progress", "", ""),
+			members: []*nib.Nib{
+				keyed(makeNib("epic-a", "epic", "in-progress", "", "ep"), "a1", "a2"),
+				keyed(makeNib("epic-z", "epic", "in-progress", "", "ep"), "a2", "a1"),
+			},
+			wantID: "epic-z",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			allNibs := append([]*nib.Nib{tt.container}, tt.members...)
+			sum := BuildSummary(allNibs, tt.container.ID, cfgForTest)
+			if sum.ActivePhase == nil {
+				t.Fatalf("ActivePhase is nil, want %s", tt.wantID)
+			}
+			if sum.ActivePhase.ID != tt.wantID {
+				t.Errorf("ActivePhase.ID = %q, want %q — the phase must be first on the container's OWN key",
+					sum.ActivePhase.ID, tt.wantID)
+			}
+		})
+	}
+}
+
+// keyed sets both ordering keys on a nib, so a test can make the two axes
+// disagree about which member comes first.
+func keyed(n *nib.Nib, milestoneOrder, order string) *nib.Nib {
+	n.MilestoneOrder, n.Order = milestoneOrder, order
+	return n
+}

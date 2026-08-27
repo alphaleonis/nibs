@@ -2,14 +2,24 @@
 - {{typeBadge .}} {{.Title}} {{nibRef .}}
 {{end -}}
 
-{{- define "epicGroup" -}}
-### Epic: {{.Epic.Title}} — {{.Progress.Percent}}% ({{.Progress.Done}}/{{.Progress.Total}}) {{nibRef .Epic}}
-{{with firstParagraph .Epic.Body}}
+{{- define "epicBlock" -}}
+### Epic: {{.Nib.Title}} — {{.Progress.Percent}}% ({{.Progress.Done}}/{{.Progress.Total}}) {{nibRef .Nib}}
+{{with firstParagraph .Nib.Body}}
 > {{.}}
 {{end}}
 
 {{range .Items -}}
 {{template "nibLine" .}}
+{{- end}}
+{{- end -}}
+
+{{- define "queue" -}}
+{{range $i, $e := . -}}
+{{if $e.Items}}{{template "epicBlock" $e}}{{else}}{{if headsRun $ $i}}
+### Miscellaneous
+
+
+{{end}}{{template "nibLine" $e.Nib}}{{end}}
 {{- end}}
 {{- end -}}
 
@@ -19,33 +29,12 @@
 {{with firstParagraph .Milestone.Body}}
 > {{.}}
 {{end}}
-{{range .Epics -}}
-{{template "epicGroup" .}}
-{{- end}}
-{{- if .Other}}
-{{- if len .Epics}}
-### Miscellaneous
-{{end}}
-
-{{range .Other -}}
-{{template "nibLine" .}}
-{{- end}}
-{{- end}}
+{{template "queue" .Queue}}
 {{- end}}
 {{- if .Unscheduled}}
 {{- if len $.Milestones}}
-## No Milestone
-{{end}}
-{{- range .Unscheduled.Epics -}}
-{{template "epicGroup" .}}
-{{- end}}
-{{- if .Unscheduled.Other}}
-{{- if len .Unscheduled.Epics}}
-### Miscellaneous
+## Unplanned
 {{end}}
 
-{{range .Unscheduled.Other -}}
-{{template "nibLine" .}}
-{{- end}}
-{{- end}}
+{{template "queue" .Unscheduled.Queue}}
 {{- end}}

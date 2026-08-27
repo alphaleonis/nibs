@@ -146,7 +146,7 @@ Or, if your agent framework supports startup hooks, wire `nibs prime` to run at 
 | `nibs mv <id>` | Reposition a nib among its siblings or reparent it |
 | `nibs close <id>` | Close a nib with a summary; `--as <closed status>` picks the close reason (default `completed`). Closing an existing nib goes through `close` — `nibs set -s <closed status>` is refused |
 | `nibs context` | Show project status summary with progress |
-| `nibs plan <id>` | View an ordered plan of a parent nib's children |
+| `nibs plan <id>` | View an ordered plan of a nib's membership — a milestone's queue, or any other nib's children |
 | `nibs query` | Run a GraphQL query or mutation |
 | `nibs roadmap` | Generate a Markdown roadmap from milestones and epics |
 | `nibs check` | Validate configuration and data integrity |
