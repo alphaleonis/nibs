@@ -1397,7 +1397,7 @@ func TestAnEditorThatRanIsTakenInWhateverItsExitStatus(t *testing.T) {
 // with its remedy ends up saying only that something went wrong.
 var (
 	editorRefusalWidths  = []int{30, 34, 38, 80}
-	editorRefusalHeights = []int{8, 12, 16, 24}
+	editorRefusalHeights = heightSweep(16, 24)
 )
 
 // statusRegionIsOneLine reports the geometries where the footer grants the
@@ -1531,9 +1531,9 @@ func TestTheEditorRefusalKeepsItsLeadOnScreen(t *testing.T) {
 }
 
 // editorLaunchDetailHeights are the heights the detail frame's arithmetic turns
-// on: every short one individually, because the thresholds are boundaries and
-// the coarse sweep steps from eight straight to twelve, then the ordinary sizes.
-var editorLaunchDetailHeights = []int{8, 9, 10, 11, 12, 16, 20, 24, 30}
+// on: every short one individually, because the thresholds are boundaries, then
+// the ordinary sizes.
+var editorLaunchDetailHeights = heightSweep(16, 20, 24, 30)
 
 // detailStatusRegionRows is how many rows the detail view grants its status
 // message at a geometry — maxStatusFooterLines above the help row, and with the

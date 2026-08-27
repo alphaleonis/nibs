@@ -282,13 +282,42 @@ func TestTheExpandedFooterRegionFitsTheTerminal(t *testing.T) {
 	}
 }
 
+// minSupportedHeight is the shortest terminal nibs undertakes to draw a usable
+// frame into. It is a decision rather than a measurement of what happens to
+// work, and the arithmetic behind it is the detail view at its most demanding:
+// the header's four rows, a status message wrapped onto two, and the help row
+// come to seven, so eight is the first height that carries all three and still
+// leaves a row for the content between them.
+//
+// Every geometry sweep floors here, so the supported height is one value to
+// change rather than a literal repeated per sweep. Heights below it are out of
+// scope, not merely untested.
+const minSupportedHeight = 8
+
+// heightSweep is the shape every geometry sweep takes: contiguous from the
+// supported floor up to dense, then whatever sparse heights follow.
+//
+// Contiguous at the bottom because that is where this layout's thresholds are.
+// The header, the links box and the body each stop fitting within a few rows of
+// each other, so a sweep that steps over the range decides nothing about it —
+// twice a frame was found broken by hand at a height a sampling sweep jumped
+// clean over. Sparse above, where nothing changes shape and each extra height
+// only costs runtime.
+func heightSweep(dense int, sparse ...int) []int {
+	heights := make([]int, 0, dense-minSupportedHeight+1+len(sparse))
+	for h := minSupportedHeight; h <= dense; h++ {
+		heights = append(heights, h)
+	}
+	return append(heights, sparse...)
+}
+
 // The geometries the frame arithmetic turns on. Widths start at 30 because that
 // is where the narrow-terminal defects live: a row too long for its column, a
 // footer built from a fixed set of key/label pairs, and a border title line
 // whose badges are appended whether or not the width can hold them.
 var (
 	sweepWidths  = []int{30, 34, 38, 40, 46, 48, 80, 100, 120, 160, 200}
-	sweepHeights = []int{8, 12, 16, 20, 24, 30}
+	sweepHeights = heightSweep(16, 20, 24, 30)
 )
 
 // assertFrameFitsTerminal fails for a frame that does not fit the cell grid the
@@ -353,13 +382,13 @@ func TestTheFrameFitsTheTerminalWithHelpClosed(t *testing.T) {
 // merely fits by dropping the message back off the bottom would be the defect
 // again with a smaller frame.
 //
-// Heights run one at a time rather than over sweepHeights because the threshold
-// is a boundary: the coarse sweep steps from eight straight to twelve, and the
-// message's own cap moves with height/3, so nine through eleven are where an
-// off-by-one lands.
+// Heights stop where sweepHeights turns sparse instead of running its tail: the
+// property is about the short end, where the body is what gives and the
+// message's own cap moves with height/3, so every row from the floor up to
+// where all three regions fit is swept and the tall geometries buy nothing.
 func TestTheDetailBodyGivesItsRowsToTheRefusal(t *testing.T) {
 	for _, width := range []int{30, 80, 200} {
-		for height := 8; height <= 16; height++ {
+		for height := minSupportedHeight; height <= 16; height++ {
 			t.Run(fmt.Sprintf("%dx%d", width, height), func(t *testing.T) {
 				view := detailSweepView(t)
 				app := enterHelpView(t, view, width, height)
