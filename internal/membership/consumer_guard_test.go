@@ -27,18 +27,25 @@ import (
 // break. Sites are keyed by file and enclosing function, with a count, so a
 // second read inside an approved function still fails.
 //
-// The list is EMPTY today: the migration left no direct reads in any audited
-// file. Adding an entry is a deliberate act — the question to answer first is
-// whether the new site is asking "what belongs to container X" (this
-// package's question, never re-derived) or something genuinely different.
+// The list holds no membership re-derivation: the migration left none, and its
+// one entry is a name collision, not a read of a nib's parent link. Adding an
+// entry is a deliberate act — the question to answer first is whether the new
+// site is asking "what belongs to container X" (this package's question, never
+// re-derived) or something genuinely different.
 var approvedConsumerParentReads = map[string]struct {
 	count  int
 	reason string
-}{}
+}{
+	"cmd/plan.go:renderPlanHuman": {
+		count:  3,
+		reason: "cmd.Plan.Parent is the plan payload's own field — the container the plan is FOR, already resolved by the id the user named — and is not a nib's parent link",
+	},
+}
 
 // auditedFiles are the membership-consuming surfaces, relative to the module
 // root. Test files are excluded by name; generated files do not occur here.
 var auditedFiles = []string{
+	"cmd/plan.go",
 	"cmd/roadmap.go",
 	"cmd/context.go",
 	"internal/nibcontext/context.go",
