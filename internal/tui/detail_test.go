@@ -295,11 +295,31 @@ func linkedNibs(n int) []*nib.Nib {
 	return nibs
 }
 
+// linkedNibsWithBody is linkedNibs whose hub carries a body taller than any
+// viewport these tests give it, so a key that reaches the viewport moves the
+// frame and one that does not shows up as a frame that did not change.
+func linkedNibsWithBody(n int) []*nib.Nib {
+	nibs := linkedNibs(n)
+	lines := make([]string, 40)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("L%02d", i)
+	}
+	nibs[0].Body = strings.Join(lines, "\n\n") // the hub, which linkedNibs puts first
+	return nibs
+}
+
 // detailOnLinkedNib drives the real key path into the detail view of a nib with
 // n links, at a given terminal size.
 func detailOnLinkedNib(t *testing.T, n, width, height int) *App {
 	t.Helper()
-	app := setupRealBackendApp(t, linkedNibs(n))
+	return detailOnHub(t, linkedNibs(n), n, width, height)
+}
+
+// detailOnHub is detailOnLinkedNib for a hub the caller built, so a test that
+// needs something under the links box can supply it.
+func detailOnHub(t *testing.T, nibs []*nib.Nib, wantLinks, width, height int) *App {
+	t.Helper()
+	app := setupRealBackendApp(t, nibs)
 	app.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	if !focusOn(app, "hub") {
 		t.Fatal("premise failed: could not focus the linked nib")
@@ -308,10 +328,103 @@ func detailOnLinkedNib(t *testing.T, n, width, height int) *App {
 	if app.state != viewDetail {
 		t.Fatalf("premise failed: expected the detail view, got state %d", app.state)
 	}
-	if got := len(app.detail.links); got != n {
-		t.Fatalf("premise failed: %d links resolved, want %d", got, n)
+	if got := len(app.detail.links); got != wantLinks {
+		t.Fatalf("premise failed: %d links resolved, want %d", got, wantLinks)
 	}
 	return app
+}
+
+// The pane the detail view routes keys to has to be one the frame drew. It
+// opens focused on the links list, and the frame drops that box whole where it
+// does not fit — so at every geometry where the box goes and the body stays, j
+// and k moved a list nobody could see while the visible body sat still, and
+// enter jumped to a link the reader never saw. Nothing on screen says so
+// either: the footer names tab only for a box it drew, and the body box's
+// border is drawn muted for as long as the links list holds focus.
+//
+// Both directions are the property. Focus that always left the links list would
+// pass the dropped half trivially, so where the box IS drawn enter still has to
+// follow the link it sits on.
+//
+// Each geometry is reached twice, because the two halves of the answer are in
+// different places: a view opened onto a frame too short for the box never sees
+// a message, and a view shrunk onto one is holding focus the frame has just
+// taken away.
+func TestTheDetailViewFocusesAPaneTheFrameDrew(t *testing.T) {
+	var linksDrawn, linksDroppedBodyDrawn int
+
+	arrivals := []struct {
+		name string
+		open func(t *testing.T, links, width, height int) *App
+	}{
+		{"opened", func(t *testing.T, links, width, height int) *App {
+			return detailOnHub(t, linkedNibsWithBody(links), links, width, height)
+		}},
+		{"resized", func(t *testing.T, links, width, height int) *App {
+			// Tall enough that every link count here draws its box, so the
+			// shrink is what takes it away.
+			const tall = 24
+			app := detailOnHub(t, linkedNibsWithBody(links), links, width, tall)
+			if !app.detail.linksActive {
+				t.Fatalf("premise failed: the view did not open on the links box at %d rows, so shrinking it takes nothing away", tall)
+			}
+			app.Update(tea.WindowSizeMsg{Width: width, Height: height})
+			return app
+		}},
+	}
+
+	for _, arrival := range arrivals {
+		for _, links := range []int{2, 4, 6} {
+			for _, width := range []int{30, 40, 80, 120, 200} {
+				// The box is dropped and the body kept at eight rows with two
+				// links and at nine with more; both are drawn from twelve up.
+				for height := 8; height <= 13; height++ {
+					t.Run(fmt.Sprintf("%s/%dlinks/%dx%d", arrival.name, links, width, height), func(t *testing.T) {
+						app := arrival.open(t, links, width, height)
+						before := frameText(app.View().Content, width, height)
+
+						if strings.Contains(before, "lk0") {
+							linksDrawn++
+							sendKey(app, tea.KeyPressMsg{Code: tea.KeyEnter})
+							if got := app.detail.nib.ID; got == "hub" {
+								t.Errorf("the links box is on screen, yet enter did not follow the link it sits on:\n%s", before)
+							}
+							return
+						}
+						if !strings.Contains(before, "L00") {
+							return
+						}
+						linksDroppedBodyDrawn++
+
+						sendKey(app, tea.KeyPressMsg{Code: 'j', Text: "j"})
+						if afterJ := frameText(app.View().Content, width, height); afterJ == before {
+							t.Errorf("the links box is not on screen and the body is, yet j left the frame where it was — the keys are reaching a list no row carries:\n%s", before)
+						}
+						sendKey(app, tea.KeyPressMsg{Code: 'k', Text: "k"})
+						if afterK := frameText(app.View().Content, width, height); afterK != before {
+							t.Errorf("k did not put the visible body back where j found it:\n%s\n%s", before, afterK)
+						}
+						sendKey(app, tea.KeyPressMsg{Code: tea.KeyEnter})
+						if got := app.detail.nib.ID; got != "hub" {
+							t.Errorf("enter followed a link the frame never drew — the view is on %s now:\n%s", got, before)
+						}
+					})
+				}
+			}
+		}
+	}
+
+	for _, c := range []struct {
+		name string
+		n    int
+	}{
+		{"geometries with the links box drawn", linksDrawn},
+		{"geometries with the links box dropped and the body drawn", linksDroppedBodyDrawn},
+	} {
+		if c.n == 0 {
+			t.Errorf("premise failed: no %s, so the sweep only saw one side of the property", c.name)
+		}
+	}
 }
 
 // The links list takes a keystroke only while it is on screen to take it. The
@@ -431,5 +544,257 @@ func TestTheLinksBoxGivesItsRowsToARefusal(t *testing.T) {
 	}
 	if !strings.Contains(painted, "e edit") {
 		t.Errorf("the frame does not carry the help row the refusal is acted on from:\n%s", painted)
+	}
+}
+
+// detailLinksBoxOnScreen reports whether the links box reached the screen. b1
+// is the only link ms1 carries and its id appears nowhere else in the frame.
+//
+// It reads a frame already clipped to the terminal, so it answers only at or
+// above detailFooterMinWidth, where the id is still inside the right edge.
+func detailLinksBoxOnScreen(painted string) bool {
+	return strings.Contains(painted, "b1")
+}
+
+// detailBodyBoxOnScreen reports whether the body box reached the screen. ms1
+// carries no body, so the placeholder is the whole of what the box holds — and
+// nothing else in the frame paints it. Clipped like the links sentinel, and
+// held to the same floor.
+func detailBodyBoxOnScreen(painted string) bool {
+	return strings.Contains(painted, "No description")
+}
+
+// detailBoxesDrawn is which of the two droppable boxes View will paint, taken
+// from the model the way View takes them.
+//
+// The sweep asserts against the sentinels instead, which is the answer the
+// reader gets and an independent one; this is only how it checks that the frame
+// is still legible enough to read them off.
+func detailBoxesDrawn(t *testing.T, app *App) (links, body bool) {
+	t.Helper()
+	if app.state != viewDetail {
+		t.Fatalf("premise failed: expected the detail view, got state %d", app.state)
+	}
+	d := app.detail
+	avail := d.contentAvail()
+	section := d.linksSection()
+	return section != "", d.renderBodyBox(avail-blockLines(section)) != ""
+}
+
+// detailFooterMinWidth is the narrowest terminal the sweep's oracles can answer
+// at. It is a property of them, not of the view, which draws a footer at any
+// width.
+//
+// Everything they read is clipped: renderFooter ends with clipToWidth, and
+// frameText cuts each line the way the alt screen does. The two footer pieces
+// under test survive furthest, being the leftmost items of the help row —
+// "100%  tab switch" is sixteen cells — while the sentinels go first, since the
+// link row spends its left columns on a label before it reaches the id.
+// Measured against the frame's own answer: below 24 columns
+// detailLinksBoxOnScreen reports a drawn box as absent, and below 20
+// detailBodyBoxOnScreen does.
+//
+// Sweep narrower than this and the oracles produce the exact failure the
+// regression would, which is why the widths below start clear of it and the
+// sweep checks the floor rather than assuming it.
+const detailFooterMinWidth = 24
+
+// detailFooterGeometries are the sizes the footer's two claims turn on: heights
+// where the links box is dropped, heights where the body is dropped, and
+// heights where both are drawn, at widths the painted frame can still be read
+// back at. Each carries a refusal, since the rows a wrapped message takes are
+// what push the frame past the thresholds.
+func detailFooterGeometries() []struct{ width, height int } {
+	var geos []struct{ width, height int }
+	for _, width := range []int{30, 38, 46, 80, 120, 200} {
+		// Eight is the floor the refusal sweeps share. Below it the header's
+		// four rows plus a two-line message and the help row are more than the
+		// terminal has, which is a frame the footer's honesty cannot fix.
+		for height := 8; height <= 20; height++ {
+			geos = append(geos, struct{ width, height int }{width, height})
+		}
+	}
+	return geos
+}
+
+// The footer describes the frame in front of the reader, not the model behind
+// it. View drops the links box and then the body when the rows run out, while
+// the footer asked whether links EXIST and printed a percentage unconditionally
+// — so it named tab as the way to a box that is not on screen, and reported a
+// position inside a body nobody painted, measured against a viewport height
+// left over from the last render that had one.
+//
+// Both directions are the property. A footer that never names tab, and one that
+// never prints a percentage, would each pass half of this trivially, so the
+// sweep is required to see both pieces drawn and withheld.
+func TestTheDetailFooterDescribesTheFrameItPaints(t *testing.T) {
+	var linksDrawn, linksDropped, bodyDrawn, bodyDropped int
+
+	for _, geo := range detailFooterGeometries() {
+		t.Run(fmt.Sprintf("%dx%d", geo.width, geo.height), func(t *testing.T) {
+			if geo.width < detailFooterMinWidth {
+				t.Fatalf("premise failed: %d columns is below the width these oracles can answer at (%d)", geo.width, detailFooterMinWidth)
+			}
+			view := detailSweepView(t)
+			app := enterHelpView(t, view, geo.width, geo.height)
+			refuseStatusChange(t, app, view)
+
+			content := app.View().Content
+			assertFrameFitsTerminal(t, content, geo.width, geo.height)
+			painted := frameText(content, geo.width, geo.height)
+
+			// The help row as the reader has it, clipped to the terminal like
+			// everything else in the frame. The two pieces under test are its
+			// leftmost items, so above the floor a missing one means the footer
+			// withheld it rather than the right edge taking it.
+			row := detailHelpRow(t, app)
+
+			// The sentinels are read off the same clipped frame, so they are
+			// checked against what View will paint before they are believed: a
+			// sentinel cut off the right edge reports a box that IS drawn as
+			// absent, and that fails as the regression this test is here for.
+			wantLinks, wantBody := detailBoxesDrawn(t, app)
+
+			links := detailLinksBoxOnScreen(painted)
+			if links != wantLinks {
+				t.Fatalf("premise failed: the links sentinel says on screen = %v where View paints the box = %v — the oracle cannot answer at %d columns:\n%s",
+					links, wantLinks, geo.width, painted)
+			}
+			if links {
+				linksDrawn++
+			} else {
+				linksDropped++
+			}
+			if got := strings.Contains(row, "tab switch"); got != links {
+				if links {
+					t.Errorf("the links box is on screen but the footer does not name tab:\n%s\n%s", row, painted)
+				} else {
+					t.Errorf("the footer names tab as the way to a links box the frame did not draw:\n%s\n%s", row, painted)
+				}
+			}
+
+			body := detailBodyBoxOnScreen(painted)
+			if body != wantBody {
+				t.Fatalf("premise failed: the body sentinel says on screen = %v where View paints the box = %v — the oracle cannot answer at %d columns:\n%s",
+					body, wantBody, geo.width, painted)
+			}
+			if body {
+				bodyDrawn++
+			} else {
+				bodyDropped++
+			}
+			if got := detailScrollPctRe.MatchString(row); got != body {
+				if body {
+					t.Errorf("the body is on screen but the footer reports no scroll position:\n%s\n%s", row, painted)
+				} else {
+					t.Errorf("the footer reports a scroll position for a body the frame did not draw:\n%s\n%s", row, painted)
+				}
+			}
+		})
+	}
+
+	for _, c := range []struct {
+		name string
+		n    int
+	}{
+		{"geometries with the links box drawn", linksDrawn},
+		{"geometries with the links box dropped", linksDropped},
+		{"geometries with the body drawn", bodyDrawn},
+		{"geometries with the body dropped", bodyDropped},
+	} {
+		if c.n == 0 {
+			t.Errorf("premise failed: no %s, so the sweep only saw one side of the property", c.name)
+		}
+	}
+}
+
+// detailHelpRow is the frame's last row: the footer's help row as the terminal
+// shows it.
+//
+// There is no unclipped one to read — renderFooter ends with clipToWidth, so
+// the row is cut to the width before it is ever painted, and reading it back
+// cannot tell a hint the footer withheld from one the right edge took. What
+// keeps the two apart is detailFooterMinWidth, below which the sweeps do not go.
+func detailHelpRow(t *testing.T, app *App) string {
+	t.Helper()
+	if app.state != viewDetail {
+		t.Fatalf("premise failed: expected the detail view, got state %d", app.state)
+	}
+	lines := strings.Split(ansiSGR.ReplaceAllString(app.View().Content, ""), "\n")
+	return lines[len(lines)-1]
+}
+
+// The four geometries the review measured, kept by name so a regression names
+// the frame it broke. At thirteen rows the body is gone and a percentage was
+// still printed; at sixteen it is drawn and the percentage has to be there.
+func TestTheDetailFooterAtTheMeasuredGeometries(t *testing.T) {
+	for _, geo := range []struct {
+		width, height int
+		wantBody      bool
+	}{
+		{38, 13, false},
+		{80, 13, false},
+		{30, 16, true},
+		{38, 16, true},
+	} {
+		t.Run(fmt.Sprintf("%dx%d", geo.width, geo.height), func(t *testing.T) {
+			view := detailSweepView(t)
+			app := enterHelpView(t, view, geo.width, geo.height)
+			refuseStatusChange(t, app, view)
+
+			painted := frameText(app.View().Content, geo.width, geo.height)
+			if got := detailBodyBoxOnScreen(painted); got != geo.wantBody {
+				t.Fatalf("premise failed: body on screen = %v, want %v:\n%s", got, geo.wantBody, painted)
+			}
+			row := detailHelpRow(t, app)
+			if got := detailScrollPctRe.MatchString(row); got != geo.wantBody {
+				t.Errorf("scroll position in the footer = %v with the body on screen = %v:\n%s\n%s",
+					got, geo.wantBody, row, painted)
+			}
+		})
+	}
+}
+
+// The footer's height cannot depend on what View painted above it, and this is
+// the load-bearing half of how the two are allowed to know about each other.
+// contentAvail measures the region to decide whether the links box and the body
+// fit, so a footer whose height moved with that decision would be measuring
+// itself. Both pieces sit in the help row, which clipToWidth cuts rather than
+// wraps, so it is one row whatever it carries; the status message above it is
+// sized from the message, the width and the terminal height alone.
+//
+// Give either piece a row of its own and the sizing pass and the painting pass
+// stop agreeing — the frame overruns the terminal, or gives back rows nothing
+// claims. This is what fails first when that happens.
+func TestTheDetailFooterRegionHeightIgnoresWhatWasPainted(t *testing.T) {
+	for _, refused := range []bool{false, true} {
+		for _, geo := range detailFooterGeometries() {
+			name := fmt.Sprintf("%dx%d", geo.width, geo.height)
+			if refused {
+				name += "/refused"
+			}
+			t.Run(name, func(t *testing.T) {
+				view := detailSweepView(t)
+				app := enterHelpView(t, view, geo.width, geo.height)
+				if refused {
+					refuseStatusChange(t, app, view)
+				}
+				for _, expanded := range []bool{false, true} {
+					d := app.detail
+					d.helpExpanded = expanded
+					base := lipgloss.Height(d.footerRegion(paintedFrame{}))
+					for _, p := range []paintedFrame{
+						{links: true},
+						{body: true},
+						{links: true, body: true},
+					} {
+						if got := lipgloss.Height(d.footerRegion(p)); got != base {
+							t.Errorf("expanded=%v: the footer region is %d rows for %+v and %d rows for the zero value — contentAvail measures one and View paints the other",
+								expanded, got, p, base)
+						}
+					}
+				}
+			})
+		}
 	}
 }

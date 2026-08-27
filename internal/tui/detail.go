@@ -183,11 +183,6 @@ func newDetailModel(b *nib.Nib, backend Backend, cfg *config.Config, width, heig
 	// Initialize link list with items
 	m.linkList = m.createLinkList()
 
-	// If there are links, select first one and focus links by default
-	if len(m.links) > 0 {
-		m.linksActive = true
-	}
-
 	// Calculate header height dynamically
 	headerHeight := m.calculateHeaderHeight()
 	footerHeight := 2
@@ -196,6 +191,12 @@ func newDetailModel(b *nib.Nib, backend Backend, cfg *config.Config, width, heig
 
 	m.viewport = viewport.New(viewport.WithWidth(vpWidth), viewport.WithHeight(vpHeight))
 	m.viewport.SetContent(m.renderBody(vpWidth))
+
+	// The view opens focused on the links list, but only where the frame can
+	// hold the box. Update asks the same question of every message after this
+	// one, and answers it after routing — so without the answer here the first
+	// key the reader presses is one that reaches a list no row on screen carries.
+	m.linksActive = len(m.links) > 0 && m.linksSection() != ""
 
 	return m
 }
@@ -256,7 +257,7 @@ func (m detailModel) linksBox() string {
 // message takes have to come from somewhere; measuring the footer first is what
 // makes their share a budget rather than a guess corrected afterwards.
 func (m detailModel) contentAvail() int {
-	return m.height - lipgloss.Height(m.renderHeader()) - lipgloss.Height(m.footerRegion())
+	return m.height - lipgloss.Height(m.renderHeader()) - lipgloss.Height(m.measuredFooterRegion())
 }
 
 // linksSection is the links box as the frame can hold it: the box, or "" when
@@ -339,13 +340,25 @@ func (m detailModel) Init() tea.Cmd {
 // refused up front; at a height too short for the grown box, / is a no-op. Every
 // path that moves the frame's arithmetic — a resize, the help panel's toggle —
 // arrives as a message, so this one place answers for all of them.
+//
+// Focus is the same question asked of the whole box rather than of its filter:
+// the pane taking the keys has to be one the frame drew. The view opens on the
+// links list, so at the heights where the box is dropped and the body is not,
+// j and k would move a list nothing on screen carries while the visible body
+// sat still, and enter would jump to a link the reader never saw.
 func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 	m, cmd := m.route(msg)
 	if m.linkList.FilterState() == list.Filtering && m.linksSection() == "" {
 		m.linkList.ResetFilter()
 		// The only command reaching here is the list's own — the cursor blink
 		// belonging to the input just discarded.
-		return m, nil
+		cmd = nil
+	}
+	// Asked after the reset above rather than beside it: dropping the filter
+	// input gives the box back the row it borrowed, which can be the row that
+	// makes it fit.
+	if m.linksActive && m.linksSection() == "" {
+		m.linksActive = false
 	}
 	return m, cmd
 }
@@ -560,9 +573,10 @@ func (m detailModel) View() string {
 	// reserves for a header taller than the one that renders — so a percentage
 	// taken against it says there is more below the fold when the whole body is
 	// on screen. Measuring the footer above and painting it here are the same
-	// rows either way: nothing in its height depends on the viewport.
+	// rows either way: nothing in its height depends on the viewport, nor on
+	// which of the boxes above it were painted — see measuredFooterRegion.
 	body := m.renderBodyBox(avail)
-	footer := m.footerRegion()
+	footer := m.footerRegion(paintedFrame{links: linksSection != "", body: body != ""})
 	if body != "" {
 		rows = append(rows, body)
 	}
@@ -605,11 +619,40 @@ func (m *detailModel) renderBodyBox(avail int) string {
 // The expanded panel carries esc/q/? and so replaces the footer's help row, but
 // not its status message: a refusal the user cannot read is the defect the
 // footer was taught to wrap for in the first place.
-func (m detailModel) footerRegion() string {
+func (m detailModel) footerRegion(painted paintedFrame) string {
 	if !m.helpExpanded {
-		return m.renderFooter()
+		return m.renderFooter(painted)
 	}
 	return expandedFooterRegion(detailExpandedEntries(), m.statusMessage, m.statusKind, m.width, m.height, m.contentFloor())
+}
+
+// paintedFrame is which of the two droppable boxes View drew above the footer.
+// The footer describes the frame the reader is looking at — it names tab only
+// for a links box on screen, and reports a scroll position only for a body it
+// can be a position within.
+type paintedFrame struct {
+	links bool
+	body  bool
+}
+
+// measuredFooterRegion is the region rendered for its height alone, which is
+// the call contentAvail makes.
+//
+// It passes the zero value, and that is deliberately not the frame View will
+// paint: contentAvail is what decides whether the two boxes fit, so a footer
+// that asked for the answer would be measuring itself — linksSection reaches
+// contentAvail, contentAvail reaches the region, and the region would reach
+// linksSection again. Passing an answer the height cannot depend on is what
+// cuts that loop.
+//
+// The height cannot depend on it because neither piece has a row of its own:
+// both sit in the help row, which is a single row whatever it carries, since
+// clipToWidth cuts a long one rather than wrapping it. The status message above
+// it is sized from the message, the width and the terminal height, none of
+// which move with what was painted.
+// TestTheDetailFooterRegionHeightIgnoresWhatWasPainted holds that.
+func (m detailModel) measuredFooterRegion() string {
+	return m.footerRegion(paintedFrame{})
 }
 
 // minBodyHeight is the fewest rows the body box occupies: its border, around a
@@ -639,10 +682,20 @@ func (m detailModel) contentFloor() int {
 }
 
 // renderFooter returns the abbreviated footer for the detail view.
-func (m detailModel) renderFooter() string {
-	scrollPct := int(m.viewport.ScrollPercent() * 100)
-	footer := helpStyle.Render(fmt.Sprintf("%d%%", scrollPct)) + "  "
-	if len(m.links) > 0 {
+//
+// Both of the pieces that come and go answer to painted rather than to the
+// model: a percentage is a position WITHIN a body, so with no body on screen
+// there is no position for it to name, and tab is the way to a links box the
+// frame may not have drawn. Neither is replaced by a placeholder — the cells
+// are scarcest at exactly the widths where a box gets dropped, and a dash where
+// a number was is one more thing to read past.
+func (m detailModel) renderFooter(painted paintedFrame) string {
+	var footer string
+	if painted.body {
+		scrollPct := int(m.viewport.ScrollPercent() * 100)
+		footer += helpStyle.Render(fmt.Sprintf("%d%%", scrollPct)) + "  "
+	}
+	if painted.links {
 		footer += renderHelpKey("tab", "switch") + "  "
 	}
 	footer += renderHelpKey("e", "edit") + "  " +

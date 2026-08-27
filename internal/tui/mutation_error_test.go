@@ -222,9 +222,9 @@ func TestDetailFooterColorsARefusalAsAWarning(t *testing.T) {
 	m.statusMessage = "Status change failed: " + refusalReason
 
 	m.statusKind = statusOK
-	okFooter := m.renderFooter()
+	okFooter := m.renderFooter(paintedFrame{})
 	m.statusKind = statusWarn
-	warnFooter := m.renderFooter()
+	warnFooter := m.renderFooter(paintedFrame{})
 
 	if warnFooter == okFooter {
 		t.Fatal("the detail footer renders a warning identically to a success — statusKind never reaches the style")
