@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"fmt"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -8,6 +11,40 @@ import (
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/progress"
 )
+
+// roadmapQueueIDs projects a queue — a milestone's or the backlog's — to the
+// ids standing at each position, expanded entries included: the one list the
+// section is supposed to be.
+func roadmapQueueIDs(queue []queueEntry) []string {
+	ids := make([]string, 0, len(queue))
+	for _, e := range queue {
+		ids = append(ids, e.Nib.ID)
+	}
+	return ids
+}
+
+// roadmapQueueEpics returns the entries that expand into a decomposition, for
+// the assertions that are about visibility or progress rather than position.
+func roadmapQueueEpics(queue []queueEntry) []queueEntry {
+	var epics []queueEntry
+	for _, e := range queue {
+		if len(e.Items) > 0 {
+			epics = append(epics, e)
+		}
+	}
+	return epics
+}
+
+// roadmapQueueItems returns the members standing alone at their position.
+func roadmapQueueItems(queue []queueEntry) []*nib.Nib {
+	var items []*nib.Nib
+	for _, e := range queue {
+		if len(e.Items) == 0 {
+			items = append(items, e.Nib)
+		}
+	}
+	return items
+}
 
 func TestBuildRoadmap(t *testing.T) {
 	cfg := config.Default()
@@ -93,8 +130,8 @@ func TestBuildRoadmap(t *testing.T) {
 			gotUnscheduledEpics := 0
 			gotUnscheduledOther := 0
 			if result.Unscheduled != nil {
-				gotUnscheduledEpics = len(result.Unscheduled.Epics)
-				gotUnscheduledOther = len(result.Unscheduled.Other)
+				gotUnscheduledEpics = len(roadmapQueueEpics(result.Unscheduled.Queue))
+				gotUnscheduledOther = len(roadmapQueueItems(result.Unscheduled.Queue))
 			}
 			if gotUnscheduledEpics != tt.wantUnscheduledEpics {
 				t.Errorf("got %d unscheduled epics, want %d", gotUnscheduledEpics, tt.wantUnscheduledEpics)
@@ -136,10 +173,11 @@ func TestBuildRoadmap_Progress(t *testing.T) {
 	}
 
 	// Epic e2: 2 task children, 1 completed -> 50%.
-	var e2 *epicGroup
-	for i := range ms.Epics {
-		if ms.Epics[i].Epic.ID == "e2" {
-			e2 = &ms.Epics[i]
+	var e2 *queueEntry
+	epics := roadmapQueueEpics(ms.Queue)
+	for i := range epics {
+		if epics[i].Nib.ID == "e2" {
+			e2 = &epics[i]
 		}
 	}
 	if e2 == nil {
@@ -183,8 +221,8 @@ func TestBuildRoadmap_DeferredChildStaysVisible(t *testing.T) {
 		if len(result.Milestones) != 1 {
 			t.Fatalf("got %d milestones, want 1 — the milestone lost its only epic", len(result.Milestones))
 		}
-		epics := result.Milestones[0].Epics
-		if len(epics) != 1 || epics[0].Epic.ID != "e1" {
+		epics := roadmapQueueEpics(result.Milestones[0].Queue)
+		if len(epics) != 1 || epics[0].Nib.ID != "e1" {
 			t.Fatalf("got epics %+v, want the in-progress epic e1 to still be rendered", epics)
 		}
 		if len(epics[0].Items) != 1 || epics[0].Items[0].ID != "t4" {
@@ -216,7 +254,7 @@ func TestBuildRoadmap_DeferredChildStaysVisible(t *testing.T) {
 		if len(result.Milestones) != 1 {
 			t.Fatalf("got %d milestones, want 1 — closing the epic removed the whole milestone", len(result.Milestones))
 		}
-		epics := result.Milestones[0].Epics
+		epics := roadmapQueueEpics(result.Milestones[0].Queue)
 		if len(epics) != 1 || len(epics[0].Items) != 1 || epics[0].Items[0].ID != "t4" {
 			t.Fatalf("got epics %+v, want the closed epic still naming its deferred child t4", epics)
 		}
@@ -240,7 +278,7 @@ func TestBuildRoadmap_DeferredChildStaysVisible(t *testing.T) {
 		if len(result.Milestones) != 1 {
 			t.Fatalf("got %d milestones, want 1 — the milestone still holds outstanding scope", len(result.Milestones))
 		}
-		other := result.Milestones[0].Other
+		other := roadmapQueueItems(result.Milestones[0].Queue)
 		if len(other) != 1 || other[0].ID != "t1" {
 			t.Errorf("got other %+v, want the deferred task t1 named", other)
 		}
@@ -257,14 +295,17 @@ func TestBuildRoadmap_DeferredChildStaysVisible(t *testing.T) {
 			{ID: "t2", Type: "task", Title: "Set Aside", Status: "deferred", Parent: "e1"},
 		}
 		result := buildRoadmap(nibs, false, nil, nil, cfg)
-		if result.Unscheduled == nil || len(result.Unscheduled.Epics) != 1 {
-			t.Fatalf("got unscheduled %+v, want the epic kept for its deferred child", result.Unscheduled)
+		if result.Unscheduled == nil {
+			t.Fatal("got no unscheduled group, want the epic kept for its deferred child")
 		}
-		epic := result.Unscheduled.Epics[0]
-		if len(epic.Items) != 1 || epic.Items[0].ID != "t2" {
-			t.Fatalf("got items %+v, want the deferred child t2 named", epic.Items)
+		epics := roadmapQueueEpics(result.Unscheduled.Queue)
+		if len(epics) != 1 {
+			t.Fatalf("got backlog %+v, want the epic kept for its deferred child", result.Unscheduled.Queue)
 		}
-		if got := epic.Progress; got.Total != 2 || got.Done != 1 || got.Percent != 50 {
+		if len(epics[0].Items) != 1 || epics[0].Items[0].ID != "t2" {
+			t.Fatalf("got items %+v, want the deferred child t2 named", epics[0].Items)
+		}
+		if got := *epics[0].Progress; got.Total != 2 || got.Done != 1 || got.Percent != 50 {
 			t.Errorf("epic progress = %+v, want {Total:2 Done:1 Percent:50}", got)
 		}
 	})
@@ -288,11 +329,12 @@ func TestBuildRoadmap_DeferredChildStaysVisible(t *testing.T) {
 		if got := ms.Progress; got.Total != 2 || got.Done != 1 || got.Percent != 50 || got.Deferred != 1 {
 			t.Errorf("milestone progress = %+v, want {Total:2 Done:1 Percent:50 Deferred:1}", got)
 		}
-		if len(ms.Epics) != 1 || ms.Epics[0].Epic.ID != "e2" {
-			t.Fatalf("got epics %+v, want the deferred epic e2 rendered with its open tasks", ms.Epics)
+		epics := roadmapQueueEpics(ms.Queue)
+		if len(epics) != 1 || epics[0].Nib.ID != "e2" {
+			t.Fatalf("got epics %+v, want the deferred epic e2 rendered with its open tasks", epics)
 		}
-		if len(ms.Epics[0].Items) != 2 {
-			t.Errorf("got %d items under the deferred epic, want 2 open tasks", len(ms.Epics[0].Items))
+		if len(epics[0].Items) != 2 {
+			t.Errorf("got %d items under the deferred epic, want 2 open tasks", len(epics[0].Items))
 		}
 	})
 }
@@ -317,8 +359,10 @@ func TestBuildRoadmap_VisibilityMatchesProgress(t *testing.T) {
 			result := buildRoadmap(nibs, false, nil, nil, cfg)
 
 			rendered := 0
-			if len(result.Milestones) == 1 && len(result.Milestones[0].Epics) == 1 {
-				rendered = len(result.Milestones[0].Epics[0].Items)
+			if len(result.Milestones) == 1 {
+				if epics := roadmapQueueEpics(result.Milestones[0].Queue); len(epics) == 1 {
+					rendered = len(epics[0].Items)
+				}
 			}
 			rollup := progress.ByCount([]string{status})
 			outstanding := rollup.Total - rollup.Done
@@ -480,5 +524,383 @@ func TestBuildRoadmap_HiddenMilestoneMembersAreNotBacklog(t *testing.T) {
 	}
 	if data.Unscheduled != nil {
 		t.Fatalf("members of the hidden milestone leaked into Unscheduled: %+v", data.Unscheduled)
+	}
+}
+
+// TestBuildRoadmap_MilestoneQueueIsOneOrderedList pins the milestone section as
+// a QUEUE: its direct members in milestone_order, epic-typed or not, standing
+// at the positions their keys give them. The sample fixture cannot reach this
+// shape — every milestone in it holds only epic assignees — so the coverage
+// here is synthetic by necessity.
+func TestBuildRoadmap_MilestoneQueueIsOneOrderedList(t *testing.T) {
+	cfg := config.Default()
+	now := time.Now()
+
+	milestone := &nib.Nib{ID: "m1", Type: "milestone", Title: "v1.0", Status: "in-progress", CreatedAt: &now}
+
+	tests := []struct {
+		name    string
+		members []*nib.Nib
+		want    []string
+	}{
+		{
+			name: "an epic stands between two loose items",
+			members: []*nib.Nib{
+				{ID: "e1", Type: "epic", Title: "Epic", Status: "todo", Milestone: "m1", MilestoneOrder: "b"},
+				{ID: "b1", Type: "bug", Title: "Loose bug", Status: "todo", Milestone: "m1", MilestoneOrder: "a"},
+				{ID: "f1", Type: "feature", Title: "Loose feature", Status: "todo", Milestone: "m1", MilestoneOrder: "c"},
+			},
+			want: []string{"b1", "e1", "f1"},
+		},
+		{
+			name: "loose work interleaves between two epics",
+			members: []*nib.Nib{
+				{ID: "b1", Type: "bug", Title: "Loose bug", Status: "todo", Milestone: "m1", MilestoneOrder: "d"},
+				{ID: "e2", Type: "epic", Title: "Second epic", Status: "todo", Milestone: "m1", MilestoneOrder: "c"},
+				{ID: "t1", Type: "task", Title: "Loose task", Status: "todo", Milestone: "m1", MilestoneOrder: "b"},
+				{ID: "e1", Type: "epic", Title: "First epic", Status: "todo", Milestone: "m1", MilestoneOrder: "a"},
+			},
+			want: []string{"e1", "t1", "e2", "b1"},
+		},
+		{
+			name: "type never outranks the key the user arranged",
+			members: []*nib.Nib{
+				// Declared bug-feature-task, which is both the input order and
+				// type-then-status order, while the queue keys ask for the
+				// reverse: no sort at all and a type sort both fail this case.
+				{ID: "b1", Type: "bug", Title: "Bug", Status: "todo", Milestone: "m1", MilestoneOrder: "c"},
+				{ID: "f1", Type: "feature", Title: "Feature", Status: "todo", Milestone: "m1", MilestoneOrder: "b"},
+				{ID: "t1", Type: "task", Title: "Task", Status: "todo", Milestone: "m1", MilestoneOrder: "a"},
+			},
+			want: []string{"t1", "f1", "b1"},
+		},
+		{
+			name: "unkeyed members fall behind the keyed ones, by title",
+			members: []*nib.Nib{
+				{ID: "b1", Type: "bug", Title: "Zebra", Status: "todo", Milestone: "m1"},
+				{ID: "e1", Type: "epic", Title: "Apple", Status: "todo", Milestone: "m1"},
+				{ID: "t1", Type: "task", Title: "Keyed", Status: "todo", Milestone: "m1", MilestoneOrder: "a"},
+			},
+			want: []string{"t1", "e1", "b1"},
+		},
+		{
+			name: "an epic with no outstanding scope leaves the queue without moving the rest",
+			members: []*nib.Nib{
+				{ID: "b1", Type: "bug", Title: "Loose bug", Status: "todo", Milestone: "m1", MilestoneOrder: "a"},
+				{ID: "e1", Type: "epic", Title: "Finished epic", Status: "completed", Milestone: "m1", MilestoneOrder: "b"},
+				{ID: "f1", Type: "feature", Title: "Loose feature", Status: "todo", Milestone: "m1", MilestoneOrder: "c"},
+			},
+			want: []string{"b1", "f1"},
+		},
+		{
+			name: "a finished loose member leaves the queue too",
+			members: []*nib.Nib{
+				{ID: "b1", Type: "bug", Title: "Loose bug", Status: "todo", Milestone: "m1", MilestoneOrder: "a"},
+				{ID: "t1", Type: "task", Title: "Shipped", Status: "completed", Milestone: "m1", MilestoneOrder: "b"},
+				{ID: "f1", Type: "feature", Title: "Loose feature", Status: "todo", Milestone: "m1", MilestoneOrder: "c"},
+			},
+			want: []string{"b1", "f1"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nibs := []*nib.Nib{milestone}
+			nibs = append(nibs, tt.members...)
+			// Every epic in the table needs one open child, or it would drop for
+			// holding no outstanding scope rather than for the reason under test.
+			for _, m := range tt.members {
+				if m.EffectiveType() == "epic" && m.Status != "completed" {
+					nibs = append(nibs, &nib.Nib{ID: m.ID + "-child", Type: "task", Title: "Child of " + m.ID, Status: "todo", Parent: m.ID})
+				}
+			}
+
+			result := buildRoadmap(nibs, false, nil, nil, cfg)
+			if len(result.Milestones) != 1 {
+				t.Fatalf("got %d milestone groups, want 1", len(result.Milestones))
+			}
+			got := roadmapQueueIDs(result.Milestones[0].Queue)
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("queue = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestBuildRoadmap_EpicItemsAreTreeOrder pins the other axis: an epic standing
+// in a milestone's queue expands into its own decomposition, and that is
+// ordered by the parent-scope `order` key, not by the queue key and not by
+// type. The two axes coexist in one section and neither borrows the other.
+func TestBuildRoadmap_EpicItemsAreTreeOrder(t *testing.T) {
+	cfg := config.Default()
+	now := time.Now()
+
+	nibs := []*nib.Nib{
+		{ID: "m1", Type: "milestone", Title: "v1.0", Status: "in-progress", CreatedAt: &now},
+		{ID: "e1", Type: "epic", Title: "Epic", Status: "in-progress", Milestone: "m1", MilestoneOrder: "a"},
+		// Declared bug-feature-task, which is both the input order and
+		// type-then-status order, while the order keys ask for the reverse.
+		// The titles run opposite to the keys as well, so CompareByKey's
+		// title tiebreak cannot stand in for reading the key.
+		{ID: "b1", Type: "bug", Title: "Alpha", Status: "todo", Parent: "e1", Order: "c"},
+		{ID: "f1", Type: "feature", Title: "Mike", Status: "todo", Parent: "e1", Order: "b"},
+		{ID: "t1", Type: "task", Title: "Zulu", Status: "todo", Parent: "e1", Order: "a"},
+	}
+
+	result := buildRoadmap(nibs, false, nil, nil, cfg)
+	epics := roadmapQueueEpics(result.Milestones[0].Queue)
+	if len(epics) != 1 {
+		t.Fatalf("got %d epic groups, want 1", len(epics))
+	}
+	var got []string
+	for _, item := range epics[0].Items {
+		got = append(got, item.ID)
+	}
+	if want := []string{"t1", "f1", "b1"}; !slices.Equal(got, want) {
+		t.Errorf("epic items = %v, want %v (tree order)", got, want)
+	}
+}
+
+// TestBuildRoadmap_BacklogIsTreeOrder pins decision 2.5: the backlog is the
+// tree, filtered — so its epics and its root-level items sit in `order`, the
+// key the tree itself is arranged by, standing in ONE list together because
+// the tree makes them siblings in the same root scope.
+func TestBuildRoadmap_BacklogIsTreeOrder(t *testing.T) {
+	cfg := config.Default()
+
+	t.Run("root-level items", func(t *testing.T) {
+		nibs := []*nib.Nib{
+			// Declared bug-feature-task, which is both the input order and
+			// type-then-status order, while the order keys ask for the reverse.
+			{ID: "b1", Type: "bug", Title: "Bug", Status: "todo", Order: "c"},
+			{ID: "f1", Type: "feature", Title: "Feature", Status: "todo", Order: "b"},
+			{ID: "t1", Type: "task", Title: "Task", Status: "todo", Order: "a"},
+		}
+		result := buildRoadmap(nibs, false, nil, nil, cfg)
+		if result.Unscheduled == nil {
+			t.Fatal("got no unscheduled group")
+		}
+		got := roadmapQueueIDs(result.Unscheduled.Queue)
+		if want := []string{"t1", "f1", "b1"}; !slices.Equal(got, want) {
+			t.Errorf("backlog items = %v, want %v (tree order)", got, want)
+		}
+	})
+
+	t.Run("epic groups", func(t *testing.T) {
+		nibs := []*nib.Nib{
+			// Declared Apple-before-Zebra, which is both the input order and
+			// title order, while the order keys ask for the reverse.
+			{ID: "e2", Type: "epic", Title: "Apple", Status: "todo", Order: "b"},
+			{ID: "e1", Type: "epic", Title: "Zebra", Status: "todo", Order: "a"},
+			{ID: "t2", Type: "task", Title: "Under apple", Status: "todo", Parent: "e2"},
+			{ID: "t1", Type: "task", Title: "Under zebra", Status: "todo", Parent: "e1"},
+		}
+		result := buildRoadmap(nibs, false, nil, nil, cfg)
+		if result.Unscheduled == nil {
+			t.Fatal("got no unscheduled group")
+		}
+		got := roadmapQueueIDs(result.Unscheduled.Queue)
+		if want := []string{"e1", "e2"}; !slices.Equal(got, want) {
+			t.Errorf("backlog epics = %v, want %v (tree order)", got, want)
+		}
+	})
+
+	t.Run("an epic stands between two root items", func(t *testing.T) {
+		// Backlog epics and backlog root items are siblings in ONE root order
+		// scope, so the epic keeps the position the tree gives it instead of
+		// being hoisted ahead of both tasks. Titles run opposite to the keys,
+		// so the title tiebreak cannot reproduce the wanted sequence.
+		nibs := []*nib.Nib{
+			{ID: "t1", Type: "task", Title: "Zulu", Status: "todo", Order: "a"},
+			{ID: "e1", Type: "epic", Title: "Mike", Status: "todo", Order: "b"},
+			{ID: "t2", Type: "task", Title: "Alpha", Status: "todo", Order: "c"},
+			{ID: "c1", Type: "task", Title: "Under the epic", Status: "todo", Parent: "e1"},
+		}
+		result := buildRoadmap(nibs, false, nil, nil, cfg)
+		if result.Unscheduled == nil {
+			t.Fatal("got no unscheduled group")
+		}
+		got := roadmapQueueIDs(result.Unscheduled.Queue)
+		if want := []string{"t1", "e1", "t2"}; !slices.Equal(got, want) {
+			t.Errorf("backlog = %v, want %v (tree order)", got, want)
+		}
+
+		// And the same interleaving survives into the rendered document — two
+		// sequential blocks would read as epic-then-everything-else whatever
+		// the data said.
+		marks := roadmapMarks(renderRoadmapMarkdown(result, false, ""))
+		want := []string{
+			"(t1)",
+			"### Epic: Mike — 0% (0/1) (e1)",
+			"(c1)",
+			"### Miscellaneous",
+			"(t2)",
+		}
+		if !slices.Equal(marks, want) {
+			t.Errorf("rendered backlog = %#v, want %#v", marks, want)
+		}
+	})
+
+	t.Run("items under a backlog epic", func(t *testing.T) {
+		nibs := []*nib.Nib{
+			{ID: "e1", Type: "epic", Title: "Epic", Status: "todo"},
+			// Declared bug-first, which is both the input order and
+			// type-then-status order, while the order keys ask for the
+			// reverse — and the titles run opposite to the keys too, so the
+			// title tiebreak cannot stand in for reading the key.
+			{ID: "b1", Type: "bug", Title: "Apple", Status: "todo", Parent: "e1", Order: "b"},
+			{ID: "t1", Type: "task", Title: "Zebra", Status: "todo", Parent: "e1", Order: "a"},
+		}
+		result := buildRoadmap(nibs, false, nil, nil, cfg)
+		if result.Unscheduled == nil {
+			t.Fatal("got no unscheduled group")
+		}
+		epics := roadmapQueueEpics(result.Unscheduled.Queue)
+		if len(epics) != 1 {
+			t.Fatalf("got backlog %+v, want one epic group", result.Unscheduled.Queue)
+		}
+		var got []string
+		for _, item := range epics[0].Items {
+			got = append(got, item.ID)
+		}
+		if want := []string{"t1", "b1"}; !slices.Equal(got, want) {
+			t.Errorf("backlog epic items = %v, want %v (tree order)", got, want)
+		}
+	})
+}
+
+// TestBuildRoadmap_QueueOrderDoesNotMoveProgress pins the seam the queue rework
+// must not disturb: the milestone rollup counts the milestone's assigned set,
+// whole, whatever the queue looks like and whatever the display filters hide.
+func TestBuildRoadmap_QueueOrderDoesNotMoveProgress(t *testing.T) {
+	cfg := config.Default()
+	now := time.Now()
+
+	nibs := []*nib.Nib{
+		{ID: "m1", Type: "milestone", Title: "v1.0", Status: "in-progress", CreatedAt: &now},
+		{ID: "e1", Type: "epic", Title: "Epic", Status: "in-progress", Milestone: "m1", MilestoneOrder: "b"},
+		{ID: "t9", Type: "task", Title: "Under the epic", Status: "todo", Parent: "e1"},
+		{ID: "b1", Type: "bug", Title: "Loose bug", Status: "todo", Milestone: "m1", MilestoneOrder: "a"},
+		{ID: "t1", Type: "task", Title: "Shipped", Status: "completed", Milestone: "m1", MilestoneOrder: "c"},
+		{ID: "t2", Type: "task", Title: "Dropped", Status: "scrapped", Milestone: "m1", MilestoneOrder: "d"},
+	}
+
+	// 4 assignees: 1 completed, 1 scrapped (out of the denominator), 2 open.
+	want := progress.Rollup{Total: 3, Done: 1, Percent: 33, Scrapped: 1}
+
+	for _, includeDone := range []bool{false, true} {
+		t.Run(fmt.Sprintf("includeDone=%v", includeDone), func(t *testing.T) {
+			result := buildRoadmap(nibs, includeDone, nil, nil, cfg)
+			if len(result.Milestones) != 1 {
+				t.Fatalf("got %d milestone groups, want 1", len(result.Milestones))
+			}
+			if got := result.Milestones[0].Progress; got != want {
+				t.Errorf("milestone progress = %+v, want %+v — the rollup follows the assigned set, not the rendered queue", got, want)
+			}
+		})
+	}
+}
+
+// roadmapMarks projects rendered roadmap Markdown to the skeleton the ordering
+// assertions are about: every block heading verbatim, and every bullet reduced
+// to the nib reference that closes it.
+//
+// The bullet projection is scoped to the `--no-links` rendering, where
+// renderNibRef emits a bare `(id)` and LastIndex therefore finds the id. With
+// links enabled the reference is `([id](path))` and LastIndex would silently
+// return the path segment instead, so callers must render with links off.
+func roadmapMarks(md string) []string {
+	var marks []string
+	for _, line := range strings.Split(md, "\n") {
+		switch {
+		case strings.HasPrefix(line, "### Epic:"), strings.HasPrefix(line, "### Miscellaneous"):
+			marks = append(marks, line)
+		case strings.HasPrefix(line, "- "):
+			marks = append(marks, line[strings.LastIndex(line, "("):])
+		}
+	}
+	return marks
+}
+
+// TestRenderRoadmapMarkdown_QueueReadsAsOneList pins the human rendering of an
+// interleaved queue: the loose members appear at their queue positions, and a
+// RUN of them that follows an epic block is headed once — a bare bullet there
+// would read as one more of that epic's items, while a heading per bullet
+// would read as a bucket per item.
+func TestRenderRoadmapMarkdown_QueueReadsAsOneList(t *testing.T) {
+	cfg := config.Default()
+	now := time.Now()
+
+	milestone := &nib.Nib{ID: "m1", Type: "milestone", Title: "v1.0", Status: "in-progress", CreatedAt: &now}
+
+	tests := []struct {
+		name    string
+		members []*nib.Nib
+		want    []string
+	}{
+		{
+			name: "a headed run of one closes the queue",
+			members: []*nib.Nib{
+				// Declared against the queue keys, so input order cannot pass
+				// for the arrangement.
+				{ID: "f1", Type: "feature", Title: "Closes the queue", Status: "todo", Milestone: "m1", MilestoneOrder: "c"},
+				{ID: "e1", Type: "epic", Title: "Middle epic", Status: "todo", Milestone: "m1", MilestoneOrder: "b"},
+				{ID: "t9", Type: "task", Title: "Under the epic", Status: "todo", Parent: "e1"},
+				{ID: "b1", Type: "bug", Title: "Opens the queue", Status: "todo", Milestone: "m1", MilestoneOrder: "a"},
+			},
+			want: []string{
+				"(b1)",
+				"### Epic: Middle epic — 0% (0/1) (e1)",
+				"(t9)",
+				"### Miscellaneous",
+				"(f1)",
+			},
+		},
+		{
+			name: "one heading opens a multi-item run, not one per item",
+			members: []*nib.Nib{
+				{ID: "e1", Type: "epic", Title: "Only epic", Status: "todo", Milestone: "m1", MilestoneOrder: "a"},
+				{ID: "t9", Type: "task", Title: "Under the epic", Status: "todo", Parent: "e1"},
+				{ID: "l1", Type: "task", Title: "First loose", Status: "todo", Milestone: "m1", MilestoneOrder: "b"},
+				{ID: "l2", Type: "task", Title: "Second loose", Status: "todo", Milestone: "m1", MilestoneOrder: "c"},
+			},
+			want: []string{
+				"### Epic: Only epic — 0% (0/1) (e1)",
+				"(t9)",
+				"### Miscellaneous",
+				"(l1)",
+				"(l2)",
+			},
+		},
+		{
+			name: "a queue with no epic in it is headed nowhere",
+			members: []*nib.Nib{
+				{ID: "l1", Type: "task", Title: "First loose", Status: "todo", Milestone: "m1", MilestoneOrder: "a"},
+				{ID: "l2", Type: "task", Title: "Second loose", Status: "todo", Milestone: "m1", MilestoneOrder: "b"},
+			},
+			want: []string{"(l1)", "(l2)"},
+		},
+		{
+			name: "an epic dropped for empty scope heads nothing",
+			members: []*nib.Nib{
+				// The heading follows the APPENDED queue, not the member list:
+				// e1 holds no outstanding scope, so it never reaches the queue
+				// and l1 opens no run.
+				{ID: "e1", Type: "epic", Title: "Finished epic", Status: "completed", Milestone: "m1", MilestoneOrder: "a"},
+				{ID: "l1", Type: "task", Title: "First loose", Status: "todo", Milestone: "m1", MilestoneOrder: "b"},
+				{ID: "l2", Type: "task", Title: "Second loose", Status: "todo", Milestone: "m1", MilestoneOrder: "c"},
+			},
+			want: []string{"(l1)", "(l2)"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nibs := append([]*nib.Nib{milestone}, tt.members...)
+			md := renderRoadmapMarkdown(buildRoadmap(nibs, false, nil, nil, cfg), false, "")
+			if marks := roadmapMarks(md); !slices.Equal(marks, tt.want) {
+				t.Errorf("rendered queue = %#v, want %#v", marks, tt.want)
+			}
+		})
 	}
 }

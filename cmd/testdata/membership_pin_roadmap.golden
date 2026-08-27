@@ -7,33 +7,33 @@
 ### Epic: User Authentication — 17% (1/6) (tnib-e001)
 
 
-- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) OAuth callback URL mismatch in production config (tnib-b001)
-- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Session tokens not invalidated on password change (tnib-b002)
 - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) OAuth2 social login (tnib-f002)
 - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Password reset flow (tnib-f003)
 - ![task](https://img.shields.io/badge/task-1d76db?style=flat-square) Write authentication API documentation (tnib-t008)
+- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Session tokens not invalidated on password change (tnib-b002)
+- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) OAuth callback URL mismatch in production config (tnib-b001)
 ### Epic: Task Management Core — 14% (1/7) (tnib-e002)
 
 
-- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Assigning task to deactivated user shows no error (tnib-b003)
-- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Task title silently truncated at 255 characters (tnib-b004)
 - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Task assignment and ownership (tnib-f005)
 - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Task prioritization and sorting (tnib-f006)
 - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Subtask and checklist support (tnib-f007)
 - ![task](https://img.shields.io/badge/task-1d76db?style=flat-square) Performance benchmark for 10k tasks (tnib-t018)
+- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Task title silently truncated at 255 characters (tnib-b004)
+- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Assigning task to deactivated user shows no error (tnib-b003)
 ### Epic: Dashboard & Reporting — 0% (0/4) (tnib-e003)
 
 
-- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Date picker shows wrong timezone for remote users (tnib-b005)
 - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Team velocity chart (tnib-f008)
 - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Personal task dashboard (tnib-f009)
 - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Export reports to CSV and PDF (tnib-f010)
+- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Date picker shows wrong timezone for remote users (tnib-b005)
 ### Epic: API & Integrations — 0% (0/3) (tnib-e004)
 
 
-- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Webhook payloads missing updated_at timestamp (tnib-b006)
 - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Webhook delivery system (tnib-f011)
 - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Slack integration (tnib-f012)
+- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Webhook payloads missing updated_at timestamp (tnib-b006)
 
 ## Milestone: v1.1 Team Collaboration — 0% (0/2) (tnib-m002)
 
@@ -47,28 +47,28 @@
 ### Epic: Notifications System — 0% (0/3) (tnib-e006)
 
 
-- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Push notifications not requesting permission on mobile (tnib-b007)
 - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) In-app notification center (tnib-f016)
 - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Email digest notifications (tnib-f017)
+- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Push notifications not requesting permission on mobile (tnib-b007)
 
-## No Milestone
+## Unplanned
 
 
-- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Memory leak in development server after hot reload (tnib-b008)
-- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Search results not updating after task deletion (tnib-b012)
-- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Flaky test in user_service_test.go (tnib-b009)
-- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) CSS grid layout breaks on Safari 15 (tnib-b010)
-- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) API returns 500 on malformed JSON body (tnib-b011)
-- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) File upload fails for names with special characters (tnib-b013)
-- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Race condition in concurrent task updates (tnib-b014)
-- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Dropdown menu z-index conflict with modal (tnib-b015)
-- ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Keyboard shortcuts for power users (tnib-f019)
-- ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Bulk task operations (tnib-f020)
-- ![task](https://img.shields.io/badge/task-1d76db?style=flat-square) Update npm dependencies to latest (tnib-t037)
 - ![task](https://img.shields.io/badge/task-1d76db?style=flat-square) Write database migration strategy doc (tnib-t034)
 - ![task](https://img.shields.io/badge/task-1d76db?style=flat-square) Accessibility audit (tnib-t035)
 - ![task](https://img.shields.io/badge/task-1d76db?style=flat-square) Security penetration testing (tnib-t036)
+- ![task](https://img.shields.io/badge/task-1d76db?style=flat-square) Update npm dependencies to latest (tnib-t037)
 - ![task](https://img.shields.io/badge/task-1d76db?style=flat-square) Optimize Docker image size (tnib-t039)
 - ![task](https://img.shields.io/badge/task-1d76db?style=flat-square) Load testing with 1000 concurrent users (tnib-t040)
 - ![task](https://img.shields.io/badge/task-1d76db?style=flat-square) Write onboarding guide for new developers (tnib-t044)
+- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Memory leak in development server after hot reload (tnib-b008)
+- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Flaky test in user_service_test.go (tnib-b009)
+- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) CSS grid layout breaks on Safari 15 (tnib-b010)
+- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) API returns 500 on malformed JSON body (tnib-b011)
+- ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Keyboard shortcuts for power users (tnib-f019)
+- ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Bulk task operations (tnib-f020)
+- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Search results not updating after task deletion (tnib-b012)
+- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) File upload fails for names with special characters (tnib-b013)
+- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Race condition in concurrent task updates (tnib-b014)
+- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Dropdown menu z-index conflict with modal (tnib-b015)
 
