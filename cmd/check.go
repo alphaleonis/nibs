@@ -11,6 +11,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
+	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/store"
 	"github.com/alphaleonis/nibs/internal/ui"
 	"github.com/spf13/cobra"
@@ -242,7 +243,26 @@ func runCheck(app *App) (int, error) {
 	if checkFix && (len(linkResult.BrokenLinks) > 0 || len(linkResult.SelfLinks) > 0 || len(linkResult.BrokenDocuments) > 0) {
 		fixedCount, err := app.Core.FixBrokenLinks()
 		if err != nil {
-			return 0, fmt.Errorf("fixing broken links: %w", err)
+			// This is runCheck's ONE error return, and it has to carry a code
+			// like every other command's: --json is a machine surface, and a
+			// bare error left it printing nothing at all beside a non-zero
+			// status — no envelope for a consumer to read the failure off.
+			//
+			// FILE_ERROR unconditionally, because every way this sweep fails is
+			// a store write it could not complete: the write lock, the render,
+			// or the atomic replace refusing a path that went stale. That is
+			// the class mutationErrCode gives the same failures on the mutating
+			// commands.
+			//
+			// The code is doing work here, not restating what the boundary
+			// would infer: only two of those paths carry an *fs.PathError —
+			// opening the lock file, and the atomic replace — and
+			// reportExitError's isIOError fallback recognizes nothing else. A
+			// flock refusal arrives as a bare errno (ENOLCK on a filesystem
+			// with no locking), a front-matter marshal failure as a plain
+			// error, and both would otherwise land on the uncategorized status
+			// rather than the one that says the store was not written.
+			return 0, reportErr(checkJSON, output.ErrFileError, fmt.Errorf("fixing broken links: %w", err))
 		}
 		fixed = fixedCount
 

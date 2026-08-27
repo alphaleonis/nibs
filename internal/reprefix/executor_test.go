@@ -654,8 +654,9 @@ func TestExecute_RewritesFullFormBodyMentions(t *testing.T) {
 	got := readNib(t, root, "new-aaa--root.md").Body
 	// Render writes a blank line between the front matter and a body that
 	// does not already start with one, and Parse hands that separator back
-	// as part of the body — so the round-tripped body leads with "\n".
-	want := "\nBlocked on #new-bbb; see #new-bbb again.\n\nShort form #bbb stays.\n\n`#tnib-bbb` is literal.\n\n```\n#tnib-bbb\n```"
+	// as part of the body — so the round-tripped body leads with "\n". The
+	// fixture's own terminating newline survives the round trip untouched.
+	want := "\nBlocked on #new-bbb; see #new-bbb again.\n\nShort form #bbb stays.\n\n`#tnib-bbb` is literal.\n\n```\n#tnib-bbb\n```\n"
 	if got != want {
 		t.Fatalf("rewritten body =\n%q\nwant\n%q", got, want)
 	}
@@ -668,11 +669,10 @@ func TestExecute_RewritesFullFormBodyMentions(t *testing.T) {
 // full-form mention.
 //
 // It is deliberately NOT a claim that Execute preserves body bytes in general —
-// it does not. nib.Parse trims one trailing "\n" and nib.Render appends one, so
-// any body ending in a blank line loses that line on every re-render, this
-// command's included. That asymmetry is pre-existing and lives in nib, not here;
-// the fixture below ends in exactly one "\n" (a Render fixed point) so the
-// comparison isolates the rewrite instead of measuring that normalization.
+// a body that does not already carry nib.Render's framing (a leading separator
+// and a terminating newline) acquires it on the first re-render, this command's
+// included. That normalization lives in nib, not here; the fixture below is
+// already a Render fixed point so the comparison isolates the rewrite.
 func TestExecute_MentionFreeBodyIsUnchangedByTheRewrite(t *testing.T) {
 	root := t.TempDir()
 

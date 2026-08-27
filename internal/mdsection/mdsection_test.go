@@ -424,6 +424,28 @@ func TestSet(t *testing.T) {
 			want:         "## Existing\n\nContent.\n\n# Added\n\nNew content.\n",
 			wantAppended: true,
 		},
+		{
+			// A parsed body carries nib.Render's terminating newline, so the
+			// append must not treat it as part of the separator.
+			name:         "appends one blank line after a body ending in a newline",
+			body:         "## Goal\n\nShip it.\n",
+			matchLevel:   0,
+			appendLevel:  2,
+			heading:      "Key Decisions",
+			content:      "\n- Decision one\n",
+			want:         "## Goal\n\nShip it.\n\n## Key Decisions\n\n- Decision one\n",
+			wantAppended: true,
+		},
+		{
+			name:         "appends one blank line after a body ending in blank lines",
+			body:         "## Goal\n\nShip it.\n\n\n",
+			matchLevel:   0,
+			appendLevel:  2,
+			heading:      "Key Decisions",
+			content:      "\n- Decision one\n",
+			want:         "## Goal\n\nShip it.\n\n## Key Decisions\n\n- Decision one\n",
+			wantAppended: true,
+		},
 		// --- exact-preferred matching ---
 		{
 			// Set finds the exact heading (not the earlier parenthetical) and

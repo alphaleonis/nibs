@@ -679,10 +679,14 @@ func TestParseRenderRoundtrip(t *testing.T) {
 				t.Errorf("Type roundtrip: got %q, want %q", parsed.Type, tt.nib.Type)
 			}
 
-			// Body comparison (parse adds newline prefix for non-empty body)
+			// Render frames a non-empty body with a leading blank-line
+			// separator and a terminating newline, and Parse hands both back
+			// verbatim. Every body in the table above is written with neither,
+			// so each picks up both exactly once and is stable thereafter (see
+			// TestBodyRoundTripPreservesTrailingNewlines).
 			wantBody := tt.nib.Body
 			if wantBody != "" {
-				wantBody = "\n" + wantBody
+				wantBody = "\n" + wantBody + "\n"
 			}
 			if parsed.Body != wantBody {
 				t.Errorf("Body roundtrip: got %q, want %q", parsed.Body, wantBody)
@@ -2398,6 +2402,93 @@ func TestRenderTrailingNewline(t *testing.T) {
 			}
 			if !strings.HasSuffix(string(rendered), "\n") {
 				t.Errorf("rendered output should end with newline\ngot: %q", rendered)
+			}
+		})
+	}
+}
+
+// TestBodyRoundTripPreservesTrailingNewlines pins that a Render->Parse cycle
+// neither eats nor grows the body's terminal newlines. Parse used to trim
+// exactly one "\n" while Render appended one only when the body had none, so a
+// body ending in a blank line lost that line on EVERY re-render — one line per
+// `nibs set`, and one per file for a whole-store pass like `nibs config
+// set-prefix`. The loss converged, but it converged by discarding the author's
+// blank lines one command at a time.
+//
+// Two properties are asserted together, and the second is the load-bearing one:
+//
+//   - wantBody: the body after ONE Render->Parse. A body already in rendered
+//     shape comes back byte-identical; one that is not is normalized exactly
+//     ONCE — a leading separator and a terminating newline are added, and the
+//     lone "\n" Render writes for a body-less nib reads back as no body at all.
+//   - Idempotence: every later cycle changes NOTHING, in bytes and in the etag
+//     hashed from them. computeStoredETag re-reads a file, re-Parses and
+//     re-Renders it, then compares that against an in-memory ETag() taken
+//     straight from Render() — so a render that is not a fixed point makes
+//     etags self-conflict and if-match writes fail at random.
+func TestBodyRoundTripPreservesTrailingNewlines(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		wantBody string
+	}{
+		{name: "empty", body: "", wantBody: ""},
+		{name: "lone newline is a body-less nib", body: "\n", wantBody: ""},
+		{name: "no trailing newline", body: "no trailing", wantBody: "\nno trailing\n"},
+		{name: "one trailing newline", body: "one\n", wantBody: "\none\n"},
+		{name: "one trailing blank line", body: "trailing blank line\n\n", wantBody: "\ntrailing blank line\n\n"},
+		{name: "two trailing blank lines", body: "more blanks\n\n\n", wantBody: "\nmore blanks\n\n\n"},
+		{name: "only newlines", body: "\n\n\n", wantBody: "\n\n\n"},
+		{name: "crlf line endings", body: "first\r\nsecond\r\n", wantBody: "\nfirst\r\nsecond\r\n"},
+		{name: "trailing spaces before the newline", body: "hard break  \n", wantBody: "\nhard break  \n"},
+		{name: "already in rendered shape", body: "\nnormalized\n", wantBody: "\nnormalized\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			original := &Nib{ID: "abc123", Version: CurrentVersion, Title: "Round Trip", Status: "todo", Body: tt.body}
+
+			r1, err := original.Render()
+			if err != nil {
+				t.Fatalf("Render error: %v", err)
+			}
+			p1, err := Parse(bytes.NewReader(r1))
+			if err != nil {
+				t.Fatalf("Parse error: %v", err)
+			}
+			// ID comes from the FILENAME, never from the file, so the store
+			// re-attaches it after every parse; do the same here or the id
+			// comment Render writes would drop out of the second render and
+			// mask what this test measures.
+			p1.ID = original.ID
+			if p1.Body != tt.wantBody {
+				t.Errorf("body after one round trip = %q, want %q", p1.Body, tt.wantBody)
+			}
+
+			prev := p1
+			for cycle := 2; cycle <= 4; cycle++ {
+				rn, err := prev.Render()
+				if err != nil {
+					t.Fatalf("cycle %d: Render error: %v", cycle, err)
+				}
+				if !bytes.Equal(rn, r1) {
+					t.Fatalf("cycle %d: render is not a fixed point — etags would self-conflict\ngot  %q\nfirst %q", cycle, rn, r1)
+				}
+				pn, err := Parse(bytes.NewReader(rn))
+				if err != nil {
+					t.Fatalf("cycle %d: Parse error: %v", cycle, err)
+				}
+				pn.ID = original.ID
+				if pn.Body != tt.wantBody {
+					t.Errorf("body after cycle %d = %q, want %q (a newline is lost per cycle)", cycle, pn.Body, tt.wantBody)
+				}
+				// The comparison computeStoredETag makes: the etag of the nib
+				// re-read from the rendered bytes against the etag of the nib
+				// they were rendered from.
+				if pn.ETag() != prev.ETag() {
+					t.Errorf("cycle %d: re-read etag %s != in-memory etag %s", cycle, pn.ETag(), prev.ETag())
+				}
+				prev = pn
 			}
 		})
 	}

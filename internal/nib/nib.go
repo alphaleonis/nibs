@@ -541,8 +541,24 @@ func Parse(r io.Reader) (*Nib, error) {
 		return nil, fmt.Errorf("parsing front matter: %w", err)
 	}
 
-	// Trim trailing newline from body (POSIX files end with newline, but it's not part of content)
-	bodyStr := strings.TrimSuffix(string(body), "\n")
+	// The body is what follows the closing fence, VERBATIM. Trimming a trailing
+	// "\n" here while Render appends one only when the body has none is not a
+	// pair of inverses: a body ending in a blank line comes back one line
+	// shorter from every parse, so each re-render — every `nibs set`, and every
+	// file of a whole-store pass like `nibs config set-prefix` — permanently
+	// discards one of the author's blank lines.
+	//
+	// The one exception is the lone "\n" Render writes after the fence for a
+	// body-less nib (POSIX line termination, not content). Reading it back as an
+	// empty body is what keeps a body-less nib body-less across a round trip;
+	// without it every existing body-less file would come back holding a body of
+	// one newline, and `Body == ""` would stop meaning "no body". Render emits
+	// identical bytes for both spellings, so this collapses nothing a file can
+	// still distinguish.
+	bodyStr := string(body)
+	if bodyStr == "\n" {
+		bodyStr = ""
+	}
 
 	if err := ValidateOrderKey(fm.Order); err != nil {
 		return nil, fmt.Errorf("invalid order key: %w", err)
@@ -834,6 +850,14 @@ func (b *Nib) renderExtra() map[string]yaml.Node {
 }
 
 // Render serializes the nib back to markdown with YAML front matter.
+//
+// A non-empty body is FRAMED: a blank-line separator when it does not already
+// open with one, a terminating newline when it does not already end with one.
+// Parse hands that framing back verbatim, and framing an already-framed body is
+// a no-op — which is what makes Render a fixed point. computeStoredETag re-reads
+// a file, re-Parses and re-Renders it, then compares the result against an
+// in-memory ETag() hashed straight from Render(), so a rule that were not
+// idempotent would make etags self-conflict and fail if-match writes at random.
 func (b *Nib) Render() ([]byte, error) {
 	fm := renderFrontMatter{
 		Version:        b.Version,

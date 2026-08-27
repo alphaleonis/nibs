@@ -218,10 +218,10 @@ func TestSetPrefix_RewritesFullFormBodyMentions(t *testing.T) {
 	}
 
 	got := parseNibFile(t, dataPath(nibsDir, "new-aaa--root.md")).Body
-	// Render writes a blank line between the front matter and a body that
-	// does not already start with one, and Parse hands that separator back
-	// as part of the body — so the round-tripped body leads with "\n".
-	want := "\nBlocked on #new-bbb; see #new-bbb again.\n\nShort form #bbb stays.\n\n`#tnib-bbb` is literal.\n\n```\n#tnib-bbb\n```"
+	// Render frames a body with a leading blank-line separator and a
+	// terminating newline, and Parse hands both back as part of the body —
+	// so this body, written with neither, round-trips carrying both.
+	want := "\nBlocked on #new-bbb; see #new-bbb again.\n\nShort form #bbb stays.\n\n`#tnib-bbb` is literal.\n\n```\n#tnib-bbb\n```\n"
 	if got != want {
 		t.Fatalf("rewritten body =\n%q\nwant\n%q", got, want)
 	}

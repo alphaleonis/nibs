@@ -181,7 +181,11 @@ func SetAtLevel(body string, matchLevel, appendLevel int, heading, content strin
 		// content is later joined with YAML front matter or other preamble.
 		return "\n" + section, true
 	}
-	return body + "\n\n" + section, true
+	// Exactly one blank line separates the last content from the new heading.
+	// The body's own trailing newlines are terminator, not separator — a body
+	// ending in a blank line would otherwise push the heading down by one line
+	// per append.
+	return strings.TrimRight(body, "\n") + "\n\n" + section, true
 }
 
 // isHeading returns true if the line starts with one or more # followed by a space.
