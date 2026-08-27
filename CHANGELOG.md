@@ -56,7 +56,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **The TUI now reports a failed save after an external editor session**, instead of returning to the list as though the edit had been stored when the store had refused it.
 - **A link repair or a nib deletion can no longer recreate a file `nibs config set-prefix` renamed away**, where the two whole-store link sweeps took no cross-process lock and wrote through a creating writer, leaving a second copy of the nib under its retired name.
 - **The TUI now says when an editor could not be started**, instead of returning to the list with no explanation when `$VISUAL` or `$EDITOR` names something that does not exist.
-- **The TUI's detail view no longer draws past the bottom of a short terminal**, where a status message pushed the frame to ten rows on an eight-row one and the scroll percentage was measured against a taller viewport than the one drawn.
+- **The TUI's detail view no longer draws past the bottom of a short terminal**, where a status message pushed the frame to ten rows on an eight-row one, and a nib with links reserved five rows for a list of one.
+- **A nib body ending in a blank line no longer loses one on every save**, where each re-render discarded another — a whole-store pass like `nibs config set-prefix` costing every affected body one at once.
+- **`nibs check --fix --json` now reports a failed repair in its error envelope**, instead of printing nothing on stdout and a plain line to stderr.
 - **`nibs config set-prefix` no longer expands a short-form link to full form** — a nib written `parent: p1` came back `parent: qq-p1`, though a short id carries no prefix to rewrite and names the same nib under either.
 - **`nibs config set-prefix` now retargets full-form `#id` mentions in nib bodies**, which it left naming the id the rename retired.
 
