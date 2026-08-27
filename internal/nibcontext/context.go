@@ -52,9 +52,10 @@ func BuildSummary(allNibs []*nib.Nib, rootID string, cfg *config.Config) Summary
 }
 
 // BuildSummaryWithView is BuildSummary for a caller that already computed the
-// membership view over the same slice — one Compute per command, not one per
-// layer. The view MUST be built over allNibs; two different slices here would
-// let the summary and its rollups disagree about the store.
+// membership view over the same slice, so the summary and the rollups the
+// caller derives from that same view share one Compute rather than taking one
+// per layer. The view MUST be built over allNibs; two different slices here
+// would let the summary and its rollups disagree about the store.
 func BuildSummaryWithView(allNibs []*nib.Nib, view *membership.View, rootID string, cfg *config.Config) Summary {
 	byID := indexByID(allNibs)
 

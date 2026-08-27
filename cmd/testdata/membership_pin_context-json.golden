@@ -1,4 +1,10 @@
 {
+  "active_milestone": {
+    "id": "tnib-m001",
+    "title": "v1.0 MVP Launch",
+    "status": "in-progress",
+    "type": "milestone"
+  },
   "milestones": [
     {
       "id": "tnib-m001",
@@ -32,5 +38,21 @@
         "deferred": 0
       }
     }
-  ]
+  ],
+  "next": {
+    "action": {
+      "id": "tnib-t006",
+      "title": "Design password reset email template",
+      "status": "todo",
+      "type": "task",
+      "estimate": "s"
+    },
+    "queue_entry": {
+      "id": "tnib-e001",
+      "title": "User Authentication",
+      "status": "in-progress",
+      "type": "epic"
+    },
+    "queue_position": 1
+  }
 }

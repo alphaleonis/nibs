@@ -24,8 +24,10 @@ type nextOutput struct {
 	// — including when its queue had nothing to offer, since naming it is half
 	// the answer.
 	Milestone *nibcontext.NibRef `json:"milestone,omitempty"`
-	// QueuePosition is Action's 1-based place in that milestone's queue.
-	// Omitted when the answer did not come from a queue.
+	// QueuePosition is the 1-based place in that milestone's queue held by the
+	// entry the walk descended from — Path[0], not Action, which is usually a
+	// descendant sitting in no queue of its own. Omitted when the answer did
+	// not come from a queue.
 	QueuePosition int `json:"queue_position,omitempty"`
 	// Path is the provenance: the queue entry (or root) first, then the
 	// descent through containers, ending at Action.
