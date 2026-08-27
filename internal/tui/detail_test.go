@@ -179,7 +179,7 @@ func detailScrollPct(t *testing.T, painted string) int {
 // just as wrong, so a body with a line genuinely off-screen has to say so.
 func TestTheDetailFooterMeasuresTheBodyItPaints(t *testing.T) {
 	const width = 100
-	for _, height := range []int{12, 16, 20, 24, 30} {
+	for _, height := range sweepHeights {
 		for paras := 1; paras <= 14; paras++ {
 			t.Run(fmt.Sprintf("%dx%d/%dp", width, height, paras), func(t *testing.T) {
 				lines := make([]string, paras)
@@ -230,14 +230,15 @@ func TestTheDetailFooterMeasuresTheBodyItPaints(t *testing.T) {
 // by dropping either is the defect again in a different shape. "Linked Nibs" is
 // redundant beside a list of nibs.
 //
-// Heights run one at a time because the thresholds here are boundaries and the
-// coarse geometry sweep steps from eight straight to twelve.
+// Heights run one at a time because the thresholds here are boundaries: the
+// box's floor of five stops fitting within a row or two of where the header and
+// the footer stop leaving room for it.
 func TestTheLinksBoxFitsAShortTerminal(t *testing.T) {
 	// Widths where a link row is wider than the box it is drawn into are in the
 	// sweep on purpose: a row left to wrap makes the box taller than the height
 	// it was sized to, which is the same floor by another route.
 	for _, width := range []int{30, 46, 76, 80, 160} {
-		for height := 8; height <= 16; height++ {
+		for height := minSupportedHeight; height <= 16; height++ {
 			t.Run(fmt.Sprintf("%dx%d", width, height), func(t *testing.T) {
 				app := enterHelpView(t, detailSweepView(t), width, height)
 				if got := len(app.detail.links); got != 1 {
@@ -378,7 +379,9 @@ func TestTheDetailViewFocusesAPaneTheFrameDrew(t *testing.T) {
 			for _, width := range []int{30, 40, 80, 120, 200} {
 				// The box is dropped and the body kept at eight rows with two
 				// links and at nine with more; both are drawn from twelve up.
-				for height := 8; height <= 13; height++ {
+				// The sweep runs past that changeover rather than stopping on
+				// it, so the drawn side is exercised at more than one height.
+				for height := minSupportedHeight; height <= 16; height++ {
 					t.Run(fmt.Sprintf("%s/%dlinks/%dx%d", arrival.name, links, width, height), func(t *testing.T) {
 						app := arrival.open(t, links, width, height)
 						before := frameText(app.View().Content, width, height)
@@ -490,7 +493,7 @@ func sendKeyNonBlocking(app *App, key tea.KeyPressMsg) {
 func TestTheStoredLinkListPagesTheRowsTheBoxPaints(t *testing.T) {
 	const width = 80
 	for _, links := range []int{1, 3, 5, 9} {
-		for _, height := range []int{12, 24, 40} {
+		for _, height := range heightSweep(16, 24, 40) {
 			t.Run(fmt.Sprintf("%dlinks/%d", links, height), func(t *testing.T) {
 				app := detailOnLinkedNib(t, links, width, height)
 				rows := app.detail.linkRows()
@@ -501,6 +504,21 @@ func TestTheStoredLinkListPagesTheRowsTheBoxPaints(t *testing.T) {
 					if strings.Contains(painted, fmt.Sprintf("lk%d", i)) {
 						onScreen++
 					}
+				}
+				// Below the height the box's floor needs, the frame drops it
+				// whole — linksSection is View's own answer to that, and
+				// linkRows is a function of the link count and the terminal
+				// alone, so it keeps reporting rows for a box nobody painted.
+				// A page size for a list no row carries has nothing to
+				// disagree with, so what is asserted at those geometries is
+				// that the frame really carries no link. Which keys such a
+				// list may still take is
+				// TestTheDetailViewFocusesAPaneTheFrameDrew's property.
+				if app.detail.linksSection() == "" {
+					if onScreen != 0 {
+						t.Fatalf("View draws no links box, yet %d link rows are on screen:\n%s", onScreen, painted)
+					}
+					return
 				}
 				if onScreen != rows {
 					t.Fatalf("premise failed: the box paints %d links, want %d:\n%s", onScreen, rows, painted)
@@ -607,10 +625,9 @@ const detailFooterMinWidth = 24
 func detailFooterGeometries() []struct{ width, height int } {
 	var geos []struct{ width, height int }
 	for _, width := range []int{30, 38, 46, 80, 120, 200} {
-		// Eight is the floor the refusal sweeps share. Below it the header's
-		// four rows plus a two-line message and the help row are more than the
-		// terminal has, which is a frame the footer's honesty cannot fix.
-		for height := 8; height <= 20; height++ {
+		// Up to twenty rather than sixteen: this sweep carries a refusal, whose
+		// wrapped rows move the thresholds it is here for further up the range.
+		for height := minSupportedHeight; height <= 20; height++ {
 			geos = append(geos, struct{ width, height int }{width, height})
 		}
 	}
