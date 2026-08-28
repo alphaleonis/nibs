@@ -186,20 +186,16 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 	// ahead of everything else.
 	var backlog []queueEntry
 	for _, eg := range rem.Epics {
-		// An epic earns its place by still holding outstanding scope, the same
-		// rule its milestone-queue counterpart takes.
-		epicItems := filterChildren(eg.Items, includeDone, cfg)
-		if len(epicItems) == 0 {
-			continue
+		if entry, ok := roadmapEntry(eg.Epic, eg.Items, includeDone, cfg); ok {
+			backlog = append(backlog, entry)
 		}
-		nib.SortByOrder(epicItems)
-		backlog = append(backlog, queueContainer(eg.Epic, progress.ByCount(childStatuses(eg.Items)), epicItems))
 	}
 	for _, b := range rem.Other {
-		if !staysOnRoadmap(b.Status, includeDone, cfg) {
-			continue
+		// A backlog root carries its decomposition for the same reason a queue
+		// entry does: it is the only place that work appears at all.
+		if entry, ok := roadmapEntry(b, view.DirectMembers(b.ID), includeDone, cfg); ok {
+			backlog = append(backlog, entry)
 		}
-		backlog = append(backlog, queueItem(b))
 	}
 	slices.SortStableFunc(backlog, func(a, b queueEntry) int {
 		return nib.CompareByKey(a.Nib, b.Nib, func(n *nib.Nib) string { return n.Order })
@@ -237,29 +233,46 @@ func buildMilestoneGroup(m *nib.Nib, view *membership.View, includeDone bool, cf
 	nib.SortByMilestoneOrder(members)
 
 	for _, member := range members {
-		if member.EffectiveType() == "epic" {
-			// An epic's items are its decomposition, a different axis from the
-			// queue the epic itself stands in — so they take the parent-scope
-			// order key.
-			decomposition := view.DirectMembers(member.ID)
-			items := filterChildren(decomposition, includeDone, cfg)
-			// An epic earns its place by still holding outstanding scope. One
-			// that closed over a deferred child keeps rendering it — closing the
-			// parent does not resolve the child.
-			if len(items) == 0 {
-				continue
-			}
-			nib.SortByOrder(items)
-			group.Queue = append(group.Queue, queueContainer(member, progress.ByCount(childStatuses(decomposition)), items))
-			continue
+		if entry, ok := roadmapEntry(member, view.DirectMembers(member.ID), includeDone, cfg); ok {
+			group.Queue = append(group.Queue, entry)
 		}
-		if !staysOnRoadmap(member.Status, includeDone, cfg) {
-			continue
-		}
-		group.Queue = append(group.Queue, queueItem(member))
 	}
 
 	return group
+}
+
+// roadmapEntry decides how one member of a milestone's queue or of the backlog
+// appears, and whether it appears at all. Both callers ask the same question,
+// so they ask it in one place.
+//
+// A member that still holds outstanding scope EXPANDS, carrying that scope with
+// it — whatever its type. Nothing here asks whether the member is an epic:
+// `nibs catalog hierarchy` declares three container types (epic, bug, feature),
+// and a type test naming one of them dropped the other two's children out of
+// every view — not into the backlog, which reaches only roots and unassigned
+// epics, and not into the rollup, which counts the container as one unit. The
+// question that matters is whether a member has scope under it, and the data
+// answers that without a type table to keep in step.
+//
+// A member with nothing outstanding under it stands alone, subject to its own
+// status. That keeps two cases straight: a container closed over a deferred
+// child keeps rendering it, because closing a parent does not resolve the
+// child; and an open container whose children are all closed still appears,
+// because it is open work the milestone's own progress is already counting.
+//
+// The decomposition takes the PARENT-scope order key. It is a different axis
+// from the queue its container stands in, and the rollup is computed over the
+// unfiltered decomposition so the display filters cannot move the arithmetic.
+func roadmapEntry(member *nib.Nib, decomposition []*nib.Nib, includeDone bool, cfg *config.Config) (queueEntry, bool) {
+	items := filterChildren(decomposition, includeDone, cfg)
+	if len(items) > 0 {
+		nib.SortByOrder(items)
+		return queueContainer(member, progress.ByCount(childStatuses(decomposition)), items), true
+	}
+	if !staysOnRoadmap(member.Status, includeDone, cfg) {
+		return queueEntry{}, false
+	}
+	return queueItem(member), true
 }
 
 // childStatuses projects a child slice to its status strings, the input
