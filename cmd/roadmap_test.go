@@ -11,12 +11,14 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/nibtypes"
 	"github.com/alphaleonis/nibs/internal/progress"
 )
 
 // roadmapQueueIDs projects a queue — a milestone's or the backlog's — to the
-// ids standing at each position, expanded entries included: the one list the
-// section is supposed to be.
+// ids standing at each position: the one list the section is supposed to be.
+// An entry that expands contributes its own id and not its items', which stay
+// nested under it; read those from the entry's Items.
 func roadmapQueueIDs(queue []queueEntry) []string {
 	ids := make([]string, 0, len(queue))
 	for _, e := range queue {
@@ -238,8 +240,33 @@ func TestBuildRoadmap_DeferredChildStaysVisible(t *testing.T) {
 		}
 	})
 
-	t.Run("epic whose children all resolved still drops", func(t *testing.T) {
+	t.Run("an OPEN container whose children all resolved stands alone", func(t *testing.T) {
+		// It has no scope left under it, but it is open work in its own right:
+		// the milestone's rollup counts it in Total and not in Done, and at a
+		// startable status `nibs next` hands it back as THE action — decision
+		// 2.4, "all-children-closed makes the container itself the action".
+		// Measured on a store of this shape with e1 at todo: next answers e1
+		// while the roadmap rendered an empty document, which made the roadmap
+		// the one surface that could not see the thing next told you to do.
 		result := buildRoadmap(base("scrapped"), false, nil, nil, cfg)
+		if len(result.Milestones) != 1 {
+			t.Fatalf("got %d milestones, want 1 — the in-progress epic is still open work", len(result.Milestones))
+		}
+		queue := result.Milestones[0].Queue
+		if len(queue) != 1 || queue[0].Nib.ID != "e1" {
+			t.Fatalf("got queue %+v, want the epic e1 standing alone", queue)
+		}
+		if len(queue[0].Items) != 0 {
+			t.Errorf("got items %+v, want none — every child is resolved", queue[0].Items)
+		}
+	})
+
+	t.Run("a CLOSED container whose children all resolved drops", func(t *testing.T) {
+		// The half of the old rule that was right: nothing here is outstanding,
+		// so the milestone has no content and leaves the board.
+		nibs := base("scrapped")
+		nibs[1].Status = "completed"
+		result := buildRoadmap(nibs, false, nil, nil, cfg)
 		if len(result.Milestones) != 0 {
 			t.Errorf("got %d milestones, want 0 — finished work drops off the roadmap", len(result.Milestones))
 		}
@@ -903,6 +930,80 @@ func TestRoadmapNamesTheBacklogTheSameWayEverywhere(t *testing.T) {
 		}
 		sort.Strings(keys)
 		t.Errorf("roadmap --json has no %q key; it carries %v, and list calls this set --%s", want, keys, want)
+	}
+}
+
+// TestBuildRoadmap_EveryContainerTypeExpands is the regression guard for a
+// milestone member whose children appeared in no view at all.
+//
+// The roadmap used to expand `EffectiveType() == "epic"` and nothing else,
+// while nibs declares THREE container types. A feature or bug assigned to a
+// milestone therefore rendered as one bare bullet and its children fell out of
+// everything: not the queue, since a milestone's members are its assignees
+// alone; not the backlog, which reaches only roots and unassigned epics; and
+// not the rollup, which counts the container as one unit.
+//
+// The table is driven off nibtypes rather than a list spelled here, so a new
+// container type joins this guard the day it is declared — which is the whole
+// failure mode, a type table that one consumer did not keep in step.
+func TestBuildRoadmap_EveryContainerTypeExpands(t *testing.T) {
+	cfg := config.Default()
+	now := time.Now()
+
+	var containers []string
+	for _, typ := range cfg.TypeNames() {
+		if typ == "milestone" {
+			continue // a container of its own, never a queue member
+		}
+		if len(nibtypes.ValidChildTypes(typ)) > 0 {
+			containers = append(containers, typ)
+		}
+	}
+	if len(containers) < 2 {
+		t.Fatalf("found %v container types; with fewer than two this guard cannot show the rule is type-independent", containers)
+	}
+	t.Logf("container types under guard: %v", containers)
+
+	for _, typ := range containers {
+		t.Run(typ+" in a milestone queue", func(t *testing.T) {
+			childType := nibtypes.ValidChildTypes(typ)[0]
+			nibs := []*nib.Nib{
+				{ID: "m1", Type: "milestone", Title: "v1.0", Status: "in-progress", CreatedAt: &now},
+				{ID: "c1", Type: typ, Title: "Container", Status: "todo", Milestone: "m1", MilestoneOrder: "a"},
+				{ID: "k1", Type: childType, Title: "First child", Status: "todo", Parent: "c1", Order: "a"},
+				{ID: "k2", Type: childType, Title: "Second child", Status: "todo", Parent: "c1", Order: "b"},
+			}
+			result := buildRoadmap(nibs, false, nil, nil, cfg)
+			if len(result.Milestones) != 1 {
+				t.Fatalf("got %d milestones, want 1", len(result.Milestones))
+			}
+			queue := result.Milestones[0].Queue
+			if got := roadmapQueueIDs(queue); !slices.Equal(got, []string{"c1"}) {
+				t.Fatalf("queue = %v, want the container standing at one position", got)
+			}
+			if got := nibIDs(queue[0].Items); !slices.Equal(got, []string{"k1", "k2"}) {
+				t.Errorf("a %s member carried items %v, want [k1 k2] — its children appear in no view at all when it does not expand", typ, got)
+			}
+		})
+
+		t.Run(typ+" in the backlog", func(t *testing.T) {
+			childType := nibtypes.ValidChildTypes(typ)[0]
+			nibs := []*nib.Nib{
+				{ID: "c1", Type: typ, Title: "Container", Status: "todo", Order: "a"},
+				{ID: "k1", Type: childType, Title: "First child", Status: "todo", Parent: "c1", Order: "a"},
+			}
+			result := buildRoadmap(nibs, false, nil, nil, cfg)
+			if result.Backlog == nil {
+				t.Fatal("got no backlog group")
+			}
+			queue := result.Backlog.Queue
+			if got := roadmapQueueIDs(queue); !slices.Equal(got, []string{"c1"}) {
+				t.Fatalf("backlog = %v, want the container standing at one position", got)
+			}
+			if got := nibIDs(queue[0].Items); !slices.Equal(got, []string{"k1"}) {
+				t.Errorf("a %s root carried items %v, want [k1] — the backlog reaches roots, so a child that is not one has nowhere else to appear", typ, got)
+			}
+		})
 	}
 }
 
