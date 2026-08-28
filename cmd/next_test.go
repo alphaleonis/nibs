@@ -317,15 +317,15 @@ func TestNextReportsASkippedInversion(t *testing.T) {
 // whole store must come back byte-identical — a question may not edit files
 // the caller never named, and must not need a writable store to be asked.
 func TestNextLeavesTheStoreUnchanged(t *testing.T) {
-	// The timestamps are load-bearing: loadNib synthesizes created_at/updated_at
-	// from mtime for a file that omits them, and the synthesized in-memory etag
-	// then never matches the stored one — so a backfill write would be refused
-	// by the etag check and this guard would pass for the wrong reason.
-	const stamps = "created_at: 2026-01-01T00:00:00Z\nupdated_at: 2026-01-01T00:00:00Z\n"
+	// The nibs carry no created_at/updated_at, and that costs the guard nothing.
+	// Measured by routing this walk's queue read through Orderer.Members and
+	// running the guard both ways: stamped or not, the backfill lands and the
+	// comparison fails on ne2 gaining `milestone_order: aV`. A synthesized etag
+	// does not refuse the write, so stamping the fixture would only be ballast.
 	nibsPath := writeStoreFiles(t, map[string]string{
-		"nm1--wave.md":    "---\nversion: 2\ntitle: Wave One\nstatus: in-progress\ntype: milestone\n" + stamps + "order: a\n---\n",
-		"ne1--keyed.md":   "---\nversion: 2\ntitle: Keyed entry\nstatus: draft\ntype: epic\n" + stamps + "milestone: nm1\nmilestone_order: a0\n---\n",
-		"ne2--unkeyed.md": "---\nversion: 2\ntitle: Unkeyed entry\nstatus: todo\ntype: epic\n" + stamps + "milestone: nm1\n---\n",
+		"nm1--wave.md":    "---\nversion: 2\ntitle: Wave One\nstatus: in-progress\ntype: milestone\norder: a\n---\n",
+		"ne1--keyed.md":   "---\nversion: 2\ntitle: Keyed entry\nstatus: draft\ntype: epic\nmilestone: nm1\nmilestone_order: a0\n---\n",
+		"ne2--unkeyed.md": "---\nversion: 2\ntitle: Unkeyed entry\nstatus: todo\ntype: epic\nmilestone: nm1\n---\n",
 	})
 	t.Cleanup(resetNextCLIFlags)
 

@@ -77,6 +77,7 @@ func TestMembershipConsumerFixturePins(t *testing.T) {
 // commands share, so one case's flags cannot leak into the next run.
 func resetMembershipPinFlags() {
 	resetListFlags()
+	resetRootPersistentFlags()
 	roadmapJSON = false
 	roadmapIncludeDone = false
 	roadmapStatus = nil

@@ -244,6 +244,11 @@ tasks:
       # cgroup instead of triggering a global OOM that takes down the WSL VM
       # (nibs-mv0i). Falls back to plain `go test` where systemd --user scopes
       # aren't available. Override the cap with NIBS_CAP_MEM_MAX (default 4G).
+      #
+      # NOT shuffled: -shuffle=on defeats the test cache outright, taking this
+      # lane from 1.2s to 13s on an unchanged tree, and CLAUDE.md asks for
+      # `task test` before every commit. The order-dependence check runs where
+      # -count=1 already pays that cost — CI and the race lane below.
       - bash scripts/go-test-capped.sh --host-os {{OS}} ./...
       # Silent when nothing was skipped, which is the normal case here.
       - cmd: 'if [ -s "$NIBS_SKIP_REPORT" ]; then cat "$NIBS_SKIP_REPORT"; fi'
@@ -270,7 +275,11 @@ tasks:
       # Scoped to the two packages that carry the concurrency invariants — a full
       # `-race ./...` is slow (the watcher tests use real debounce timing).
       # -count=1 defeats the test cache so the detector always actually runs.
-      - bash scripts/go-test-capped.sh --host-os {{OS}} -race -count=1 ./internal/nibcore/... ./internal/graph/...
+      # -shuffle=on is free here: -count=1 has already defeated the cache. These
+      # two packages hold the concurrency invariants and the most shared
+      # package-level fixtures, so an order dependence here would have the worst
+      # consequences (nibs-ni02).
+      - bash scripts/go-test-capped.sh --host-os {{OS}} -race -count=1 -shuffle=on ./internal/nibcore/... ./internal/graph/...
 
   nibs:
     desc: Build and run the nibs CLI (pass args after `--`, e.g. `task nibs -- list --json`)
