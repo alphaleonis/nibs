@@ -4,55 +4,43 @@
 
 > Ship the minimum viable product with core task management, user authentication, basic dashboard, and API foundation.
 
-### Epic: User Authentication — 17% (1/6) (tnib-e001)
-
-
-- ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Email/password login (tnib-f001)
-- ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) OAuth2 social login (tnib-f002)
-- ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Password reset flow (tnib-f003)
-- ![task](https://img.shields.io/badge/task-1d76db?style=flat-square) Write authentication API documentation (tnib-t008)
-- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Session tokens not invalidated on password change (tnib-b002)
-- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) OAuth callback URL mismatch in production config (tnib-b001)
-### Epic: Task Management Core — 14% (1/7) (tnib-e002)
-
-
-- ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) CRUD operations for tasks (tnib-f004)
-- ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Task assignment and ownership (tnib-f005)
-- ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Task prioritization and sorting (tnib-f006)
-- ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Subtask and checklist support (tnib-f007)
-- ![task](https://img.shields.io/badge/task-1d76db?style=flat-square) Performance benchmark for 10k tasks (tnib-t018)
-- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Task title silently truncated at 255 characters (tnib-b004)
-- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Assigning task to deactivated user shows no error (tnib-b003)
-### Epic: Dashboard & Reporting — 0% (0/4) (tnib-e003)
-
-
-- ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Team velocity chart (tnib-f008)
-- ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Personal task dashboard (tnib-f009)
-- ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Export reports to CSV and PDF (tnib-f010)
-- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Date picker shows wrong timezone for remote users (tnib-b005)
-### Epic: API & Integrations — 0% (0/3) (tnib-e004)
-
-
-- ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Webhook delivery system (tnib-f011)
-- ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Slack integration (tnib-f012)
-- ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) REST API v2 with OpenAPI (tnib-f013)
-- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Webhook payloads missing updated_at timestamp (tnib-b006)
+- ![epic](https://img.shields.io/badge/epic-5319e7?style=flat-square) **User Authentication** — 17% (1/6) (tnib-e001)
+  - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Email/password login (tnib-f001)
+  - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) OAuth2 social login (tnib-f002)
+  - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Password reset flow (tnib-f003)
+  - ![task](https://img.shields.io/badge/task-1d76db?style=flat-square) Write authentication API documentation (tnib-t008)
+  - ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Session tokens not invalidated on password change (tnib-b002)
+  - ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) OAuth callback URL mismatch in production config (tnib-b001)
+- ![epic](https://img.shields.io/badge/epic-5319e7?style=flat-square) **Task Management Core** — 14% (1/7) (tnib-e002)
+  - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) CRUD operations for tasks (tnib-f004)
+  - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Task assignment and ownership (tnib-f005)
+  - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Task prioritization and sorting (tnib-f006)
+  - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Subtask and checklist support (tnib-f007)
+  - ![task](https://img.shields.io/badge/task-1d76db?style=flat-square) Performance benchmark for 10k tasks (tnib-t018)
+  - ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Task title silently truncated at 255 characters (tnib-b004)
+  - ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Assigning task to deactivated user shows no error (tnib-b003)
+- ![epic](https://img.shields.io/badge/epic-5319e7?style=flat-square) **Dashboard & Reporting** — 0% (0/4) (tnib-e003)
+  - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Team velocity chart (tnib-f008)
+  - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Personal task dashboard (tnib-f009)
+  - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Export reports to CSV and PDF (tnib-f010)
+  - ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Date picker shows wrong timezone for remote users (tnib-b005)
+- ![epic](https://img.shields.io/badge/epic-5319e7?style=flat-square) **API & Integrations** — 0% (0/3) (tnib-e004)
+  - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Webhook delivery system (tnib-f011)
+  - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Slack integration (tnib-f012)
+  - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) REST API v2 with OpenAPI (tnib-f013)
+  - ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Webhook payloads missing updated_at timestamp (tnib-b006)
 
 ## Milestone: v1.1 Team Collaboration — 0% (0/2) (tnib-m002)
 
 > Add real-time collaboration features, notification system, and activity feeds. Depends on v1.0 infrastructure being stable.
 
-### Epic: Real-time Collaboration — 0% (0/2) (tnib-e005)
-
-
-- ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) WebSocket live updates (tnib-f014)
-- ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Activity feed (tnib-f015)
-### Epic: Notifications System — 0% (0/3) (tnib-e006)
-
-
-- ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) In-app notification center (tnib-f016)
-- ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Email digest notifications (tnib-f017)
-- ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Push notifications not requesting permission on mobile (tnib-b007)
+- ![epic](https://img.shields.io/badge/epic-5319e7?style=flat-square) **Real-time Collaboration** — 0% (0/2) (tnib-e005)
+  - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) WebSocket live updates (tnib-f014)
+  - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Activity feed (tnib-f015)
+- ![epic](https://img.shields.io/badge/epic-5319e7?style=flat-square) **Notifications System** — 0% (0/3) (tnib-e006)
+  - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) In-app notification center (tnib-f016)
+  - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Email digest notifications (tnib-f017)
+  - ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Push notifications not requesting permission on mobile (tnib-b007)
 
 ## Unplanned
 

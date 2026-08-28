@@ -333,7 +333,6 @@ func renderRoadmapMarkdown(data *roadmapData, links bool, linkPrefix string) str
 		template.New("roadmap").Funcs(template.FuncMap{
 			"firstParagraph": firstParagraph,
 			"typeBadge":      typeBadge,
-			"headsRun":       headsRun,
 			"nibRef": func(b *nib.Nib) string {
 				return renderNibRef(b, links, linkPrefix)
 			},
@@ -345,21 +344,6 @@ func renderRoadmapMarkdown(data *roadmapData, links bool, linkPrefix string) str
 		panic(err)
 	}
 	return sb.String()
-}
-
-// headsRun reports whether the entry at index i follows an expanded block. It
-// asks only about entry i-1: the template calls it from the branch that has
-// already established entry i is a bare member, and a bare bullet directly
-// after a block would read as one more of that block's items, so the Markdown
-// heads the run it opens. Called from anywhere else it answers a narrower
-// question than its name suggests.
-//
-// This is rendering state, not roadmap data: it is a property of the whole
-// list rather than of one entry, and it is only ever correct for the exact
-// slice it is asked about — so it lives behind the renderer's FuncMap seam and
-// stays out of the JSON, where the queue is the ordered list and nothing else.
-func headsRun(queue []queueEntry, i int) bool {
-	return i > 0 && len(queue[i-1].Items) > 0
 }
 
 // renderNibRef renders a nib ID, optionally as a markdown link.

@@ -2,24 +2,18 @@
 - {{typeBadge .}} {{.Title}} {{nibRef .}}
 {{end -}}
 
-{{- define "epicBlock" -}}
-### Epic: {{.Nib.Title}} — {{.Progress.Percent}}% ({{.Progress.Done}}/{{.Progress.Total}}) {{nibRef .Nib}}
-{{with firstParagraph .Nib.Body}}
-> {{.}}
-{{end}}
-
-{{range .Items -}}
-{{template "nibLine" .}}
+{{- define "containerBlock" -}}
+- {{typeBadge .Nib}} **{{.Nib.Title}}** — {{.Progress.Percent}}% ({{.Progress.Done}}/{{.Progress.Total}}) {{nibRef .Nib}}
+{{- with firstParagraph .Nib.Body}}
+  > {{.}}
 {{- end}}
+{{range .Items}}  - {{typeBadge .}} {{.Title}} {{nibRef .}}
+{{end}}
 {{- end -}}
 
 {{- define "queue" -}}
-{{range $i, $e := . -}}
-{{if $e.Items}}{{template "epicBlock" $e}}{{else}}{{if headsRun $ $i}}
-### Miscellaneous
-
-
-{{end}}{{template "nibLine" $e.Nib}}{{end}}
+{{range . -}}
+{{if .Items}}{{template "containerBlock" .}}{{else}}{{template "nibLine" .Nib}}{{end}}
 {{- end}}
 {{- end -}}
 
