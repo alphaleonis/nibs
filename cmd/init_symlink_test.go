@@ -112,6 +112,7 @@ func TestInitRefusesASymlinkedStoreDirectory(t *testing.T) {
 		for _, route := range routes {
 			t.Run(tt.name+" via "+route.name, func(t *testing.T) {
 				t.Cleanup(resetInitFlags)
+				t.Cleanup(resetRootPersistentFlags)
 				resetInitFlags()
 				t.Setenv("NIBS_PATH", "")
 				tmp := t.TempDir()
@@ -170,6 +171,7 @@ func TestInitStillInitializesARealStoreDirectory(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			t.Cleanup(resetInitFlags)
+			t.Cleanup(resetRootPersistentFlags)
 			resetInitFlags()
 			t.Setenv("NIBS_PATH", "")
 			tmp := t.TempDir()
@@ -206,6 +208,7 @@ func TestInitStillInitializesARealStoreDirectory(t *testing.T) {
 func TestInitRemediesTheSymlinkedStoreRefusalPrescribes(t *testing.T) {
 	t.Run("remove the link and run nibs init here", func(t *testing.T) {
 		t.Cleanup(resetInitFlags)
+		t.Cleanup(resetRootPersistentFlags)
 		resetInitFlags()
 		t.Setenv("NIBS_PATH", "")
 		tmp := t.TempDir()
@@ -232,6 +235,7 @@ func TestInitRemediesTheSymlinkedStoreRefusalPrescribes(t *testing.T) {
 
 	t.Run("name the store with --nibs-path and --prefix, then link at it", func(t *testing.T) {
 		t.Cleanup(resetInitFlags)
+		t.Cleanup(resetRootPersistentFlags)
 		resetInitFlags()
 		t.Setenv("NIBS_PATH", "")
 		tmp := t.TempDir()
@@ -285,6 +289,7 @@ func TestInitRemediesTheSymlinkedStoreRefusalPrescribes(t *testing.T) {
 // spelling of a store on a volume that moves.
 func TestInitStillInitializesAThroughAnExplicitlyNamedLink(t *testing.T) {
 	t.Cleanup(resetInitFlags)
+	t.Cleanup(resetRootPersistentFlags)
 	resetInitFlags()
 	t.Setenv("NIBS_PATH", "")
 	tmp := t.TempDir()
@@ -338,6 +343,7 @@ func TestInitAtALinkedStoreReportsTheConfigRatherThanTheLink(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Cleanup(resetInitFlags)
+			t.Cleanup(resetRootPersistentFlags)
 			resetInitFlags()
 			t.Setenv("NIBS_PATH", "")
 			tmp := t.TempDir()

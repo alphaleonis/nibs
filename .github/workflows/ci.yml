@@ -125,7 +125,11 @@ jobs:
       # scripts/go-test-capped.sh, which needs bash and degrades to an uncapped
       # run wherever there is no user systemd manager.
       - run: go build ./...
-      - run: go test -count=1 ./...
+      # -shuffle=on costs nothing here (-count=1 already defeats the cache) and
+      # this is the lane that blocks a merge, so the order-dependence guard runs
+      # where it can stop a regression rather than only on whichever developer
+      # draws an unlucky seed (nibs-ni02). The seed is printed on failure.
+      - run: go test -count=1 -shuffle=on ./...
       # The counts the step above cannot print. `if: always()` because a failing
       # test run is exactly when knowing which guards never ran matters most, and
       # the job summary because a log line still has to be gone looking for.

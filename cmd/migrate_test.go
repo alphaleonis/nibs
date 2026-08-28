@@ -29,8 +29,23 @@ func v0MigrateFixture() map[string]string {
 
 // runRootWith drives the real Cobra pipeline with the given args, capturing
 // stdout and returning the execution error.
+//
+// It clears the root's persistent flags on the way IN as well as when the
+// calling test ends. Those live in package-level vars on a shared rootCmd, and
+// root.go reads `nibsPath` by value without consulting pflag's Changed bit — so
+// a `--nibs-path` left set anywhere silently binds the store for a later run
+// that meant to bind by discovery, an order dependence only `-shuffle=on`
+// reveals.
+//
+// Clearing on entry is what makes this hold WITHIN one test too: t.Cleanup
+// fires when the test ends, so a second call in the same test would otherwise
+// inherit the first call's flag. Doing it here rather than asking every caller
+// to remember is what keeps it true as callers are added — though a test that
+// drives rootCmd.Execute() by hand still owes its own reset.
 func runRootWith(t *testing.T, args ...string) (string, error) {
 	t.Helper()
+	resetRootPersistentFlags()
+	t.Cleanup(resetRootPersistentFlags)
 	rootCmd.SetArgs(args)
 	var execErr error
 	out := captureStdout(t, func() {
