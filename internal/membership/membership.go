@@ -37,13 +37,22 @@ type Lookup func(id string) *nib.Nib
 
 // ResolvedMilestoneID is THE definition of "directly assigned to a
 // milestone": the target of b's `milestone:` field when that target exists
-// and is milestone-typed, "" otherwise — the same dangling-link rule the
-// resolved parent gives, so hand-edited garbage (a dangling id, an assignment
-// naming a non-milestone) stays out of every view. The structural parent axis
-// confers no membership at all. The ordering engine's milestone scope consumes
-// this via a Lookup closure.
+// and is milestone-typed AND b is not itself a milestone, "" otherwise — the
+// same dangling-link rule the resolved parent gives, so hand-edited garbage
+// (a dangling id, an assignment naming a non-milestone) stays out of every
+// view. The structural parent axis confers no membership at all. The ordering
+// engine's milestone scope consumes this via a Lookup closure.
+//
+// The subject test is half the rule, not a detail. MilestoneOf states the same
+// thing transitively — "a milestone belongs to no milestone itself: it is a
+// container of its own even when hand-edited data assigns or nests it" — and
+// for a while this function disagreed with its own sibling, answering that a
+// milestone carrying `milestone:` IS assigned to one. Every consumer that
+// filtered the result afterwards agreed with MilestoneOf; every consumer that
+// did not answered differently, which is how one store came to have several
+// queues depending on which surface was asked (nibs-q2kh).
 func ResolvedMilestoneID(b *nib.Nib, lookup Lookup) string {
-	if b.Milestone == "" {
+	if b.Milestone == "" || b.EffectiveType() == "milestone" {
 		return ""
 	}
 	target := lookup(b.Milestone)
@@ -130,6 +139,10 @@ func (v *View) DirectMembers(containerID string) []*nib.Nib {
 	if c := v.byID[containerID]; c != nil && c.EffectiveType() == "milestone" {
 		group = v.assigned[containerID]
 	}
+	// The exclusion now guards the STRUCTURAL axis alone: ResolvedMilestoneID
+	// refuses a milestone-typed subject, so the assignment index cannot hold
+	// one, but a milestone carrying a hand-authored `parent:` still lands in
+	// that parent's children.
 	var members []*nib.Nib
 	for _, b := range group {
 		if b.EffectiveType() == "milestone" {
