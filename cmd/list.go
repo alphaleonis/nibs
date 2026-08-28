@@ -63,14 +63,14 @@ Id-valued filters (--parent, --milestone, --mentions, --mentioned-by):
   listing zero rows, so a mistyped or stale id — --parent "$ID" with $ID unset
   or wrong — stays distinguishable from a nib that genuinely has no children.
   An empty value is rejected outright (use --no-parent to select the parentless
-  nibs, --backlog for the unscheduled ones). --milestone given a nib that is
+  nibs, --backlog for the ones in no milestone). --milestone given a nib that is
   not a milestone is refused as a validation error (exit 2) naming its type,
   as 'nibs set --milestone' refuses the same id.
 
 Milestone queue and backlog:
   --milestone <id>   The milestone's queue — the nibs assigned to it — in
                      queue order (milestone_order) unless --sort says otherwise.
-  --backlog          The unscheduled remainder in tree order: nibs with no
+  --backlog          The backlog in tree order: nibs with no
                      assignment of their own and none up their parent chain
                      (a child of an assigned epic is planned work, not backlog).
                      Milestones themselves are in no queue and so appear here;

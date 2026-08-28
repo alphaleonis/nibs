@@ -25,10 +25,10 @@
 {{end}}
 {{template "queue" .Queue}}
 {{- end}}
-{{- if .Unscheduled}}
+{{- if .Backlog}}
 {{- if len $.Milestones}}
-## Unplanned
+## Backlog
 {{end}}
 
-{{template "queue" .Unscheduled.Queue}}
+{{template "queue" .Backlog.Queue}}
 {{- end}}

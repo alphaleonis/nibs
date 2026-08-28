@@ -34,16 +34,15 @@ var (
 
 // roadmapData holds the structured roadmap for JSON output.
 type roadmapData struct {
-	Milestones  []milestoneGroup  `json:"milestones"`
-	Unscheduled *unscheduledGroup `json:"unscheduled,omitempty"`
+	Milestones []milestoneGroup `json:"milestones"`
+	Backlog    *backlogGroup    `json:"backlog,omitempty"`
 }
 
-// unscheduledGroup is the backlog: the work no milestone holds, rendered under
-// the `## Unplanned` heading whenever there are milestone sections to separate
-// it from. Its queue is ONE ordered list because a backlog epic and a backlog
+// backlogGroup is the work no milestone holds, rendered under the `## Backlog`
+// heading whenever there are milestone sections to separate it from. Its queue is ONE ordered list because a backlog epic and a backlog
 // root item are siblings in the same root `order` scope: two arrays would put
 // every epic ahead of every item, which is an arrangement nobody made.
-type unscheduledGroup struct {
+type backlogGroup struct {
 	Queue []queueEntry `json:"queue,omitempty"`
 }
 
@@ -140,7 +139,7 @@ var roadmapCmd = &cobra.Command{
 }
 
 // buildRoadmap constructs the roadmap data structure from nibs. Membership —
-// which milestones exist, what belongs to each, what remains unscheduled —
+// which milestones exist, what belongs to each, what is left in the backlog —
 // comes from internal/membership; everything here is display policy: status
 // filters, the includeDone rule, sorting, and the "earns its place by holding
 // outstanding scope" tests.
@@ -173,12 +172,12 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 		}
 	}
 
-	// The unscheduled remainder comes from the view, computed against every
+	// The backlog comes from the view, computed against every
 	// DECLARED milestone rather than the status-filtered list above — work
 	// under a status-hidden milestone is scheduled work the filter chose not
 	// to show, not backlog. (The old two-level walk leaked it here; restoring
 	// that would be a deliberate policy change, not a default.)
-	rem := view.Unscheduled()
+	rem := view.Backlog()
 
 	// The backlog is the tree, filtered (decision 2.5). Its epics and its
 	// root-level items are SIBLINGS in the same root `order` scope, so they
@@ -206,15 +205,15 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 		return nib.CompareByKey(a.Nib, b.Nib, func(n *nib.Nib) string { return n.Order })
 	})
 
-	// Build unscheduled group if there's content
-	var unscheduled *unscheduledGroup
+	// Build the backlog group if there's content
+	var backlogGrp *backlogGroup
 	if len(backlog) > 0 {
-		unscheduled = &unscheduledGroup{Queue: backlog}
+		backlogGrp = &backlogGroup{Queue: backlog}
 	}
 
 	return &roadmapData{
-		Milestones:  milestoneGroups,
-		Unscheduled: unscheduled,
+		Milestones: milestoneGroups,
+		Backlog:    backlogGrp,
 	}
 }
 

@@ -42,7 +42,7 @@
   - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Email digest notifications (tnib-f017)
   - ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Push notifications not requesting permission on mobile (tnib-b007)
 
-## Unplanned
+## Backlog
 
 
 - ![task](https://img.shields.io/badge/task-1d76db?style=flat-square) Set up CI/CD pipeline (tnib-t032)
