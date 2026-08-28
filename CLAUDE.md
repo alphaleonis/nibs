@@ -219,7 +219,7 @@ Before starting any new work, run `git fetch` (and `git -C .nibs fetch`) and che
 
 ## Architecture Reviews
 
-Before breaking down a new phase or starting a large feature that touches existing interactive components (especially the web UI), run `/decaf-experimental:improve-codebase-architecture` scoped to the area that phase will touch. This identifies structural issues (prop explosion, god components, tightly coupled interaction systems) *before* new features pile onto them. If the review surfaces refactoring opportunities, create nibs for them and make them prerequisites of the new features.
+Before breaking down a new phase or starting a large feature that touches existing interactive components (especially the web UI), run `/decaf-plan:architecture-review` scoped to the area that phase will touch. This identifies structural issues (prop explosion, god components, tightly coupled interaction systems) *before* new features pile onto them. If the review surfaces refactoring opportunities, create nibs for them and make them prerequisites of the new features.
 
 ## When Executing Plans
 
