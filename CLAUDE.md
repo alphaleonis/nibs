@@ -102,7 +102,7 @@ The GraphQL engine runs in-process for CLI commands (`cmd/graphql.go` executes q
 
 ### Web UI Conventions
 
-- **Event delegation**: TreeTable uses delegated event handlers on the scroll container (not per-row callbacks). TreeTableRow is a pure render component with zero callback props — interactive elements use `data-action` attributes (toggle, title, add-child, drag-handle). New actions require a handler case in TreeTable's `handleDelegatedClick`.
+- **Event delegation**: TreeTable uses delegated event handlers on the scroll container (not per-row callbacks). TreeTableRow is a pure render component with zero callback props — interactive elements use `data-action` attributes (toggle, title, add-child); drag starts from a delegated `onpointerdown` on the row itself, not from a handle. New actions require a handler case in TreeTable's `handleDelegatedClick`.
 - **Svelte context for ambient state**: SelectionState and DragState are provided via `provideSelection`/`provideDrag` from `contexts.ts`. Components read with `useSelection()`/`useDrag()`. Tests must provide context via `makeTestContext()` from contexts.ts — pass as `context` option to `render()`.
 - **Shared field components**: Use `StatusSelect`, `TypeSelect`, `PrioritySelect`, `EstimateSelect`, `TagEditor` from `web/src/lib/components/` instead of inline select/tag markup. Use `renderMarkdown()` from `web/src/lib/markdown.ts` instead of inline DOMPurify+marked. Use `.prose-nib` CSS class for markdown prose styling.
 - There is no prettier config — **do not run prettier**; it reformats unrelated files (one run churned 129 lines of untouched code).
