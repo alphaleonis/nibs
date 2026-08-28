@@ -251,3 +251,45 @@ func TestResolvedMilestoneID(t *testing.T) {
 		}
 	}
 }
+
+// TestResolvedMilestoneIDRefusesAMilestoneSubject pins the half of the rule
+// that was missing: a milestone is a container of its own, so it is assigned to
+// nothing even when hand-edited data says otherwise.
+//
+// MilestoneOf has always said this transitively. While ResolvedMilestoneID did
+// not, the two disagreed, and every consumer inherited whichever answer it
+// happened to call — which is how one store had several queues depending on the
+// surface asked (nibs-q2kh).
+func TestResolvedMilestoneIDRefusesAMilestoneSubject(t *testing.T) {
+	m1 := &nib.Nib{ID: "m1", Type: "milestone", Title: "Wave"}
+	m2 := &nib.Nib{ID: "m2", Type: "milestone", Title: "Nested", Milestone: "m1"}
+	e1 := &nib.Nib{ID: "e1", Type: "epic", Title: "Real member", Milestone: "m1"}
+	lookup := func(id string) *nib.Nib {
+		for _, b := range []*nib.Nib{m1, m2, e1} {
+			if b.ID == id {
+				return b
+			}
+		}
+		return nil
+	}
+
+	if got := ResolvedMilestoneID(m2, lookup); got != "" {
+		t.Errorf("ResolvedMilestoneID(a milestone carrying `milestone:`) = %q, want \"\"", got)
+	}
+	if got := ResolvedMilestoneID(e1, lookup); got != "m1" {
+		t.Errorf("ResolvedMilestoneID(e1) = %q, want m1 — a real assignment still resolves", got)
+	}
+
+	// The two answers in this package must not diverge again.
+	v := Compute([]*nib.Nib{m1, m2, e1})
+	if got := v.MilestoneOf("m2"); got != "" {
+		t.Errorf("MilestoneOf(m2) = %q, want \"\" — it must agree with ResolvedMilestoneID", got)
+	}
+	if ids := ids(v.DirectMembers("m1")); len(ids) != 1 || ids[0] != "e1" {
+		t.Errorf("DirectMembers(m1) = %v, want [e1]", ids)
+	}
+	// And the index itself, not merely the filtered read of it.
+	if got := ids(v.assigned["m1"]); len(got) != 1 || got[0] != "e1" {
+		t.Errorf("assigned[m1] = %v, want [e1] — the milestone must not be filed as a member at all", got)
+	}
+}

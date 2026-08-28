@@ -2,6 +2,7 @@ package graph
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -165,4 +166,54 @@ func TestQueueInversionsInvolving(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestQueueMembershipIsOneAnswer covers the surfaces that diverged when the
+// milestone-queue definition was fixed in one reader and not the rest.
+//
+// The store is the shape that produced the regression: a milestone (m2)
+// carrying a hand-authored `milestone: m1`, blocking a REAL queue entry (e1)
+// that sits ahead of it by key. While the ordering engine excluded m2 from its
+// member scan and this file's scan did not, `nibs next` reported e1 as an
+// order-vs-dependency inversion against a blocker the engine said was in no
+// queue, and printed a `nibs mv e1 --queue --after m2` remedy that failed with
+// "queue nib not found: m2" (nibs-q2kh).
+//
+// roadmap and membership.DirectMembers agreed throughout — they filter
+// milestone-typed members on the way out — which is exactly why a guard over
+// THEM would have passed while the bug shipped. These two readers are the ones
+// that inherit the definition raw.
+func TestQueueMembershipIsOneAnswer(t *testing.T) {
+	m1 := &nib.Nib{ID: "m1", Type: "milestone", Title: "Wave", Status: "in-progress"}
+	m2 := &nib.Nib{ID: "m2", Type: "milestone", Title: "Nested", Status: "todo", Milestone: "m1", MilestoneOrder: "c"}
+	e1 := &nib.Nib{ID: "e1", Type: "epic", Title: "First", Status: "todo", Milestone: "m1", MilestoneOrder: "a", BlockedBy: []string{"m2"}}
+	e2 := &nib.Nib{ID: "e2", Type: "epic", Title: "Second", Status: "todo", Milestone: "m1", MilestoneOrder: "b"}
+	reader := newOrdererReader(m1, m2, e1, e2)
+
+	// The definition itself: a milestone is assigned to nothing.
+	if got := resolvedMilestoneID(m2, reader); got != "" {
+		t.Errorf("resolvedMilestoneID(m2) = %q, want \"\" — a milestone is a container of its own", got)
+	}
+
+	// The inversion engine, which reads it raw. e1 is genuinely blocked by m2,
+	// but m2 stands in no queue, so there is no queue ORDER to invert against.
+	if invs := QueueInversionsIn(reader, "m1"); len(invs) != 0 {
+		t.Errorf("QueueInversionsIn(m1) = %+v, want none — m2 is in no queue, so e1 sits ahead of nothing", invs)
+	}
+
+	// The ordering engine's member set, which the first attempt fixed alone.
+	got := make([]string, 0, 2)
+	for _, b := range NewOrderer(reader, &stubWriter{}).Members(ScopeMilestone, "m1") {
+		got = append(got, b.ID)
+	}
+	if len(got) != 2 || got[0] != "e1" || got[1] != "e2" {
+		t.Errorf("Orderer members = %v, want [e1 e2]", got)
+	}
+
+	// And the anchor tier a caller sees when naming m2: it exists, so the
+	// refusal must say it is not in this queue rather than that it is missing.
+	err := NewOrderer(reader, &stubWriter{}).Move(ScopeMilestone, e2, After("m2"))
+	if err == nil || !strings.Contains(err.Error(), "not in the same milestone queue") {
+		t.Errorf("Move(after m2) error = %v, want the not-a-member tier", err)
+	}
 }
