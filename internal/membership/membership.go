@@ -197,27 +197,6 @@ type EpicGroup struct {
 	Items []*nib.Nib
 }
 
-// Tree is a milestone's membership in the roadmap's shape: the epic-typed
-// direct members each with their items, and the remaining direct members.
-// Sets only — filtering, sorting and progress are the consumer's policy.
-type Tree struct {
-	Epics []EpicGroup
-	Other []*nib.Nib
-}
-
-// Grouped returns the milestone's Tree.
-func (v *View) Grouped(milestoneID string) Tree {
-	var tree Tree
-	for _, b := range v.DirectMembers(milestoneID) {
-		if b.EffectiveType() == "epic" {
-			tree.Epics = append(tree.Epics, EpicGroup{Epic: b, Items: v.DirectMembers(b.ID)})
-			continue
-		}
-		tree.Other = append(tree.Other, b)
-	}
-	return tree
-}
-
 // Remainder is the backlog outside every milestone: the epics that belong to
 // no milestone (each with their items), and the root-level work items. Sets
 // only, in input order.

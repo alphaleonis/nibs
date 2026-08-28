@@ -88,6 +88,8 @@ func TestChildrenAndDirectMembers(t *testing.T) {
 	wantIDs(t, `DirectMembers("m1")`, v.DirectMembers("m1"), "e1", "b1")
 	wantIDs(t, `DirectMembers("e2")`, v.DirectMembers("e2"), "t2")
 	wantIDs(t, `DirectMembers("e1")`, v.DirectMembers("e1"), "f1")
+	// A milestone nothing is assigned to has an empty queue, not a phantom one.
+	wantIDs(t, `DirectMembers("m2")`, v.DirectMembers("m2"))
 }
 
 func TestMembersIsTheFullDepthClosure(t *testing.T) {
@@ -135,21 +137,6 @@ func TestMilestoneOfStopsAtAStructuralMilestoneAncestor(t *testing.T) {
 	if rem := v.Unscheduled(); len(rem.Other) != 0 {
 		// t1 is not a root (its parent resolves), so it is not backlog either.
 		t.Errorf("Unscheduled().Other = %v, want none", ids(rem.Other))
-	}
-}
-
-func TestGrouped(t *testing.T) {
-	v := Compute(standardFixture())
-	tree := v.Grouped("m1")
-	if len(tree.Epics) != 1 || tree.Epics[0].Epic.ID != "e1" {
-		t.Fatalf("Grouped(m1).Epics = %v, want [e1]", tree.Epics)
-	}
-	wantIDs(t, "Grouped(m1).Epics[0].Items", tree.Epics[0].Items, "f1")
-	wantIDs(t, "Grouped(m1).Other", tree.Other, "b1")
-
-	empty := v.Grouped("m2")
-	if len(empty.Epics) != 0 || len(empty.Other) != 0 {
-		t.Errorf("Grouped(m2) = %+v, want empty", empty)
 	}
 }
 
