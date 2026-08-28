@@ -729,13 +729,7 @@ func TestBuildRoadmap_BacklogIsTreeOrder(t *testing.T) {
 		// sequential blocks would read as epic-then-everything-else whatever
 		// the data said.
 		marks := roadmapMarks(renderRoadmapMarkdown(result, false, ""))
-		want := []string{
-			"(t1)",
-			"### Epic: Mike — 0% (0/1) (e1)",
-			"(c1)",
-			"### Miscellaneous",
-			"(t2)",
-		}
+		want := []string{"(t1)", "(e1)", "  (c1)", "(t2)"}
 		if !slices.Equal(marks, want) {
 			t.Errorf("rendered backlog = %#v, want %#v", marks, want)
 		}
@@ -801,9 +795,62 @@ func TestBuildRoadmap_QueueOrderDoesNotMoveProgress(t *testing.T) {
 	}
 }
 
+// TestRenderRoadmapMarkdown_NoHeadingRepeatsInsideASection renders the shape
+// that used to mint duplicate anchors — a queue alternating containers and
+// loose runs — and holds every heading in a section to appearing once.
+//
+// A repeated heading is not merely untidy: the roadmap is meant to be
+// committed and linked into, and two identically-named sections in one
+// document give a reader no way to say which one they meant. The queue's
+// members carry no heading of their own now, so the only headings a section
+// holds are its own `##` line; the assertion is written over ALL headings
+// rather than that fact, so it keeps its meaning if a future block earns one.
+func TestRenderRoadmapMarkdown_NoHeadingRepeatsInsideASection(t *testing.T) {
+	cfg := config.Default()
+	now := time.Now()
+
+	nibs := []*nib.Nib{
+		{ID: "m1", Type: "milestone", Title: "v1.0", Status: "in-progress", CreatedAt: &now},
+		{ID: "e1", Type: "epic", Title: "First epic", Status: "todo", Milestone: "m1", MilestoneOrder: "a"},
+		{ID: "t1", Type: "task", Title: "Under first", Status: "todo", Parent: "e1"},
+		{ID: "l1", Type: "task", Title: "First loose", Status: "todo", Milestone: "m1", MilestoneOrder: "b"},
+		{ID: "e2", Type: "epic", Title: "Second epic", Status: "todo", Milestone: "m1", MilestoneOrder: "c"},
+		{ID: "t2", Type: "task", Title: "Under second", Status: "todo", Parent: "e2"},
+		{ID: "l2", Type: "task", Title: "Second loose", Status: "todo", Milestone: "m1", MilestoneOrder: "d"},
+		{ID: "l3", Type: "task", Title: "Third loose", Status: "todo", Milestone: "m1", MilestoneOrder: "e"},
+	}
+
+	md := renderRoadmapMarkdown(buildRoadmap(nibs, false, nil, nil, cfg), false, "")
+
+	// The queue must actually be interleaved, or the document under test is
+	// not the one that produced duplicates.
+	if marks := roadmapMarks(md); !slices.Equal(marks, []string{"(e1)", "  (t1)", "(l1)", "(e2)", "  (t2)", "(l2)", "(l3)"}) {
+		t.Fatalf("the fixture did not render an interleaved queue: %#v", marks)
+	}
+
+	seen := map[string]int{}
+	for _, line := range strings.Split(md, "\n") {
+		if !strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "## ") {
+			seen = map[string]int{} // a new section starts its own namespace
+		}
+		seen[line]++
+		if seen[line] > 1 {
+			t.Errorf("heading %q appears %d times in one section — a reader linking to it cannot say which:\n%s", line, seen[line], md)
+		}
+	}
+}
+
 // roadmapMarks projects rendered roadmap Markdown to the skeleton the ordering
-// assertions are about: every block heading verbatim, and every bullet reduced
-// to the nib reference that closes it.
+// assertions are about: every bullet reduced to its indent plus the nib
+// reference that closes it.
+//
+// The indent is load-bearing, not cosmetic. A milestone's section is ONE list,
+// so nesting is the only thing that distinguishes a container's decomposition
+// from the queue entries standing around it — a projection that dropped the
+// indent would read a flattened decomposition as a correct queue.
 //
 // The bullet projection is scoped to the `--no-links` rendering, where
 // renderNibRef emits a bare `(id)` and LastIndex therefore finds the id. With
@@ -812,21 +859,25 @@ func TestBuildRoadmap_QueueOrderDoesNotMoveProgress(t *testing.T) {
 func roadmapMarks(md string) []string {
 	var marks []string
 	for _, line := range strings.Split(md, "\n") {
-		switch {
-		case strings.HasPrefix(line, "### Epic:"), strings.HasPrefix(line, "### Miscellaneous"):
-			marks = append(marks, line)
-		case strings.HasPrefix(line, "- "):
-			marks = append(marks, line[strings.LastIndex(line, "("):])
+		body := strings.TrimLeft(line, " ")
+		if !strings.HasPrefix(body, "- ") {
+			continue
 		}
+		indent := strings.Repeat(" ", len(line)-len(body))
+		marks = append(marks, indent+body[strings.LastIndex(body, "("):])
 	}
 	return marks
 }
 
 // TestRenderRoadmapMarkdown_QueueReadsAsOneList pins the human rendering of an
-// interleaved queue: the loose members appear at their queue positions, and a
-// RUN of them that follows an epic block is headed once — a bare bullet there
-// would read as one more of that epic's items, while a heading per bullet
-// would read as a bucket per item.
+// interleaved queue: a milestone's section is one Markdown list, each member
+// standing at its queue position, and a container's decomposition NESTED
+// beneath it.
+//
+// Nesting is what makes the list unambiguous. Rendered flat, a container's
+// child and the queue entry after it are the same shape at the same level, and
+// no separator between them can be both unique per run and meaningful — which
+// is why the heading this replaced could repeat inside one section.
 func TestRenderRoadmapMarkdown_QueueReadsAsOneList(t *testing.T) {
 	cfg := config.Default()
 	now := time.Now()
@@ -839,7 +890,7 @@ func TestRenderRoadmapMarkdown_QueueReadsAsOneList(t *testing.T) {
 		want    []string
 	}{
 		{
-			name: "a headed run of one closes the queue",
+			name: "a loose member standing after a container closes the queue",
 			members: []*nib.Nib{
 				// Declared against the queue keys, so input order cannot pass
 				// for the arrangement.
@@ -848,32 +899,20 @@ func TestRenderRoadmapMarkdown_QueueReadsAsOneList(t *testing.T) {
 				{ID: "t9", Type: "task", Title: "Under the epic", Status: "todo", Parent: "e1"},
 				{ID: "b1", Type: "bug", Title: "Opens the queue", Status: "todo", Milestone: "m1", MilestoneOrder: "a"},
 			},
-			want: []string{
-				"(b1)",
-				"### Epic: Middle epic — 0% (0/1) (e1)",
-				"(t9)",
-				"### Miscellaneous",
-				"(f1)",
-			},
+			want: []string{"(b1)", "(e1)", "  (t9)", "(f1)"},
 		},
 		{
-			name: "one heading opens a multi-item run, not one per item",
+			name: "a container nests its items and the loose members do not",
 			members: []*nib.Nib{
 				{ID: "e1", Type: "epic", Title: "Only epic", Status: "todo", Milestone: "m1", MilestoneOrder: "a"},
 				{ID: "t9", Type: "task", Title: "Under the epic", Status: "todo", Parent: "e1"},
 				{ID: "l1", Type: "task", Title: "First loose", Status: "todo", Milestone: "m1", MilestoneOrder: "b"},
 				{ID: "l2", Type: "task", Title: "Second loose", Status: "todo", Milestone: "m1", MilestoneOrder: "c"},
 			},
-			want: []string{
-				"### Epic: Only epic — 0% (0/1) (e1)",
-				"(t9)",
-				"### Miscellaneous",
-				"(l1)",
-				"(l2)",
-			},
+			want: []string{"(e1)", "  (t9)", "(l1)", "(l2)"},
 		},
 		{
-			name: "a queue with no epic in it is headed nowhere",
+			name: "a queue holding no container is a flat list",
 			members: []*nib.Nib{
 				{ID: "l1", Type: "task", Title: "First loose", Status: "todo", Milestone: "m1", MilestoneOrder: "a"},
 				{ID: "l2", Type: "task", Title: "Second loose", Status: "todo", Milestone: "m1", MilestoneOrder: "b"},
@@ -881,11 +920,10 @@ func TestRenderRoadmapMarkdown_QueueReadsAsOneList(t *testing.T) {
 			want: []string{"(l1)", "(l2)"},
 		},
 		{
-			name: "an epic dropped for empty scope heads nothing",
+			name: "an epic dropped for empty scope leaves no trace",
 			members: []*nib.Nib{
-				// The heading follows the APPENDED queue, not the member list:
-				// e1 holds no outstanding scope, so it never reaches the queue
-				// and l1 opens no run.
+				// e1 holds no outstanding scope, so it never reaches the
+				// queue at all and leaves no gap where it would have stood.
 				{ID: "e1", Type: "epic", Title: "Finished epic", Status: "completed", Milestone: "m1", MilestoneOrder: "a"},
 				{ID: "l1", Type: "task", Title: "First loose", Status: "todo", Milestone: "m1", MilestoneOrder: "b"},
 				{ID: "l2", Type: "task", Title: "Second loose", Status: "todo", Milestone: "m1", MilestoneOrder: "c"},
