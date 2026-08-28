@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -52,12 +54,12 @@ func TestBuildRoadmap(t *testing.T) {
 	now := time.Now()
 
 	tests := []struct {
-		name                 string
-		nibs                 []*nib.Nib
-		includeDone          bool
-		wantMilestones       int
-		wantUnscheduledEpics int
-		wantUnscheduledOther int
+		name             string
+		nibs             []*nib.Nib
+		includeDone      bool
+		wantMilestones   int
+		wantBacklogEpics int
+		wantBacklogOther int
 	}{
 		{
 			name:           "empty nibs",
@@ -82,13 +84,13 @@ func TestBuildRoadmap(t *testing.T) {
 			wantMilestones: 1,
 		},
 		{
-			name: "unscheduled epic",
+			name: "backlog epic",
 			nibs: []*nib.Nib{
 				{ID: "e1", Type: "epic", Title: "Future", Status: "todo"},
 				{ID: "t1", Type: "task", Title: "Nice to have", Status: "todo", Parent: "e1"},
 			},
-			wantMilestones:       0,
-			wantUnscheduledEpics: 1,
+			wantMilestones:   0,
+			wantBacklogEpics: 1,
 		},
 		{
 			name: "done items excluded by default",
@@ -109,13 +111,13 @@ func TestBuildRoadmap(t *testing.T) {
 			wantMilestones: 1,
 		},
 		{
-			name: "orphan nib appears in unscheduled other",
+			name: "orphan nib appears in the backlog",
 			nibs: []*nib.Nib{
 				{ID: "m1", Type: "milestone", Title: "v1.0", Status: "todo", CreatedAt: &now},
 				{ID: "t1", Type: "task", Title: "Orphan", Status: "todo"}, // no parent link
 			},
-			wantMilestones:       0, // milestone has no children
-			wantUnscheduledOther: 1, // orphan appears in unscheduled
+			wantMilestones:   0, // milestone has no children
+			wantBacklogOther: 1, // orphan appears in the backlog
 		},
 	}
 
@@ -127,17 +129,17 @@ func TestBuildRoadmap(t *testing.T) {
 				t.Errorf("got %d milestones, want %d", got, tt.wantMilestones)
 			}
 
-			gotUnscheduledEpics := 0
-			gotUnscheduledOther := 0
-			if result.Unscheduled != nil {
-				gotUnscheduledEpics = len(roadmapQueueEpics(result.Unscheduled.Queue))
-				gotUnscheduledOther = len(roadmapQueueItems(result.Unscheduled.Queue))
+			gotBacklogEpics := 0
+			gotBacklogOther := 0
+			if result.Backlog != nil {
+				gotBacklogEpics = len(roadmapQueueEpics(result.Backlog.Queue))
+				gotBacklogOther = len(roadmapQueueItems(result.Backlog.Queue))
 			}
-			if gotUnscheduledEpics != tt.wantUnscheduledEpics {
-				t.Errorf("got %d unscheduled epics, want %d", gotUnscheduledEpics, tt.wantUnscheduledEpics)
+			if gotBacklogEpics != tt.wantBacklogEpics {
+				t.Errorf("got %d backlog epics, want %d", gotBacklogEpics, tt.wantBacklogEpics)
 			}
-			if gotUnscheduledOther != tt.wantUnscheduledOther {
-				t.Errorf("got %d unscheduled other, want %d", gotUnscheduledOther, tt.wantUnscheduledOther)
+			if gotBacklogOther != tt.wantBacklogOther {
+				t.Errorf("got %d backlog items, want %d", gotBacklogOther, tt.wantBacklogOther)
 			}
 		})
 	}
@@ -287,7 +289,7 @@ func TestBuildRoadmap_DeferredChildStaysVisible(t *testing.T) {
 		}
 	})
 
-	t.Run("unscheduled epic keeps its deferred child", func(t *testing.T) {
+	t.Run("a backlog epic keeps its deferred child", func(t *testing.T) {
 		// The third call site: an epic with no milestone parent. Same rule.
 		nibs := []*nib.Nib{
 			{ID: "e1", Type: "epic", Title: "Loose Epic", Status: "in-progress"},
@@ -295,12 +297,12 @@ func TestBuildRoadmap_DeferredChildStaysVisible(t *testing.T) {
 			{ID: "t2", Type: "task", Title: "Set Aside", Status: "deferred", Parent: "e1"},
 		}
 		result := buildRoadmap(nibs, false, nil, nil, cfg)
-		if result.Unscheduled == nil {
-			t.Fatal("got no unscheduled group, want the epic kept for its deferred child")
+		if result.Backlog == nil {
+			t.Fatal("got no backlog group, want the epic kept for its deferred child")
 		}
-		epics := roadmapQueueEpics(result.Unscheduled.Queue)
+		epics := roadmapQueueEpics(result.Backlog.Queue)
 		if len(epics) != 1 {
-			t.Fatalf("got backlog %+v, want the epic kept for its deferred child", result.Unscheduled.Queue)
+			t.Fatalf("got backlog %+v, want the epic kept for its deferred child", result.Backlog.Queue)
 		}
 		if len(epics[0].Items) != 1 || epics[0].Items[0].ID != "t2" {
 			t.Fatalf("got items %+v, want the deferred child t2 named", epics[0].Items)
@@ -506,7 +508,7 @@ func TestStatusFiltering(t *testing.T) {
 // TestBuildRoadmap_HiddenMilestoneMembersAreNotBacklog pins the roadmap's side
 // of membership ledger delta (d): work under a milestone the status filter
 // hides is SCHEDULED work the filter chose not to show — it must not leak into
-// the Unscheduled group. The old two-level walk computed "under a milestone"
+// the backlog. The old two-level walk computed "under a milestone"
 // from the filtered list, so hiding a milestone dumped its epics into the
 // backlog.
 func TestBuildRoadmap_HiddenMilestoneMembersAreNotBacklog(t *testing.T) {
@@ -522,8 +524,8 @@ func TestBuildRoadmap_HiddenMilestoneMembersAreNotBacklog(t *testing.T) {
 	if len(data.Milestones) != 0 {
 		t.Fatalf("the completed milestone is filtered out, got %d milestone groups", len(data.Milestones))
 	}
-	if data.Unscheduled != nil {
-		t.Fatalf("members of the hidden milestone leaked into Unscheduled: %+v", data.Unscheduled)
+	if data.Backlog != nil {
+		t.Fatalf("members of the hidden milestone leaked into the backlog: %+v", data.Backlog)
 	}
 }
 
@@ -677,10 +679,10 @@ func TestBuildRoadmap_BacklogIsTreeOrder(t *testing.T) {
 			{ID: "t1", Type: "task", Title: "Task", Status: "todo", Order: "a"},
 		}
 		result := buildRoadmap(nibs, false, nil, nil, cfg)
-		if result.Unscheduled == nil {
-			t.Fatal("got no unscheduled group")
+		if result.Backlog == nil {
+			t.Fatal("got no backlog group")
 		}
-		got := roadmapQueueIDs(result.Unscheduled.Queue)
+		got := roadmapQueueIDs(result.Backlog.Queue)
 		if want := []string{"t1", "f1", "b1"}; !slices.Equal(got, want) {
 			t.Errorf("backlog items = %v, want %v (tree order)", got, want)
 		}
@@ -696,10 +698,10 @@ func TestBuildRoadmap_BacklogIsTreeOrder(t *testing.T) {
 			{ID: "t1", Type: "task", Title: "Under zebra", Status: "todo", Parent: "e1"},
 		}
 		result := buildRoadmap(nibs, false, nil, nil, cfg)
-		if result.Unscheduled == nil {
-			t.Fatal("got no unscheduled group")
+		if result.Backlog == nil {
+			t.Fatal("got no backlog group")
 		}
-		got := roadmapQueueIDs(result.Unscheduled.Queue)
+		got := roadmapQueueIDs(result.Backlog.Queue)
 		if want := []string{"e1", "e2"}; !slices.Equal(got, want) {
 			t.Errorf("backlog epics = %v, want %v (tree order)", got, want)
 		}
@@ -717,10 +719,10 @@ func TestBuildRoadmap_BacklogIsTreeOrder(t *testing.T) {
 			{ID: "c1", Type: "task", Title: "Under the epic", Status: "todo", Parent: "e1"},
 		}
 		result := buildRoadmap(nibs, false, nil, nil, cfg)
-		if result.Unscheduled == nil {
-			t.Fatal("got no unscheduled group")
+		if result.Backlog == nil {
+			t.Fatal("got no backlog group")
 		}
-		got := roadmapQueueIDs(result.Unscheduled.Queue)
+		got := roadmapQueueIDs(result.Backlog.Queue)
 		if want := []string{"t1", "e1", "t2"}; !slices.Equal(got, want) {
 			t.Errorf("backlog = %v, want %v (tree order)", got, want)
 		}
@@ -746,12 +748,12 @@ func TestBuildRoadmap_BacklogIsTreeOrder(t *testing.T) {
 			{ID: "t1", Type: "task", Title: "Zebra", Status: "todo", Parent: "e1", Order: "a"},
 		}
 		result := buildRoadmap(nibs, false, nil, nil, cfg)
-		if result.Unscheduled == nil {
-			t.Fatal("got no unscheduled group")
+		if result.Backlog == nil {
+			t.Fatal("got no backlog group")
 		}
-		epics := roadmapQueueEpics(result.Unscheduled.Queue)
+		epics := roadmapQueueEpics(result.Backlog.Queue)
 		if len(epics) != 1 {
-			t.Fatalf("got backlog %+v, want one epic group", result.Unscheduled.Queue)
+			t.Fatalf("got backlog %+v, want one epic group", result.Backlog.Queue)
 		}
 		var got []string
 		for _, item := range epics[0].Items {
@@ -840,6 +842,67 @@ func TestRenderRoadmapMarkdown_NoHeadingRepeatsInsideASection(t *testing.T) {
 		if seen[line] > 1 {
 			t.Errorf("heading %q appears %d times in one section — a reader linking to it cannot say which:\n%s", line, seen[line], md)
 		}
+	}
+}
+
+// TestRoadmapNamesTheBacklogTheSameWayEverywhere pins the one thing this set
+// kept getting wrong: it had four names at once — `## Unplanned` in Markdown,
+// `unscheduled` in JSON, `Unscheduled()`/`Remainder` in internal/membership,
+// and `--backlog` on list, cheat and catalog.
+//
+// The flag is the authority rather than a literal spelled here, so the
+// assertion cannot drift with the thing it guards: if `--backlog` is ever
+// renamed, this fails until the roadmap follows.
+func TestRoadmapNamesTheBacklogTheSameWayEverywhere(t *testing.T) {
+	cfg := config.Default()
+	now := time.Now()
+	nibs := []*nib.Nib{
+		{ID: "m1", Type: "milestone", Title: "v1.0", Status: "in-progress", CreatedAt: &now},
+		{ID: "e1", Type: "epic", Title: "Assigned", Status: "todo", Milestone: "m1", MilestoneOrder: "a"},
+		{ID: "t1", Type: "task", Title: "Under the epic", Status: "todo", Parent: "e1"},
+		{ID: "t2", Type: "task", Title: "In no milestone", Status: "todo", Order: "a"},
+	}
+
+	flag := listCmd.Flags().Lookup("backlog")
+	if flag == nil {
+		t.Fatal("list has no --backlog flag; this guard compares the roadmap against it")
+	}
+	want := flag.Name
+
+	data := buildRoadmap(nibs, false, nil, nil, cfg)
+	if data.Backlog == nil {
+		t.Fatal("the fixture produced no backlog, so neither surface names anything")
+	}
+
+	// The Markdown heading.
+	md := renderRoadmapMarkdown(data, false, "")
+	var heading string
+	for _, line := range strings.Split(md, "\n") {
+		if strings.HasPrefix(line, "## ") && !strings.HasPrefix(line, "## Milestone:") {
+			heading = strings.ToLower(strings.TrimPrefix(line, "## "))
+		}
+	}
+	if heading != want {
+		t.Errorf("roadmap Markdown heads the backlog %q, but list calls it --%s:\n%s", heading, want, md)
+	}
+
+	// The JSON key, read off the encoded payload rather than the struct tag, so
+	// the wire format is what is checked.
+	encoded, err := json.Marshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := payload[want]; !ok {
+		keys := make([]string, 0, len(payload))
+		for k := range payload {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		t.Errorf("roadmap --json has no %q key; it carries %v, and list calls this set --%s", want, keys, want)
 	}
 }
 

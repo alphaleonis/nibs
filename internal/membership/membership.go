@@ -163,12 +163,12 @@ func (v *View) Members(containerID string) []*nib.Nib {
 }
 
 // MilestoneOf returns the id of the milestone the nib transitively belongs to,
-// or "" for unscheduled work: the nib's own resolved assignment when it has
+// or "" for a nib in the backlog: its own resolved assignment when it has
 // one, else the nearest resolved assignment up the structural parent chain.
 // The walk stops at a milestone-typed ancestor — a milestone parent is
 // decomposition data, not an assignment — and a milestone belongs to no
 // milestone itself: it is a container of its own even when hand-edited data
-// assigns or nests it. An unknown id is unscheduled.
+// assigns or nests it. An unknown id is in the backlog.
 func (v *View) MilestoneOf(id string) string {
 	b := v.byID[id]
 	if b == nil || b.EffectiveType() == "milestone" {
@@ -197,15 +197,19 @@ type EpicGroup struct {
 	Items []*nib.Nib
 }
 
-// Remainder is the backlog outside every milestone: the epics that belong to
-// no milestone (each with their items), and the root-level work items. Sets
-// only, in input order.
-type Remainder struct {
+// Backlog is the work outside every milestone: the epics that belong to no
+// milestone (each with their items), and the root-level work items. Sets only,
+// in input order.
+//
+// "Backlog" is the name every surface uses for this set — `nibs list
+// --backlog`, the roadmap's section, the GraphQL filter's documentation — so
+// the package that defines it says the same word.
+type Backlog struct {
 	Epics []EpicGroup
 	Other []*nib.Nib
 }
 
-// Unscheduled returns the Remainder. Roots are the RESOLVED reading — a nib
+// Backlog returns the set. Roots are the RESOLVED reading — a nib
 // whose parent link names no nib is a root here, exactly as every query
 // surface reports it — and scheduling is MilestoneOf's: a root with a
 // resolved assignment is scheduled work, not backlog, while a dangling
@@ -213,8 +217,8 @@ type Remainder struct {
 // declared milestone regardless of status: work under a status-hidden
 // milestone is scheduled work, not backlog — a consumer wanting the old leak
 // back has to build it deliberately.
-func (v *View) Unscheduled() Remainder {
-	var rem Remainder
+func (v *View) Backlog() Backlog {
+	var rem Backlog
 	for _, b := range v.all {
 		switch b.EffectiveType() {
 		case "milestone":

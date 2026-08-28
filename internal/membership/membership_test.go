@@ -125,7 +125,7 @@ func TestMilestoneOf(t *testing.T) {
 // TestMilestoneOfStopsAtAStructuralMilestoneAncestor pins the axis cutover's
 // reading of a hand-authored milestone PARENT: the parent edge is decomposition
 // only and confers no membership, so work structurally under a milestone with
-// no assignment anywhere on its chain is unscheduled.
+// no assignment anywhere on its chain is in the backlog.
 func TestMilestoneOfStopsAtAStructuralMilestoneAncestor(t *testing.T) {
 	v := Compute([]*nib.Nib{
 		n("m1", "milestone", ""),
@@ -134,25 +134,25 @@ func TestMilestoneOfStopsAtAStructuralMilestoneAncestor(t *testing.T) {
 	if got := v.MilestoneOf("t1"); got != "" {
 		t.Errorf(`MilestoneOf("t1") = %q, want "" — a milestone parent is not an assignment`, got)
 	}
-	if rem := v.Unscheduled(); len(rem.Other) != 0 {
+	if rem := v.Backlog(); len(rem.Other) != 0 {
 		// t1 is not a root (its parent resolves), so it is not backlog either.
-		t.Errorf("Unscheduled().Other = %v, want none", ids(rem.Other))
+		t.Errorf("Backlog().Other = %v, want none", ids(rem.Other))
 	}
 }
 
-func TestUnscheduled(t *testing.T) {
+func TestBacklog(t *testing.T) {
 	v := Compute(standardFixture())
-	rem := v.Unscheduled()
+	rem := v.Backlog()
 
 	if len(rem.Epics) != 1 || rem.Epics[0].Epic.ID != "e2" {
-		t.Fatalf("Unscheduled().Epics = %v, want [e2]", rem.Epics)
+		t.Fatalf("Backlog().Epics = %v, want [e2]", rem.Epics)
 	}
-	wantIDs(t, "Unscheduled().Epics[0].Items", rem.Epics[0].Items, "t2")
+	wantIDs(t, "Backlog().Epics[0].Items", rem.Epics[0].Items, "t2")
 
 	// t4's parent link names no nib, so t4 IS a root by the resolved reading
 	// every query surface uses. b1 is a root too, but its assignment schedules
 	// it — the backlog is roots with no milestone anywhere on their chain.
-	wantIDs(t, "Unscheduled().Other", rem.Other, "t3", "t4")
+	wantIDs(t, "Backlog().Other", rem.Other, "t3", "t4")
 }
 
 // TestMilestoneTypedNibsAreNeverMembers pins the container exclusion on BOTH
@@ -213,7 +213,7 @@ func TestDeterminism(t *testing.T) {
 		wantIDs(t, "Children mismatch", v2.Children(id), ids(v1.Children(id))...)
 		wantIDs(t, "Members mismatch", v2.Members(id), ids(v1.Members(id))...)
 	}
-	wantIDs(t, "Unscheduled mismatch", v2.Unscheduled().Other, ids(v1.Unscheduled().Other)...)
+	wantIDs(t, "Backlog mismatch", v2.Backlog().Other, ids(v1.Backlog().Other)...)
 }
 
 // TestResolvedMilestoneID pins THE definition of "directly assigned to a
