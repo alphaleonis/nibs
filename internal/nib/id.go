@@ -1,6 +1,8 @@
 package nib
 
 import (
+	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"unicode"
@@ -25,6 +27,43 @@ func NewID(prefix string, length int) string {
 		panic(err) // should never happen with valid alphabet
 	}
 	return prefix + id
+}
+
+// ErrIDNotFilename is the sentinel every ValidateIDForFilename refusal wraps, so
+// callers can classify the failure without matching on message text.
+var ErrIDNotFilename = errors.New("unusable nib id")
+
+// ValidateIDForFilename refuses an id that cannot survive the filename round
+// trip. An id becomes a filename (BuildFilename) and is read back out of one
+// (ParseFilename applied to filepath.Base) on the next load, so an id that is
+// not a plain file name within one directory names a DIFFERENT nib — or no nib
+// at all — as soon as the store is reloaded.
+//
+// This is deliberately NOT a charset gate: ParseFilename accepts any id shape,
+// and internal/ui/tree.go documents why that stays true. The rule here is about
+// PATH SHAPE only, and it is the whole rule:
+//
+//   - A path separator makes the leading part a directory. `--prefix a/b-`
+//     writes data/a/b-x9z2.md, whose id reads back as "b-x9z2"; `--prefix ../../`
+//     resolves upward out of the store entirely, because filepath.Join CLEANS
+//     its result rather than refusing it, and MkdirAll then creates whatever
+//     directories the traversal names. Both separators are refused on every
+//     platform: a backslash is an ordinary filename byte on Linux but a separator
+//     on Windows, and nib files travel between the two through git.
+//   - "." and ".." name a directory entry rather than a file. They carry no
+//     separator, so only a caller that assigns Nib.ID itself can reach them —
+//     the generated short id is [0-9a-z], so no prefix can compose one.
+//
+// Refusing separators also refuses every traversal: a ".." path SEGMENT cannot
+// form without one.
+func ValidateIDForFilename(id string) error {
+	if i := strings.IndexAny(id, `/\`); i >= 0 {
+		return fmt.Errorf("%w %q: an id must not contain the path separator %q — it becomes the nib's filename, so anything before a separator turns into a directory and the id no longer reads back as itself; check --prefix and the store's nibs.prefix", ErrIDNotFilename, id, id[i:i+1])
+	}
+	if id == "." || id == ".." {
+		return fmt.Errorf("%w %q: an id must name a file, and %q names a directory entry", ErrIDNotFilename, id, id)
+	}
+	return nil
 }
 
 // ParseFilename extracts the ID and optional slug from a nib filename. The

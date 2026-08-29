@@ -21,7 +21,7 @@ describe("getActionTargetIds", () => {
     s.toggleSelect("b", "follow");
     // Inject a bucket id directly — SelectionState's writers normally reject it
     // (nibs-mn0t), so this forces the helper's own filter to be exercised.
-    s.selectedIds = new Set(["a", "__no_milestone__", "b"]);
+    s.selectedIds = new Set(["a", "/__no_milestone__", "b"]);
     expect(s.hasMultiSelect).toBe(true);
     expect(getActionTargetIds(s, "ctx").sort()).toEqual(["a", "b"]);
   });
@@ -34,13 +34,13 @@ describe("getActionTargetIds", () => {
 
   it("does NOT return a bucket focused id — falls through to the context target", () => {
     const s = new SelectionState();
-    s.focus("__no_epic__"); // focus() admits any id, including a bucket
+    s.focus("/__no_epic__"); // focus() admits any id, including a bucket
     expect(getActionTargetIds(s, "ctx")).toEqual(["ctx"]);
   });
 
   it("does NOT return a bucket focused id when there is no context target", () => {
     const s = new SelectionState();
-    s.focus("__no_epic__");
+    s.focus("/__no_epic__");
     expect(getActionTargetIds(s, null)).toEqual([]);
   });
 
@@ -51,7 +51,7 @@ describe("getActionTargetIds", () => {
 
   it("does NOT return a bucket context target", () => {
     const s = new SelectionState();
-    expect(getActionTargetIds(s, "__no_feature_or_bug__")).toEqual([]);
+    expect(getActionTargetIds(s, "/__no_feature_or_bug__")).toEqual([]);
   });
 
   it("returns an empty array when nothing is targetable", () => {

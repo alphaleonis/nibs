@@ -248,7 +248,7 @@ describe("useTreeDrag", () => {
     // surface. The discriminating assertion below is drag.dropValid: with the
     // producer fix reverted, T1's displayParentId is the bucket id and the drop
     // is rejected there.
-    expect(rows.some(r => r.nib.id === "__no_epic__")).toBe(true);
+    expect(rows.some(r => r.nib.id === "/__no_epic__")).toBe(true);
 
     const drag = new DragState();
     const composable = setup({ drag, rows });
@@ -516,7 +516,7 @@ describe("useTreeDrag", () => {
     const dragged = makeNib({ id: "nibs-drag", type: "feature", parentId: null });
     const target = makeNib({ id: "nibs-target", type: "feature", parentId: null });
     const rows = [
-      makeRow(dragged, { displayParentId: "__no_milestone__" }),
+      makeRow(dragged, { displayParentId: "/__no_milestone__" }),
       makeRow(target, { displayParentId: "nibs-other-epic" }),
     ];
 

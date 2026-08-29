@@ -4,6 +4,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { flushSync } from "svelte";
 import { ACTIVE_VIEW_KEY, CONFIRM_DIALOG_KEY } from "$lib/contexts";
 import type { ConfirmDialogState, ConfirmDialogOptions } from "$lib/composables/useConfirmDialog.svelte";
+import type { ActiveView, MissingNibOutcome } from "$lib/composables/useActiveView.svelte";
+import type { ViewState } from "$lib/composables/activeView";
 import { Preferences } from "$lib/preferences.svelte";
 import { editNibForm } from "$lib/nibForm.svelte";
 import ActiveNibView from "./ActiveNibView.svelte";
@@ -66,6 +68,15 @@ function makeMockConfirmDialog(): ConfirmDialogState & { lastOpts: ConfirmDialog
   return state;
 }
 
+/**
+ * The form stub, deliberately NOT derived from `CreateForm | EditForm`. Unlike
+ * `FakeView` below, that derivation is impossible rather than merely skipped:
+ * both are classes with `#private` fields (their own and `BaseForm`'s), which
+ * makes them nominal, so no object literal can ever stand in for one. That is
+ * also why the two `realEditForm` fixtures below cast a genuine EditForm back
+ * to this shape — those casts are permanent, and closing them needs a
+ * production change (an interface the forms implement structurally).
+ */
 interface FakeForm {
   mode: "edit" | "create";
   id?: string;
@@ -180,27 +191,30 @@ function makeDetailNib(overrides: Record<string, unknown> = {}) {
   };
 }
 
-interface FakeView {
-  state: unknown;
+/** Strips `readonly` so the fixtures can drive the fake by assignment. */
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+
+/**
+ * The view stub these tests inject, DERIVED from `ActiveView` rather than
+ * re-declared beside it — so a member added to the presenter breaks this file
+ * instead of arriving here as `undefined`. A hand-written parallel interface is
+ * what let `savePending` reach three production sites with no test able to
+ * observe it: every one of its terms was inert by construction (nibs-kbyn).
+ *
+ * `Mutable` because the real surface is read-only while the fixtures steer the
+ * fake by assigning to it (`view.state`, `view.form`, `view.externalApplied`).
+ * Three members stay loose, because the alternative is fixtures rather than
+ * fidelity: `form` is a hand-built FakeForm, not a real Create/EditForm;
+ * `detail.nib` is a hand-built object, not the query-derived `DetailNib`; and
+ * `save` returns abbreviated outcomes (`snapshot: {}`) and is asserted on as a
+ * mock. `state` is NOT loosened — the fixtures already build exact `ViewState`
+ * shapes, so the real type costs nothing and catches a mistyped fixture.
+ */
+type FakeView = Omit<Mutable<ActiveView>, "form" | "detail" | "save"> & {
   form: FakeForm | null;
   detail: { nib: unknown; fetching: boolean } | null;
-  isOpen: boolean;
-  presentation: "docked" | "expanded";
-  blocksHistoryNav: boolean;
-  externalApplied: number;
-  open: ReturnType<typeof vi.fn>;
-  expand: ReturnType<typeof vi.fn>;
-  collapse: ReturnType<typeof vi.fn>;
-  startCreate: ReturnType<typeof vi.fn>;
-  startCreateChild: ReturnType<typeof vi.fn>;
-  chooseType: ReturnType<typeof vi.fn>;
-  cancelType: ReturnType<typeof vi.fn>;
   save: ReturnType<typeof vi.fn>;
-  requestClose: ReturnType<typeof vi.fn>;
-  syncTo: ReturnType<typeof vi.fn>;
-  noteMissing: ReturnType<typeof vi.fn>;
-  dispose: ReturnType<typeof vi.fn>;
-}
+};
 
 function makeView(opts: {
   kind?: "viewing" | "gone" | "creating";
@@ -209,10 +223,12 @@ function makeView(opts: {
   form?: FakeForm;
   detail?: { nib: unknown; fetching: boolean } | null;
   presentation?: "docked" | "expanded";
+  /** A null-remote conflict fallback is in flight for the active form. */
+  savePending?: boolean;
 }): FakeView {
   const kind = opts.kind ?? "viewing";
   const presentation = opts.presentation ?? "docked";
-  const stateObj =
+  const stateObj: ViewState =
     kind === "creating"
       ? { kind, defaults: { type: "task" }, presentation }
       : kind === "gone"
@@ -224,8 +240,11 @@ function makeView(opts: {
     detail: opts.detail ?? { nib: makeDetailNib(), fetching: false },
     isOpen: true,
     presentation: opts.presentation ?? "docked",
+    typePicker: null,
     blocksHistoryNav: false,
+    savePending: opts.savePending ?? false,
     externalApplied: 0,
+    invalidateDetailSeed: vi.fn(),
     open: vi.fn(),
     expand: vi.fn(),
     collapse: vi.fn(),
@@ -236,10 +255,14 @@ function makeView(opts: {
     save: vi.fn(async () => ({ kind: "saved", snapshot: {} })),
     requestClose: vi.fn(),
     syncTo: vi.fn(),
-    noteMissing: vi.fn(() => "closed"),
+    // "stale", not "closed": from a `closed` state the real noteMissing returns
+    // "stale" for every call ("closed" is only reachable from `viewing` with a
+    // pristine form), and the token is what tells the caller who owns healing
+    // the URL.
+    noteMissing: vi.fn((): MissingNibOutcome => "stale"),
     dispose: vi.fn(),
   });
-  return view as unknown as FakeView;
+  return view;
 }
 
 function renderView(
@@ -1148,6 +1171,46 @@ describe("ActiveNibView", () => {
       const form = makeEditForm({ dirty: false, externalChange: null });
       renderView(makeView({ form }), confirmDialog);
       expect(screen.queryByTestId("anv-conflict-banner")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("save re-entrancy while a null-remote conflict fallback is in flight", () => {
+    // `EditForm.save()` clears `form.saving` BEFORE the presenter's fallback
+    // fetch begins, so for the length of that fetch `view.savePending` is the
+    // only thing holding the save path shut. Both halves are covered: the
+    // visible control, and handleSave's own guard — which the editor's Ctrl+S
+    // reaches without going through the button at all.
+    it("keeps Save disabled and labelled Saving... while savePending", () => {
+      // Dirty, not saving, not gone: every other term of the disabled
+      // expression is false, so only `view.savePending` can hold the button
+      // shut — and only it can pick the "Saving..." label.
+      const form = makeEditForm({ dirty: true, saving: false });
+      renderView(makeView({ form, savePending: true }), confirmDialog);
+
+      const save = screen.getByTestId("anv-save");
+      expect(save).toBeDisabled();
+      expect(save).toHaveTextContent("Saving...");
+    });
+
+    it("refuses a save re-triggered from the editor's Ctrl+S while savePending", async () => {
+      const form = makeEditForm({ dirty: true, saving: false });
+      const view = makeView({ form, savePending: true });
+      renderView(view, confirmDialog);
+
+      // The disabled button cannot dispatch, but MarkdownEditor's Mod-s keymap
+      // calls handleSave directly — the re-dispatch this guard exists for.
+      await user.click(screen.getByTestId("anv-edit-toggle"));
+      // The editor must have really initialized, or the keystroke below lands
+      // on nothing and the assertion passes vacuously.
+      await waitFor(() =>
+        expect(screen.getByTestId("anv-editor-container").querySelector(".cm-content")).not.toBeNull(),
+      );
+      const content = screen.getByTestId("anv-editor-container").querySelector(".cm-content") as HTMLElement;
+
+      await user.click(content);
+      await user.keyboard("{Control>}s{/Control}");
+
+      expect(view.save).not.toHaveBeenCalled();
     });
   });
 

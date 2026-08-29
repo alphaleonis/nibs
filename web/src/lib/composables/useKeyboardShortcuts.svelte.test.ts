@@ -347,17 +347,17 @@ describe("useKeyboardShortcuts · confirm-dialog gate (nibs-an5d)", () => {
 });
 
 describe("useKeyboardShortcuts · bucket target guard (nibs-oxaq)", () => {
-  // A synthetic grouping-bucket id (e.g. "__no_milestone__") can be arrow-focused
+  // A synthetic grouping-bucket id (e.g. "/__no_milestone__") can be arrow-focused
   // (focus() has no bucket guard, unlike select/toggleSelect/rangeSelect) or supplied
   // as the context-menu target. getActionTargetIds must never resolve a bucket id, so
-  // Delete/Backspace can't dispatch a phantom deleteBatch(["__no_milestone__"]). Each
+  // Delete/Backspace can't dispatch a phantom deleteBatch(["/__no_milestone__"]). Each
   // negative test carries a real-id positive control (same key, same path) so it can
   // only pass because the bucket guard bit, not because the handler is unwired.
 
   describe.each(["Delete", "Backspace"] as const)("%s", key => {
     it("does NOT fire the confirm when a bucket row is focused", () => {
       const h = makeHarness();
-      h.selection.focus("__no_milestone__");
+      h.selection.focus("/__no_milestone__");
       mount(h);
 
       const button = focusEl(document.createElement("button"));
@@ -378,7 +378,7 @@ describe("useKeyboardShortcuts · bucket target guard (nibs-oxaq)", () => {
     });
 
     it("does NOT fire the confirm when the context-menu target is a bucket", () => {
-      const h = makeHarness({ getContextMenuNibId: () => "__no_milestone__" });
+      const h = makeHarness({ getContextMenuNibId: () => "/__no_milestone__" });
       mount(h);
 
       const button = focusEl(document.createElement("button"));

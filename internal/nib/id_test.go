@@ -1,6 +1,8 @@
 package nib
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -241,6 +243,48 @@ func TestParseFilenameAndBuildFilenameRoundtrip(t *testing.T) {
 			if gotID != tt.id || gotSlug != tt.slug {
 				t.Errorf("Roundtrip failed: BuildFilename(%q, %q) = %q, ParseFilename(_, %q) = (%q, %q)",
 					tt.id, tt.slug, filename, tt.prefix, gotID, gotSlug)
+			}
+		})
+	}
+}
+
+func TestValidateIDForFilename(t *testing.T) {
+	tests := []struct {
+		name    string
+		id      string
+		wantErr bool
+	}{
+		{"plain short id", "z5r9", false},
+		{"prefixed id", "nibs-z5r9", false},
+		{"uppercase prefix", "PX-tkn1", false},
+		{"underscores and dots inside a segment", "__no_milestone__.v2-z5r9", false},
+		{"leading dots but not a whole segment", "..z5r9", false},
+		{"forward slash", "a/b-z5r9", true},
+		{"leading forward slash", "/__no_milestone__z5r9", true},
+		{"parent traversal", "../../z5r9", true},
+		{"backslash", `a\b-z5r9`, true},
+		{"windows traversal", `..\..\z5r9`, true},
+		{"bare dot", ".", true},
+		{"bare parent", "..", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateIDForFilename(tt.id)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("ValidateIDForFilename(%q) = nil, want an error", tt.id)
+				}
+				if !errors.Is(err, ErrIDNotFilename) {
+					t.Errorf("ValidateIDForFilename(%q) error = %v, want one wrapping ErrIDNotFilename", tt.id, err)
+				}
+				if !strings.Contains(err.Error(), fmt.Sprintf("%q", tt.id)) {
+					t.Errorf("ValidateIDForFilename(%q) error = %q, should quote the offending id", tt.id, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("ValidateIDForFilename(%q) = %v, want nil", tt.id, err)
 			}
 		})
 	}

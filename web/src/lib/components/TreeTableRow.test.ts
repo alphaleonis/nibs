@@ -489,7 +489,7 @@ describe("TreeTableRow", () => {
   it("renders blank Created / Modified cells for a synthetic bucket row (empty dates)", () => {
     const visibleColumns: ColumnKey[] = ["title", "created", "modified"];
     const { container } = renderRow({
-      nib: makeTreeTableNib({ id: "__no_epic__", title: "No epic (2)", type: "", createdAt: "", updatedAt: "" }),
+      nib: makeTreeTableNib({ id: "/__no_epic__", title: "No epic (2)", type: "", createdAt: "", updatedAt: "" }),
       depth: 0,
       hasChildren: true,
       dimmed: false,
@@ -632,7 +632,7 @@ describe("TreeTableRow", () => {
 
   it("renders empty ID cell for a synthetic bucket node", () => {
     const { container } = renderRow({
-      nib: makeTreeTableNib({ id: "__no_epic__", title: "No epic (2)", type: "", status: "" }),
+      nib: makeTreeTableNib({ id: "/__no_epic__", title: "No epic (2)", type: "", status: "" }),
       depth: 0,
       hasChildren: true,
       dimmed: false,

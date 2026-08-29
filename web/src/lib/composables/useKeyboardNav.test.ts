@@ -178,7 +178,7 @@ describe("useKeyboardNav", () => {
     const header = makeNib({ id: "nibs-m1", type: "milestone" });
     const epic = makeNib({ id: "nibs-e1", type: "epic", parentId: "nibs-m1" });
     // Synthetic bucket row, interleaved between nib rows (as buildViewTree emits it).
-    const bucket = makeNib({ id: "__no_milestone__", type: "" });
+    const bucket = makeNib({ id: "/__no_milestone__", type: "" });
     const loose = makeNib({ id: "nibs-loose" });
     const rows = [makeRow(header), makeRow(epic), makeRow(bucket, { hasChildren: true }), makeRow(loose)];
     const { handleKeydown } = setup({ selection, rows });
@@ -191,7 +191,7 @@ describe("useKeyboardNav", () => {
     expect(selection.focusedNibId).toBe("nibs-loose");
     expect(selection.selectedIds.has("nibs-e1")).toBe(true);
     expect(selection.selectedIds.has("nibs-loose")).toBe(true);
-    expect(selection.selectedIds.has("__no_milestone__")).toBe(false);
+    expect(selection.selectedIds.has("/__no_milestone__")).toBe(false);
   });
 
   it("double mode: Shift+ArrowDown collapsing to one row leaves the detail panel alone", () => {
@@ -330,7 +330,7 @@ describe("useKeyboardNav", () => {
     const selection = new SelectionState();
     const toggleNode = vi.fn();
     const navigateToNib = vi.fn();
-    const bucketId = "__no_milestone__";
+    const bucketId = "/__no_milestone__";
     const rows = [makeRow(makeNib({ id: bucketId, type: "" }), { hasChildren: true })];
     const { handleKeydown } = setup({ selection, rows, toggleNode, navigateToNib });
 

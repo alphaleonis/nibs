@@ -389,3 +389,60 @@ func TestCreateTellsALongLivedHolderToRestartRatherThanRerun(t *testing.T) {
 		})
 	}
 }
+
+// TestCreateRefusesAStoredPrefixThatEscapesTheStore pins the third door onto
+// nib.NewID. `nibs init` and `nibs config set-prefix` both put their argument
+// through reprefix.ValidatePrefix, but nothing re-checks the value once it is IN
+// the config file — mintingVocabulary reads nibs.prefix and hands it straight to
+// the generator. A hand-edited (or hand-merged) config carrying a path separator
+// therefore poisons every create in the store, with no flag involved.
+//
+// Create is where all three doors meet, so the refusal lives there and is
+// asserted here on the id that actually reaches the filesystem.
+func TestCreateRefusesAStoredPrefixThatEscapesTheStore(t *testing.T) {
+	core, nibsDir := setupCoreWithStoredConfig(t, "nibs:\n  prefix: ../../pwn-\n  id_length: 4\n")
+
+	// The store is <tmp>/.nibs, and data/../../ resolves to <tmp> — the first
+	// directory outside the store a traversal reaches.
+	outside := filepath.Dir(nibsDir)
+	before, err := os.ReadDir(outside)
+	if err != nil {
+		t.Fatalf("reading %s: %v", outside, err)
+	}
+
+	b := &nib.Nib{Title: "Poisoned", Slug: "poisoned", Status: "todo"}
+	if err := core.Create(b); err == nil {
+		t.Fatalf("Create() = nil with id %q, want a refusal", b.ID)
+	} else if !errors.Is(err, nib.ErrIDNotFilename) {
+		t.Fatalf("Create() error = %v, want one wrapping nib.ErrIDNotFilename", err)
+	}
+
+	after, err := os.ReadDir(outside)
+	if err != nil {
+		t.Fatalf("reading %s: %v", outside, err)
+	}
+	if len(after) != len(before) {
+		t.Errorf("a refused create wrote outside the store: %d entries -> %d", len(before), len(after))
+	}
+	if n := len(core.All()); n != 0 {
+		t.Errorf("store holds %d nibs after a refused create, want 0", n)
+	}
+}
+
+// TestCreateRefusesACallerSuppliedIDThatIsNotAFilename covers the direct
+// entrypoint no prefix passes through: a caller that assigns Nib.ID itself. "."
+// and ".." carry no separator, so the separator clause never sees them, yet both
+// name a directory entry rather than a file.
+func TestCreateRefusesACallerSuppliedIDThatIsNotAFilename(t *testing.T) {
+	for _, id := range []string{".", "..", "sub/dir-x9z2"} {
+		t.Run(id, func(t *testing.T) {
+			core, _ := setupCoreWithStoredConfig(t, "nibs:\n  prefix: ok-\n  id_length: 4\n")
+			b := &nib.Nib{ID: id, Title: "Direct", Slug: "direct", Status: "todo"}
+			if err := core.Create(b); err == nil {
+				t.Fatalf("Create(ID=%q) = nil, want a refusal", id)
+			} else if !errors.Is(err, nib.ErrIDNotFilename) {
+				t.Errorf("Create(ID=%q) error = %v, want one wrapping nib.ErrIDNotFilename", id, err)
+			}
+		})
+	}
+}

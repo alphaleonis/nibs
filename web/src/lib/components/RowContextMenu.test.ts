@@ -411,8 +411,8 @@ describe("RowContextMenu", () => {
       // Right-clicking a "No X" grouping-bucket row sets nib to the bucket. Its id
       // is unresolvable for any bulk action, so getActionTargetIds must exclude it —
       // delete then early-returns and never opens the confirm (which would otherwise
-      // dispatch a phantom deleteBatch(["__no_milestone__"])).
-      renderMenu({ nib: makeNib({ id: "__no_milestone__" }) });
+      // dispatch a phantom deleteBatch(["/__no_milestone__"])).
+      renderMenu({ nib: makeNib({ id: "/__no_milestone__" }) });
 
       await waitFor(() => {
         expect(screen.getByTestId("ctx-delete")).toBeInTheDocument();
