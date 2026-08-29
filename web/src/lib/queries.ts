@@ -188,6 +188,8 @@ export const TREE_TABLE_QUERY = graphql(`
       createdAt
       updatedAt
       parentId
+      milestone
+      milestoneOrder
       blockingIds
       blockedByIds
       etag

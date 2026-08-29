@@ -17,6 +17,8 @@ function makeNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
     createdAt: "",
     updatedAt: "",
     parentId: null,
+    milestone: "",
+    milestoneOrder: "",
     blockingIds: [],
     blockedByIds: [],
     etag: "etag-test",

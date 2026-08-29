@@ -17,8 +17,8 @@ vi.mock("./tree", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./tree")>();
   return {
     ...actual,
-    buildViewTree: (...args: Parameters<typeof actual.buildViewTree>) =>
-      hooks.viewTree ?? actual.buildViewTree(...args),
+    buildShapedViewTree: (...args: Parameters<typeof actual.buildShapedViewTree>) =>
+      hooks.viewTree ?? actual.buildShapedViewTree(...args),
   };
 });
 
@@ -36,6 +36,8 @@ function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
     createdAt: "2026-03-15T10:00:00Z",
     updatedAt: "2026-03-20T10:00:00Z",
     parentId: null,
+    milestone: "",
+    milestoneOrder: "",
     blockingIds: [],
     blockedByIds: [],
     etag: "etag-test",

@@ -6,7 +6,7 @@ import { tick } from "svelte";
 import TreeTable from "./TreeTable.svelte";
 import type { TreeTableNib, ViewLevel, ColumnKey } from "../types";
 import { DEFAULT_COLUMN_WIDTHS } from "../types";
-import { displayContainerIdForItem, isSyntheticRowId } from "../tree";
+import { containingSectionRowId, isSyntheticRowId } from "../tree";
 import { OPEN_STATUSES } from "../constants";
 import { SelectionState } from "../selection.svelte";
 import { DragState } from "../drag.svelte";
@@ -28,6 +28,8 @@ function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
     createdAt: "2026-03-15T10:00:00Z",
     updatedAt: "2026-03-20T10:00:00Z",
     parentId: null,
+    milestone: "",
+    milestoneOrder: "",
     blockingIds: [],
     blockedByIds: [],
     etag: "etag-test",
@@ -2409,7 +2411,7 @@ describe("TreeTable", () => {
     }
 
     function milestoneBucketId(nibs: TreeTableNib[]): string {
-      const bucketId = displayContainerIdForItem(new Map(nibs.map(n => [n.id, n])), "nibs-loose", "milestones");
+      const bucketId = containingSectionRowId(new Map(nibs.map(n => [n.id, n])), "nibs-loose", "milestones");
       expect(bucketId).not.toBeNull();
       expect(isSyntheticRowId(bucketId!)).toBe(true);
       return bucketId!;

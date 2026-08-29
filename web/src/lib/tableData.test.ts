@@ -20,6 +20,8 @@ function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
     createdAt: "2026-03-15T10:00:00Z",
     updatedAt: "2026-03-20T10:00:00Z",
     parentId: null,
+    milestone: "",
+    milestoneOrder: "",
     blockingIds: [],
     blockedByIds: [],
     etag: "etag-test",
@@ -1030,7 +1032,7 @@ describe("buildTableData — an id appears at most once in rows (nibs-pxk4)", ()
    * the bucket put the id in `rows` twice.
    *
    * A bucket id now carries a leading "/", which no filename-derived id can hold
-   * (see GROUPING_LENSES), so these two spaces cannot meet however the store is
+   * (see isSyntheticRowId), so these two spaces cannot meet however the store is
    * populated. The cases below are the executable half of that claim: the
    * formerly-colliding nib renders once, and the lens's own bucket is a separate
    * row beside it.

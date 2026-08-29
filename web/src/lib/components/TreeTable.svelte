@@ -5,7 +5,7 @@
   import type { ColumnKey } from "../columns";
   import type { Preferences } from "../preferences.svelte";
   import { buildTableData } from "../tableData";
-  import { isSyntheticRowId, displayContainerIdForItem, buildViewTree, collectDescendantIds } from "../tree";
+  import { isSyntheticRowId, containingSectionRowId, buildViewTree, collectDescendantIds } from "../tree";
   import { applySort, nextTableSort } from "../tableSort";
   import { prepareFilter, matchesFilter } from "../filter";
   import { dragBlockFor, DRAG_BLOCK_TOAST_ID } from "../dragBlock";
@@ -392,11 +392,12 @@
         next.delete(current.parentId);
         current = nibMap.get(current.parentId);
       }
-      // The target may sit inside a container that holds it by display rather
-      // than by parentage — today a synthetic "No X" bucket — which is never any
-      // real nib's parentId, so the chain walk above cannot reach it.
-      // Un-collapse the enclosing container for the current lens too.
-      const containerId = displayContainerIdForItem(nibMap, nibId, resolvedViewLevel);
+      // The target may sit inside a container that holds it by ARRANGEMENT
+      // rather than by parentage — a fabricated "No X" section, or a header that
+      // is not the target's ancestor — which no real nib names as its parentId,
+      // so the chain walk above cannot reach it. Un-collapse the section the
+      // current lens puts this nib in too.
+      const containerId = containingSectionRowId(nibMap, nibId, resolvedViewLevel);
       if (containerId) next.delete(containerId);
       // If expansion changes nothing yet the nib is still not visible, it is in
       // the dataset but has no row, regardless of collapse state — either an

@@ -1,5 +1,6 @@
 import type { TreeTableNib, NibFilter, ViewLevel, TreeNode, TableSort } from "./types";
-import { buildViewTree, holdsChildrenByDisplay, isSyntheticRowId } from "./tree";
+import { buildShapedViewTree, holdsChildrenByDisplay, isSyntheticRowId, viewShapeFor } from "./tree";
+import type { ViewShape } from "./tree";
 import { makeNibComparator } from "./tableSort";
 import { hasClientFilters, matchesFilter } from "./filter";
 
@@ -25,21 +26,19 @@ import { hasClientFilters, matchesFilter } from "./filter";
  *     row that was clicked.
  *
  * Two things uphold it upstream: `buildTree` gives every nib exactly one parent
- * slot, and `buildViewTree`'s `classify` visits each node exactly once (a
- * grouping header and a bucket item both stop the descent, so a container nested
- * under another of its own tier stays inside that header's subtree instead of
- * also being promoted). A membership model where one nib can belong to several
- * containers — assignment-based grouping, multi-parent links — has to reconcile
- * that to a single row here, or pick a row key that is not the nib id and fix
- * all four consumers above.
+ * slot, and a grouping lens decides each nib ONCE — `buildShapedViewTree` asks
+ * `place` a single time per nib and reads that memo everywhere after, so the
+ * reconciliation a membership model needs (one nib, several plausible
+ * containers) happens there rather than being left to whichever consumer looks
+ * first. The alternative it rules out is a row key that is not the nib id, which
+ * would mean fixing all four consumers above.
  *
- * The synthetic bucket ids `buildViewTree` mints are covered too, by a third
- * mechanism: they are minted from a fixed table rather than derived from the
- * input, so neither of the two above reaches them, and instead each one carries
- * a leading "/" that no filename-derived id can hold (see GROUPING_LENSES in
- * tree.ts). The two id spaces are therefore disjoint by construction — a nib
- * cannot be given a bucket's id however its file is named — rather than merely
- * unlikely to overlap.
+ * The fabricated section-container ids are covered too, by a third mechanism:
+ * each carries a leading "/" that no filename-derived id can hold AND a last
+ * character outside the nanoid charset that no minted id can end on (see
+ * `isSyntheticRowId` in tree.ts). The two id spaces are therefore disjoint by
+ * construction — a nib cannot be given a section container's id however its file
+ * is named — rather than merely unlikely to overlap.
  */
 export interface RowData {
   nib: TreeTableNib;
@@ -74,18 +73,36 @@ export interface TableData {
   parentIds: Set<string>;
   /**
    * Every id the CURRENT view tree contains — real nibs plus the lens's own
-   * synthetic bucket. Answers "does this lens have a row for that id at all",
-   * which a grouping lens can say no to: it hides a container ranked above its
-   * tier while descending into it, so a milestone selected in the Tree view has
-   * no row under the Epics lens.
+   * fabricated section containers. Answers "does this lens have a row for that
+   * id at all", which a grouping lens can say no to: it hides a container ranked
+   * above its tier while descending into it, so a milestone selected in the Tree
+   * view has no row under the Epics lens.
    *
-   * Read off `buildViewTree`'s output, BEFORE the flatten, so it is
+   * Read off `buildShapedViewTree`'s output, BEFORE the flatten, so it is
    * collapse-independent — a collapsed parent must never look like a departed
    * one. It is also filter-independent: a client filter narrows which members
    * are rendered, not which the lens has, and the continuous filter pruner
    * already owns that dimension.
    */
   viewMemberIds: Set<string>;
+}
+
+/**
+ * Whether a row's ancestors are shown around it, which decides whether a client
+ * filter has to keep a non-matching ancestor for context.
+ *
+ * Exhaustive switch, no default arm: a fourth view shape is a compile error here
+ * rather than silently taking whichever answer a `!== "flat"` string test fell
+ * through to.
+ */
+function showsAncestorContext(shape: ViewShape): boolean {
+  switch (shape.kind) {
+    case "flat":
+      return false;
+    case "tree":
+    case "grouped":
+      return true;
+  }
 }
 
 export function buildTableData(
@@ -95,6 +112,8 @@ export function buildTableData(
   collapsedIds: ReadonlySet<string>,
   sort: TableSort | null = null,
 ): TableData {
+  const shape = viewShapeFor(viewLevel);
+
   // Stage 1: Build nibMap for O(1) parent lookups
   const nibMap = new Map<string, TreeTableNib>();
   for (const nib of allNibs) {
@@ -143,7 +162,7 @@ export function buildTableData(
     // unindented dimmed row with no visual link to its match. Skip the walk in
     // flat: a non-match is simply excluded like any other.
     const ancestorIds = new Set<string>();
-    if (viewLevel !== "flat") {
+    if (showsAncestorContext(shape)) {
       for (const id of matchingIds) {
         const visited = new Set<string>();
         let current = nibMap.get(id);
@@ -163,7 +182,7 @@ export function buildTableData(
   // epics/features lenses order their promoted headers + bucket items globally
   // by the sort field instead of by their hidden higher-tier ancestor.
   const nodeComparator = sort ? makeNibComparator(sort, nibMap) : undefined;
-  const tree = buildViewTree<TreeTableNib>(allNibs, viewLevel, nodeComparator);
+  const tree = buildShapedViewTree<TreeTableNib>(allNibs, shape, nodeComparator);
 
   // Stage 5a: `parentIds` and `visibleIds` are both derived from real `parentId`
   // links, so a node that holds its rows by ARRANGEMENT — a synthetic "No X"

@@ -86,8 +86,18 @@ type _GeneratedKeysExistOnClient = keyof GeneratedNibFilter extends keyof NibFil
 const _generatedKeysCheck: _GeneratedKeysExistOnClient = true;
 void _generatedKeysCheck;
 
+// The assignment axis lives HERE rather than on TreeTableNib because
+// `buildViewTree` is generic over `T extends TreeNib`, and a grouping lens
+// cannot read a field the bound does not promise.
 export interface TreeNib extends NibSummary {
   parentId: string | null;
+  /** Milestone assignment as stored — the scheduling axis, empty when
+   *  unassigned. Reported verbatim, so an assignment naming a missing or
+   *  non-milestone nib arrives here as written. */
+  milestone: string;
+  /** Fractional position within the assigned milestone's queue; empty when the
+   *  nib has never been placed in one. */
+  milestoneOrder: string;
 }
 
 export interface TreeTableNib extends TreeNib {
