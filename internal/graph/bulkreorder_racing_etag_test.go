@@ -41,16 +41,12 @@ func setupRacingReorderFixture(t *testing.T) (*Resolver, *nibcore.Core, string) 
 	t.Helper()
 	resolver, core := setupTestResolver(t)
 	parent := &nib.Nib{ID: "epic-race", Title: "Epic", Status: "todo", Type: "epic", Version: 1}
-	if err := core.Create(parent); err != nil {
-		t.Fatal(err)
-	}
+	mustCreate(t, core, parent)
 	for _, c := range []struct{ id, order string }{
 		{"alpha", "a0"}, {"bravo", "b0"}, {"victor", "c0"}, {"whiskey", "d0"},
 	} {
 		child := &nib.Nib{ID: c.id, Title: strings.ToUpper(c.id), Status: "todo", Type: "task", Parent: "epic-race", Order: c.order, Version: 1}
-		if err := core.Create(child); err != nil {
-			t.Fatal(err)
-		}
+		mustCreate(t, core, child)
 	}
 	return resolver, core, "epic-race"
 }

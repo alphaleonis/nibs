@@ -232,7 +232,7 @@ func TestSingleWriteSyncsItsDirectory(t *testing.T) {
 
 	t.Run("Create", func(t *testing.T) {
 		synced := recordDirSyncs(t)
-		b := &nib.Nib{ID: "sync-create-1", Title: "Created", Status: "todo", Version: 1}
+		b := &nib.Nib{ID: "sync-create-1", Slug: "created", Title: "Created", Status: "todo", Version: 1}
 		if err := core.Create(b); err != nil {
 			t.Fatalf("Create: %v", err)
 		}

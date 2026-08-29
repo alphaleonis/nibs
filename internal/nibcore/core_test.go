@@ -2027,6 +2027,7 @@ func TestUpdateWithETag(t *testing.T) {
 		b := &nib.Nib{
 			ID:     "etag-test-1",
 			Title:  "ETag Test",
+			Slug:   "etag-test",
 			Status: "todo",
 			Body:   "Original",
 		}
@@ -2046,6 +2047,7 @@ func TestUpdateWithETag(t *testing.T) {
 		b := &nib.Nib{
 			ID:     "etag-test-2",
 			Title:  "ETag Test",
+			Slug:   "etag-test",
 			Status: "todo",
 		}
 		if err := core.Create(b); err != nil {
@@ -2066,6 +2068,7 @@ func TestUpdateWithETag(t *testing.T) {
 		b := &nib.Nib{
 			ID:     "etag-test-3",
 			Title:  "ETag Test",
+			Slug:   "etag-test",
 			Status: "todo",
 		}
 		if err := core.Create(b); err != nil {
@@ -2087,6 +2090,7 @@ func TestUpdateWithETagRequired(t *testing.T) {
 		b := &nib.Nib{
 			ID:     "etag-req-test-1",
 			Title:  "ETag Required Test",
+			Slug:   "etag-required-test",
 			Status: "todo",
 		}
 		if err := core.Create(b); err != nil {
@@ -2106,6 +2110,7 @@ func TestUpdateWithETagRequired(t *testing.T) {
 		b := &nib.Nib{
 			ID:     "etag-req-test-2",
 			Title:  "ETag Required Test",
+			Slug:   "etag-required-test",
 			Status: "todo",
 		}
 		if err := core.Create(b); err != nil {
@@ -2126,6 +2131,7 @@ func TestUpdateWithETagRequired(t *testing.T) {
 		b := &nib.Nib{
 			ID:     "etag-req-test-3",
 			Title:  "ETag Required Test",
+			Slug:   "etag-required-test",
 			Status: "todo",
 		}
 		if err := core.Create(b); err != nil {
@@ -2146,6 +2152,7 @@ func TestUpdateWithETagDebug(t *testing.T) {
 	b := &nib.Nib{
 		ID:     "etag-debug",
 		Title:  "ETag Test",
+		Slug:   "etag-test",
 		Status: "todo",
 		Body:   "Original",
 	}

@@ -29,14 +29,31 @@ const (
 )
 
 // ValidatePrefix checks a prefix against the repo's convention:
-// lowercase alphanumerics followed by a trailing dash, length 2–16.
+// lowercase alphanumerics followed by a trailing dash, length 2–16, and no
+// internal double dash.
 // Returns nil if valid, or a descriptive error.
+//
+// The double-dash clause is separate from prefixPattern rather than folded into
+// it because the two refusals have different things to say: the pattern's
+// message is the pattern, which tells a caller who typed "a--b" nothing about
+// why those characters are the problem. It is checked last so the more basic
+// failures — a prefix of the wrong length, or one carrying an uppercase letter
+// or an underscore — still report themselves first.
+//
+// nib.ValidateIDRoundTrip is the general form of this rule and the one that
+// actually holds the line: it runs in Core.Create, so it also covers the shapes
+// that reach a file name without passing through here — `nibs new --prefix`
+// composes an id from its flag directly, and a hand-edited config.yml reaches
+// the minting path with no validation of any kind.
 func ValidatePrefix(s string) error {
 	if len(s) < minPrefixLen || len(s) > maxPrefixLen {
 		return fmt.Errorf("invalid prefix %q: length must be between %d and %d characters", s, minPrefixLen, maxPrefixLen)
 	}
 	if !prefixPattern.MatchString(s) {
 		return fmt.Errorf("invalid prefix %q: must match %s", s, prefixPattern.String())
+	}
+	if i := strings.Index(s, "--"); i >= 0 {
+		return fmt.Errorf("invalid prefix %q: a double dash is what a nib file name puts between the id and the slug, so every nib named under this prefix would read back as %q — the text before that double dash", s, s[:i])
 	}
 	return nil
 }

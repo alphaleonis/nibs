@@ -102,6 +102,7 @@ func TestCheckBrokenDocuments(t *testing.T) {
 	// Create nib with one valid and one broken document link
 	b := &nib.Nib{
 		ID:        "doc-check-1",
+		Slug:      "doc-check",
 		Title:     "Doc Check",
 		Status:    "todo",
 		Version:   1,

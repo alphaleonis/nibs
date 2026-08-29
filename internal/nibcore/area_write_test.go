@@ -27,7 +27,11 @@ func setupAreaCore(t *testing.T) (*Core, string) {
 		t.Fatalf("failed to create test store: %v", err)
 	}
 
-	cfg := config.Default()
+	// Prefixed, because every nib this file creates is named "nibs-…": a store
+	// declaring no prefix parses such a file name with the legacy single-dash
+	// split, so the id would read back as "nibs" and Create refuses it (see
+	// nib.ValidateIDRoundTrip). A real store always declares one.
+	cfg := config.DefaultWithPrefix("nibs-")
 	cfg.Areas = []config.AreaConfig{
 		{Name: "web", Children: []config.AreaConfig{{Name: "dashboard"}, {Name: "ui"}}},
 		{Name: "auth"},

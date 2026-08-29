@@ -252,6 +252,48 @@ func TestSetPrefix_InvalidNewPrefix_Rejected(t *testing.T) {
 	}
 }
 
+// TestSetPrefix_DoubleDashNewPrefix_Rejected pins the prefix shape that reads as
+// valid and is not. "a--b-" is nothing but lowercase alphanumerics and dashes
+// ending in a dash, so prefixPattern accepts it — but a double dash is exactly
+// what a nib file name puts between the id and the slug, so renaming this store
+// under it would leave every file parsing back to the id "a" and collapse the
+// whole store onto one nib. Refused before anything is renamed, with the
+// VALIDATION code the other new-prefix refusal carries.
+func TestSetPrefix_DoubleDashNewPrefix_Rejected(t *testing.T) {
+	_, nibsDir, cfgPath := setupSetPrefixTest(t, "tnib-",
+		testNibSpec{filename: "tnib-aaa--only.md", id: "tnib-aaa"},
+	)
+
+	err := runSetPrefixCmd(t, cfgPath, nibsDir, "a--b", "--json")
+	if err == nil {
+		t.Fatal("expected error for the prefix a--b, got nil")
+	}
+	var ce *output.CodedError
+	if !errors.As(err, &ce) {
+		t.Fatalf("refusal is uncoded (%T): %v", err, err)
+	}
+	if ce.Code != output.ErrValidation {
+		t.Errorf("code = %q, want %q — a prefix this command cannot use is the caller's to fix", ce.Code, output.ErrValidation)
+	}
+	if !strings.Contains(err.Error(), "a--b-") {
+		t.Errorf("error %q does not quote the prefix it refused", err.Error())
+	}
+
+	// Nothing renamed: the file keeps its name, and no file under the new prefix
+	// exists beside it.
+	if _, statErr := os.Stat(dataPath(nibsDir, "tnib-aaa--only.md")); statErr != nil {
+		t.Errorf("expected the original file to remain, stat err=%v", statErr)
+	}
+	if _, statErr := os.Stat(dataPath(nibsDir, "a--b-aaa--only.md")); statErr == nil {
+		t.Error("a refused set-prefix renamed a file")
+	}
+
+	// Config unchanged.
+	if cfg := loadCfg(t, cfgPath); cfg.Nibs.Prefix != "tnib-" {
+		t.Errorf("cfg prefix = %q, want unchanged %q", cfg.Nibs.Prefix, "tnib-")
+	}
+}
+
 func TestSetPrefix_GitDirtyWithoutForce_Rejected(t *testing.T) {
 	_, nibsDir, cfgPath := setupSetPrefixTest(t, "tnib-",
 		testNibSpec{filename: "tnib-aaa--only.md", id: "tnib-aaa"},

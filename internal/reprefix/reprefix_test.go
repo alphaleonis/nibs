@@ -19,6 +19,11 @@ func TestValidatePrefix_Invalid(t *testing.T) {
 		{"slash", "nibs/"},
 		{"too long", "abcdefghijklmnop-"},
 		{"leading dash", "-nibs-"},
+		// A double dash passes prefixPattern — it is nothing but lowercase
+		// alphanumerics and dashes ending in a dash — yet it is the separator
+		// BuildFilename puts between a nib's id and its slug, so it is refused by
+		// name.
+		{"double dash", "a--b-"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

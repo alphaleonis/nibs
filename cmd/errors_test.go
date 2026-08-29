@@ -731,6 +731,17 @@ func TestMutationErrCodeBoundaries(t *testing.T) {
 			output.ErrValidation,
 		},
 		{
+			// An id whose file name reads back as a different id. It reaches this
+			// function only wrapped — `nibs new` prefixes "failed to create nib:"
+			// — and create is the surface whose fallback is FILE_ERROR, so
+			// without the branch a bad --prefix exits 5 and sends the caller to
+			// look at the filesystem. Its path-shape sibling already exits 2.
+			"an id whose file name does not read back as itself",
+			fmt.Errorf("failed to create nib: %w",
+				nib.ValidateIDRoundTrip("c.d-h1wy", "", "tnib-")),
+			output.ErrValidation,
+		},
+		{
 			"unreadable filter target holding a not-found reader error",
 			&graph.FilterTargetUnreadableError{
 				Field: "siblingId", ID: "gone", ReaderErr: nib.ErrNotFound,

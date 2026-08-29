@@ -1039,11 +1039,7 @@ func TestIsBlocked(t *testing.T) {
 		blockedByActive, blockedByCompleted, blockedByScrapped,
 		notBlocked, blockedByBroken, mixedBlockers, allResolvedBlockers,
 	}
-	for _, b := range nibs {
-		if err := core.Create(b); err != nil {
-			t.Fatalf("Create error: %v", err)
-		}
-	}
+	createAll(t, core, nibs)
 
 	tests := []struct {
 		name  string
@@ -1110,11 +1106,7 @@ func TestIsBlocking(t *testing.T) {
 		activeBlocker, completedBlocker,
 		activeTarget, completedTarget, notBlocking,
 	}
-	for _, b := range nibs {
-		if err := core.Create(b); err != nil {
-			t.Fatalf("Create error: %v", err)
-		}
-	}
+	createAll(t, core, nibs)
 
 	tests := []struct {
 		name  string
@@ -1169,11 +1161,7 @@ func TestFindActiveBlockers(t *testing.T) {
 	}
 
 	nibs := []*nib.Nib{activeBlocker1, activeBlocker2, completedBlocker, target, noBlockers}
-	for _, b := range nibs {
-		if err := core.Create(b); err != nil {
-			t.Fatalf("Create error: %v", err)
-		}
-	}
+	createAll(t, core, nibs)
 
 	t.Run("returns active blockers from BlockedBy field", func(t *testing.T) {
 		blockers := core.FindActiveBlockers("target")
@@ -1412,5 +1400,23 @@ func TestLinkSweepsAcquireWriteLock(t *testing.T) {
 				t.Fatal("the sweep did not complete after the write lock was released")
 			}
 		})
+	}
+}
+
+// createAll writes each fixture nib the way a real create does: with the slug
+// nib.Slugify derives from the title, which is what the CreateNib resolver hands
+// Core.Create for every nib the product makes. It is load-bearing here because
+// these ids carry dashes and this store declares no prefix — a slugless
+// "active-blocker.md" is taken apart by the legacy single-dash split and reads
+// back as "active", so Core.Create refuses it (nib.ValidateIDRoundTrip). The
+// slug puts BuildFilename's "--" ahead of those dashes, which is where
+// ParseFilename looks first.
+func createAll(t *testing.T, core *Core, nibs []*nib.Nib) {
+	t.Helper()
+	for _, b := range nibs {
+		b.Slug = nib.Slugify(b.Title)
+		if err := core.Create(b); err != nil {
+			t.Fatalf("Create error: %v", err)
+		}
 	}
 }

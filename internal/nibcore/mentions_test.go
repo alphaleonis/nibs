@@ -15,6 +15,14 @@ import (
 
 // mustLoadPrefixedCore builds a fresh Core with the "nibs-" prefix and an
 // empty data directory — the common shape across the Core mention tests.
+//
+// Declaring NO areas is load-bearing for at least one caller, not just an
+// omission: TestUpdateRefusesAxesOnMilestone hands a milestone an undeclared
+// area and can only get the axis refusal if ValidateAxes runs before
+// ValidateArea, which is how Core.Update's documented ordering stays pinned.
+// Adding an `areas:` block here would retire that guard silently — the test
+// keeps passing, because both orderings then produce the same message. A test
+// needing a vocabulary wants setupAreaCore instead.
 func mustLoadPrefixedCore(t *testing.T) (*Core, string) {
 	t.Helper()
 	tmpDir := t.TempDir()
