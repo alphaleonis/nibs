@@ -97,7 +97,11 @@ function makeMockActiveView(selection: SelectionState) {
     save: vi.fn(async () => undefined),
     requestClose: vi.fn(async () => { selection.close(); }),
     syncTo: vi.fn(),
-    noteMissing: vi.fn((): MissingNibOutcome => "closed"),
+    // "stale", not "closed": from a `closed` state the real noteMissing returns
+    // "stale" for every call ("closed" is only reachable from `viewing` with a
+    // pristine form), and the token is what tells the caller who owns healing
+    // the URL.
+    noteMissing: vi.fn((): MissingNibOutcome => "stale"),
     invalidateDetailSeed: vi.fn(),
     dispose: vi.fn(),
   } satisfies ActiveView;

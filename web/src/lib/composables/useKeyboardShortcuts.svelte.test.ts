@@ -3,7 +3,8 @@ import { flushSync } from "svelte";
 import { SelectionState } from "../selection.svelte";
 import { useKeyboardShortcuts } from "./useKeyboardShortcuts.svelte";
 import type { HistoryNav } from "./useHistoryNav.svelte";
-import type { ActiveView } from "./useActiveView.svelte";
+import type { ActiveView, MissingNibOutcome } from "./useActiveView.svelte";
+import type { ViewState } from "./activeView";
 import type { ConfirmDialogState } from "./useConfirmDialog.svelte";
 import type { MutationStore } from "../mutations/store.svelte";
 
@@ -21,35 +22,80 @@ function makeHarness(
   overrides: {
     selection?: SelectionState;
     isOpen?: boolean;
-    presentation?: string;
+    presentation?: ActiveView["presentation"];
     confirmOpen?: boolean;
     getContextMenuNibId?: () => string | null;
   } = {},
 ) {
   const selection = overrides.selection ?? new SelectionState();
 
+  // `satisfies` rather than a cast: a member added to HistoryNav has to fail
+  // HERE, where the stub goes stale, instead of being waved through. What it
+  // does NOT close is parameter lists — a zero-arg vi.fn() satisfies any arity —
+  // so `replaceClosed`, the one nav member these tests observe, is typed from
+  // the interface. Dropping the cast is what makes `h.nav.replaceClosed` a Mock
+  // at all; the generic on top of that types its call record from the interface
+  // instead of the `any[]` a bare vi.fn() falls back to. `replaceClosed()` takes
+  // no parameters, so that narrowing buys nothing here beyond one consistent
+  // rule — pin every member these tests observe — and it is `startCreate`/`open`
+  // below that get a real parameter list out of it.
   const nav = {
     navigateToNib: vi.fn(),
     closePanel: vi.fn(),
-    replaceClosed: vi.fn(),
+    replaceClosed: vi.fn<HistoryNav["replaceClosed"]>(),
     handlePopState: vi.fn(),
     syncFromUrl: vi.fn(),
-  } as unknown as HistoryNav;
+  } satisfies HistoryNav;
 
-  const startCreate = vi.fn(async () => {});
-  const open = vi.fn(async () => {});
-  const requestClose = vi.fn(async () => {});
+  // The three members these tests observe, typed from the interface for the
+  // reason given on `nav` — `requestClose()` is another zero-parameter member,
+  // pinned for that same consistency rather than for its call record. The
+  // argument assertions further down on `startCreate`/`open` are a RUNTIME
+  // guard, not a compile-time one: vitest declares `toHaveBeenCalledWith` as
+  // `<E extends any[]>(...args: E)`, so it checks nothing against the signature.
+  const startCreate = vi.fn<ActiveView["startCreate"]>(async () => {});
+  const open = vi.fn<ActiveView["open"]>(async () => {});
+  const requestClose = vi.fn<ActiveView["requestClose"]>(async () => {});
+  // `state`, `isOpen` and `presentation` are not independent in production:
+  // the latter two are derived from the first (useActiveView.svelte.ts).
+  // Deriving them here too keeps the `isOpen` knob while making it impossible to
+  // build a stub production can never occupy — an open view on a `closed` state.
+  const state: ViewState = overrides.isOpen
+    ? { kind: "viewing", nibId: "tnib-open", presentation: overrides.presentation ?? "docked" }
+    : { kind: "closed" };
+  // The rest of the surface is inert here: these tests neither call nor observe
+  // it, and it is spelled out only so `satisfies` can hold the stub to the whole
+  // interface. Mirrors the sibling stub in RowContextMenu.test.ts.
   const view = {
-    isOpen: overrides.isOpen ?? false,
-    presentation: overrides.presentation ?? "docked",
-    startCreate,
+    state,
+    form: null,
+    detail: null,
+    isOpen: state.kind !== "closed",
+    presentation: state.kind === "closed" ? "docked" : state.presentation,
+    typePicker: null,
+    blocksHistoryNav: false,
+    savePending: false,
+    externalApplied: 0,
     open,
+    expand: vi.fn(),
+    collapse: vi.fn(),
+    startCreate,
+    startCreateChild: vi.fn(async () => {}),
+    chooseType: vi.fn(async () => {}),
+    cancelType: vi.fn(),
+    save: vi.fn(async () => undefined),
     requestClose,
-  } as unknown as ActiveView;
+    syncTo: vi.fn(),
+    // "stale", not "closed": from a `closed` state the real noteMissing returns
+    // "stale" for every call ("closed" is only reachable from `viewing` with a
+    // pristine form), and the token is what tells the caller who owns healing
+    // the URL.
+    noteMissing: vi.fn((): MissingNibOutcome => "stale"),
+    invalidateDetailSeed: vi.fn(),
+    dispose: vi.fn(),
+  } satisfies ActiveView;
 
-  const showConfirm = vi.fn();
-  const close = vi.fn();
-  const dismiss = vi.fn();
+  const showConfirm = vi.fn<ConfirmDialogState["showConfirm"]>();
   const confirmDialog = {
     open: overrides.confirmOpen ?? false,
     title: "",
@@ -60,10 +106,14 @@ function makeHarness(
     saveLabel: null,
     saveAction: null,
     showConfirm,
-    close,
-    dismiss,
-  } as unknown as ConfirmDialogState;
+    close: vi.fn(),
+    dismiss: vi.fn(),
+  } satisfies ConfirmDialogState;
 
+  // The cast here is permanent, unlike the three above: MutationStore is a class
+  // with `#private` fields, which makes it nominal — no object literal can ever
+  // `satisfies` it. Dropping it needs a production change (an executor interface,
+  // or narrowing the parameter to `Pick<MutationStore, "execute">`).
   const execute = vi.fn(async () => ({ ok: true }));
   const mutations = { execute } as unknown as MutationStore;
 
@@ -217,6 +267,7 @@ describe("useKeyboardShortcuts · confirm-dialog gate (nibs-an5d)", () => {
     press("n", button);
 
     expect(h.startCreate).toHaveBeenCalledTimes(1);
+    expect(h.startCreate).toHaveBeenCalledWith({ type: "task" });
   });
 
   it("'$mod+n' does NOT start a create while a confirm dialog is open", () => {
@@ -265,6 +316,7 @@ describe("useKeyboardShortcuts · confirm-dialog gate (nibs-an5d)", () => {
     press("e", button);
 
     expect(h.open).toHaveBeenCalledTimes(1);
+    expect(h.open).toHaveBeenCalledWith("tnib-abcd");
   });
 
   // Delete/Backspace are the wrong-dialog-answer variant: repainting the open
@@ -380,7 +432,7 @@ describe("useKeyboardShortcuts · post-delete cleanup", () => {
   /** Press Delete and run the confirm dialog's action, i.e. confirm the delete. */
   async function deleteAndConfirm(h: ReturnType<typeof makeHarness>): Promise<void> {
     press("Delete", focusEl(document.createElement("button")));
-    const opts = h.showConfirm.mock.calls[0]?.[0] as { action: () => Promise<void> } | undefined;
+    const opts = h.showConfirm.mock.calls[0]?.[0];
     expect(opts).toBeDefined();
     await opts!.action();
   }

@@ -3,6 +3,45 @@ import { buildViewTree, isBucketId } from "./tree";
 import { makeNibComparator } from "./tableSort";
 import { hasClientFilters, matchesFilter } from "./filter";
 
+/**
+ * One rendered table row.
+ *
+ * INVARIANT: across `TableData.rows`, a real nib's id appears at most ONCE. The
+ * rendered list is keyed and addressed by id alone, so a repeat is not a
+ * cosmetic extra row; it silently mis-targets four consumers at once, none of
+ * which can tell which occurrence was meant:
+ *   - TreeTable's delegated handlers carry only the id (`getNibIdFromEvent`) and
+ *     recover everything structural with `rows.find(r => r.nib.id === nibId)`,
+ *     so a second row with that id is unreachable and every action aimed at it
+ *     lands on the first.
+ *   - the keyed `{#each rows as row (row.nib.id)}` in TreeTable requires unique
+ *     keys; Svelte throws `each_key_duplicate` on a repeat, taking the table
+ *     down rather than rendering it wrong.
+ *   - the `tr[data-nib-id="..."]` selectors behind reveal-scroll, drag and
+ *     keyboard navigation resolve to the first match in document order, so
+ *     focus, scroll and drop targets can point at a row the user never touched.
+ *   - `visibleIds.indexOf` in selection.svelte.ts anchors a range-select on the
+ *     first occurrence, so shift-click can select a span that does not reach the
+ *     row that was clicked.
+ *
+ * Two things uphold it upstream: `buildTree` gives every nib exactly one parent
+ * slot, and `buildViewTree`'s `classify` visits each node exactly once (a
+ * grouping header and a bucket item both stop the descent, so a container nested
+ * under another of its own tier stays inside that header's subtree instead of
+ * also being promoted). A membership model where one nib can belong to several
+ * containers — assignment-based grouping, multi-parent links — has to reconcile
+ * that to a single row here, or pick a row key that is not the nib id and fix
+ * all four consumers above.
+ *
+ * Neither mechanism reaches the synthetic bucket ids, which `buildViewTree`
+ * mints from a fixed table rather than deriving from the input: a real nib
+ * carrying one of them collides with its lens's bucket and is rendered twice.
+ * That is reachable rather than theoretical — a nib id comes from its filename
+ * and `nib.ParseFilename` applies no charset gate, so `__no_milestone__.md`
+ * yields that id verbatim. It is a known defect, tracked as nibs-b2vf and
+ * characterized in tableData.test.ts; settling it should let the sentence above
+ * cover bucket ids too.
+ */
 export interface RowData {
   nib: TreeTableNib;
   depth: number;
