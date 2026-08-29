@@ -119,8 +119,14 @@
   const drag = new DragState();
   // Collapse state lives here — OUTSIDE the {#key position} block that remounts the
   // PaneGroup (and TreeTable) on a dock toggle — so it survives the remount, like
-  // selection/drag.
-  const treeView = new TreeViewState();
+  // selection/drag. The constructor argument seeds `activeLevel` from the restored
+  // preference so it names the lens actually on screen from the first render
+  // rather than the default. Nothing in production reads it yet: it is scaffolding
+  // for per-view collapse and scroll memory (nibs-g6sb), which needs a level that
+  // still names the OUTGOING view while `prefs.viewLevel` already names the
+  // incoming one. The switch itself does not consult it — `switchViewLevel` takes
+  // `from` from its caller.
+  const treeView = new TreeViewState(prefs.viewLevel);
   const confirmDialog = createConfirmDialog();
 
   // --- active-nib-view presenter (unified detail/editor) ------------------
@@ -602,6 +608,7 @@
   <UpdateBanner />
   <Toolbar
     {prefs}
+    {treeView}
     {projectName}
     {availableTags}
     connectionStatus={recovery.status}

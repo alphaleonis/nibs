@@ -19,7 +19,8 @@
   import { typeIcons } from "../icons";
   import { priorityIndicators } from "../badges";
   import type { TypeIconInfo } from "../icons";
-  import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnOrder, emitFilter as emitFilterHelper } from "../resolvePrefs";
+  import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnOrder, emitFilter as emitFilterHelper, switchViewLevel } from "../resolvePrefs";
+  import type { TreeViewState } from "../treeView.svelte";
   import { parseQuery, serializeQuery, getCompletion, tokenGroups, tokenSegments, relTokenValueContext } from "../query";
   import type { Completion, QueryFilter, SpanKind, RelValueContext, NibSuggestion } from "../query";
   import { createNibSearch, type SearchNibsFn } from "../searchNibs";
@@ -45,6 +46,7 @@
     onchange = undefined as ((filter: NibFilter) => void) | undefined,
     viewLevel = undefined as ViewLevel | undefined,
     onviewlevelchange = undefined as ((level: ViewLevel) => void) | undefined,
+    treeView = undefined as TreeViewState | undefined,
     visibleColumns = undefined as ColumnKey[] | undefined,
     oncolumnschange = undefined as ((columns: ColumnKey[]) => void) | undefined,
     columnOrder = undefined as ColumnKey[] | undefined,
@@ -71,6 +73,11 @@
     onchange?: (filter: NibFilter) => void;
     viewLevel?: ViewLevel;
     onviewlevelchange?: (level: ViewLevel) => void;
+    /** Threaded from App rather than read from context: `useTreeView()` throws
+     *  when absent, and the toolbar renders standalone in its own tests with no
+     *  table to reconcile. Absent, the view still switches — nothing reconciles
+     *  it. */
+    treeView?: TreeViewState;
     visibleColumns?: ColumnKey[];
     oncolumnschange?: (columns: ColumnKey[]) => void;
     columnOrder?: ColumnKey[];
@@ -213,11 +220,10 @@
   }
 
   function handleSelectViewLevel(level: ViewLevel) {
-    if (prefs) {
-      prefs.viewLevel = level;
-    } else {
-      onviewlevelchange?.(level);
-    }
+    // Through the seam, never straight at the preference: switching lenses can
+    // leave the focused/selected rows without a row to be on, and the write alone
+    // cannot tell the table that happened.
+    switchViewLevel(prefs, onviewlevelchange, treeView, resolvedViewLevel, level);
     viewLevelOpen = false;
   }
 

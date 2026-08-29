@@ -308,6 +308,69 @@ describe("buildTableData", () => {
     });
   });
 
+  describe("viewMemberIds (what the lens has a row for)", () => {
+    // A milestone over an epic over a task. Under the Epics lens the milestone is
+    // descended into but never emitted, so it has no row to be selected on — the
+    // membership set is what lets a view switch notice that.
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "m1", type: "milestone", title: "Milestone" }),
+      makeTreeTableNib({ id: "e1", type: "epic", title: "Epic", parentId: "m1" }),
+      makeTreeTableNib({ id: "t1", type: "task", title: "Task", parentId: "e1" }),
+    ];
+
+    it("is empty for empty input", () => {
+      expect(buildTableData([], emptyFilter, "epics", noCollapsed).viewMemberIds).toEqual(new Set());
+    });
+
+    it("holds every nib in the Tree view", () => {
+      const result = buildTableData(nibs, emptyFilter, "none", noCollapsed);
+
+      expect(result.viewMemberIds).toEqual(new Set(["m1", "e1", "t1"]));
+    });
+
+    it("omits a container the lens hides while descending into it", () => {
+      const result = buildTableData(nibs, emptyFilter, "epics", noCollapsed);
+
+      expect(result.viewMemberIds.has("m1")).toBe(false);
+      expect(result.viewMemberIds).toEqual(new Set(["e1", "t1"]));
+    });
+
+    it("holds the lens's own synthetic bucket, which is a row like any other", () => {
+      const loose = [makeTreeTableNib({ id: "t9", type: "task", title: "Loose" })];
+      const result = buildTableData(loose, emptyFilter, "epics", noCollapsed);
+
+      expect(result.viewMemberIds).toEqual(new Set(["t9", "/__no_epic__"]));
+    });
+
+    it("is collapse-INDEPENDENT: a collapsed parent's children are still members", () => {
+      // Read off buildViewTree's output rather than the flattened rows, so a
+      // collapsed subtree never looks like a departed one — collapsing a branch
+      // must not deselect what is inside it.
+      const collapsed = buildTableData(nibs, emptyFilter, "epics", new Set(["e1"]));
+
+      expect(collapsed.rows.map(r => r.nib.id)).toEqual(["e1"]);
+      expect(collapsed.viewMemberIds).toEqual(new Set(["e1", "t1"]));
+    });
+
+    it("answers tree membership only — a client filter narrows rows, not members", () => {
+      // The continuous filter pruner already owns the filter dimension; folding it
+      // in here would make one set answer two different questions.
+      const filtered = buildTableData(nibs, { type: ["epic"] }, "none", noCollapsed);
+
+      expect(filtered.rows.some(r => r.dimmed)).toBe(true);
+      expect(filtered.viewMemberIds).toEqual(new Set(["m1", "e1", "t1"]));
+    });
+
+    it("names exactly the ids the lens emits as rows, in every view", () => {
+      // The set and the rows must agree, or a reconcile prunes away a row the user
+      // can see (or spares one they cannot).
+      for (const level of VIEW_LEVELS) {
+        const result = buildTableData(nibs, emptyFilter, level, noCollapsed);
+        expect(new Set(result.rows.map(r => r.nib.id)), level).toEqual(result.viewMemberIds);
+      }
+    });
+  });
+
   describe("completeness invariant (messy hierarchy)", () => {
     // Every type at root and mis-nested (tier-skipping / orphaned), plus a dangling
     // parentId. No hierarchy inversions, so rank comparisons are well-defined.

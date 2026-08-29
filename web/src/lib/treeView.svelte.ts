@@ -1,3 +1,7 @@
+import type { ViewLevel } from "./types";
+import { DEFAULT_VIEW_LEVEL } from "./types";
+import type { ViewTransition } from "./viewTransition";
+
 /**
  * Owns the tree's expand/collapse state, lifted out of TreeTable so it survives
  * a TreeTable remount. App wraps the whole Resizable.PaneGroup (including the
@@ -36,10 +40,89 @@ export class TreeViewState {
    */
   scrollTop: number = $state(0);
 
+  /**
+   * A view switch recorded by `switchViewLevel` and not yet reconciled. A
+   * consumed-and-cleared pending slot, modeled on
+   * `SelectionState.pendingEnsureVisibleId`: the write path records it, TreeTable's
+   * applier effect reads it once, acts, and calls `clearTransition`.
+   *
+   * It exists because the switch itself carries information the new state cannot:
+   * `prefs.viewLevel` says which view is on screen, never that it just changed or
+   * what it changed FROM.
+   */
+  #pendingTransition: ViewTransition | null = $state(null);
+
+  /**
+   * Bumped whenever a transition retires the saved scroll offset. Scroll
+   * ownership in `useScrollRestore` is keyed on (element, epoch), so advancing
+   * this retires the current claim on an element that is NOT being recreated —
+   * which is exactly a view switch, where the same container now shows different
+   * content and its offset means something else.
+   */
+  #scrollEpoch: number = $state(0);
+
+  /**
+   * The view level currently ON SCREEN — the destination of the last transition
+   * that was reconciled, seeded at construction.
+   *
+   * Distinct from `prefs.viewLevel`, which flips synchronously at the write and
+   * so already names the incoming view while the outgoing one is still rendered.
+   * Nothing reads it in production yet: it is scaffolding for per-view collapse
+   * and scroll memory (nibs-g6sb), which has to attribute the outgoing view's
+   * offset to the view it came from and so cannot ask the preference.
+   *
+   * It is NOT a source for `switchViewLevel`'s `from`, which it superficially
+   * resembles: it lags a full transition (it advances only when one is consumed)
+   * and is absent entirely for a caller holding no `TreeViewState`.
+   */
+  #activeLevel: ViewLevel = $state(DEFAULT_VIEW_LEVEL);
+
+  constructor(initialLevel: ViewLevel = DEFAULT_VIEW_LEVEL) {
+    this.#activeLevel = initialLevel;
+  }
+
   /** Read-only view of the collapsed-node ids. Reading it inside a
    *  `$derived`/`$effect` still tracks, because the getter reads the $state. */
   get collapsedIds(): ReadonlySet<string> {
     return this.#collapsedIds;
+  }
+
+  /** The unreconciled view switch, or null. */
+  get pendingTransition(): ViewTransition | null {
+    return this.#pendingTransition;
+  }
+
+  /** Current scroll-ownership generation; see `#scrollEpoch`. */
+  get scrollEpoch(): number {
+    return this.#scrollEpoch;
+  }
+
+  /** The view level on screen; see `#activeLevel`. */
+  get activeLevel(): ViewLevel {
+    return this.#activeLevel;
+  }
+
+  /** Record a view switch for the applier to reconcile. Called BEFORE the write
+   *  that changes the level, so `from` is still readable. A second call before
+   *  the first is consumed replaces it: only the last destination is rendered,
+   *  and the reconcile is against the view that ends up on screen. */
+  beginTransition(from: ViewLevel, to: ViewLevel): void {
+    this.#pendingTransition = { from, to };
+  }
+
+  /** Consume the pending slot, advancing the on-screen level to its destination. */
+  clearTransition(): void {
+    const pending = this.#pendingTransition;
+    if (pending) this.#activeLevel = pending.to;
+    this.#pendingTransition = null;
+  }
+
+  /** Retire the saved scroll offset and the ownership keyed to it, so the
+   *  incoming view starts at the top instead of at a position measured in the
+   *  outgoing view's geometry. */
+  resetScroll(): void {
+    this.scrollTop = 0;
+    this.#scrollEpoch++;
   }
 
   /** True if the given node id is currently collapsed. */

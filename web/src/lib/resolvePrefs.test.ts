@@ -9,10 +9,12 @@ import {
   emitFilter,
   emitTableSort,
   emitColumnOrder,
+  switchViewLevel,
 } from "./resolvePrefs";
 import { ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS, DEFAULT_VISIBLE_COLUMNS } from "./types";
 import type { NibFilter, ViewLevel, ColumnKey, TableSort } from "./types";
 import type { Preferences } from "./preferences.svelte.ts";
+import { TreeViewState } from "./treeView.svelte";
 
 function makePrefs(overrides: Partial<Preferences> = {}): Preferences {
   return {
@@ -205,5 +207,55 @@ describe("emitTableSort", () => {
   it("does nothing when both prefs and onchange are undefined", () => {
     // Should not throw
     emitTableSort(undefined, undefined, null);
+  });
+});
+
+describe("switchViewLevel", () => {
+  it("writes prefs.viewLevel when prefs is defined (callback not called)", () => {
+    const prefs = makePrefs({ viewLevel: "none" });
+    const onchange = vi.fn();
+    switchViewLevel(prefs, onchange, new TreeViewState("none"), "none", "epics");
+    expect(prefs.viewLevel).toBe("epics");
+    expect(onchange).not.toHaveBeenCalled();
+  });
+
+  it("calls onchange when prefs is undefined", () => {
+    const onchange = vi.fn();
+    switchViewLevel(undefined, onchange, new TreeViewState("flat"), "flat", "none");
+    expect(onchange).toHaveBeenCalledWith("none");
+  });
+
+  it("records the switch so the table can reconcile what left the view", () => {
+    const treeView = new TreeViewState("none");
+    switchViewLevel(makePrefs({ viewLevel: "none" }), undefined, treeView, "none", "epics");
+    expect(treeView.pendingTransition).toEqual({ from: "none", to: "epics" });
+  });
+
+  it("ignores a re-pick of the current level entirely", () => {
+    // The dropdown offers every level including the active one, and selecting it
+    // is not an event: no write, no callback, and above all no transition —
+    // reconciling one would prune a selection nothing had invalidated.
+    const prefs = makePrefs({ viewLevel: "epics" });
+    const onchange = vi.fn();
+    const treeView = new TreeViewState("epics");
+
+    switchViewLevel(prefs, onchange, treeView, "epics", "epics");
+
+    expect(prefs.viewLevel).toBe("epics");
+    expect(onchange).not.toHaveBeenCalled();
+    expect(treeView.pendingTransition).toBeNull();
+  });
+
+  it("still writes when no tree view is available to record against", () => {
+    // Toolbar renders standalone in tests, with no TreeTable to reconcile — the
+    // write must not depend on a reconciler being present.
+    const prefs = makePrefs({ viewLevel: "none" });
+    switchViewLevel(prefs, undefined, undefined, "none", "flat");
+    expect(prefs.viewLevel).toBe("flat");
+  });
+
+  it("does nothing when prefs, onchange and treeView are all undefined", () => {
+    // Should not throw
+    switchViewLevel(undefined, undefined, undefined, "none", "flat");
   });
 });

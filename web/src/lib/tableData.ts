@@ -72,6 +72,20 @@ export interface TableData {
   rows: RowData[];
   allTags: string[];
   parentIds: Set<string>;
+  /**
+   * Every id the CURRENT view tree contains — real nibs plus the lens's own
+   * synthetic bucket. Answers "does this lens have a row for that id at all",
+   * which a grouping lens can say no to: it hides a container ranked above its
+   * tier while descending into it, so a milestone selected in the Tree view has
+   * no row under the Epics lens.
+   *
+   * Read off `buildViewTree`'s output, BEFORE the flatten, so it is
+   * collapse-independent — a collapsed parent must never look like a departed
+   * one. It is also filter-independent: a client filter narrows which members
+   * are rendered, not which the lens has, and the continuous filter pruner
+   * already owns that dimension.
+   */
+  viewMemberIds: Set<string>;
 }
 
 export function buildTableData(
@@ -162,9 +176,15 @@ export function buildTableData(
   //     visible descendant must itself be visible, or flatten() would skip it AND
   //     everything under it — silently dropping filter-matching rows (the lens is
   //     lossless, so a client filter must not hide them).
+  //
+  // The walk visits every emitted node exactly once, so `viewMemberIds` is
+  // collected here rather than in a pass of its own. It takes EVERY node, not
+  // just the display containers: it answers which ids the lens has a row for.
+  const viewMemberIds = new Set<string>();
   (function foldDisplayContainers(nodes: TreeNode<TreeTableNib>[]): boolean {
     let anyVisible = false;
     for (const node of nodes) {
+      viewMemberIds.add(node.nib.id);
       const childVisible = foldDisplayContainers(node.children);
       // `some` over the children, so this is false for a childless node and the
       // "has rows under it" half of the collapse question comes for free.
@@ -227,5 +247,5 @@ export function buildTableData(
 
   flatten(tree, null);
 
-  return { rows, allTags, parentIds };
+  return { rows, allTags, parentIds, viewMemberIds };
 }

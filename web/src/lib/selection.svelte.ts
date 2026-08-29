@@ -155,8 +155,9 @@ export class SelectionState {
 
   /**
    * Prunes the multi-select set (and anchor/focus) down to only the ids present
-   * in `matchingIds`, dropping any that are no longer selectable (e.g. filtered
-   * out of the current view). The detail-panel selection (`selectedNibId`) is
+   * in `matchingIds`, dropping any that are no longer selectable — filtered out
+   * of the dataset, or left without a row by a view switch (a grouping lens hides
+   * containers ranked above its tier). The detail-panel selection (`selectedNibId`) is
    * intentionally left untouched — pruning targets the bulk-action set only so a
    * multi-drag / bulk mutation never applies to rows the user can no longer see.
    *
@@ -164,7 +165,7 @@ export class SelectionState {
    * something is actually dropped, so an unchanged selection produces no writes
    * and cannot feed a reactive update loop.
    */
-  retainOnly(matchingIds: Set<string>): void {
+  retainOnly(matchingIds: ReadonlySet<string>): void {
     let changed = false;
     const next = new Set<string>();
     for (const id of this.selectedIds) {

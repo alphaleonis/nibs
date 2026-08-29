@@ -38,6 +38,7 @@ describe("useScrollRestore", () => {
       getSavedScrollTop: () => saved,
       setSavedScrollTop: (n) => { saved = n; },
       hasContent: () => true,
+      getEpoch: () => 0,
     });
 
     r.restore();
@@ -54,6 +55,7 @@ describe("useScrollRestore", () => {
       getSavedScrollTop: () => saved,
       setSavedScrollTop: (n) => { saved = n; },
       hasContent: () => hasContent,
+      getEpoch: () => 0,
     });
 
     // No content yet: restore() must not touch the container and must NOT take
@@ -75,6 +77,7 @@ describe("useScrollRestore", () => {
       getSavedScrollTop: () => saved,
       setSavedScrollTop: (n) => { saved = n; },
       hasContent: () => true,
+      getEpoch: () => 0,
     });
 
     r.restore();
@@ -101,6 +104,7 @@ describe("useScrollRestore", () => {
       getSavedScrollTop: () => saved,
       setSavedScrollTop: (n) => { saved = n; },
       hasContent: () => true,
+      getEpoch: () => 0,
     });
 
     // restore()'s write here is a no-op (saved 0 → container already 0), so it
@@ -122,10 +126,11 @@ describe("useScrollRestore", () => {
       getSavedScrollTop: () => saved,
       setSavedScrollTop: (n) => { saved = n; },
       hasContent: () => true,
+      getEpoch: () => 0,
     });
 
     // Fresh container reports scrollTop=0 before we've restored; onScroll must
-    // ignore it (currentTarget !== ownedEl) so the saved value survives.
+    // ignore it (the element is not owned yet) so the saved value survives.
     r.onScroll(scrollEvent(container));
 
     expect(saved).toBe(250);
@@ -139,6 +144,7 @@ describe("useScrollRestore", () => {
       getSavedScrollTop: () => saved,
       setSavedScrollTop: (n) => { saved = n; },
       hasContent: () => true,
+      getEpoch: () => 0,
     });
 
     // restore()/claim() self-locate via getScrollContainer() and early-return on
@@ -167,6 +173,7 @@ describe("useScrollRestore", () => {
       getSavedScrollTop: () => saved,
       setSavedScrollTop: (n) => { saved = n; },
       hasContent: () => true,
+      getEpoch: () => 0,
     });
 
     container.scrollTop = 500;
@@ -184,6 +191,7 @@ describe("useScrollRestore", () => {
       getSavedScrollTop: () => saved,
       setSavedScrollTop: (n) => { saved = n; },
       hasContent: () => true,
+      getEpoch: () => 0,
     });
 
     // ensureVisible's scrollIntoView moved element A, then claim() handled it.
@@ -210,6 +218,7 @@ describe("useScrollRestore", () => {
       getSavedScrollTop: () => saved,
       setSavedScrollTop: (n) => { saved = n; },
       hasContent: () => true,
+      getEpoch: () => 0,
     });
 
     r.restore();
@@ -239,6 +248,7 @@ describe("useScrollRestore", () => {
       getSavedScrollTop: () => saved,
       setSavedScrollTop: (n) => { saved = n; },
       hasContent: () => true,
+      getEpoch: () => 0,
     });
 
     r.restore();
@@ -267,6 +277,7 @@ describe("useScrollRestore", () => {
       getSavedScrollTop: () => saved,
       setSavedScrollTop: (n) => { saved = n; },
       hasContent: () => true,
+      getEpoch: () => 0,
     });
 
     r.restore();
@@ -291,6 +302,7 @@ describe("useScrollRestore", () => {
       getSavedScrollTop: () => saved,
       setSavedScrollTop: (n) => { saved = n; },
       hasContent: () => true,
+      getEpoch: () => 0,
     });
 
     // restore() on container A: clamps 5000 → 1800, arms lastWrite={A, 1800}.
@@ -310,5 +322,119 @@ describe("useScrollRestore", () => {
     containerB.scrollTop = 300;
     r.onScroll(scrollEvent(containerB));
     expect(saved).toBe(300);
+  });
+
+  // A view switch keeps the SAME container and changes what is in it, so the
+  // element-identity key above cannot see it: nothing is recreated. The epoch is
+  // the second half of the ownership key, advanced by TreeViewState.resetScroll().
+  describe("epoch (view transition on a container that is not recreated)", () => {
+    it("does not persist the clamp the incoming view forces, because the transition retired ownership", () => {
+      // Without the epoch clause the element is still `ownedEl`, so the clamp the
+      // shorter incoming view provokes is recorded as if the user had scrolled
+      // there — destroying the offset while it is being reset.
+      let saved = 5000;
+      let epoch = 0;
+      const container = clampingContainer(5000);
+      const r = useScrollRestore({
+        getScrollContainer: () => container,
+        getSavedScrollTop: () => saved,
+        setSavedScrollTop: (n) => { saved = n; },
+        hasContent: () => true,
+        getEpoch: () => epoch,
+      });
+
+      r.restore();
+      expect(container.scrollTop).toBe(5000);
+
+      // The switch: resetScroll() zeroes the saved offset and advances the epoch.
+      saved = 0;
+      epoch = 1;
+
+      // The incoming view is shorter; the browser clamps and fires a scroll event.
+      container.scrollTop = 1800;
+      r.onScroll(scrollEvent(container));
+
+      expect(saved).toBe(0);
+    });
+
+    it("restores again onto the same element after a transition, so the incoming view starts at the reset offset", () => {
+      // Ownership is keyed to (element, epoch): the element is unchanged, so only
+      // the epoch can re-arm restore() here.
+      let saved = 500;
+      let epoch = 0;
+      const container = fakeContainer();
+      const r = useScrollRestore({
+        getScrollContainer: () => container,
+        getSavedScrollTop: () => saved,
+        setSavedScrollTop: (n) => { saved = n; },
+        hasContent: () => true,
+        getEpoch: () => epoch,
+      });
+
+      r.restore();
+      expect(container.scrollTop).toBe(500);
+
+      saved = 0;
+      epoch = 1;
+      r.restore();
+
+      expect(container.scrollTop).toBe(0);
+    });
+
+    it("claim() takes ownership under the CURRENT epoch, so a later transition retires the claim too", () => {
+      // claim() is the third participant in the ordering restore()'s own doc calls
+      // "order-dependent, not absolute". An epoch-less claim would hold ownership
+      // across the transition and silently defeat the reset.
+      let saved = 0;
+      let epoch = 0;
+      const container = fakeContainer();
+      const r = useScrollRestore({
+        getScrollContainer: () => container,
+        getSavedScrollTop: () => saved,
+        setSavedScrollTop: (n) => { saved = n; },
+        hasContent: () => true,
+        getEpoch: () => epoch,
+      });
+
+      // A deep link scrolled the row into view and claim() adopted the element.
+      container.scrollTop = 500;
+      r.claim();
+      expect(saved).toBe(500);
+
+      // While the epoch stands, restore() must not clobber the claimed offset.
+      saved = 250;
+      r.restore();
+      expect(container.scrollTop).toBe(500);
+
+      // The transition retires the claim: the incoming view starts from the reset.
+      saved = 0;
+      epoch = 1;
+      r.restore();
+      expect(container.scrollTop).toBe(0);
+    });
+
+    it("a genuine scroll in the incoming view is recorded once restore() re-takes ownership", () => {
+      // The retirement must not be permanent — the new view has to track scrolls.
+      let saved = 300;
+      let epoch = 0;
+      const container = fakeContainer();
+      const r = useScrollRestore({
+        getScrollContainer: () => container,
+        getSavedScrollTop: () => saved,
+        setSavedScrollTop: (n) => { saved = n; },
+        hasContent: () => true,
+        getEpoch: () => epoch,
+      });
+
+      r.restore();
+      saved = 0;
+      epoch = 1;
+      r.restore();
+
+      container.scrollTop = 140;
+      r.onScroll(scrollEvent(container));
+
+      expect(saved).toBe(140);
+    });
   });
 });
