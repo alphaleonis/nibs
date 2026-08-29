@@ -1205,3 +1205,90 @@ func TestNewScrappedDuplicateJSONCarriesReason(t *testing.T) {
 		t.Errorf("reason = %q, want the scrapping reason snippet", dups[0].Reason)
 	}
 }
+
+// TestNewRefusesPrefixWithPathSeparator is the CLI half of the nibs-8ay1 guard.
+// `--prefix` was concatenated onto the drawn short id with no character check at
+// all, and the id becomes the nib's filename — so `--prefix ../../` wrote the
+// file outside the store, and `--prefix a/b-` buried it in a subdirectory whose
+// name the id lost on the next load. The refusal is validation-class (exit 2).
+func TestNewRefusesPrefixWithPathSeparator(t *testing.T) {
+	for _, prefix := range []string{"../../", "a/b-"} {
+		t.Run(prefix, func(t *testing.T) {
+			nibsDir := setupNewTest(t)
+			t.Setenv("EDITOR", "")
+			t.Setenv("VISUAL", "")
+
+			// <tmp> is where data/../../ lands, and it holds only .nibs to start.
+			outside := filepath.Dir(nibsDir)
+			before, err := os.ReadDir(outside)
+			if err != nil {
+				t.Fatalf("reading %s: %v", outside, err)
+			}
+
+			rootCmd.SetArgs([]string{
+				"--nibs-path", nibsDir,
+				"new", "Escape", "--prefix", prefix, "--no-edit",
+			})
+			var runErr error
+			_ = captureStdout(t, func() { runErr = rootCmd.Execute() })
+			if runErr == nil {
+				t.Fatal("expected a refusal for a prefix carrying a path separator, got nil")
+			}
+			var ce *output.CodedError
+			if !errors.As(runErr, &ce) {
+				t.Fatalf("error = %T, want *output.CodedError", runErr)
+			}
+			if ce.Code != output.ErrValidation {
+				t.Errorf("code = %q, want %q", ce.Code, output.ErrValidation)
+			}
+			if output.ExitCode(ce.Code) != output.ExitValidation {
+				t.Errorf("exit = %d, want %d (validation)", output.ExitCode(ce.Code), output.ExitValidation)
+			}
+
+			after, err := os.ReadDir(outside)
+			if err != nil {
+				t.Fatalf("reading %s: %v", outside, err)
+			}
+			if len(after) != len(before) {
+				t.Errorf("a refused create wrote outside the store: %d entries -> %d", len(before), len(after))
+			}
+			if n := countNibFiles(t, nibsDir); n != 0 {
+				t.Errorf("store holds %d nibs after a refused create, want 0", n)
+			}
+		})
+	}
+}
+
+// TestNewRefusesPrefixWithPathSeparatorJSON pins the --json envelope for the
+// same refusal: {"error":{"code","message"}} with the validation code.
+func TestNewRefusesPrefixWithPathSeparatorJSON(t *testing.T) {
+	nibsDir := setupNewTest(t)
+	t.Setenv("EDITOR", "")
+	t.Setenv("VISUAL", "")
+
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"new", "Escape", "--prefix", "../../", "--json",
+	})
+	var runErr error
+	out := captureStdout(t, func() { runErr = rootCmd.Execute() })
+	if runErr == nil {
+		t.Fatal("expected a refusal, got nil")
+	}
+
+	var env struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if e := json.Unmarshal([]byte(out), &env); e != nil {
+		t.Fatalf("error output is not valid JSON: %v\n%s", e, out)
+	}
+	if env.Error.Code != output.ErrValidation {
+		t.Errorf("code = %q, want %q", env.Error.Code, output.ErrValidation)
+	}
+	if !strings.Contains(env.Error.Message, "../../") {
+		t.Errorf("message %q should quote the offending id", env.Error.Message)
+	}
+}

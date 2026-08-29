@@ -1138,6 +1138,19 @@ func (c *Core) Create(b *nib.Nib) error {
 		return &IDExistsError{ID: b.ID}
 	}
 
+	// The id is about to become a path (nibFilePath joins BuildFilename onto
+	// data/), so it has to be a plain file name — and this is the one point all
+	// three ways an id gets its shape meet: the config prefix the draw above
+	// used, the custom prefix CreateNib pre-composes an id from, and an id a
+	// caller assigned itself. Nothing downstream stands in for the check, because
+	// filepath.Join CLEANS what it is given rather than refusing it — a separator
+	// in the prefix is obeyed, so `../../` writes the nib outside the store
+	// (MkdirAll creating the directories on the way) and `a/b-` buries it in a
+	// subdirectory whose name the id loses on the next load (nibs-8ay1).
+	if err := nib.ValidateIDForFilename(b.ID); err != nil {
+		return err
+	}
+
 	// Set timestamps
 	now := time.Now().UTC().Truncate(time.Second)
 	b.CreatedAt = &now

@@ -593,6 +593,11 @@ func mutationErrCode(err error) (string, bool) {
 	if errors.As(err, &axisErr) {
 		return output.ErrValidation, true
 	}
+	// An id that cannot serve as a filename is the caller's input at fault — a
+	// `--prefix` carrying a path separator, or a store whose nibs.prefix does.
+	if errors.Is(err, nib.ErrIDNotFilename) {
+		return output.ErrValidation, true
+	}
 	var matchErr *nib.ReplaceMatchError
 	if errors.As(err, &matchErr) {
 		if matchErr.Count == 0 {
