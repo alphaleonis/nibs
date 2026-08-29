@@ -595,7 +595,10 @@ func mutationErrCode(err error) (string, bool) {
 	}
 	// An id that cannot serve as a filename is the caller's input at fault — a
 	// `--prefix` carrying a path separator, or a store whose nibs.prefix does.
-	if errors.Is(err, nib.ErrIDNotFilename) {
+	// Its grammar sibling is the same fault through a different clause: a
+	// `--prefix` whose own "--" or "." lands ahead of the separator
+	// BuildFilename writes, so the name reads back as a different id.
+	if errors.Is(err, nib.ErrIDNotFilename) || errors.Is(err, nib.ErrIDNotRoundTrip) {
 		return output.ErrValidation, true
 	}
 	var matchErr *nib.ReplaceMatchError

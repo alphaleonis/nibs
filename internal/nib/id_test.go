@@ -289,3 +289,98 @@ func TestValidateIDForFilename(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateIDRoundTrip pins the grammar half of the file-name contract: the
+// id an id's own file name decodes to. The rows are chosen to sit on both sides
+// of every branch ParseFilename tries, because the rule is exactly "wherever
+// that function splits, is it where BuildFilename joined?" and nothing more
+// general — an id is accepted or refused by where the split lands, not by the
+// characters it is spelled with.
+func TestValidateIDRoundTrip(t *testing.T) {
+	tests := []struct {
+		name    string
+		id      string
+		slug    string
+		prefix  string
+		wantErr bool
+		// wantTitle is whether the refusal should name the title as a knob the
+		// caller owns. True only where a slug WOULD have saved the name, since
+		// the slug comes from the title; an id carrying its own separator is
+		// refused with or without one, so no title reaches it.
+		wantTitle bool
+	}{
+		{"plain short id, no prefix, no slug", "z5r9", "", "", false, false},
+		{"plain short id with a slug", "z5r9", "add-tests", "", false, false},
+		{"prefixed slugless", "nibs-z5r9", "", "nibs-", false, false},
+		{"prefixed with a slug", "nibs-z5r9", "add-tests", "nibs-", false, false},
+		// A legacy single-dash slug on a prefixed id: the prefix-aware branch
+		// splits after the prefix, so the id survives its own trailing dash.
+		{"legacy hyphenated prefix under its own vocabulary", "boardgametracker-z5r9", "", "boardgametracker-", false, false},
+		// The boundary of the rule, and the reason it is not a charset gate: a
+		// dot inside the id is harmless as long as something splits earlier.
+		// BuildFilename's "--" is the first separator ParseFilename looks for,
+		// so a slug puts the split ahead of the dot and the id comes back whole.
+		// The same id with no slug is the refusal two rows below.
+		{"dotted prefix with a slug", "a.b-9k3y", "dot-probe", "tnib-", false, false},
+
+		{"double-dash prefix with a slug", "a--b-hmv7", "rt-probe", "a--b-", true, false},
+		// Slugless, but a slug would NOT have saved it: the id's own "--"
+		// is found before the one BuildFilename writes. The title is not a
+		// remedy here, so the refusal must not offer it.
+		{"double-dash prefix slugless", "a--b-hmv7", "", "a--b-", true, false},
+		{"dotted prefix slugless, under its own vocabulary", "c.d-h1wy", "", "c.d-", true, true},
+		{"dotted prefix slugless, no configured prefix", "c.d-h1wy", "", "", true, true},
+		// A foreign prefix: `nibs new --prefix` composes an id the store's own
+		// vocabulary does not recognize, so the prefix-aware branch never fires
+		// and the legacy single-dash split takes the name apart at the prefix's
+		// own trailing dash. The same shape from the store's side is the row
+		// below — one mechanism, two ways to arrive at it.
+		{"foreign prefix slugless", "zz-924q", "", "tnib-", true, true},
+		{"store prefix checked under a different vocabulary", "nibs-z5r9", "", "tnib-", true, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateIDRoundTrip(tt.id, tt.slug, tt.prefix)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("ValidateIDRoundTrip(%q, %q, %q) = nil, want an error", tt.id, tt.slug, tt.prefix)
+				}
+				if !errors.Is(err, ErrIDNotRoundTrip) {
+					t.Errorf("ValidateIDRoundTrip(%q, %q, %q) error = %v, want one wrapping ErrIDNotRoundTrip", tt.id, tt.slug, tt.prefix, err)
+				}
+				if !strings.Contains(err.Error(), fmt.Sprintf("%q", tt.id)) {
+					t.Errorf("ValidateIDRoundTrip(%q, %q, %q) error = %q, should quote the offending id", tt.id, tt.slug, tt.prefix, err)
+				}
+				// The name and what it decodes to are the whole explanation —
+				// the rule cannot be stated as a charset, so the message has to
+				// show the caller the two strings that disagree.
+				name := BuildFilename(tt.id, tt.slug)
+				if !strings.Contains(err.Error(), fmt.Sprintf("%q", name)) {
+					t.Errorf("ValidateIDRoundTrip(%q, %q, %q) error = %q, should quote the file name %q it would write", tt.id, tt.slug, tt.prefix, err, name)
+				}
+				readBack, _ := ParseFilename(name, tt.prefix)
+				if !strings.Contains(err.Error(), fmt.Sprintf("%q", readBack)) {
+					t.Errorf("ValidateIDRoundTrip(%q, %q, %q) error = %q, should quote the id %q that name reads back as", tt.id, tt.slug, tt.prefix, err, readBack)
+				}
+				// The remedy names only the inputs that can actually be at
+				// fault. The title is one exactly when a slug would have saved
+				// the name, since the slug is derived from the title; offering
+				// it otherwise sends the caller to change something that cannot
+				// help. Matched on the whole clause rather than the bare word,
+				// which a row's id, slug or prefix could contain by accident.
+				mentionsTitle := strings.Contains(err.Error(), "check the title")
+				if tt.wantTitle && !mentionsTitle {
+					t.Errorf("ValidateIDRoundTrip(%q, %q, %q) error = %q, should name the title — a slug would have made this name read back correctly", tt.id, tt.slug, tt.prefix, err)
+				}
+				if !tt.wantTitle && mentionsTitle {
+					t.Errorf("ValidateIDRoundTrip(%q, %q, %q) error = %q, must not name the title — no title makes this name read back correctly", tt.id, tt.slug, tt.prefix, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("ValidateIDRoundTrip(%q, %q, %q) = %v, want nil", tt.id, tt.slug, tt.prefix, err)
+			}
+		})
+	}
+}

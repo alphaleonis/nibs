@@ -37,6 +37,16 @@ func setupTestResolver(t *testing.T) (*Resolver, *nibcore.Core) {
 
 func mustCreate(t *testing.T, core *nibcore.Core, b *nib.Nib) {
 	t.Helper()
+	// Fill in the slug a real create always carries — CreateNib passes
+	// nib.Slugify(title) for every nib the product makes — which these fixtures
+	// mostly omit. It is not cosmetic here: the ids below carry dashes and the
+	// test store declares no prefix, so a slugless "epic-1.md" is taken apart by
+	// ParseFilename's legacy single-dash split and reads back as "epic", which
+	// Core.Create refuses (nib.ValidateIDRoundTrip). The slug puts
+	// BuildFilename's "--" ahead of those dashes, where ParseFilename looks first.
+	if b.Slug == "" {
+		b.Slug = nib.Slugify(b.Title)
+	}
 	if err := core.Create(b); err != nil {
 		t.Fatalf("failed to create nib %s: %v", b.ID, err)
 	}
@@ -50,9 +60,7 @@ func createTestNib(t *testing.T, core *nibcore.Core, id, title, status string) *
 		Title:  title,
 		Status: status,
 	}
-	if err := core.Create(b); err != nil {
-		t.Fatalf("failed to create test nib: %v", err)
-	}
+	mustCreate(t, core, b)
 	return b
 }
 
@@ -241,15 +249,9 @@ func TestQueryNibsWithTags(t *testing.T) {
 	b1 := &nib.Nib{ID: "tag-1", Title: "Tagged 1", Status: "todo", Tags: []string{"frontend", "urgent"}}
 	b2 := &nib.Nib{ID: "tag-2", Title: "Tagged 2", Status: "todo", Tags: []string{"backend"}}
 	b3 := &nib.Nib{ID: "tag-3", Title: "No Tags", Status: "todo"}
-	if err := core.Create(b1); err != nil {
-		t.Fatal(err)
-	}
-	if err := core.Create(b2); err != nil {
-		t.Fatal(err)
-	}
-	if err := core.Create(b3); err != nil {
-		t.Fatal(err)
-	}
+	mustCreate(t, core, b1)
+	mustCreate(t, core, b2)
+	mustCreate(t, core, b3)
 
 	t.Run("filter by tag", func(t *testing.T) {
 		qr := resolver.Query()
@@ -306,9 +308,7 @@ func TestQueryNibsWithPriority(t *testing.T) {
 	b4 := &nib.Nib{ID: "pri-4", Title: "Normal Implicit", Status: "todo", Priority: ""} // empty = normal
 	b5 := &nib.Nib{ID: "pri-5", Title: "Low", Status: "todo", Priority: "low"}
 	for _, b := range []*nib.Nib{b1, b2, b3, b4, b5} {
-		if err := core.Create(b); err != nil {
-			t.Fatal(err)
-		}
+		mustCreate(t, core, b)
 	}
 
 	t.Run("filter by normal includes empty priority", func(t *testing.T) {
@@ -411,9 +411,7 @@ func TestNibRelationships(t *testing.T) {
 	}
 
 	for _, b := range []*nib.Nib{parent, child1, child2, blocker} {
-		if err := core.Create(b); err != nil {
-			t.Fatal(err)
-		}
+		mustCreate(t, core, b)
 	}
 
 	t.Run("parent resolver", func(t *testing.T) {
@@ -750,9 +748,7 @@ func TestIsBlockedFilterWithResolvedBlockers(t *testing.T) {
 		notBlocked, mixedBlocker, mixedBlockerCompleted, mixedBlocked,
 	}
 	for _, b := range nibs {
-		if err := core.Create(b); err != nil {
-			t.Fatalf("Create error: %v", err)
-		}
+		mustCreate(t, core, b)
 	}
 
 	t.Run("isBlocked true returns only nibs with active blockers", func(t *testing.T) {
@@ -1624,9 +1620,7 @@ func TestRelationshipFieldsWithFilter(t *testing.T) {
 	}
 
 	for _, b := range []*nib.Nib{parent, child1, child2, child3, blocker1, blocker2} {
-		if err := core.Create(b); err != nil {
-			t.Fatalf("Failed to create nib %s: %v", b.ID, err)
-		}
+		mustCreate(t, core, b)
 	}
 
 	br := resolver.Nib()
@@ -3428,9 +3422,7 @@ func TestChildrenSortedByOrder(t *testing.T) {
 
 	// Create a parent
 	parent := &nib.Nib{ID: "parent-1", Title: "Parent", Status: "todo", Type: "epic", Version: 1}
-	if err := core.Create(parent); err != nil {
-		t.Fatal(err)
-	}
+	mustCreate(t, core, parent)
 
 	// Create children with explicit order keys (out of lexicographic order)
 	children := []struct {
@@ -3452,9 +3444,7 @@ func TestChildrenSortedByOrder(t *testing.T) {
 			Order:   c.order,
 			Version: 1,
 		}
-		if err := core.Create(child); err != nil {
-			t.Fatal(err)
-		}
+		mustCreate(t, core, child)
 	}
 
 	got, err := resolver.Nib().Children(ctx, parent, nil, nil)
@@ -3480,9 +3470,7 @@ func TestChildrenBackfillOrder(t *testing.T) {
 
 	// Create a parent (IDs without hyphens to avoid ParseFilename legacy id-slug split on reload)
 	parent := &nib.Nib{ID: "parent1", Title: "Parent", Status: "todo", Type: "epic", Version: 1}
-	if err := core.Create(parent); err != nil {
-		t.Fatal(err)
-	}
+	mustCreate(t, core, parent)
 
 	// Create children WITHOUT order keys
 	for _, c := range []struct{ id, title string }{
@@ -3496,9 +3484,7 @@ func TestChildrenBackfillOrder(t *testing.T) {
 			Parent:  "parent1",
 			Version: 1,
 		}
-		if err := core.Create(child); err != nil {
-			t.Fatal(err)
-		}
+		mustCreate(t, core, child)
 	}
 
 	// First query should backfill order keys
@@ -3559,17 +3545,13 @@ func TestCreateNibPositioning(t *testing.T) {
 
 	// Create parent epic
 	parent := &nib.Nib{ID: "epic1", Title: "Epic", Status: "todo", Type: "epic", Version: 1}
-	if err := core.Create(parent); err != nil {
-		t.Fatal(err)
-	}
+	mustCreate(t, core, parent)
 
 	// Create two ordered children
 	child1 := &nib.Nib{ID: "task1", Title: "First", Status: "todo", Type: "task", Parent: "epic1", Order: "a0", Version: 1}
 	child2 := &nib.Nib{ID: "task2", Title: "Second", Status: "todo", Type: "task", Parent: "epic1", Order: "b0", Version: 1}
 	for _, c := range []*nib.Nib{child1, child2} {
-		if err := core.Create(c); err != nil {
-			t.Fatal(err)
-		}
+		mustCreate(t, core, c)
 	}
 
 	taskType := "task"
@@ -3716,16 +3698,12 @@ func setupReorderFixture(t *testing.T) (*Resolver, *nibcore.Core) {
 	t.Helper()
 	resolver, core := setupTestResolver(t)
 	parent := &nib.Nib{ID: "epic1", Title: "Epic", Status: "todo", Type: "epic", Version: 1}
-	if err := core.Create(parent); err != nil {
-		t.Fatal(err)
-	}
+	mustCreate(t, core, parent)
 	for _, c := range []struct{ id, title, order string }{
 		{"t1", "First", "a0"}, {"t2", "Second", "b0"}, {"t3", "Third", "c0"},
 	} {
 		child := &nib.Nib{ID: c.id, Title: c.title, Status: "todo", Type: "task", Parent: "epic1", Order: c.order, Version: 1}
-		if err := core.Create(child); err != nil {
-			t.Fatal(err)
-		}
+		mustCreate(t, core, child)
 	}
 	return resolver, core
 }
@@ -3805,16 +3783,12 @@ func TestReorderNib(t *testing.T) {
 		resolver, core := setupReorderFixture(t)
 		// Create a second epic with children
 		epic2 := &nib.Nib{ID: "epic2", Title: "Epic 2", Status: "todo", Type: "epic", Version: 1}
-		if err := core.Create(epic2); err != nil {
-			t.Fatal(err)
-		}
+		mustCreate(t, core, epic2)
 		for _, c := range []struct{ id, title, order string }{
 			{"x1", "X First", "a0"}, {"x2", "X Second", "b0"},
 		} {
 			child := &nib.Nib{ID: c.id, Title: c.title, Status: "todo", Type: "task", Parent: "epic2", Order: c.order, Version: 1}
-			if err := core.Create(child); err != nil {
-				t.Fatal(err)
-			}
+			mustCreate(t, core, child)
 		}
 
 		// Move t1 (child of epic1) to before x2 (child of epic2) using parentId
@@ -4156,28 +4130,18 @@ func TestReparentRecalculatesOrderKey(t *testing.T) {
 	// Create two epics (parent groups)
 	epicA := &nib.Nib{ID: "epic-a", Title: "Epic A", Status: "todo", Type: "epic", Order: "a0"}
 	epicB := &nib.Nib{ID: "epic-b", Title: "Epic B", Status: "todo", Type: "epic", Order: "a0"}
-	if err := core.Create(epicA); err != nil {
-		t.Fatalf("failed to create epicA: %v", err)
-	}
-	if err := core.Create(epicB); err != nil {
-		t.Fatalf("failed to create epicB: %v", err)
-	}
+	mustCreate(t, core, epicA)
+	mustCreate(t, core, epicB)
 
 	// Create children under epic-a with known order keys
 	childA1 := &nib.Nib{ID: "child-a1", Title: "Child A1", Status: "todo", Type: "task", Parent: "epic-a", Order: "a0"}
 	childA2 := &nib.Nib{ID: "child-a2", Title: "Child A2", Status: "todo", Type: "task", Parent: "epic-a", Order: "b0"}
-	if err := core.Create(childA1); err != nil {
-		t.Fatalf("failed to create childA1: %v", err)
-	}
-	if err := core.Create(childA2); err != nil {
-		t.Fatalf("failed to create childA2: %v", err)
-	}
+	mustCreate(t, core, childA1)
+	mustCreate(t, core, childA2)
 
 	// Create a child under epic-b that happens to have the same order key as child-a1
 	childB1 := &nib.Nib{ID: "child-b1", Title: "Child B1", Status: "todo", Type: "task", Parent: "epic-b", Order: "a0"}
-	if err := core.Create(childB1); err != nil {
-		t.Fatalf("failed to create childB1: %v", err)
-	}
+	mustCreate(t, core, childB1)
 
 	t.Run("SetParent recalculates order to avoid collision", func(t *testing.T) {
 		mr := resolver.Mutation()
@@ -4239,9 +4203,7 @@ func TestReparentRecalculatesOrderKey(t *testing.T) {
 	t.Run("reparent to empty group gets initial order", func(t *testing.T) {
 		// Create a new empty epic
 		epicC := &nib.Nib{ID: "epic-c", Title: "Epic C", Status: "todo", Type: "epic", Order: "c0"}
-		if err := core.Create(epicC); err != nil {
-			t.Fatalf("failed to create epicC: %v", err)
-		}
+		mustCreate(t, core, epicC)
 
 		mr := resolver.Mutation()
 		parentID := "epic-c"

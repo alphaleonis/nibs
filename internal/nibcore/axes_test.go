@@ -60,7 +60,14 @@ func TestCreateRefusesAxesOnMilestone(t *testing.T) {
 // milestone while it carries an axis field, or handing an axis field to an
 // existing milestone, is refused before anything is written.
 func TestUpdateRefusesAxesOnMilestone(t *testing.T) {
-	core, _ := setupTestCore(t)
+	// Prefixed, because the store has to declare the "nibs-" prefix these ids are
+	// written under or their file names read back as "nibs" (see
+	// nib.ValidateIDRoundTrip). Deliberately NOT the area-declaring core the
+	// create test above uses: `web/ui` being UNDECLARED is what makes the
+	// "milestone gaining an area" row below pin Core.Update's ordering, since
+	// only ValidateAxes running before ValidateArea can produce the axis refusal
+	// against a store that would otherwise reject the area as unknown.
+	core, _ := mustLoadPrefixedCore(t)
 
 	if err := core.Create(&nib.Nib{ID: "nibs-ms1", Title: "Waypoint", Type: "milestone", Status: "todo"}); err != nil {
 		t.Fatalf("create milestone: %v", err)

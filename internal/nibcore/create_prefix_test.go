@@ -446,3 +446,129 @@ func TestCreateRefusesACallerSuppliedIDThatIsNotAFilename(t *testing.T) {
 		})
 	}
 }
+
+// reloadedGet answers the only question that matters about an accepted create:
+// does the id come back from a store read off disk? Resolving it in the Core
+// that minted it proves nothing — the id is in that map either way, and the
+// whole defect is that the FILE decodes to something else.
+func reloadedGet(t *testing.T, nibsDir, id string) (*nib.Nib, error) {
+	t.Helper()
+	cfg, err := config.LoadFromStore(nibsDir)
+	if err != nil {
+		t.Fatalf("re-loading the store config: %v", err)
+	}
+	fresh := New(nibsDir, cfg)
+	fresh.SetWarnWriter(nil)
+	if err := fresh.Load(); err != nil {
+		t.Fatalf("re-loading the store: %v", err)
+	}
+	return fresh.Get(id)
+}
+
+// TestCreateRefusesAStoredPrefixThatCollidesWithTheSlugSeparator is the
+// round-trip sibling of the traversal test above, through the same door: a
+// hand-edited config.yml. `nibs init` and `nibs config set-prefix` both put
+// their argument through reprefix.ValidatePrefix, and nothing re-reads the value
+// once it is in the file — mintingVocabulary hands nibs.prefix straight to the
+// generator.
+//
+// "a--b-" is the shape the pattern alone lets through: lowercase alphanumerics
+// and dashes, ending in a dash. BuildFilename then joins the id and the slug
+// with the very separator the prefix already carries, so ParseFilename splits
+// inside the id on the next load and every nib in the store answers to "a".
+func TestCreateRefusesAStoredPrefixThatCollidesWithTheSlugSeparator(t *testing.T) {
+	core, nibsDir := setupCoreWithStoredConfig(t, "nibs:\n  prefix: a--b-\n  id_length: 4\n")
+
+	before := dataEntries(t, nibsDir)
+
+	b := &nib.Nib{Title: "Round Trip Probe", Slug: nib.Slugify("Round Trip Probe"), Status: "todo"}
+	if err := core.Create(b); err == nil {
+		t.Fatalf("Create() = nil with id %q, want a refusal", b.ID)
+	} else if !errors.Is(err, nib.ErrIDNotRoundTrip) {
+		t.Fatalf("Create() error = %v, want one wrapping nib.ErrIDNotRoundTrip", err)
+	}
+
+	if after := dataEntries(t, nibsDir); len(after) != len(before) {
+		t.Errorf("a refused create wrote to data/: %v -> %v", before, after)
+	}
+	if n := len(core.All()); n != 0 {
+		t.Errorf("store holds %d nibs after a refused create, want 0", n)
+	}
+}
+
+// TestCreateRefusesACallerSuppliedIDThatDoesNotReadBack covers the door the
+// stored prefix does not: `nibs new --prefix <p>` pre-composes the id from its
+// flag in the CreateNib resolver and assigns it to Nib.ID, so mintingVocabulary
+// — and with it every check that hangs off the store's declared prefix — is
+// never reached. Setting b.ID directly is that path.
+//
+// The accepted rows are as load-bearing as the refused ones. A foreign prefix is
+// a supported feature, and a dotted id is legal in a file name; what decides
+// each case is only where ParseFilename splits, so the rule has to be shown
+// letting through the shapes that survive it.
+func TestCreateRefusesACallerSuppliedIDThatDoesNotReadBack(t *testing.T) {
+	tests := []struct {
+		name    string
+		id      string
+		slug    string
+		wantErr bool
+	}{
+		// The store below declares "tnib-", so every id here is foreign to it —
+		// which is exactly what --prefix produces.
+		{name: "double dash with a slug", id: "a--b-hmv7", slug: "rt-probe", wantErr: true},
+		{name: "double dash slugless", id: "a--b-hmv7", wantErr: true},
+		// A dotted prefix parts along the two branches ParseFilename tries in
+		// order. With a slug the "--" BuildFilename writes comes first and wins,
+		// so the id survives; with no slug the dot is the only separator in the
+		// name and takes it apart at "c". Both rows are the same id — the slug
+		// is the whole difference.
+		{name: "dotted prefix slugless", id: "c.d-h1wy", wantErr: true},
+		{name: "dotted prefix with a slug", id: "a.b-9k3y", slug: "dot-probe"},
+		// A prefix the store does not declare carries no recognized prefix into
+		// ParseFilename, so the prefix-aware branch never fires and the legacy
+		// single-dash split takes the name apart at the prefix's own trailing
+		// dash. A slug moves the split back ahead of it.
+		{name: "foreign prefix slugless", id: "zz-924q", wantErr: true},
+		{name: "foreign prefix with a slug", id: "zz-924q", slug: "has-slug"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			core, nibsDir := setupCoreWithStoredConfig(t, "nibs:\n  prefix: tnib-\n  id_length: 4\n")
+			before := dataEntries(t, nibsDir)
+
+			b := &nib.Nib{ID: tt.id, Title: "Prefixed", Slug: tt.slug, Status: "todo"}
+			err := core.Create(b)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("Create(ID=%q, Slug=%q) = nil, want a refusal", tt.id, tt.slug)
+				}
+				if !errors.Is(err, nib.ErrIDNotRoundTrip) {
+					t.Fatalf("Create(ID=%q, Slug=%q) error = %v, want one wrapping nib.ErrIDNotRoundTrip", tt.id, tt.slug, err)
+				}
+				if after := dataEntries(t, nibsDir); len(after) != len(before) {
+					t.Errorf("a refused create wrote to data/: %v -> %v", before, after)
+				}
+				if n := len(core.All()); n != 0 {
+					t.Errorf("store holds %d nibs after a refused create, want 0", n)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Create(ID=%q, Slug=%q) = %v, want it accepted", tt.id, tt.slug, err)
+			}
+			// Read back from disk, not from the Core that wrote it: the id lives
+			// in the file name and nowhere else, so a fresh load is the only
+			// thing that can tell whether it survived.
+			got, err := reloadedGet(t, nibsDir, tt.id)
+			if err != nil {
+				t.Fatalf("re-loaded store: Get(%q) = %v, want the nib the create returned (data/ holds %v)", tt.id, err, dataEntries(t, nibsDir))
+			}
+			if got.ID != tt.id {
+				t.Errorf("re-loaded store: Get(%q).ID = %q, want %q", tt.id, got.ID, tt.id)
+			}
+		})
+	}
+}

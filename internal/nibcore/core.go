@@ -1110,6 +1110,19 @@ func (c *Core) Create(b *nib.Nib) error {
 		}
 	}
 
+	// The prefix the nib's file will be READ BACK under, for the round-trip check
+	// below. The two branches draw it from different places on purpose: a minted
+	// id is composed from mintingVocabulary's prefix, which is the store's
+	// DECLARED vocabulary and therefore what a later load parses with, while
+	// c.configPrefix() is only what this process loaded — for a Core built with no
+	// config against a store whose config.yml declares one, mintingVocabulary
+	// adopts the stored value and c.configPrefix() is still "", which would judge
+	// a legitimately minted id under a vocabulary the store does not use.
+	// A caller-supplied id has no such reading available, so it is checked under
+	// the loaded prefix, which is the same expression loadNib parses filenames
+	// with.
+	readBackPrefix := c.configPrefix()
+
 	// Generate ID if not provided. Redraw on a collision with a live id —
 	// active or archived, both are in c.nibs — because a single draw once
 	// shadowed an existing nib (nibs-kafe): 4-char ids give ~1.7M
@@ -1121,6 +1134,7 @@ func (c *Core) Create(b *nib.Nib) error {
 		if err != nil {
 			return err
 		}
+		readBackPrefix = prefix
 		for range 100 {
 			id := newNibID(prefix, length)
 			if _, exists := c.nibs[id]; !exists {
@@ -1139,15 +1153,28 @@ func (c *Core) Create(b *nib.Nib) error {
 	}
 
 	// The id is about to become a path (nibFilePath joins BuildFilename onto
-	// data/), so it has to be a plain file name — and this is the one point all
-	// three ways an id gets its shape meet: the config prefix the draw above
-	// used, the custom prefix CreateNib pre-composes an id from, and an id a
-	// caller assigned itself. Nothing downstream stands in for the check, because
-	// filepath.Join CLEANS what it is given rather than refusing it — a separator
-	// in the prefix is obeyed, so `../../` writes the nib outside the store
-	// (MkdirAll creating the directories on the way) and `a/b-` buries it in a
-	// subdirectory whose name the id loses on the next load (nibs-8ay1).
+	// data/), so it has to be a plain file name AND a name that reads back as
+	// this id — and this is the one point all three ways an id gets its shape
+	// meet: the config prefix the draw above used, the custom prefix CreateNib
+	// pre-composes an id from, and an id a caller assigned itself. Nothing
+	// downstream stands in for either check.
+	//
+	// Path shape, because filepath.Join CLEANS what it is given rather than
+	// refusing it — a separator in the prefix is obeyed, so `../../` writes the
+	// nib outside the store (MkdirAll creating the directories on the way) and
+	// `a/b-` buries it in a subdirectory whose name the id loses on the next load
+	// (nibs-8ay1).
+	//
+	// Grammar, because the file name is the only record of the id: BuildFilename
+	// joins id and slug with "--", and a prefix carrying its own "--" or "." puts
+	// an earlier separator in the name, so ParseFilename splits inside the id and
+	// the store comes back holding a nib nobody can name. A create is the only
+	// place a file name is minted from an id and a slug — a later slug change
+	// does not rename the file — so refusing here covers every way in.
 	if err := nib.ValidateIDForFilename(b.ID); err != nil {
+		return err
+	}
+	if err := nib.ValidateIDRoundTrip(b.ID, b.Slug, readBackPrefix); err != nil {
 		return err
 	}
 
