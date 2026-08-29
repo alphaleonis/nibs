@@ -201,6 +201,109 @@ describe("collectDescendantIds", () => {
     const result = collectDescendantIds(["nib-001"], rows);
     expect(result.size).toBe(0);
   });
+
+  // Row order is not a contract. A DFS flatten happens to put every parent
+  // before its children, but a queue-ordered section carries no such guarantee,
+  // and an under-collected set would let a row be dropped onto its own
+  // descendant.
+  it("collects a direct child that precedes its parent", () => {
+    // Not an order guard: at depth 1 the parent is a seed from the first
+    // iteration, so even the single forward pass described above collects this
+    // child wherever it sits. Kept as contract regression coverage.
+    const rows: RowData[] = [
+      makeRow({ nib: { id: "nib-002", parentId: "nib-001", type: "task" }, depth: 1 }),
+      makeRow({ nib: { id: "nib-001", parentId: null, type: "epic" }, depth: 0 }),
+    ];
+    const result = collectDescendantIds(["nib-001"], rows);
+    expect(result.has("nib-002")).toBe(true);
+    expect(result.size).toBe(1);
+  });
+
+  it("collects a grandchild chain emitted in reverse order", () => {
+    const rows: RowData[] = [
+      makeRow({ nib: { id: "nib-003", parentId: "nib-002", type: "task" }, depth: 2 }),
+      makeRow({ nib: { id: "nib-002", parentId: "nib-001", type: "epic" }, depth: 1 }),
+      makeRow({ nib: { id: "nib-001", parentId: null, type: "milestone" }, depth: 0 }),
+    ];
+    const result = collectDescendantIds(["nib-001"], rows);
+    expect(result.has("nib-002")).toBe(true);
+    expect(result.has("nib-003")).toBe(true);
+    expect(result.size).toBe(2);
+  });
+
+  it("collects a chain interleaved so that no single pass suffices", () => {
+    // Grandchild, then root, then the middle link: neither a forward nor a
+    // backward single pass reaches nib-004.
+    const rows: RowData[] = [
+      makeRow({ nib: { id: "nib-004", parentId: "nib-003", type: "task" }, depth: 2 }),
+      makeRow({ nib: { id: "nib-001", parentId: null, type: "milestone" }, depth: 0 }),
+      makeRow({ nib: { id: "nib-003", parentId: "nib-001", type: "epic" }, depth: 1 }),
+    ];
+    const result = collectDescendantIds(["nib-001"], rows);
+    expect(result.has("nib-003")).toBe(true);
+    expect(result.has("nib-004")).toBe(true);
+    expect(result.size).toBe(2);
+  });
+
+  it("collects descendants of several dragged items in scrambled order", () => {
+    const rows: RowData[] = [
+      makeRow({ nib: { id: "nib-005", parentId: "nib-002", type: "task" }, depth: 2 }),
+      makeRow({ nib: { id: "nib-006", parentId: null, type: "task" }, depth: 0 }),
+      makeRow({ nib: { id: "nib-004", parentId: "nib-003", type: "task" }, depth: 1 }),
+      makeRow({ nib: { id: "nib-001", parentId: null, type: "milestone" }, depth: 0 }),
+      makeRow({ nib: { id: "nib-002", parentId: "nib-001", type: "epic" }, depth: 1 }),
+      makeRow({ nib: { id: "nib-003", parentId: null, type: "epic" }, depth: 0 }),
+    ];
+    const result = collectDescendantIds(["nib-001", "nib-003"], rows);
+    expect([...result].sort()).toEqual(["nib-002", "nib-004", "nib-005"]);
+  });
+
+  it("excludes a dragged item nested under another dragged item, but keeps its descendants", () => {
+    const rows: RowData[] = [
+      makeRow({ nib: { id: "nib-001", parentId: null, type: "milestone" }, depth: 0 }),
+      makeRow({ nib: { id: "nib-002", parentId: "nib-001", type: "epic" }, depth: 1 }),
+      makeRow({ nib: { id: "nib-003", parentId: "nib-002", type: "task" }, depth: 2 }),
+    ];
+    // nib-002 is dragged too, so it is not a drop target to reject — but
+    // nib-003 beneath it still is.
+    const result = collectDescendantIds(["nib-001", "nib-002"], rows);
+    expect(result.has("nib-002")).toBe(false);
+    expect([...result].sort()).toEqual(["nib-003"]);
+  });
+
+  // Dropping the visited guard makes a cyclic parent graph spin forever without
+  // allocating, and vitest's test timeout cannot interrupt a synchronous loop —
+  // the run would wedge instead of failing. So bound the walk explicitly: it
+  // pops the queue exactly once per iteration, and the budget has to move with
+  // that if the queue ever stops being an array.
+  function collectWithWorkBudget(nibIds: string[], rows: RowData[], budget: number): Set<string> {
+    const realPop = Array.prototype.pop;
+    let pops = 0;
+    Array.prototype.pop = function (this: unknown[]) {
+      if (++pops > budget) {
+        throw new Error(`collectDescendantIds did not terminate within ${budget} iterations`);
+      }
+      return realPop.call(this);
+    } as typeof Array.prototype.pop;
+    try {
+      return collectDescendantIds(nibIds, rows);
+    } finally {
+      Array.prototype.pop = realPop;
+    }
+  }
+
+  it("terminates on a malformed parentId cycle among the rows", () => {
+    const rows: RowData[] = [
+      makeRow({ nib: { id: "nib-001", parentId: null, type: "milestone" }, depth: 0 }),
+      makeRow({ nib: { id: "nib-002", parentId: "nib-001", type: "epic" }, depth: 1 }),
+      makeRow({ nib: { id: "nib-003", parentId: "nib-002", type: "task" }, depth: 2 }),
+      // nib-002 a second time, parented to its own child: a 002 -> 003 -> 002
+      // cycle between two rows, neither of which is a seed.
+      makeRow({ nib: { id: "nib-002", parentId: "nib-003", type: "epic" }, depth: 2 }),
+    ];
+    const result = collectWithWorkBudget(["nib-001"], rows, 50);
+    expect([...result].sort()).toEqual(["nib-002", "nib-003"]);
+  });
 });
 
 describe("isValidCrossParentDrop", () => {
