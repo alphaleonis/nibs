@@ -66,6 +66,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`nibs config set-prefix` no longer expands a short-form link to full form** — a nib written `parent: p1` came back `parent: qq-p1`, though a short id carries no prefix to rewrite and names the same nib under either.
 - **`nibs config set-prefix` now retargets full-form `#id` mentions in nib bodies**, which it left naming the id the rename retired.
 - **ArrowLeft no longer throws focus across the Flat view** — every nib is a top-level row there, so a parented nib's ArrowLeft jumped to its parent's row elsewhere in the list instead of staying put.
+- **`nibs new` no longer writes outside the store** — a `--prefix` carrying a path separator, or a store whose `nibs.prefix` did, composed straight into the nib's filename, so `../../` placed the file anywhere the process could write (creating the directories on the way) and `a/b-` buried it in a subdirectory whose name the id lost, leaving the created nib unreachable by the id the create returned.
+- **A nib named like a grouping bucket no longer crashes the web table** — an id equal to one of the "No X" rows appeared twice in the list, which the keyed render refuses.
 
 ## v0.8.3 - 2026-08-13
 
