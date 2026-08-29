@@ -116,7 +116,11 @@ export function makeTestContext(
     save: async () => undefined,
     requestClose: async () => { selection.close(); },
     syncTo: () => {},
-    noteMissing: () => "closed",
+    // "stale", not "closed": from a `closed` state the real noteMissing returns
+    // "stale" for every call ("closed" is only reachable from `viewing` with a
+    // pristine form), and the token is what tells the caller who owns healing
+    // the URL.
+    noteMissing: () => "stale",
     invalidateDetailSeed: () => {},
     dispose: () => {},
   } satisfies ActiveView);
