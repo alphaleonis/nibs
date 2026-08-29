@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { VIEW_LEVELS, DEFAULT_THEME, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_OPEN_DETAIL_ON, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE } from "../types";
+  import { VIEW_LEVELS, VIEW_LEVEL_LABELS, DEFAULT_THEME, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_OPEN_DETAIL_ON, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE } from "../types";
   import type { NibFilter, ViewLevel, RowDensity, FontSize, Theme, DetailPanelPosition, OpenDetailGesture, BlockedEmphasis } from "../types";
   import { ALL_COLUMN_KEYS, COLUMNS } from "../columns";
   import type { ColumnKey } from "../columns";
@@ -190,7 +190,7 @@
   // Static trigger labels shared by each control's aria-label and its Tooltip.Content,
   // defined once so the accessible name and the visible tooltip can't drift apart.
   const newItemLabel = "New item";
-  const groupByLabel = "Group by";
+  const viewLabel = "View";
   const columnsLabel = "Columns";
   const clearKeywordLabel = "Clear keyword";
   // The token hint is tooltip text only, never an accessible name: the layer it
@@ -207,14 +207,6 @@
   // canonical order, each option carrying label + alwaysVisible. Parent is a
   // normal toggleable column in every lens now.
   let columnOptions = $derived(ALL_COLUMN_KEYS.map((key) => COLUMNS[key]));
-
-  const VIEW_LEVEL_LABELS: Record<ViewLevel, string> = {
-    none: "Tree",
-    flat: "Flat",
-    milestones: "Milestones",
-    epics: "Epics",
-    features: "Features & Bugs",
-  };
 
   function emitFilter(updated: NibFilter) {
     emitFilterHelper(prefs, onchange, updated);
@@ -839,13 +831,13 @@
     <!-- Separator -->
     <div class="mx-1 h-5 w-px bg-border shrink-0"></div>
 
-    <!-- View selector (group-by) -->
+    <!-- View selector -->
     <DropdownMenu.Root bind:open={viewLevelOpen}>
-      <WithTooltip tooltip={groupByLabel}>
+      <WithTooltip tooltip={viewLabel}>
         {#snippet trigger({ props })}
           <DropdownMenu.Trigger
             {...props}
-            aria-label={`${groupByLabel}: ${VIEW_LEVEL_LABELS[resolvedViewLevel]}`}
+            aria-label={`${viewLabel}: ${VIEW_LEVEL_LABELS[resolvedViewLevel]}`}
             class={buttonVariants({ variant: "outline", size: "default" })}
           >
             <ViewLevelIcon size={14} style="color: {viewLevelIconInfo.color};" />

@@ -1,4 +1,4 @@
-import { VIEW_LEVELS, MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT, DETAIL_PANEL_POSITIONS, OPEN_DETAIL_GESTURES, BLOCKED_EMPHASES, THEMES, DEFAULT_THEME, FONT_SCALES } from "./types";
+import { VIEW_LEVELS, DEFAULT_VIEW_LEVEL, MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT, DETAIL_PANEL_POSITIONS, OPEN_DETAIL_GESTURES, BLOCKED_EMPHASES, THEMES, DEFAULT_THEME, FONT_SCALES } from "./types";
 import type { FilterPreferences, RowDensity, ViewLevel, Theme, DetailPanelPosition, OpenDetailGesture, BlockedEmphasis, FontSize, NibFilter, TableSort } from "./types";
 import { ALL_COLUMN_KEYS, ALWAYS_VISIBLE_KEYS, SORTABLE_COLUMN_KEYS } from "./columns";
 import type { ColumnKey } from "./columns";
@@ -12,7 +12,7 @@ export const STORAGE_KEY = "nibs-filter-preferences";
 
 const DEFAULTS: FilterPreferences = {
   query: "",
-  viewLevel: "none",
+  viewLevel: DEFAULT_VIEW_LEVEL,
   theme: DEFAULT_THEME,
 };
 

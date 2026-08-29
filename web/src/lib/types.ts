@@ -124,6 +124,26 @@ export interface RowSubtreeActions {
 export const VIEW_LEVELS = ["none", "flat", "milestones", "epics", "features"] as const;
 export type ViewLevel = (typeof VIEW_LEVELS)[number];
 
+/** The view a session starts in, and the one the drag-block remedy offers to
+ *  return to. Those two readings coincide only while the default is the
+ *  hierarchical view: the remedy means "leave Flat for the tree", so pointing
+ *  this at "flat" would make it offer the view the user is already in. Split it
+ *  into a separate TREE_VIEW_LEVEL before changing the default to anything else. */
+export const DEFAULT_VIEW_LEVEL: ViewLevel = "none";
+
+/** The user-facing name of each view. Lives here rather than in Toolbar.svelte so
+ *  non-component modules can name a view the way the user sees it — a toast that
+ *  offers to leave a view has to spell it the same way the menu that selects it
+ *  does. VIEW_LEVEL_ICON_INFO deliberately stays in the toolbar: it pulls lucide
+ *  components, which do not belong in a module this one's importers share. */
+export const VIEW_LEVEL_LABELS: Record<ViewLevel, string> = {
+  none: "Tree",
+  flat: "Flat",
+  milestones: "Milestones",
+  epics: "Epics",
+  features: "Features & Bugs",
+};
+
 // Client-side table sort. Absent/null means "off" (manual `order` sequence).
 // Applied in every view: a flat sorted list in Flat, sibling-sort (siblings,
 // roots, grouping-bucket items, and promoted group headers reordered, nesting

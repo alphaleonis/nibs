@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { dragBlockFor } from "./dragBlock";
+import { VIEW_LEVEL_LABELS } from "./types";
 import type { NibFilter } from "./types";
 
 describe("dragBlockFor", () => {
@@ -55,5 +56,27 @@ describe("dragBlockFor", () => {
   it("reports the search ahead of a sort when both are active", () => {
     const block = dragBlockFor({ search: "api" }, "none", { field: "title", direction: "asc" });
     expect(block?.reason).toBe("search");
+  });
+
+  // The flat block names two views the user can see — the one reorder is off in,
+  // and the one its action switches to — so both have to be READ from the label
+  // map the toolbar menu renders. Asserting the literal strings cannot tell a
+  // derived name from a hand-written one that happens to agree today, so these
+  // rewrite the map and require the block to follow.
+  describe("names views the way the toolbar does", () => {
+    const original = { ...VIEW_LEVEL_LABELS };
+    afterEach(() => {
+      Object.assign(VIEW_LEVEL_LABELS, original);
+    });
+
+    it("follows a renamed default view in the action label", () => {
+      VIEW_LEVEL_LABELS.none = "Outline";
+      expect(dragBlockFor({}, "flat", null)?.actionLabel).toBe("Switch to Outline");
+    });
+
+    it("follows a renamed flat view in the message", () => {
+      VIEW_LEVEL_LABELS.flat = "Listing";
+      expect(dragBlockFor({}, "flat", null)?.message).toBe("Reordering is off in the Listing view");
+    });
   });
 });

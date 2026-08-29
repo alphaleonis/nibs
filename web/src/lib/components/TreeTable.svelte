@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getContextClient } from "@urql/svelte";
-  import { DEFAULT_BLOCKED_EMPHASIS, DEFAULT_OPEN_DETAIL_ON } from "../types";
+  import { DEFAULT_BLOCKED_EMPHASIS, DEFAULT_OPEN_DETAIL_ON, DEFAULT_VIEW_LEVEL } from "../types";
   import type { NibFilter, ViewLevel, RowDensity, BlockedEmphasis, OpenDetailGesture, RowSubtreeActions, TreeTableNib, TableSort, SortField } from "../types";
   import type { ColumnKey } from "../columns";
   import type { Preferences } from "../preferences.svelte";
@@ -522,7 +522,7 @@
         break;
       }
       case "flat":
-        emitViewLevel(prefs, onviewlevelchange, "none");
+        emitViewLevel(prefs, onviewlevelchange, DEFAULT_VIEW_LEVEL);
         break;
     }
   }

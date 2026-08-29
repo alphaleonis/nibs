@@ -1,5 +1,6 @@
 import { COLUMNS } from "./columns";
 import { isDragAllowed } from "./filter";
+import { DEFAULT_VIEW_LEVEL, VIEW_LEVEL_LABELS } from "./types";
 import type { NibFilter, ViewLevel, TableSort } from "./types";
 
 /**
@@ -49,8 +50,8 @@ export function dragBlockFor(
   if (viewLevel === "flat") {
     return {
       reason: "flat",
-      message: "Reordering is off in the Flat view",
-      actionLabel: "Switch to Tree",
+      message: `Reordering is off in the ${VIEW_LEVEL_LABELS.flat} view`,
+      actionLabel: `Switch to ${VIEW_LEVEL_LABELS[DEFAULT_VIEW_LEVEL]}`,
     };
   }
   if (!isDragAllowed(filter)) {

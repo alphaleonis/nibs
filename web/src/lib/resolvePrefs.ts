@@ -1,5 +1,5 @@
 import type { NibFilter, ViewLevel, ColumnKey, TableSort } from "./types";
-import { ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS, DEFAULT_VISIBLE_COLUMNS } from "./types";
+import { ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS, DEFAULT_VISIBLE_COLUMNS, DEFAULT_VIEW_LEVEL } from "./types";
 import type { Preferences } from "./preferences.svelte";
 
 export function resolveFilter(prefs: Preferences | undefined, filter: NibFilter | undefined): NibFilter {
@@ -7,7 +7,7 @@ export function resolveFilter(prefs: Preferences | undefined, filter: NibFilter 
 }
 
 export function resolveViewLevel(prefs: Preferences | undefined, viewLevel: ViewLevel | undefined): ViewLevel {
-  return prefs?.viewLevel ?? viewLevel ?? "none";
+  return prefs?.viewLevel ?? viewLevel ?? DEFAULT_VIEW_LEVEL;
 }
 
 export function resolveVisibleColumns(prefs: Preferences | undefined, visibleColumns: ColumnKey[] | undefined): ColumnKey[] {

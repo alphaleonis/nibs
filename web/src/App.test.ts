@@ -965,16 +965,16 @@ describe("App", () => {
     expect(screen.getByText("Test milestone")).toBeInTheDocument();
   });
 
-  it("renders toolbar icon buttons including the group-by control", () => {
+  it("renders toolbar icon buttons including the view control", () => {
     render(App);
 
     expect(screen.getByRole("button", { name: "New item" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Group by/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^View/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Columns" })).toBeInTheDocument();
 
-    // Group-by control should show "Tree" (default lens — the full hierarchy)
-    expect(screen.getByRole("button", { name: /^Group by/ })).toHaveTextContent("Tree");
+    // View control should show "Tree" (default lens — the full hierarchy)
+    expect(screen.getByRole("button", { name: /^View/ })).toHaveTextContent("Tree");
   });
 
   it("TreeTable DOM element persists when panel opens", async () => {

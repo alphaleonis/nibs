@@ -66,38 +66,38 @@ describe("Toolbar", () => {
 
   it("renders view selector button showing current view label", () => {
     render(Toolbar, { ...defaultToolbarProps, viewLevel: "milestones" });
-    expect(screen.getByRole("button", { name: /^Group by/ })).toHaveTextContent("Milestones");
+    expect(screen.getByRole("button", { name: /^View/ })).toHaveTextContent("Milestones");
   });
 
   it("shows 'Epics' label when viewLevel is epics", () => {
     render(Toolbar, { ...defaultToolbarProps, viewLevel: "epics" });
-    expect(screen.getByRole("button", { name: /^Group by/ })).toHaveTextContent("Epics");
+    expect(screen.getByRole("button", { name: /^View/ })).toHaveTextContent("Epics");
   });
 
   it("shows 'Features & Bugs' label when viewLevel is features", () => {
     render(Toolbar, { ...defaultToolbarProps, viewLevel: "features" });
-    expect(screen.getByRole("button", { name: /^Group by/ })).toHaveTextContent("Features & Bugs");
+    expect(screen.getByRole("button", { name: /^View/ })).toHaveTextContent("Features & Bugs");
   });
 
   it("shows 'Tree' label when viewLevel is none (the full hierarchy view)", () => {
     render(Toolbar, { ...defaultToolbarProps, viewLevel: "none" });
-    expect(screen.getByRole("button", { name: /^Group by/ })).toHaveTextContent("Tree");
+    expect(screen.getByRole("button", { name: /^View/ })).toHaveTextContent("Tree");
   });
 
   it("shows 'Flat' label when viewLevel is flat", () => {
     render(Toolbar, { ...defaultToolbarProps, viewLevel: "flat" });
-    expect(screen.getByRole("button", { name: /^Group by/ })).toHaveTextContent("Flat");
+    expect(screen.getByRole("button", { name: /^View/ })).toHaveTextContent("Flat");
   });
 
   it("view selector button is enabled (not disabled)", () => {
     render(Toolbar, { ...defaultToolbarProps });
-    expect(screen.getByRole("button", { name: /^Group by/ })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: /^View/ })).not.toBeDisabled();
   });
 
   it("opens dropdown with all five view levels when the control is clicked", async () => {
     render(Toolbar, { ...defaultToolbarProps });
 
-    await user.click(screen.getByRole("button", { name: /^Group by/ }));
+    await user.click(screen.getByRole("button", { name: /^View/ }));
 
     // All five view levels should appear as radio items
     const radioItems = screen.getAllByRole("menuitemradio");
@@ -114,7 +114,7 @@ describe("Toolbar", () => {
     const onviewlevelchange = vi.fn();
     render(Toolbar, { ...defaultToolbarProps, viewLevel: "milestones", onviewlevelchange });
 
-    await user.click(screen.getByRole("button", { name: /^Group by/ }));
+    await user.click(screen.getByRole("button", { name: /^View/ }));
     await user.click(screen.getByRole("menuitemradio", { name: /Epics/i }));
 
     expect(onviewlevelchange).toHaveBeenCalledWith("epics");
@@ -124,7 +124,7 @@ describe("Toolbar", () => {
     const onviewlevelchange = vi.fn();
     render(Toolbar, { ...defaultToolbarProps, viewLevel: "none", onviewlevelchange });
 
-    await user.click(screen.getByRole("button", { name: /^Group by/ }));
+    await user.click(screen.getByRole("button", { name: /^View/ }));
     await user.click(screen.getByRole("menuitemradio", { name: /^Flat$/i }));
 
     expect(onviewlevelchange).toHaveBeenCalledWith("flat");
@@ -133,7 +133,7 @@ describe("Toolbar", () => {
   it("closes dropdown on second click of view selector button", async () => {
     render(Toolbar, { ...defaultToolbarProps });
 
-    const viewBtn = screen.getByRole("button", { name: /^Group by/ });
+    const viewBtn = screen.getByRole("button", { name: /^View/ });
     await user.click(viewBtn);
     expect(screen.getAllByRole("menuitemradio").length).toBeGreaterThan(0);
 
@@ -1463,7 +1463,7 @@ describe("Toolbar — token-click affordances", () => {
   });
 
   // The token is the last control in the filter band that hinted through the
-  // browser's native tooltip; its siblings (New / Group by / Columns / clear-×) all
+  // browser's native tooltip; its siblings (New / View / Columns / clear-×) all
   // use the app's styled one. bits-ui's tooltip content carries no role="tooltip",
   // so it is matched by its data-slot rather than by role.
   it("hints a token with the styled tooltip, not a native title", async () => {
@@ -2196,7 +2196,7 @@ describe("Toolbar — query syntax help", () => {
     expect(screen.getByRole("button", { name: /query syntax help/i })).toBeInTheDocument();
   });
 
-  // The `?` sits in the same band as New / Group by / Columns / clear-×, which all
+  // The `?` sits in the same band as New / View / Columns / clear-×, which all
   // hover through the app's styled tooltip. A native `title` here would read with a
   // different delay, placement and theming. bits-ui's tooltip content carries no
   // role="tooltip", so it is matched by its data-slot rather than by role.
