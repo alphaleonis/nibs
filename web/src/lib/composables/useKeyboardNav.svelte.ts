@@ -121,13 +121,21 @@ export function useKeyboardNav(opts: {
           const collapsedIds = opts.getCollapsedIds();
           if (row.hasChildren && !collapsedIds.has(row.nib.id)) {
             opts.toggleNode(row.nib.id);
-          } else if (row.nib.parentId) {
-            const parentIndex = currentRows.findIndex(r => r.nib.id === row.nib.parentId);
-            if (parentIndex >= 0) {
-              const nibId = currentRows[parentIndex].nib.id;
-              selection.focus(nibId);
-              requestAnimationFrame(() => scrollFocusedRowIntoView(nibId));
-            }
+          } else if (row.displayParentId) {
+            // Walk the DISPLAY container, not `nib.parentId` — the same
+            // structural authority drag reorder uses. `buildTableData`
+            // guarantees a non-null displayParentId names a RENDERED row
+            // (`flatten` skips a hidden node together with its whole subtree),
+            // so no presence lookup is needed before focusing it.
+            //
+            // The two disagree only one way: a row at the display root (null)
+            // whose real parent is rendered elsewhere — every parented nib in
+            // the flat lens, which nests nothing. There is no container to walk
+            // out of there, so ArrowLeft must stay put instead of jumping to a
+            // structurally unrelated row.
+            const nibId = row.displayParentId;
+            selection.focus(nibId);
+            requestAnimationFrame(() => scrollFocusedRowIntoView(nibId));
           }
         }
         break;

@@ -65,6 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`nibs check --fix --json` now reports a failed repair in its error envelope**, instead of printing nothing on stdout and a plain line to stderr.
 - **`nibs config set-prefix` no longer expands a short-form link to full form** — a nib written `parent: p1` came back `parent: qq-p1`, though a short id carries no prefix to rewrite and names the same nib under either.
 - **`nibs config set-prefix` now retargets full-form `#id` mentions in nib bodies**, which it left naming the id the rename retired.
+- **ArrowLeft no longer throws focus across the Flat view** — every nib is a top-level row there, so a parented nib's ArrowLeft jumped to its parent's row elsewhere in the list instead of staying put.
 
 ## v0.8.3 - 2026-08-13
 

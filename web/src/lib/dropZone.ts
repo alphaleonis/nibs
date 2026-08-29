@@ -74,21 +74,37 @@ export function isValidCrossParentDrop(
 
 /**
  * Collect all descendant IDs of the given nib IDs from the flat row list.
- * Walks the row list in order — children appear after their parent due to
- * pre-order traversal of the tree.
+ *
+ * Order-independent by construction: it indexes the rows by parent first, then
+ * walks that adjacency map outward from the seeds. Row order is not a contract
+ * — a DFS flatten happens to place every parent before its children, but a
+ * queue-ordered section carries no such guarantee, and a single forward pass
+ * silently under-collects when a child precedes its parent. This set is what
+ * `isValidDropTarget` rejects drops against, so an incomplete one would let a
+ * row be dropped onto its own descendant and form a cycle.
+ *
+ * The result set doubles as the visited guard, so a malformed parent cycle
+ * among the rows terminates rather than looping.
  */
 export function collectDescendantIds(nibIds: string[], rows: RowData[]): Set<string> {
-  const result = new Set<string>();
-  const ancestors = new Set(nibIds);
-
+  const childrenByParent = new Map<string, string[]>();
   for (const row of rows) {
-    if (ancestors.has(row.nib.id)) continue; // skip the dragged items themselves
-    // Check if this row's parent is in ancestors or already collected
-    if (
-      row.nib.parentId &&
-      (ancestors.has(row.nib.parentId) || result.has(row.nib.parentId))
-    ) {
-      result.add(row.nib.id);
+    const parentId = row.nib.parentId;
+    if (!parentId) continue;
+    const siblings = childrenByParent.get(parentId);
+    if (siblings) siblings.push(row.nib.id);
+    else childrenByParent.set(parentId, [row.nib.id]);
+  }
+
+  const result = new Set<string>();
+  const seeds = new Set(nibIds);
+  const queue = [...seeds];
+  while (queue.length > 0) {
+    for (const childId of childrenByParent.get(queue.pop()!) ?? []) {
+      // Skip the dragged items themselves, and anything already collected.
+      if (seeds.has(childId) || result.has(childId)) continue;
+      result.add(childId);
+      queue.push(childId);
     }
   }
   return result;

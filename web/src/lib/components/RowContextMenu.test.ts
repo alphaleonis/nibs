@@ -10,7 +10,10 @@ import type {
   ConfirmDialogState,
   ConfirmDialogOptions,
 } from "$lib/composables/useConfirmDialog.svelte";
-import type { ActiveView } from "$lib/composables/useActiveView.svelte";
+import type {
+  ActiveView,
+  MissingNibOutcome,
+} from "$lib/composables/useActiveView.svelte";
 import type { HistoryNav } from "$lib/composables/useHistoryNav.svelte";
 import type { TreeTableNib } from "../types";
 import type { RelIdKey } from "$lib/query";
@@ -80,20 +83,24 @@ function makeMockActiveView(selection: SelectionState) {
     detail: null,
     isOpen: false,
     presentation: "docked" as const,
+    typePicker: null,
     blocksHistoryNav: false,
+    savePending: false,
+    externalApplied: 0,
     open: vi.fn(async (id: string) => { selection.select(id); }),
     expand: vi.fn(),
     collapse: vi.fn(),
     startCreate: vi.fn(async () => {}),
     startCreateChild: vi.fn(async () => {}),
-    chooseType: vi.fn(),
+    chooseType: vi.fn(async () => {}),
     cancelType: vi.fn(),
     save: vi.fn(async () => undefined),
     requestClose: vi.fn(async () => { selection.close(); }),
     syncTo: vi.fn(),
-    noteMissing: vi.fn(() => "closed"),
+    noteMissing: vi.fn((): MissingNibOutcome => "closed"),
+    invalidateDetailSeed: vi.fn(),
     dispose: vi.fn(),
-  };
+  } satisfies ActiveView;
 }
 
 /** A HistoryNav stub whose `replaceClosed` is observable — the URL-healing call
@@ -165,7 +172,7 @@ describe("RowContextMenu", () => {
       },
       context: makeTestContext(selection, new DragState(), {
         confirmDialog: mockConfirmDialog,
-        activeView: mockView as unknown as ActiveView,
+        activeView: mockView,
         historyNav: props.historyNav,
       }),
     });
@@ -1018,7 +1025,7 @@ describe("RowContextMenu", () => {
         },
         context: makeTestContext(selection, new DragState(), {
           confirmDialog: mockConfirmDialog,
-          activeView: mockView as unknown as ActiveView,
+          activeView: mockView,
         }),
       });
 

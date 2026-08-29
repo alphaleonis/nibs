@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { SelectionState } from "../selection.svelte";
-import type { RowData } from "../tableData";
+import { buildTableData, type RowData } from "../tableData";
 import type { TreeTableNib, OpenDetailGesture } from "../types";
 import { DEFAULT_OPEN_DETAIL_ON } from "../types";
 import { useKeyboardNav } from "./useKeyboardNav.svelte";
@@ -359,19 +359,49 @@ describe("useKeyboardNav", () => {
   });
 
   it("ArrowLeft on leaf/collapsed row moves focus to parent", () => {
+    // Not a display-vs-real-parent guard: the ordinary tree view nests a child
+    // under its real parent, so `displayParentId` and `nib.parentId` agree here
+    // and either one would satisfy the assertion. Kept as regression coverage
+    // for the plain case.
     const selection = new SelectionState();
     selection.focus("nibs-002");
     const nib1 = makeNib({ id: "nibs-001" });
     const nib2 = makeNib({ id: "nibs-002", parentId: "nibs-001" });
     const rows = [
       makeRow(nib1, { hasChildren: true }),
-      makeRow(nib2),
+      makeRow(nib2, { depth: 1, displayParentId: "nibs-001" }),
     ];
     const { handleKeydown } = setup({ selection, rows });
 
     handleKeydown(keydown("ArrowLeft"));
 
     expect(selection.focusedNibId).toBe("nibs-001");
+  });
+
+  // The one shape where the display container and the real parent disagree in a
+  // way ArrowLeft can observe: a row at the display root whose real parent is
+  // rendered elsewhere. The flat lens emits it for every parented nib — no
+  // nesting, so nothing to walk out of, and focus must stay put rather than jump
+  // across the list. Built through `buildTableData` rather than by hand so the
+  // row shape is the producer's, not this file's idea of it.
+  it("ArrowLeft does nothing at the display root even when the real parent is rendered", () => {
+    const selection = new SelectionState();
+    selection.focus("nibs-002");
+    const { rows } = buildTableData(
+      [makeNib({ id: "nibs-001" }), makeNib({ id: "nibs-002", parentId: "nibs-001" })],
+      {},
+      "flat",
+      new Set<string>(),
+    );
+    expect(rows.map(r => [r.nib.id, r.displayParentId, r.hasChildren])).toEqual([
+      ["nibs-001", null, false],
+      ["nibs-002", null, false],
+    ]);
+    const { handleKeydown } = setup({ selection, rows });
+
+    handleKeydown(keydown("ArrowLeft"));
+
+    expect(selection.focusedNibId).toBe("nibs-002");
   });
 
   it("ArrowRight on collapsed parent expands it", () => {
