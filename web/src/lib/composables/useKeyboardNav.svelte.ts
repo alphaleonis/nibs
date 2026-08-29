@@ -1,7 +1,7 @@
 import type { PanelPolicy, SelectionState } from "../selection.svelte";
 import type { RowData } from "../tableData";
 import type { OpenDetailGesture } from "../types";
-import { isBucketId } from "../tree";
+import { isSyntheticRowId } from "../tree";
 
 export function useKeyboardNav(opts: {
   selection: SelectionState;
@@ -157,7 +157,7 @@ export function useKeyboardNav(opts: {
         if (targetId === null) break;
         // A synthetic grouping bucket is not a real nib — Enter toggles its group
         // (like its caret) instead of opening a detail view for an unresolvable id.
-        if (isBucketId(targetId)) {
+        if (isSyntheticRowId(targetId)) {
           opts.toggleNode(targetId);
         } else {
           opts.navigateToNib(targetId);
@@ -172,7 +172,7 @@ export function useKeyboardNav(opts: {
         // so Space on a bucket is a no-op. toggleSelect also moves focus/anchor to
         // the toggled row — matching mouse Ctrl/Cmd-click — so the Space-toggled
         // row becomes the focused row.
-        if (isBucketId(targetId)) break;
+        if (isSyntheticRowId(targetId)) break;
         selection.toggleSelect(targetId, panelPolicy());
         break;
       }

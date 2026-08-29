@@ -28,6 +28,16 @@ describe("typeRank", () => {
 describe("getValidChildTypes", () => {
   it("milestone can have no children at all", () => {
     expect(getValidChildTypes("milestone")).toEqual([]);
+    // Asserted directly on the table too, because this entry is a precondition
+    // for `holdsChildrenByDisplay` in tree.ts and not merely a hierarchy rule.
+    // That predicate reads a section header off the view tree — a node whose
+    // children do not name it as their parent — which is only sound while a
+    // milestone's section members CANNOT name it: an empty child list is what
+    // makes `--parent <milestone>` a server-side refusal, so membership is
+    // always arrangement and never parentage. Were milestone ever to accept a
+    // child type, a section header holding one would read as an ordinary
+    // container and its members would inherit it as their reorder parent.
+    expect(VALID_CHILD_TYPES.milestone).toEqual([]);
   });
 
   it("epic can have bug, feature, task, and research children", () => {

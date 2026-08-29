@@ -154,25 +154,59 @@ function lensRank(cfg: LensConfig): number {
 export const BUCKET_IDS = new Set<string>(Object.values(GROUPING_LENSES).map(c => c.bucketId));
 
 /**
- * True for synthetic display-bucket ids ("No X"). Membership is exact against the
- * known bucket ids, and no id a store can produce — parsed from a filename or
- * minted by `nib.NewID` — can equal one of them, because every bucket id both
- * carries a path separator and ends outside the nanoid charset (see
- * GROUPING_LENSES for why it takes both). So this is not merely "unlikely to
- * collide": the two id spaces are disjoint by construction, under any
- * `nibs.prefix` and for any hand-created or imported file.
+ * True for ids the view layer fabricated — the synthetic "No X" bucket rows,
+ * which carry a `data-nib-id` so delegation reaches them but name no nib.
+ *
+ * This is an IDENTITY question, and only that: it answers whether a row has a
+ * nib behind it, never whether the row is a header. A real nib heading a
+ * section of its own answers false and is selectable, openable and a legal
+ * action target like any other row; use `holdsChildrenByDisplay` to ask what a
+ * node's children mean.
+ *
+ * Membership is exact against the known bucket ids, and no id a store can
+ * produce — parsed from a filename or minted by `nib.NewID` — can equal one of
+ * them, because every bucket id both carries a path separator and ends outside
+ * the nanoid charset (see GROUPING_LENSES for why it takes both). So this is
+ * not merely "unlikely to collide": the two id spaces are disjoint by
+ * construction, under any `nibs.prefix` and for any hand-created or imported
+ * file. That disjointness is what lets the question be settled from the string
+ * alone, with no node to consult.
  */
-export function isBucketId(id: string): boolean {
+export function isSyntheticRowId(id: string): boolean {
   return BUCKET_IDS.has(id);
 }
 
 /**
- * The bucket id an item would fall under for the given lens, or null if the item
- * is not bucketed (it sits under a grouping header, is a grouping header itself,
- * or the lens has no buckets). Used to un-collapse an item's enclosing bucket
- * when revealing it, since a bucket is never any real nib's `parentId`.
+ * True when a node's view-tree children are held by ARRANGEMENT rather than
+ * parentage — a synthetic bucket sweeping up loose items, or a real nib heading
+ * a section of members that are not its children. The rows beneath such a node
+ * are not its children, so they must not name it as their backend `parentId`
+ * and it must still behave as a container for collapse and filter visibility.
+ *
+ * Read off the tree rather than declared per row kind: `buildTree` nests a child
+ * only under the parent its `parentId` names, so a node holds by arrangement
+ * exactly when some child disagrees. A new kind of section therefore needs no
+ * second list of row kinds kept in sync with this one.
+ *
+ * This is a whole-node verdict, which is sound only while a container's members
+ * can never ALSO be its structural children — today `VALID_CHILD_TYPES.milestone`
+ * is `[]`, so nothing parents under the one type that heads a section (the
+ * precondition is asserted in typeHierarchy.test.ts). A future kind admitting
+ * both at once would need a per-edge form; taking `.some()` for it would re-root
+ * its genuine children onto the container's own display parent.
  */
-export function bucketIdForItem<T extends TreeNib>(
+export function holdsChildrenByDisplay<T extends TreeNib>(node: TreeNode<T>): boolean {
+  return node.children.some((child) => child.nib.parentId !== node.nib.id);
+}
+
+/**
+ * The id of the display container an item would fall under for the given lens,
+ * or null if it has none (it sits under a grouping header, is a grouping header
+ * itself, or the lens groups nothing). Used to un-collapse an item's enclosing
+ * container when revealing it, since a container that holds its rows by display
+ * is never their `parentId` and so is missed by an ancestor-chain walk.
+ */
+export function displayContainerIdForItem<T extends TreeNib>(
   nibMap: Map<string, T>,
   nibId: string,
   viewLevel: ViewLevel,

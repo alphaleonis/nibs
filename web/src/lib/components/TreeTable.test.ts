@@ -6,7 +6,7 @@ import { tick } from "svelte";
 import TreeTable from "./TreeTable.svelte";
 import type { TreeTableNib, ViewLevel, ColumnKey } from "../types";
 import { DEFAULT_COLUMN_WIDTHS } from "../types";
-import { bucketIdForItem, isBucketId } from "../tree";
+import { displayContainerIdForItem, isSyntheticRowId } from "../tree";
 import { OPEN_STATUSES } from "../constants";
 import { SelectionState } from "../selection.svelte";
 import { DragState } from "../drag.svelte";
@@ -2408,9 +2408,9 @@ describe("TreeTable", () => {
     }
 
     function milestoneBucketId(nibs: TreeTableNib[]): string {
-      const bucketId = bucketIdForItem(new Map(nibs.map(n => [n.id, n])), "nibs-loose", "milestones");
+      const bucketId = displayContainerIdForItem(new Map(nibs.map(n => [n.id, n])), "nibs-loose", "milestones");
       expect(bucketId).not.toBeNull();
-      expect(isBucketId(bucketId!)).toBe(true);
+      expect(isSyntheticRowId(bucketId!)).toBe(true);
       return bucketId!;
     }
 
@@ -2908,7 +2908,7 @@ describe("TreeTable", () => {
       );
 
       const bucketRow = Array.from(container.querySelectorAll("tr[data-nib-id]")).find((tr) =>
-        isBucketId(tr.getAttribute("data-nib-id")!),
+        isSyntheticRowId(tr.getAttribute("data-nib-id")!),
       ) as HTMLElement;
       expect(bucketRow).toBeTruthy();
       expect(screen.getByText("Loose Task")).toBeInTheDocument();

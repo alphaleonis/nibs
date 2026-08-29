@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildTree, buildViewTree, isBucketId, bucketIdForItem, collectDescendantIds, BUCKET_IDS } from "./tree";
+import { buildTree, buildViewTree, isSyntheticRowId, holdsChildrenByDisplay, displayContainerIdForItem, collectDescendantIds, BUCKET_IDS } from "./tree";
 import { makeNibComparator } from "./tableSort";
 import { typeRank } from "./typeHierarchy";
 import type { TreeNib, TreeTableNib, TreeNode, ViewLevel, TableSort } from "./types";
@@ -277,7 +277,7 @@ describe("buildTree", () => {
         makeTreeNib({ id: "a", type: "epic", parentId: "b" }),
         makeTreeNib({ id: "b", type: "task", parentId: "a" }),
       ];
-      const ids = collectIds(buildViewTree(nibs, "epics")).filter((id) => !isBucketId(id));
+      const ids = collectIds(buildViewTree(nibs, "epics")).filter((id) => !isSyntheticRowId(id));
       expect(ids.sort()).toEqual(["a", "b"]);
     });
   });
@@ -362,7 +362,7 @@ describe("buildViewTree", () => {
         "nibs-004",
         "nibs-005",
       ]);
-      expect(result.some((n) => isBucketId(n.nib.id))).toBe(false);
+      expect(result.some((n) => isSyntheticRowId(n.nib.id))).toBe(false);
     });
 
     it("returns an empty forest for empty input", () => {
@@ -391,7 +391,7 @@ describe("buildViewTree", () => {
       expect(result[0].children[0].children[0].depth).toBe(2);
 
       // Single "No milestone" bucket holds the loose feature and bug
-      const bucket = result.find(r => isBucketId(r.nib.id))!;
+      const bucket = result.find(r => isSyntheticRowId(r.nib.id))!;
       expect(bucket).toBeDefined();
       expect(bucket.nib.id).toBe("/__no_milestone__");
       const bucketChildIds = bucket.children.map(c => c.nib.id);
@@ -486,7 +486,7 @@ describe("buildViewTree", () => {
       expect(result[0].children[0].nib.id).toBe("nibs-004");
 
       // The task under the epic (no feature/bug ancestor) lands in the bucket
-      const bucket = result.find(r => isBucketId(r.nib.id))!;
+      const bucket = result.find(r => isSyntheticRowId(r.nib.id))!;
       expect(bucket).toBeDefined();
       expect(bucket.nib.id).toBe("/__no_feature_or_bug__");
       expect(bucket.children.map(c => c.nib.id)).toEqual(["nibs-005"]);
@@ -528,7 +528,7 @@ describe("buildViewTree", () => {
         const result = buildViewTree(MESSY_FIXTURE, lens);
 
         // Real nib ids only (drop synthetic bucket nodes)
-        const outputIds = collectIds(result).filter(id => !isBucketId(id));
+        const outputIds = collectIds(result).filter(id => !isSyntheticRowId(id));
 
         const counts = new Map<string, number>();
         for (const id of outputIds) counts.set(id, (counts.get(id) ?? 0) + 1);
@@ -563,7 +563,7 @@ describe("buildViewTree", () => {
 
       const result = buildViewTree(nibs, "epics");
 
-      const bucket = result.find(r => isBucketId(r.nib.id))!;
+      const bucket = result.find(r => isSyntheticRowId(r.nib.id))!;
       // Count is direct children only — the nested task is (3) if recursive, (2) if direct.
       expect(bucket.nib.title).toBe("No epic (2)");
       expect(bucket.children).toHaveLength(2);
@@ -662,14 +662,14 @@ describe("buildViewTree", () => {
 
       it("no comparator → grouped DFS bucket-item order (control)", () => {
         const result = buildViewTree(nibs, "epics");
-        const bucket = result.find((r) => isBucketId(r.nib.id))!;
+        const bucket = result.find((r) => isSyntheticRowId(r.nib.id))!;
         expect(bucket.children.map((c) => c.nib.id)).toEqual(["tZ", "tA"]);
       });
 
       it("title asc → bucket items in GLOBAL order [Apple, Zebra]", () => {
         const cmp = cmpFor(nibs, { field: "title", direction: "asc" });
         const result = buildViewTree(nibs, "epics", cmp);
-        const bucket = result.find((r) => isBucketId(r.nib.id))!;
+        const bucket = result.find((r) => isSyntheticRowId(r.nib.id))!;
         expect(bucket.children.map((c) => c.nib.id)).toEqual(["tA", "tZ"]);
       });
     });
@@ -710,19 +710,19 @@ describe("buildViewTree", () => {
   });
 });
 
-describe("bucketIdForItem", () => {
+describe("displayContainerIdForItem", () => {
   function nibMapOf(nibs: TreeNib[]): Map<string, TreeNib> {
     return new Map(nibs.map(n => [n.id, n]));
   }
 
   it("returns null for the none lens (no buckets)", () => {
     const map = nibMapOf([makeTreeNib({ id: "t1", type: "task" })]);
-    expect(bucketIdForItem(map, "t1", "none")).toBeNull();
+    expect(displayContainerIdForItem(map, "t1", "none")).toBeNull();
   });
 
   it("returns the lens bucket for a loose item with no grouping ancestor", () => {
     const map = nibMapOf([makeTreeNib({ id: "t1", type: "task" })]);
-    expect(bucketIdForItem(map, "t1", "epics")).toBe("/__no_epic__");
+    expect(displayContainerIdForItem(map, "t1", "epics")).toBe("/__no_epic__");
   });
 
   it("returns null when the item sits under a grouping header", () => {
@@ -731,12 +731,12 @@ describe("bucketIdForItem", () => {
       makeTreeNib({ id: "f1", type: "feature", parentId: "e1" }),
       makeTreeNib({ id: "t1", type: "task", parentId: "f1" }),
     ]);
-    expect(bucketIdForItem(map, "t1", "epics")).toBeNull();
+    expect(displayContainerIdForItem(map, "t1", "epics")).toBeNull();
   });
 
   it("returns null when the item IS a grouping header itself", () => {
     const map = nibMapOf([makeTreeNib({ id: "e1", type: "epic" })]);
-    expect(bucketIdForItem(map, "e1", "epics")).toBeNull();
+    expect(displayContainerIdForItem(map, "e1", "epics")).toBeNull();
   });
 
   it("buckets a loose task under a milestone (above-tier ancestor, no epic)", () => {
@@ -744,7 +744,7 @@ describe("bucketIdForItem", () => {
       makeTreeNib({ id: "m1", type: "milestone" }),
       makeTreeNib({ id: "t1", type: "task", parentId: "m1" }),
     ]);
-    expect(bucketIdForItem(map, "t1", "epics")).toBe("/__no_epic__");
+    expect(displayContainerIdForItem(map, "t1", "epics")).toBe("/__no_epic__");
   });
 
   it("features lens: task under an epic (no feature/bug) lands in the bucket", () => {
@@ -752,7 +752,7 @@ describe("bucketIdForItem", () => {
       makeTreeNib({ id: "e1", type: "epic" }),
       makeTreeNib({ id: "t1", type: "task", parentId: "e1" }),
     ]);
-    expect(bucketIdForItem(map, "t1", "features")).toBe("/__no_feature_or_bug__");
+    expect(displayContainerIdForItem(map, "t1", "features")).toBe("/__no_feature_or_bug__");
   });
 
   it("features lens: task under a feature is under a header (null)", () => {
@@ -760,45 +760,114 @@ describe("bucketIdForItem", () => {
       makeTreeNib({ id: "f1", type: "feature" }),
       makeTreeNib({ id: "t1", type: "task", parentId: "f1" }),
     ]);
-    expect(bucketIdForItem(map, "t1", "features")).toBeNull();
+    expect(displayContainerIdForItem(map, "t1", "features")).toBeNull();
   });
 
   // An item whose OWN rank is above the grouping tier is hidden outright by
   // buildViewTree (not swept into a bucket), so it has no enclosing bucket —
-  // bucketIdForItem must agree and return null, else ensure-visible would
+  // displayContainerIdForItem must agree and return null, else ensure-visible would
   // spuriously un-collapse a bucket when deep-linking to such a container.
   it("returns null for an above-tier container queried in a lower lens", () => {
     const map = nibMapOf([
       makeTreeNib({ id: "m1", type: "milestone" }),
       makeTreeNib({ id: "e1", type: "epic", parentId: "m1" }),
     ]);
-    expect(bucketIdForItem(map, "m1", "epics")).toBeNull(); // milestone hidden in epics lens
-    expect(bucketIdForItem(map, "m1", "features")).toBeNull(); // milestone hidden in features lens
-    expect(bucketIdForItem(map, "e1", "features")).toBeNull(); // epic hidden in features lens
+    expect(displayContainerIdForItem(map, "m1", "epics")).toBeNull(); // milestone hidden in epics lens
+    expect(displayContainerIdForItem(map, "m1", "features")).toBeNull(); // milestone hidden in features lens
+    expect(displayContainerIdForItem(map, "e1", "features")).toBeNull(); // epic hidden in features lens
   });
 });
 
-describe("isBucketId", () => {
+describe("holdsChildrenByDisplay", () => {
+  /**
+   * Nodes are built by hand rather than through `buildViewTree`, and they have to
+   * be: `buildTree` nests a child only under the parent its `parentId` names, so
+   * the only node in any tree it emits whose children disagree is the synthetic
+   * bucket. A real nib heading a section of members that are not its children —
+   * the shape this predicate exists to recognize — is unreachable from a nib list,
+   * which would make every assertion below pass against the bucket-only predicate
+   * it replaces.
+   */
+  function nodeOf(nib: TreeNib, children: TreeNib[]): TreeNode<TreeNib> {
+    return { nib, children: children.map((c) => ({ nib: c, children: [], depth: 1 })), depth: 0 };
+  }
+
+  it("is false for a container whose children all name it as their parent", () => {
+    const epic = makeTreeNib({ id: "e1", type: "epic" });
+    const node = nodeOf(epic, [
+      makeTreeNib({ id: "t1", type: "task", parentId: "e1" }),
+      makeTreeNib({ id: "t2", type: "task", parentId: "e1" }),
+    ]);
+    expect(holdsChildrenByDisplay(node)).toBe(false);
+  });
+
+  it("is false for a leaf, which holds nothing either way", () => {
+    expect(holdsChildrenByDisplay(nodeOf(makeTreeNib({ id: "t1", type: "task" }), []))).toBe(false);
+  });
+
+  it("is true for a synthetic bucket, whose loose items name some other parent or none", () => {
+    const node = nodeOf(makeTreeNib({ id: "/__no_epic__", type: "" }), [
+      makeTreeNib({ id: "t1", type: "task", parentId: null }),
+      makeTreeNib({ id: "t2", type: "task", parentId: "m1" }),
+    ]);
+    expect(holdsChildrenByDisplay(node)).toBe(true);
+  });
+
+  it("is true for a real nib heading a section of members that are not its children", () => {
+    // A task cannot BE a milestone's child — VALID_CHILD_TYPES.milestone is []
+    // (asserted in typeHierarchy.test.ts), so `nibs new "Ship it" -t task
+    // --parent nibs-mile1` is refused by the server. Membership is therefore
+    // always by arrangement here, never by parentage, and the disagreement below
+    // is the only signal available.
+    const node = nodeOf(makeTreeNib({ id: "nibs-mile1", type: "milestone" }), [
+      makeTreeNib({ id: "t1", type: "task", parentId: null }),
+    ]);
+    expect(holdsChildrenByDisplay(node)).toBe(true);
+    // ...and it is emphatically not synthetic. The two questions are independent.
+    expect(isSyntheticRowId(node.nib.id)).toBe(false);
+  });
+
+  it("is true when only SOME children disagree", () => {
+    const node = nodeOf(makeTreeNib({ id: "e1", type: "epic" }), [
+      makeTreeNib({ id: "t1", type: "task", parentId: "e1" }),
+      makeTreeNib({ id: "t2", type: "task", parentId: null }),
+    ]);
+    expect(holdsChildrenByDisplay(node)).toBe(true);
+  });
+});
+
+describe("isSyntheticRowId", () => {
   it("is true for synthetic bucket ids and false for real nib ids", () => {
-    expect(isBucketId("/__no_epic__")).toBe(true);
-    expect(isBucketId("/__no_milestone__")).toBe(true);
-    expect(isBucketId("/__no_feature_or_bug__")).toBe(true);
-    expect(isBucketId("nibs-abc1")).toBe(false);
-    expect(isBucketId("")).toBe(false);
+    expect(isSyntheticRowId("/__no_epic__")).toBe(true);
+    expect(isSyntheticRowId("/__no_milestone__")).toBe(true);
+    expect(isSyntheticRowId("/__no_feature_or_bug__")).toBe(true);
+    expect(isSyntheticRowId("nibs-abc1")).toBe(false);
+    expect(isSyntheticRowId("")).toBe(false);
     // Membership is exact, not prefix- or substring-based: an id that merely
     // resembles a bucket id is still an ordinary nib id.
-    expect(isBucketId("__proj-abc1")).toBe(false);
-    expect(isBucketId("/__no_epic__x")).toBe(false);
-    expect(isBucketId("no_epic")).toBe(false);
+    expect(isSyntheticRowId("__proj-abc1")).toBe(false);
+    expect(isSyntheticRowId("/__no_epic__x")).toBe(false);
+    expect(isSyntheticRowId("no_epic")).toBe(false);
     // The underscore-fenced strings are ordinary nib ids: a filename holds every
     // character in them, so `__no_epic__.md` parses back to exactly this id and
     // it must NOT be mistaken for a bucket.
-    expect(isBucketId("__no_epic__")).toBe(false);
-    expect(isBucketId("__no_milestone__")).toBe(false);
-    expect(isBucketId("__no_feature_or_bug__")).toBe(false);
+    expect(isSyntheticRowId("__no_epic__")).toBe(false);
+    expect(isSyntheticRowId("__no_milestone__")).toBe(false);
+    expect(isSyntheticRowId("__no_feature_or_bug__")).toBe(false);
   });
 
-  // The disjointness `isBucketId` rests on needs TWO properties of every bucket
+  // The property every caller of this predicate leans on. It asks whether a row
+  // has a nib behind it — NOT whether the row is a section header, which is a
+  // separate question `holdsChildrenByDisplay` answers from the node. A real nib
+  // heading a section of its own is still a nib: selection, detail-open, the
+  // action-target resolver, drag and the id column all admit it, and a predicate
+  // that swept section headers in would take every one of those away at once.
+  it("is false for a real nib that heads a section", () => {
+    const header = makeTreeNib({ id: "nibs-mile1", type: "milestone", title: "v2.0" });
+    expect(isSyntheticRowId(header.id)).toBe(false);
+  });
+
+  // The disjointness `isSyntheticRowId` rests on needs TWO properties of every bucket
   // id, and neither is sufficient alone (see GROUPING_LENSES): the leading "/"
   // keeps it out of the filename-derived id space, and a last character outside
   // [0-9a-z] keeps it out of `nib.NewID`'s prefix-plus-nanoid space. This rule

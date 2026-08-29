@@ -1,5 +1,5 @@
 import type { TreeTableNib, NibFilter, ViewLevel, TreeNode, TableSort } from "./types";
-import { buildViewTree, isBucketId } from "./tree";
+import { buildViewTree, holdsChildrenByDisplay, isSyntheticRowId } from "./tree";
 import { makeNibComparator } from "./tableSort";
 import { hasClientFilters, matchesFilter } from "./filter";
 
@@ -48,19 +48,22 @@ export interface RowData {
   dimmed: boolean;
   parentNib: TreeTableNib | null;
   /**
-   * The id of this row's DISPLAY container in the current view tree — the node
-   * whose `children` array holds it — or null when it is a display root. This is
-   * the structural authority for drag reorder: under a grouping lens it differs
-   * from `nib.parentId` (a promoted header's display parent is null though its
-   * real parent is a hidden container). Distinct from `parentNib`, which stays
-   * the real logical parent used by the "Parent" column.
+   * The id of the nib this row would REORDER AGAINST in the current view tree,
+   * or null when it reorders at the display root. This is the structural
+   * authority for drag reorder: under a grouping lens it differs from
+   * `nib.parentId` (a promoted header's display parent is null though its real
+   * parent is a hidden container). Distinct from `parentNib`, which stays the
+   * real logical parent used by the "Parent" column.
    *
-   * INVARIANT: always a real nib id or `null` — NEVER a synthetic bucket id. A
-   * bucket's children inherit the bucket's OWN display parent (`null` for today's
-   * single top-level bucket), so consumers can use this value directly as a
-   * backend `parentId` / type-lookup key without an `isBucketId` guard. If
-   * buckets ever nest, the recursion in `flatten` must pass the bucket's own
-   * resolved display parent rather than the value threaded down.
+   * INVARIANT: always a real nib id that could hold this row as a child, or
+   * `null` — so consumers can use it directly as a backend `parentId` /
+   * type-lookup key with no guard of their own. That excludes both kinds of
+   * display container: a synthetic bucket, whose id names no nib, and a real nib
+   * heading a section of rows that are not its children. Rows under either
+   * inherit that container's OWN display parent (`null` for today's single
+   * top-level bucket) rather than naming it. If display containers ever nest,
+   * the recursion in `flatten` must pass the container's own resolved display
+   * parent rather than the value threaded down.
    */
   displayParentId: string | null;
 }
@@ -148,24 +151,29 @@ export function buildTableData(
   const nodeComparator = sort ? makeNibComparator(sort, nibMap) : undefined;
   const tree = buildViewTree<TreeTableNib>(allNibs, viewLevel, nodeComparator);
 
-  // Stage 5a: Synthetic "No X" bucket nodes are not real nibs, so they never
-  // appear in the real-parentId-derived `parentIds` or `visibleIds` sets. Fold
-  // them in from the emitted tree so consumers treat them like real containers:
-  //   - collapse (parentIds): a bucket with children is collapsible.
-  //   - filter visibility (visibleIds): a bucket whose subtree contains a visible
-  //     descendant must itself be visible, or flatten() would skip it AND its
-  //     children — silently dropping filter-matching loose items (the lens is
+  // Stage 5a: `parentIds` and `visibleIds` are both derived from real `parentId`
+  // links, so a node that holds its rows by ARRANGEMENT — a synthetic "No X"
+  // bucket, or a real nib heading a section of members that are not its children
+  // — is absent from both however visible its section is. Fold those in from the
+  // emitted tree so consumers treat them like the containers they are:
+  //   - collapse (parentIds): a display container with rows under it is
+  //     collapsible, or it renders a section with no way to close it.
+  //   - filter visibility (visibleIds): a display container whose subtree holds a
+  //     visible descendant must itself be visible, or flatten() would skip it AND
+  //     everything under it — silently dropping filter-matching rows (the lens is
   //     lossless, so a client filter must not hide them).
-  (function foldBuckets(nodes: TreeNode<TreeTableNib>[]): boolean {
+  (function foldDisplayContainers(nodes: TreeNode<TreeTableNib>[]): boolean {
     let anyVisible = false;
     for (const node of nodes) {
-      const childVisible = foldBuckets(node.children);
-      const isBucket = isBucketId(node.nib.id);
-      if (isBucket && node.children.length > 0) {
+      const childVisible = foldDisplayContainers(node.children);
+      // `some` over the children, so this is false for a childless node and the
+      // "has rows under it" half of the collapse question comes for free.
+      const byDisplay = holdsChildrenByDisplay(node);
+      if (byDisplay) {
         parentIds.add(node.nib.id);
       }
       const selfVisible = (visibleIds ? visibleIds.has(node.nib.id) : true) || childVisible;
-      if (visibleIds && isBucket && selfVisible) {
+      if (visibleIds && byDisplay && selfVisible) {
         visibleIds.add(node.nib.id);
       }
       anyVisible = anyVisible || selfVisible;
@@ -181,9 +189,11 @@ export function buildTableData(
       // If we have visibility filtering, skip non-visible nodes
       if (visibleIds && !visibleIds.has(node.nib.id)) continue;
 
-      // Bucket nodes are synthetic structural containers, never real nibs in
-      // matchingIds, so they must never be dimmed by a client filter.
-      const dimmed = matchingIds && !isBucketId(node.nib.id) ? !matchingIds.has(node.nib.id) : false;
+      // An identity question, not an arrangement one: a synthetic bucket row is
+      // never in matchingIds because it is no nib, so a client filter must not
+      // dim it. A real nib heading a section IS in the filter's domain and dims
+      // like any other row when it does not match.
+      const dimmed = matchingIds && !isSyntheticRowId(node.nib.id) ? !matchingIds.has(node.nib.id) : false;
       const visibleChildren = visibleIds
         ? node.children.filter(c => visibleIds.has(c.nib.id))
         : node.children;
@@ -203,12 +213,14 @@ export function buildTableData(
       });
 
       if (!collapsedIds.has(node.nib.id)) {
-        // A bucket is synthetic (not a real nib), so its children must inherit
-        // the bucket's OWN display parent — never the unusable bucket id. This
-        // upholds the RowData.displayParentId invariant. (If buckets ever nest,
-        // this must resolve the bucket's own display parent, not the value
-        // threaded down.)
-        flatten(node.children, isBucketId(node.nib.id) ? displayParentId : node.nib.id);
+        // Rows a node holds by ARRANGEMENT are not its children, so they inherit
+        // that node's OWN display parent instead of naming it — upholding the
+        // RowData.displayParentId invariant. Naming it would hand a reorder a
+        // parent id the backend rejects: a synthetic bucket resolves to no nib,
+        // and a milestone heading a section accepts no children of any type.
+        // (If display containers ever nest, this must resolve the node's own
+        // display parent rather than the value threaded down.)
+        flatten(node.children, holdsChildrenByDisplay(node) ? displayParentId : node.nib.id);
       }
     }
   }

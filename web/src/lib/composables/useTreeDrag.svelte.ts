@@ -214,10 +214,11 @@ export function useTreeDrag(opts: {
 
     // For before/after on a different parent, validate the type hierarchy.
     // Compare and look up the parent through displayParentId so move-validation
-    // and the drop agree. displayParentId is guaranteed by the producer
-    // (tableData's flatten) to be a real nib id or null — never a synthetic
-    // bucket id (see the RowData.displayParentId invariant) — so no isBucketId
-    // guard is needed here.
+    // and the drop agree. The producer (tableData's flatten) guarantees it is a
+    // real nib id that could hold the row as a child, or null — never a display
+    // container, whether that is a synthetic bucket or a real nib heading a
+    // section (see the RowData.displayParentId invariant) — so no guard of any
+    // kind is needed here.
     if (valid && (zone === "before" || zone === "after")) {
       if (draggedParentId !== undefined && targetRow.displayParentId !== draggedParentId) {
         const nibMap = nibMapFromRows();

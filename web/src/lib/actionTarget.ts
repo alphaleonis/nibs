@@ -1,14 +1,16 @@
 import type { SelectionState } from "./selection.svelte";
-import { isBucketId } from "./tree";
+import { isSyntheticRowId } from "./tree";
 
 /**
  * Resolves which nib IDs a delete/bulk action should target, in priority order:
  * the multi-select set, then the focused row, then the context-menu target.
  *
- * A synthetic grouping-bucket id (e.g. "/__no_milestone__") is NEVER returned. A
- * bucket row has no detail and is unresolvable for any bulk mutation, so admitting
- * one would dispatch a phantom (e.g. `deleteBatch(["/__no_milestone__"])`) against a
- * nonexistent nib. The three tiers guard buckets differently:
+ * A synthetic row id (e.g. "/__no_milestone__") is NEVER returned. Such a row has
+ * no detail and is unresolvable for any bulk mutation, so admitting one would
+ * dispatch a phantom (e.g. `deleteBatch(["/__no_milestone__"])`) against a
+ * nonexistent nib. What disqualifies it is naming no nib, not heading a section:
+ * a real nib heading one resolves like any other row and is a legal target. The
+ * three tiers guard synthetic ids differently:
  *  - `selectedIds` is already bucket-free — SelectionState.select/toggleSelect/
  *    rangeSelect reject bucket ids (nibs-mn0t) — so the filter here is
  *    defense-in-depth.
@@ -24,12 +26,12 @@ export function getActionTargetIds(
   contextTargetId: string | null,
 ): string[] {
   if (selection.hasMultiSelect) {
-    return [...selection.selectedIds].filter((id) => !isBucketId(id));
+    return [...selection.selectedIds].filter((id) => !isSyntheticRowId(id));
   }
-  if (selection.focusedNibId && !isBucketId(selection.focusedNibId)) {
+  if (selection.focusedNibId && !isSyntheticRowId(selection.focusedNibId)) {
     return [selection.focusedNibId];
   }
-  if (contextTargetId && !isBucketId(contextTargetId)) {
+  if (contextTargetId && !isSyntheticRowId(contextTargetId)) {
     return [contextTargetId];
   }
   return [];

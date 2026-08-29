@@ -5,7 +5,7 @@
   import type { ColumnKey } from "../columns";
   import type { Preferences } from "../preferences.svelte";
   import { buildTableData } from "../tableData";
-  import { isBucketId, bucketIdForItem, buildViewTree, collectDescendantIds } from "../tree";
+  import { isSyntheticRowId, displayContainerIdForItem, buildViewTree, collectDescendantIds } from "../tree";
   import { applySort, nextTableSort } from "../tableSort";
   import { prepareFilter, matchesFilter } from "../filter";
   import { dragBlockFor, DRAG_BLOCK_TOAST_ID } from "../dragBlock";
@@ -332,11 +332,12 @@
         next.delete(current.parentId);
         current = nibMap.get(current.parentId);
       }
-      // The target may sit inside a synthetic "No X" bucket, which is never any
-      // real nib's parentId — so the chain walk above cannot un-collapse it.
-      // Un-collapse the enclosing bucket for the current lens too.
-      const bucketId = bucketIdForItem(nibMap, nibId, resolvedViewLevel);
-      if (bucketId) next.delete(bucketId);
+      // The target may sit inside a container that holds it by display rather
+      // than by parentage — today a synthetic "No X" bucket — which is never any
+      // real nib's parentId, so the chain walk above cannot reach it.
+      // Un-collapse the enclosing container for the current lens too.
+      const containerId = displayContainerIdForItem(nibMap, nibId, resolvedViewLevel);
+      if (containerId) next.delete(containerId);
       // If expansion changes nothing yet the nib is still not visible, it is in
       // the dataset but excluded from the visible rows by an active client
       // filter, regardless of collapse state. (Grouping lenses are lossless —
@@ -420,7 +421,8 @@
     const next = new Set(treeView.collapsedIds);
     // Collapse the row itself plus every descendant that actually has children,
     // so re-expanding the row reveals exactly one level at a time. parentIds
-    // already folds in synthetic buckets (tableData Stage 5a).
+    // already folds in the containers that hold their rows by display rather
+    // than by parentage (tableData Stage 5a).
     next.add(rootId);
     for (const id of descendantIds) {
       if (parentIds.has(id)) next.add(id);
@@ -559,14 +561,15 @@
     return { action, el: actionEl };
   }
 
-  // Row-open guard for synthetic grouping buckets. A "No X" bucket row
-  // (isBucketId) is not a real nib, so routing its synthetic id through
-  // view.open resolves an empty detail query and fires the missing-nib
-  // ("no longer exists") heal path. Instead, opening a bucket
-  // toggles/collapses its group — the same effect as its caret — mirroring the
-  // drag handlers, which skip buckets via the same isBucketId test.
+  // Row-open guard for rows that name no nib. A "No X" bucket row is fabricated
+  // by the view layer, so routing its synthetic id through view.open resolves an
+  // empty detail query and fires the missing-nib ("no longer exists") heal path.
+  // Opening one toggles/collapses its group instead — the same effect as its
+  // caret — mirroring the drag handlers, which skip such rows via the same
+  // isSyntheticRowId test. The question is identity, not whether the row heads a
+  // section: a real nib heading one opens its own detail like any other row.
   function openOrToggleBucket(id: string) {
-    if (isBucketId(id)) {
+    if (isSyntheticRowId(id)) {
       toggleNode(id);
       return;
     }
@@ -602,7 +605,7 @@
     // select/toggleSelect reject a bucket id outright — so an interleaved or
     // keyboard-focused bucket never reaches selectedIds even where this
     // click-level guard does not see it.
-    if (isBucketId(nibId)) {
+    if (isSyntheticRowId(nibId)) {
       toggleNode(nibId);
       return;
     }
@@ -687,7 +690,7 @@
     // by a gate still goes through, so attempting a drag on it can explain why
     // nothing moves — useTreeDrag only reports once the gesture passes the drag
     // threshold, so a plain click stays silent.
-    if (isBucketId(nibId)) return;
+    if (isSyntheticRowId(nibId)) return;
 
     treeDrag.onRowPointerDown(nibId, e);
   }
@@ -804,7 +807,7 @@
           parentNib={row.parentNib}
           visibleColumns={resolvedVisibleColumns}
           columnOrder={resolvedColumnOrder}
-          draggable={!isBucketId(row.nib.id) && dragAllowed}
+          draggable={!isSyntheticRowId(row.nib.id) && dragAllowed}
           highlighted={dataSource.changed.isHighlighted(row.nib.id)}
           fading={dataSource.changed.isFading(row.nib.id)}
           {blockedEmphasis}
