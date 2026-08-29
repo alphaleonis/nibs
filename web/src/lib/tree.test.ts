@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildTree, buildViewTree, isBucketId, bucketIdForItem, collectDescendantIds } from "./tree";
+import { buildTree, buildViewTree, isBucketId, bucketIdForItem, collectDescendantIds, BUCKET_IDS } from "./tree";
 import { makeNibComparator } from "./tableSort";
 import { typeRank } from "./typeHierarchy";
 import type { TreeNib, TreeTableNib, TreeNode, ViewLevel, TableSort } from "./types";
@@ -393,7 +393,7 @@ describe("buildViewTree", () => {
       // Single "No milestone" bucket holds the loose feature and bug
       const bucket = result.find(r => isBucketId(r.nib.id))!;
       expect(bucket).toBeDefined();
-      expect(bucket.nib.id).toBe("__no_milestone__");
+      expect(bucket.nib.id).toBe("/__no_milestone__");
       const bucketChildIds = bucket.children.map(c => c.nib.id);
       expect(bucketChildIds).toEqual(["nibs-004", "nibs-005"]);
 
@@ -442,7 +442,7 @@ describe("buildViewTree", () => {
       expect(result[0].children[0].children[0].nib.id).toBe("nibs-004");
 
       // Loose feature/bug go under "No epic"
-      const bucket = result.find(r => r.nib.id === "__no_epic__")!;
+      const bucket = result.find(r => r.nib.id === "/__no_epic__")!;
       expect(bucket).toBeDefined();
       expect(bucket.children.map(c => c.nib.id)).toEqual(["nibs-005", "nibs-006"]);
     });
@@ -459,7 +459,7 @@ describe("buildViewTree", () => {
       // No epic headers exist; milestone row hidden; tasks fall to the bucket
       expect(result).toHaveLength(1);
       const bucket = result[0];
-      expect(bucket.nib.id).toBe("__no_epic__");
+      expect(bucket.nib.id).toBe("/__no_epic__");
       expect(bucket.children.map(c => c.nib.id)).toEqual(["nibs-002", "nibs-003"]);
     });
   });
@@ -488,7 +488,7 @@ describe("buildViewTree", () => {
       // The task under the epic (no feature/bug ancestor) lands in the bucket
       const bucket = result.find(r => isBucketId(r.nib.id))!;
       expect(bucket).toBeDefined();
-      expect(bucket.nib.id).toBe("__no_feature_or_bug__");
+      expect(bucket.nib.id).toBe("/__no_feature_or_bug__");
       expect(bucket.children.map(c => c.nib.id)).toEqual(["nibs-005"]);
     });
 
@@ -508,7 +508,7 @@ describe("buildViewTree", () => {
       expect(feature.children.map(c => c.nib.id)).toContain("nibs-004");
 
       // Root research (rank 0, not feature/bug) becomes a bucket item, carrying its task subtree
-      const bucket = result.find(r => r.nib.id === "__no_feature_or_bug__")!;
+      const bucket = result.find(r => r.nib.id === "/__no_feature_or_bug__")!;
       expect(bucket).toBeDefined();
       const rootResearch = bucket.children.find(c => c.nib.id === "nibs-001")!;
       expect(rootResearch).toBeDefined();
@@ -722,7 +722,7 @@ describe("bucketIdForItem", () => {
 
   it("returns the lens bucket for a loose item with no grouping ancestor", () => {
     const map = nibMapOf([makeTreeNib({ id: "t1", type: "task" })]);
-    expect(bucketIdForItem(map, "t1", "epics")).toBe("__no_epic__");
+    expect(bucketIdForItem(map, "t1", "epics")).toBe("/__no_epic__");
   });
 
   it("returns null when the item sits under a grouping header", () => {
@@ -744,7 +744,7 @@ describe("bucketIdForItem", () => {
       makeTreeNib({ id: "m1", type: "milestone" }),
       makeTreeNib({ id: "t1", type: "task", parentId: "m1" }),
     ]);
-    expect(bucketIdForItem(map, "t1", "epics")).toBe("__no_epic__");
+    expect(bucketIdForItem(map, "t1", "epics")).toBe("/__no_epic__");
   });
 
   it("features lens: task under an epic (no feature/bug) lands in the bucket", () => {
@@ -752,7 +752,7 @@ describe("bucketIdForItem", () => {
       makeTreeNib({ id: "e1", type: "epic" }),
       makeTreeNib({ id: "t1", type: "task", parentId: "e1" }),
     ]);
-    expect(bucketIdForItem(map, "t1", "features")).toBe("__no_feature_or_bug__");
+    expect(bucketIdForItem(map, "t1", "features")).toBe("/__no_feature_or_bug__");
   });
 
   it("features lens: task under a feature is under a header (null)", () => {
@@ -780,17 +780,43 @@ describe("bucketIdForItem", () => {
 
 describe("isBucketId", () => {
   it("is true for synthetic bucket ids and false for real nib ids", () => {
-    expect(isBucketId("__no_epic__")).toBe(true);
-    expect(isBucketId("__no_milestone__")).toBe(true);
-    expect(isBucketId("__no_feature_or_bug__")).toBe(true);
+    expect(isBucketId("/__no_epic__")).toBe(true);
+    expect(isBucketId("/__no_milestone__")).toBe(true);
+    expect(isBucketId("/__no_feature_or_bug__")).toBe(true);
     expect(isBucketId("nibs-abc1")).toBe(false);
     expect(isBucketId("")).toBe(false);
-    // Exact-set membership is collision-proof: a real id can never equal a bucket
-    // id, even with a user nibs.prefix that starts with underscores or that shares
-    // a bucket-id substring.
+    // Membership is exact, not prefix- or substring-based: an id that merely
+    // resembles a bucket id is still an ordinary nib id.
     expect(isBucketId("__proj-abc1")).toBe(false);
-    expect(isBucketId("__no_epic__x")).toBe(false);
+    expect(isBucketId("/__no_epic__x")).toBe(false);
     expect(isBucketId("no_epic")).toBe(false);
+    // The underscore-fenced strings are ordinary nib ids: a filename holds every
+    // character in them, so `__no_epic__.md` parses back to exactly this id and
+    // it must NOT be mistaken for a bucket.
+    expect(isBucketId("__no_epic__")).toBe(false);
+    expect(isBucketId("__no_milestone__")).toBe(false);
+    expect(isBucketId("__no_feature_or_bug__")).toBe(false);
+  });
+
+  // The disjointness `isBucketId` rests on needs TWO properties of every bucket
+  // id, and neither is sufficient alone (see GROUPING_LENSES): the leading "/"
+  // keeps it out of the filename-derived id space, and a last character outside
+  // [0-9a-z] keeps it out of `nib.NewID`'s prefix-plus-nanoid space. This rule
+  // has already been written down wrongly once as prose, which has no compiler —
+  // so it is asserted here instead, against the derived set the production code
+  // actually uses.
+  it("every bucket id leads with a slash and ends outside the nanoid charset", () => {
+    expect(BUCKET_IDS.size, "no bucket ids to check — this guard would pass vacuously").toBeGreaterThan(0);
+    for (const id of BUCKET_IDS) {
+      expect(
+        id.startsWith("/"),
+        `bucket id ${JSON.stringify(id)} must lead with "/" — otherwise an id parsed from a filename could equal it`,
+      ).toBe(true);
+      expect(
+        /[0-9a-z]$/.test(id),
+        `bucket id ${JSON.stringify(id)} must not end in [0-9a-z] — otherwise nib.NewID could mint it from a caller prefix`,
+      ).toBe(false);
+    }
   });
 });
 
@@ -853,13 +879,13 @@ describe("collectDescendantIds", () => {
   });
 
   it("collects loose items under the synthetic 'No X' bucket", () => {
-    // Loose tasks with no epic ancestor fall into the __no_epic__ bucket.
+    // Loose tasks with no epic ancestor fall into the /__no_epic__ bucket.
     const nibs: TreeNib[] = [
       makeTreeNib({ id: "t1", type: "task" }),
       makeTreeNib({ id: "t2", type: "task" }),
     ];
     const tree = buildViewTree(nibs, "epics");
-    expect(collectDescendantIds(tree, "__no_epic__")).toEqual(new Set(["t1", "t2"]));
+    expect(collectDescendantIds(tree, "/__no_epic__")).toEqual(new Set(["t1", "t2"]));
   });
 
   it("does not overflow on a cyclic tree (visited guard)", () => {

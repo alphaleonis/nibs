@@ -106,10 +106,35 @@ interface LensConfig {
   bucketLabel: string;
 }
 
+/**
+ * Every bucket id leads with a SLASH and ends with an UNDERSCORE. Both are
+ * load-bearing, because a nib id can reach the UI by two routes and each
+ * character closes one of them.
+ *
+ * The leading slash closes the filename-derived route: an id read off disk is
+ * `nib.ParseFilename(filepath.Base(path))`, a substring of one filename
+ * component, and no filesystem admits a path separator inside one. Front matter
+ * cannot supply an id either — `Nib.ID` carries `yaml:"-"`.
+ *
+ * The trailing underscore closes the created-nib route, which the slash does
+ * NOT: `nib.NewID(prefix, length)` concatenates an unvalidated caller prefix
+ * with a nanoid, so a created id can perfectly well hold a slash — `nibs new
+ * --prefix "a/b-"` minted `a/b-ejgn`, and `--prefix "/__no_milestone__"` minted
+ * `/__no_milestone__0q1d`. What it can never do is end in "_": the nanoid is
+ * drawn from [0-9a-z] and its length is floored above zero at every call site,
+ * so a minted id always ends in one of those 36 characters.
+ *
+ * A bucket id added here must therefore satisfy BOTH — lead with "/" AND end
+ * outside [0-9a-z]. The slash alone is not sufficient: `/no-area` would be
+ * reachable from `--prefix "/no-are"` under `nibs.id_length: 1`. Both halves are
+ * asserted over `BUCKET_IDS` in tree.test.ts, so a new id that satisfies only
+ * one fails there rather than reinstating a duplicate-key collision in the
+ * table.
+ */
 const GROUPING_LENSES: Record<Exclude<ViewLevel, "none" | "flat">, LensConfig> = {
-  milestones: { grouping: new Set(["milestone"]),     bucketId: "__no_milestone__",      bucketLabel: "No milestone" },
-  epics:      { grouping: new Set(["epic"]),          bucketId: "__no_epic__",           bucketLabel: "No epic" },
-  features:   { grouping: new Set(["feature", "bug"]), bucketId: "__no_feature_or_bug__", bucketLabel: "No feature or bug" },
+  milestones: { grouping: new Set(["milestone"]),     bucketId: "/__no_milestone__",      bucketLabel: "No milestone" },
+  epics:      { grouping: new Set(["epic"]),          bucketId: "/__no_epic__",           bucketLabel: "No epic" },
+  features:   { grouping: new Set(["feature", "bug"]), bucketId: "/__no_feature_or_bug__", bucketLabel: "No feature or bug" },
 };
 
 /**
@@ -121,13 +146,21 @@ function lensRank(cfg: LensConfig): number {
   return typeRank([...cfg.grouping][0]);
 }
 
-/** Exact set of synthetic "No X" bucket ids, derived from the lens configs. */
-const BUCKET_IDS = new Set<string>(Object.values(GROUPING_LENSES).map(c => c.bucketId));
+/**
+ * Exact set of synthetic "No X" bucket ids, derived from the lens configs.
+ * Exported so the disjointness invariant documented on GROUPING_LENSES is
+ * asserted against the real set rather than a copy of it.
+ */
+export const BUCKET_IDS = new Set<string>(Object.values(GROUPING_LENSES).map(c => c.bucketId));
 
 /**
  * True for synthetic display-bucket ids ("No X"). Membership is exact against the
- * known bucket ids, so it can never collide with a real nib id — even under a
- * user-configured `nibs.prefix` that happens to start with underscores.
+ * known bucket ids, and no id a store can produce — parsed from a filename or
+ * minted by `nib.NewID` — can equal one of them, because every bucket id both
+ * carries a path separator and ends outside the nanoid charset (see
+ * GROUPING_LENSES for why it takes both). So this is not merely "unlikely to
+ * collide": the two id spaces are disjoint by construction, under any
+ * `nibs.prefix` and for any hand-created or imported file.
  */
 export function isBucketId(id: string): boolean {
   return BUCKET_IDS.has(id);

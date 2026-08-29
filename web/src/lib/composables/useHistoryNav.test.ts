@@ -53,11 +53,11 @@ describe("useHistoryNav", () => {
   it("navigateToNib does NOT push ?nib=<bucket> for a synthetic grouping-bucket id (nibs-oxaq)", () => {
     // A right-clicked/arrow-focused "No X" bucket row can route here. select()
     // already no-ops on a bucket id, but the history push must also be skipped —
-    // otherwise a stale ?nib=__no_milestone__ survives reload/Back and tries to
+    // otherwise a stale ?nib=/__no_milestone__ survives reload/Back and tries to
     // select a nonexistent nib.
     const { nav, selection, history } = setup();
 
-    nav.navigateToNib("__no_milestone__");
+    nav.navigateToNib("/__no_milestone__");
 
     expect(history.calls).toEqual([]);
     expect(selection.selectedNibId).toBeNull();

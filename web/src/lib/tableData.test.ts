@@ -374,7 +374,7 @@ describe("buildTableData", () => {
 
       const bucketRow = expanded.rows.find(r => isBucketId(r.nib.id))!;
       expect(bucketRow).toBeDefined();
-      expect(bucketRow.nib.id).toBe("__no_epic__");
+      expect(bucketRow.nib.id).toBe("/__no_epic__");
       expect(bucketRow.nib.title).toBe("No epic (2)");
       expect(bucketRow.hasChildren).toBe(true);
       // Expanded: bucket + its 2 direct children + the nested task under the feature
@@ -382,12 +382,12 @@ describe("buildTableData", () => {
 
       // The bucket is a collapsible container, so "Collapse All" (which uses
       // parentIds) must include it — otherwise the bucket stays expanded (#3).
-      expect(expanded.parentIds.has("__no_epic__")).toBe(true);
+      expect(expanded.parentIds.has("/__no_epic__")).toBe(true);
 
       // Collapsing the bucket omits its children but still reports hasChildren
-      const collapsed = buildTableData(looseNibs, emptyFilter, "epics", new Set(["__no_epic__"]));
+      const collapsed = buildTableData(looseNibs, emptyFilter, "epics", new Set(["/__no_epic__"]));
       expect(collapsed.rows).toHaveLength(1);
-      expect(collapsed.rows[0].nib.id).toBe("__no_epic__");
+      expect(collapsed.rows[0].nib.id).toBe("/__no_epic__");
       expect(collapsed.rows[0].hasChildren).toBe(true);
     });
   });
@@ -798,7 +798,7 @@ describe("buildTableData — global promoted-header ordering under an active sor
       makeTreeTableNib({ id: "t1", title: "T-Alpha", type: "task" }),
     ];
     const result = buildTableData(nibs, emptyFilter, "milestones", noCollapsed, titleAsc);
-    expect(result.rows.map((r) => r.nib.id)).toEqual(["m1", "m2", "__no_milestone__", "t1", "t2"]);
+    expect(result.rows.map((r) => r.nib.id)).toEqual(["m1", "m2", "/__no_milestone__", "t1", "t2"]);
   });
 });
 
@@ -821,10 +821,10 @@ describe("buildTableData — an id appears at most once in rows (nibs-pxk4)", ()
 
   // Synthetic bucket ids are deliberately NOT excluded from the scan — a repeated
   // bucket id breaks the same four consumers. Two buckets cannot collide with
-  // each other (buildViewTree mints at most one per view), but a bucket CAN
-  // collide with a real nib that carries its id, and today it does; none of the
-  // fixtures below constructs such a nib, so that collision is pinned by its own
-  // characterization test at the end of this block rather than by these cases.
+  // each other (buildViewTree mints at most one per view), and a bucket cannot
+  // collide with a real nib either, since bucket ids carry a "/" no
+  // filename-derived id can hold (nibs-b2vf). The cases at the end of this block
+  // exercise that boundary directly; these ones cover the ordinary shapes.
   function expectOneRowPerId(rows: readonly RowData[], context: string): void {
     expect(rows.length, `${context}: fixture produced no rows`).toBeGreaterThan(0);
     expect(duplicateRowIds(rows), `${context}: id rendered more than once`).toEqual([]);
@@ -881,7 +881,7 @@ describe("buildTableData — an id appears at most once in rows (nibs-pxk4)", ()
   const tasksOnly: NibFilter = { type: ["task"] };
   // Containers at three tiers plus a bucket, so collapse gating runs on a
   // promoted header, a nested same-tier container and a synthetic bucket.
-  const someCollapsed = new Set(["e1", "f1", "m2", "__no_epic__", "__no_milestone__"]);
+  const someCollapsed = new Set(["e1", "f1", "m2", "/__no_epic__", "/__no_milestone__"]);
 
   for (const viewLevel of VIEW_LEVELS) {
     describe(`${viewLevel} lens`, () => {
@@ -917,9 +917,9 @@ describe("buildTableData — an id appears at most once in rows (nibs-pxk4)", ()
     // Guards the cases above against going vacuous: without a bucket row the
     // scan would never see a synthetic id at all.
     const buckets: [ViewLevel, string][] = [
-      ["milestones", "__no_milestone__"],
-      ["epics", "__no_epic__"],
-      ["features", "__no_feature_or_bug__"],
+      ["milestones", "/__no_milestone__"],
+      ["epics", "/__no_epic__"],
+      ["features", "/__no_feature_or_bug__"],
     ];
     for (const [viewLevel, bucketId] of buckets) {
       const { rows } = buildTableData(structured, emptyFilter, viewLevel, noCollapsed);
@@ -957,39 +957,50 @@ describe("buildTableData — an id appears at most once in rows (nibs-pxk4)", ()
   });
 
   /**
-   * CHARACTERIZATION of a known defect (nibs-b2vf) — this pins what the code
-   * does today, NOT what it should do. A real nib whose id equals a lens's
-   * synthetic bucket id collides with the bucket `buildViewTree` mints, and the
-   * id lands in `rows` twice. Such an id is producible: it comes from the
-   * filename and `nib.ParseFilename` applies no charset gate, so a hand-created
-   * or imported `__no_milestone__.md` yields it verbatim.
+   * The one shape the invariant above cannot reach on its own: a nib whose id is
+   * the underscore-fenced string a lens's bucket USED to be called. Nothing stops
+   * a store from holding one — an id comes from its filename and `ParseFilename`
+   * applies no charset gate, so a hand-created or imported `__no_milestone__.md`
+   * yields it verbatim — and while the bucket carried that same string, minting
+   * the bucket put the id in `rows` twice.
    *
-   * The assertion is at the data layer because that is the last place the
-   * duplicate is observable — rendering it throws Svelte's `each_key_duplicate`
-   * out of the keyed `{#each}`, in production builds too.
+   * A bucket id now carries a leading "/", which no filename-derived id can hold
+   * (see GROUPING_LENSES), so these two spaces cannot meet however the store is
+   * populated. The cases below are the executable half of that claim: the
+   * formerly-colliding nib renders once, and the lens's own bucket is a separate
+   * row beside it.
    *
-   * When nibs-b2vf is fixed this test FAILS, deliberately: swap it for
-   * `expectOneRowPerId` and fold bucket ids back into the invariant above.
+   * They assert at the data layer because that is the last place a duplicate
+   * would be observable — rendering one throws Svelte's `each_key_duplicate` out
+   * of the keyed `{#each}`, in production builds too.
    */
-  const bucketIdCollisions: [ViewLevel, string][] = [
-    ["milestones", "__no_milestone__"],
-    ["epics", "__no_epic__"],
-    ["features", "__no_feature_or_bug__"],
+  const formerBucketIds: [ViewLevel, string, string][] = [
+    ["milestones", "__no_milestone__", "/__no_milestone__"],
+    ["epics", "__no_epic__", "/__no_epic__"],
+    ["features", "__no_feature_or_bug__", "/__no_feature_or_bug__"],
   ];
-  for (const [viewLevel, bucketId] of bucketIdCollisions) {
-    it(`KNOWN DEFECT nibs-b2vf: a real nib carrying ${bucketId} is rendered twice at the ${viewLevel} lens`, () => {
+  for (const [viewLevel, realId, bucketId] of formerBucketIds) {
+    it(`a real nib carrying ${realId} renders once beside the ${viewLevel} lens's own bucket`, () => {
+      // Fails loudly if a bucket id is ever moved back into the filename-derived
+      // id space, which is what made this shape a duplicate in the first place.
+      expect(isBucketId(realId), `${realId} must not be a bucket id`).toBe(false);
       expect(isBucketId(bucketId), `${bucketId} is no longer a bucket id`).toBe(true);
       const nibs: TreeTableNib[] = [
-        makeTreeTableNib({ id: bucketId, title: "Imported nib", type: "task" }),
+        makeTreeTableNib({ id: realId, title: "Imported nib", type: "task" }),
         makeTreeTableNib({ id: "t9", title: "T-Nine", type: "task" }),
       ];
       const { rows } = buildTableData(nibs, emptyFilter, viewLevel, noCollapsed);
       const ids = rows.map((r) => r.nib.id);
-      expect(ids.filter((id) => id === bucketId)).toHaveLength(2);
-      expect(duplicateRowIds(rows)).toEqual([bucketId]);
-      // The loose task still renders, so this is a collision and not a fixture
-      // that failed to build a tree at all.
+      expect(duplicateRowIds(rows)).toEqual([]);
+      expect(ids.filter((id) => id === realId)).toHaveLength(1);
+      // Present, not merely un-duplicated: the lossless lens must still show it.
+      expect(ids).toContain(realId);
       expect(ids).toContain("t9");
+      // The bucket is its own row, holding both loose tasks as children.
+      const bucketRow = rows.find((r) => r.nib.id === bucketId)!;
+      expect(bucketRow).toBeDefined();
+      expect(bucketRow.hasChildren).toBe(true);
+      expect(rows.find((r) => r.nib.id === realId)!.displayParentId).toBeNull();
     });
   }
 });

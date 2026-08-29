@@ -5,9 +5,9 @@ import { isBucketId } from "./tree";
  * Resolves which nib IDs a delete/bulk action should target, in priority order:
  * the multi-select set, then the focused row, then the context-menu target.
  *
- * A synthetic grouping-bucket id (e.g. "__no_milestone__") is NEVER returned. A
+ * A synthetic grouping-bucket id (e.g. "/__no_milestone__") is NEVER returned. A
  * bucket row has no detail and is unresolvable for any bulk mutation, so admitting
- * one would dispatch a phantom (e.g. `deleteBatch(["__no_milestone__"])`) against a
+ * one would dispatch a phantom (e.g. `deleteBatch(["/__no_milestone__"])`) against a
  * nonexistent nib. The three tiers guard buckets differently:
  *  - `selectedIds` is already bucket-free — SelectionState.select/toggleSelect/
  *    rangeSelect reject bucket ids (nibs-mn0t) — so the filter here is

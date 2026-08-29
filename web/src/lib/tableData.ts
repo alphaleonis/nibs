@@ -33,14 +33,13 @@ import { hasClientFilters, matchesFilter } from "./filter";
  * that to a single row here, or pick a row key that is not the nib id and fix
  * all four consumers above.
  *
- * Neither mechanism reaches the synthetic bucket ids, which `buildViewTree`
- * mints from a fixed table rather than deriving from the input: a real nib
- * carrying one of them collides with its lens's bucket and is rendered twice.
- * That is reachable rather than theoretical — a nib id comes from its filename
- * and `nib.ParseFilename` applies no charset gate, so `__no_milestone__.md`
- * yields that id verbatim. It is a known defect, tracked as nibs-b2vf and
- * characterized in tableData.test.ts; settling it should let the sentence above
- * cover bucket ids too.
+ * The synthetic bucket ids `buildViewTree` mints are covered too, by a third
+ * mechanism: they are minted from a fixed table rather than derived from the
+ * input, so neither of the two above reaches them, and instead each one carries
+ * a leading "/" that no filename-derived id can hold (see GROUPING_LENSES in
+ * tree.ts). The two id spaces are therefore disjoint by construction — a nib
+ * cannot be given a bucket's id however its file is named — rather than merely
+ * unlikely to overlap.
  */
 export interface RowData {
   nib: TreeTableNib;
