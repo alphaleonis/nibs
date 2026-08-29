@@ -68,6 +68,67 @@ func TestUnavailableFailsWhenTheCapabilityIsRequired(t *testing.T) {
 	}
 }
 
+// TestNeedPosixFileModesLetsTheGuardRunWhereTheModeSurvives pins the direction
+// that costs coverage. A probe that skipped too readily would take four guards
+// off every machine at once and report it in a tally nothing fails on, which is
+// the same invisibility as not counting the skip at all.
+//
+// Only this direction is staged here: the other one needs a filesystem with no
+// permission bits, and what the probe does with that answer is Unavailable,
+// which the two tests above already pin in both of its directions.
+func TestNeedPosixFileModesLetsTheGuardRunWhereTheModeSurvives(t *testing.T) {
+	forget()
+	t.Cleanup(forget)
+	dir := t.TempDir()
+
+	// The premise, established independently of the probe: this machine's temp
+	// filesystem keeps the bits. Where it does not, skipping is the right answer
+	// and there is nothing here to assert.
+	premise := filepath.Join(dir, "premise")
+	if err := os.WriteFile(premise, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(premise, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(premise)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A bare Skipf, deliberately, and the one place in the module where that is
+	// right. Taking this through Unavailable would call the machinery under test
+	// to decide whether to run a test OF that machinery, and this package's own
+	// tests clear the tally in cleanup — so the count would be both circular and
+	// zeroed. Nothing is lost by staying outside: internal/testskip has no
+	// TestMain calling Report, so it keeps no tally to be absent from.
+	if info.Mode().Perm() != 0o640 {
+		t.Skipf("this filesystem reports %v for a file chmodded to 0640, so it cannot host this direction", info.Mode().Perm())
+	}
+
+	var r recorder
+	NeedPosixFileModes(&r, dir)
+
+	if r.skipped != "" {
+		t.Errorf("NeedPosixFileModes skipped on a filesystem that keeps the mode: %s", r.skipped)
+	}
+	if r.failed != "" {
+		t.Errorf("NeedPosixFileModes failed on a filesystem that keeps the mode: %s", r.failed)
+	}
+	if got := tally(); got != "" {
+		t.Errorf("tally = %q after a capability that is present, want none", got)
+	}
+
+	// The call sites pass a directory the fixture also lives in, so the probe
+	// has to leave it as it found it.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "premise" {
+		t.Errorf("the probe left %v behind in the directory it was handed", entries)
+	}
+}
+
 // TestReportIsSilentWhenNothingWasSkipped is why a normal Linux run stays quiet:
 // the report has to cost nothing when there is nothing to report, or it becomes
 // noise everyone learns to scroll past.

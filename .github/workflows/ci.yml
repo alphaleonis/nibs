@@ -55,6 +55,14 @@ jobs:
       # could not build it, and the five guards it covers are the ones proving a
       # filename cannot rewrite a message that quotes it.
       NIBS_REQUIRE_HOSTILE_FILENAMES: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
+      # Ubuntu only, and unfixably so: Windows stores no POSIX permission bits,
+      # and Go synthesizes FileMode.Perm() there from the read-only attribute
+      # alone, so 0666 and 0444 are the only values a fixture can produce. The
+      # four guards this covers are the whole of the coverage that a rewrite of
+      # <store>/config.yml does not widen a private config's mode — a change
+      # that is silent at the point it happens — so a skip on the linux leg
+      # means they stopped running rather than that they could not.
+      NIBS_REQUIRE_POSIX_FILE_MODES: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # Every tool this job runs — go, node, task — is installed by mise from

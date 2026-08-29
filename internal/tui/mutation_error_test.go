@@ -1181,10 +1181,19 @@ func TestUnreadableNibFileAfterEditingIsReported(t *testing.T) {
 
 	// The file is gone, so the reassurance the other legs carry would be a lie
 	// here: this leg gets a lead of its own.
-	prefix := editorFileUnreadableLead + " The file recorded for nib-1 could not be read: stat "
+	//
+	// The prefix stops where the message stops being ours. What follows the colon
+	// is the *fs.PathError's own text, and its Op is whichever syscall the
+	// platform reached for — `stat` on Unix, `GetFileAttributesEx` on Windows —
+	// so pinning it asserts a property of the host rather than of the footer. The
+	// path is the part of the detail worth holding, and it is portable.
+	prefix := editorFileUnreadableLead + " The file recorded for nib-1 could not be read: "
 	got := app.list.statusMessage
 	if !strings.HasPrefix(got, prefix) {
 		t.Errorf("list footer message = %q, want it to start %q", got, prefix)
+	}
+	if wantPath := filepath.Join(stub.RootDir, "data", "nib-1.md"); !strings.Contains(got, wantPath) {
+		t.Errorf("list footer message = %q, want the file it could not read (%s) named in it", got, wantPath)
 	}
 	// Neither claim about the user's text is this leg's to make. A stat that
 	// failed cannot promise the text is sitting in the file — and it cannot say

@@ -3,7 +3,6 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -1481,9 +1480,7 @@ func TestGetProjectName(t *testing.T) {
 // not become world-readable; Save writing 0644 unconditionally undid that on the
 // next `nibs config set-*`.
 func TestSavePreservesTheConfigsPermissions(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("unix permission bits are not modeled on windows")
-	}
+	testskip.NeedPosixFileModes(t, t.TempDir())
 	storeDir := filepath.Join(t.TempDir(), store.DirName)
 	if err := os.MkdirAll(storeDir, 0755); err != nil {
 		t.Fatal(err)
