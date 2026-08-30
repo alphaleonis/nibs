@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`nibs check` names a nib whose area the store does not declare** — the value loads as written, so nothing else reported it; `--fix` refuses, since choosing the right area is not provable intent.
 - **`nibs context` names the active milestone and carries what `nibs next` answers** — "where are we" and "what do I do" become one call, with next's own fallback and no-answer labels traveling verbatim so the two surfaces cannot answer one question two ways.
 - **A store is fenced against migration while a `nibs serve` or `nibs tui` holds it** — `nibs migrate` refuses while either is running and either refuses to start while a migration runs, because a session that loaded the store beforehand writes its pre-migration copy back afterwards with nothing to detect it.
+- **The web table remembers a scroll position per view**, so switching away and back returns you to where you were rather than to wherever the other view's list left the offset.
 
 ### Changed
 - **BREAKING: moving more than one nib at once now requires `--block`** — `nibs mv <a> <b> --first` is refused instead of quietly reordering a nib you did not name, which is what a mistyped single move produced, since `--first` takes no anchor and a trailing id became a second one; the help and cheat grammars that invited it are corrected too.
