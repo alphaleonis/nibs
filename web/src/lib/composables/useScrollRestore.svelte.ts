@@ -25,9 +25,10 @@
  *                     replaces its content, so the offset saved for the outgoing
  *                     view describes geometry the incoming one does not have.
  *                     Advancing the epoch retires ownership without recreating
- *                     anything, which both re-arms restore() onto the reset offset
- *                     and stops onScroll from recording the clamp the shorter
- *                     incoming view provokes as if it were user intent.
+ *                     anything, which both re-arms restore() onto the offset the
+ *                     switch swapped in and stops onScroll from recording the
+ *                     clamp the shorter incoming view provokes as if it were user
+ *                     intent.
  *   lastWrite {el,top} the exact element + value of our most recent PROGRAMMATIC
  *                     scroll write. A scroll event on THAT element whose scrollTop
  *                     still equals THAT value is that write's own echo (including
@@ -105,7 +106,7 @@ export function useScrollRestore(opts: {
     // synchronously so it is durable even if a refetch unmounts the container before
     // the async scroll event fires; take ownership so restore() won't overwrite it.
     // The claim is epoch-keyed like restore()'s: a claim that outlived a view
-    // switch would hold ownership across it and defeat the reset the switch owes
+    // switch would hold ownership across it and defeat the swap the switch owes
     // the incoming view.
     // Self-locates via getScrollContainer() (single source of truth), matching
     // restore() and the sibling composables.

@@ -1,17 +1,15 @@
 import { describe, it, expect, vi } from "vitest";
-import { PerViewColumnMap } from "./perViewColumnMap.svelte";
+import { PerViewMap, persistedPerViewMap } from "./perViewMap.svelte";
 import type { ViewLevel } from "./types";
 
 // A REPLACE-combinator instance (visibility/order semantics): the stored value
 // is used whole; the default is a fresh copy when nothing is stored.
 function makeReplaceMap(requestSave = vi.fn()) {
   const dflt = ["id", "title"];
-  return new PerViewColumnMap<string[]>({
-    storageKey: "columnVisibility",
+  return persistedPerViewMap<string[]>({
     defaultValue: [...dflt],
     resolve: (stored, d) => stored ?? [...d],
-    saveMode: "auto",
-    requestSave,
+    persistence: { storageKey: "columnVisibility", saveMode: "auto", requestSave },
   });
 }
 
@@ -21,16 +19,23 @@ function makeReplaceMap(requestSave = vi.fn()) {
 type WKey = "id" | "title" | "state";
 function makeMergeMap(requestSave = vi.fn()) {
   const dflt: Record<WKey, number> = { id: 100, title: 400, state: 120 };
-  return new PerViewColumnMap<Partial<Record<WKey, number>>, Record<WKey, number>>({
-    storageKey: "columnWidths",
+  return persistedPerViewMap<Partial<Record<WKey, number>>, Record<WKey, number>>({
     defaultValue: { ...dflt },
     resolve: (stored, d) => ({ ...d, ...(stored ?? {}) }),
-    saveMode: "flush",
-    requestSave,
+    persistence: { storageKey: "columnWidths", saveMode: "flush", requestSave },
   });
 }
 
-describe("PerViewColumnMap", () => {
+// An EPHEMERAL instance (per-view scroll semantics): no persistence group, so it
+// never reaches localStorage and has no save timing to declare.
+function makeEphemeralMap() {
+  return new PerViewMap<number>({
+    defaultValue: 0,
+    resolve: (stored, dflt) => stored ?? dflt,
+  });
+}
+
+describe("PerViewMap", () => {
   describe("resolve — merge vs replace", () => {
     it("REPLACE returns a fresh copy of the default when a level is unset", () => {
       const map = makeReplaceMap();
@@ -118,6 +123,50 @@ describe("PerViewColumnMap", () => {
       const map = makeMergeMap(requestSave);
       map.flush();
       expect(requestSave).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("ephemeral instance (no persistence group)", () => {
+    it("resolve/setLevel/updateLevel/peek behave exactly as on a persisted instance", () => {
+      const map = makeEphemeralMap();
+      expect(map.resolve("none" as ViewLevel)).toBe(0);
+      expect(map.peek("none" as ViewLevel)).toBeUndefined();
+
+      map.setLevel("none" as ViewLevel, 500);
+      expect(map.resolve("none" as ViewLevel)).toBe(500);
+      expect(map.peek("none" as ViewLevel)).toBe(500);
+      // Another level is still unset, so it resolves to the default.
+      expect(map.resolve("epics" as ViewLevel)).toBe(0);
+
+      map.updateLevel("none" as ViewLevel, (cur) => (cur ?? 0) + 20);
+      expect(map.resolve("none" as ViewLevel)).toBe(520);
+      expect(map.serialize()).toEqual({ none: 520 });
+    });
+
+    it("declares no persistence group at all", () => {
+      expect(makeEphemeralMap().persistence).toBeUndefined();
+      // The persisted siblings declare the pair whole, so `undefined` reads as
+      // "ephemeral" rather than "not configured yet".
+      expect(makeMergeMap().persistence).toEqual({ storageKey: "columnWidths", saveMode: "flush" });
+    });
+
+    it("does not re-expose requestSave, so flush() stays the only way to reach it", () => {
+      // The closure into Preferences.save() is the primitive's own wire, not part
+      // of what a consumer reads off the group.
+      expect(makeMergeMap().persistence).not.toHaveProperty("requestSave");
+    });
+
+    it("flush() is inert — the call is safe on an instance with no save wire", () => {
+      // A positive control on the same call, so "inert" is distinguished from
+      // "flush() does nothing anywhere": the persisted sibling's does fire.
+      const wiredSave = vi.fn();
+      makeMergeMap(wiredSave).flush();
+      expect(wiredSave).toHaveBeenCalledTimes(1);
+
+      // The ephemeral instance cannot be handed a save spy of its own — supplying
+      // one is exactly what would make it persisted — so surviving the call is
+      // the whole of what there is to assert here.
+      expect(() => makeEphemeralMap().flush()).not.toThrow();
     });
   });
 });

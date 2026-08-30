@@ -1,8 +1,8 @@
 import { untrack } from "svelte";
 import { loadPreferences, savePreferences } from "./storage";
 import { parseQuery, serializeQuery } from "./query";
-import { PerViewColumnMap } from "./perViewColumnMap.svelte";
-import type { SaveMode } from "./perViewColumnMap.svelte";
+import { persistedPerViewMap } from "./perViewMap.svelte";
+import type { PerViewPersistence } from "./perViewMap.svelte";
 import { ALL_COLUMN_KEYS, DEFAULT_VISIBLE_COLUMNS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_OPEN_DETAIL_ON, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE, DEFAULT_THEME, DEFAULT_PREVIEW_OPEN, DEFAULT_VIEW_LEVEL } from "./types";
 import type { NibFilter, ViewLevel, ColumnKey, RowDensity, Theme, DetailPanelPosition, OpenDetailGesture, BlockedEmphasis, FontSize, TableSort } from "./types";
 
@@ -23,31 +23,27 @@ export class Preferences {
   //   - order REPLACES the default (stored value used whole); auto-saved. The
   //     stored value is already the full canonical set (parseColumnOrder appends
   //     any missing key on load), so a permutation persists intact.
-  readonly visibility = new PerViewColumnMap<ColumnKey[]>({
-    storageKey: "columnVisibility",
+  readonly visibility = persistedPerViewMap<ColumnKey[]>({
     defaultValue: [...DEFAULT_VISIBLE_COLUMNS],
     resolve: (stored, dflt) => stored ?? [...dflt],
-    saveMode: "auto",
-    requestSave: () => this.save(),
+    persistence: { storageKey: "columnVisibility", saveMode: "auto", requestSave: () => this.save() },
   });
-  readonly widths = new PerViewColumnMap<Partial<Record<ColumnKey, number>>, Record<ColumnKey, number>>({
-    storageKey: "columnWidths",
+  readonly widths = persistedPerViewMap<Partial<Record<ColumnKey, number>>, Record<ColumnKey, number>>({
     defaultValue: { ...DEFAULT_COLUMN_WIDTHS },
     resolve: (stored, dflt) => ({ ...dflt, ...(stored ?? {}) }),
-    saveMode: "flush",
-    requestSave: () => this.save(),
+    persistence: { storageKey: "columnWidths", saveMode: "flush", requestSave: () => this.save() },
   });
-  readonly order = new PerViewColumnMap<ColumnKey[]>({
-    storageKey: "columnOrder",
+  readonly order = persistedPerViewMap<ColumnKey[]>({
     defaultValue: [...ALL_COLUMN_KEYS],
     resolve: (stored, dflt) => stored ?? [...dflt],
-    saveMode: "auto",
-    requestSave: () => this.save(),
+    persistence: { storageKey: "columnOrder", saveMode: "auto", requestSave: () => this.save() },
   });
   // The auto-save $effect subscribes only to the "auto" instances; iterating one
   // list keeps the save-timing split driven by a single explicit flag. Typed to
-  // the members the effect touches so the differing T/R generics can share a list.
-  readonly #perViewMaps: readonly { readonly saveMode: SaveMode; track(): void }[] = [
+  // the members the effect touches so the differing T/R generics can share a list
+  // — and to a DEFINED persistence group, so a slice with nothing to save cannot
+  // be enrolled here and silently never persist.
+  readonly #perViewMaps: readonly { readonly persistence: PerViewPersistence; track(): void }[] = [
     this.visibility,
     this.widths,
     this.order,
@@ -155,7 +151,7 @@ export class Preferences {
         // Subscribe only the "auto" per-view maps; "flush" maps stay untracked
         // so their mutations (width drags) don't trigger auto-save.
         for (const map of this.#perViewMaps) {
-          if (map.saveMode === "auto") map.track();
+          if (map.persistence.saveMode === "auto") map.track();
         }
         this.rowDensity;
         this.fontSize;

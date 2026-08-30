@@ -121,11 +121,12 @@
   // PaneGroup (and TreeTable) on a dock toggle — so it survives the remount, like
   // selection/drag. The constructor argument seeds `activeLevel` from the restored
   // preference so it names the lens actually on screen from the first render
-  // rather than the default. Nothing in production reads it yet: it is scaffolding
-  // for per-view collapse and scroll memory (nibs-g6sb), which needs a level that
-  // still names the OUTGOING view while `prefs.viewLevel` already names the
-  // incoming one. The switch itself does not consult it — `switchViewLevel` takes
-  // `from` from its caller.
+  // rather than the default. TreeTable's transition applier reads it as the key
+  // the outgoing scroll offset is parked under — a level that still names the
+  // OUTGOING view, which `prefs.viewLevel` cannot be since it already names the
+  // incoming one. A wrong seed would file the first parked offset under the wrong
+  // view. The switch itself does not consult it — `switchViewLevel` takes `from`
+  // from its caller.
   const treeView = new TreeViewState(prefs.viewLevel);
   const confirmDialog = createConfirmDialog();
 
