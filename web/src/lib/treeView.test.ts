@@ -4,19 +4,19 @@ import { DEFAULT_VIEW_LEVEL } from "./types";
 
 describe("TreeViewState", () => {
   it("starts with an empty collapsed set", () => {
-    const state = new TreeViewState();
+    const state = new TreeViewState(DEFAULT_VIEW_LEVEL);
     expect(state.collapsedIds.size).toBe(0);
   });
 
   it("toggle() adds an id when it is absent", () => {
-    const state = new TreeViewState();
+    const state = new TreeViewState(DEFAULT_VIEW_LEVEL);
     state.toggle("a");
     expect(state.collapsedIds.has("a")).toBe(true);
     expect(state.collapsedIds.size).toBe(1);
   });
 
   it("toggle() removes an id when it is present", () => {
-    const state = new TreeViewState();
+    const state = new TreeViewState(DEFAULT_VIEW_LEVEL);
     state.toggle("a");
     state.toggle("a");
     expect(state.collapsedIds.has("a")).toBe(false);
@@ -24,14 +24,14 @@ describe("TreeViewState", () => {
   });
 
   it("toggle() replaces the Set instance (reassign-invariant guard)", () => {
-    const state = new TreeViewState();
+    const state = new TreeViewState(DEFAULT_VIEW_LEVEL);
     const before = state.collapsedIds;
     state.toggle("x");
     expect(state.collapsedIds).not.toBe(before);
   });
 
   it("expandAll() clears the collapsed set", () => {
-    const state = new TreeViewState();
+    const state = new TreeViewState(DEFAULT_VIEW_LEVEL);
     state.toggle("a");
     state.toggle("b");
     state.expandAll();
@@ -39,7 +39,7 @@ describe("TreeViewState", () => {
   });
 
   it("expandAll() replaces the Set instance", () => {
-    const state = new TreeViewState();
+    const state = new TreeViewState(DEFAULT_VIEW_LEVEL);
     state.toggle("a");
     const before = state.collapsedIds;
     state.expandAll();
@@ -47,7 +47,7 @@ describe("TreeViewState", () => {
   });
 
   it("collapseAll() sets exactly the given ids", () => {
-    const state = new TreeViewState();
+    const state = new TreeViewState(DEFAULT_VIEW_LEVEL);
     state.collapseAll(["a", "b", "c"]);
     expect(state.collapsedIds.size).toBe(3);
     expect(state.collapsedIds.has("a")).toBe(true);
@@ -56,7 +56,7 @@ describe("TreeViewState", () => {
   });
 
   it("collapseAll() replaces any previous collapsed ids", () => {
-    const state = new TreeViewState();
+    const state = new TreeViewState(DEFAULT_VIEW_LEVEL);
     state.collapseAll(["a", "b"]);
     state.collapseAll(["c"]);
     expect(state.collapsedIds.size).toBe(1);
@@ -65,7 +65,7 @@ describe("TreeViewState", () => {
   });
 
   it("setCollapsed() replaces the collapsed set wholesale", () => {
-    const state = new TreeViewState();
+    const state = new TreeViewState(DEFAULT_VIEW_LEVEL);
     state.collapseAll(["a", "b"]);
     const before = state.collapsedIds;
     state.setCollapsed(["c", "d"]);
@@ -77,7 +77,7 @@ describe("TreeViewState", () => {
   });
 
   it("setCollapsed() accepts any iterable of ids", () => {
-    const state = new TreeViewState();
+    const state = new TreeViewState(DEFAULT_VIEW_LEVEL);
     state.setCollapsed(new Set(["a", "b"]));
     expect(state.collapsedIds.size).toBe(2);
     expect(state.collapsedIds.has("a")).toBe(true);
@@ -85,7 +85,7 @@ describe("TreeViewState", () => {
   });
 
   it("isCollapsed() reflects membership", () => {
-    const state = new TreeViewState();
+    const state = new TreeViewState(DEFAULT_VIEW_LEVEL);
     expect(state.isCollapsed("a")).toBe(false);
     state.toggle("a");
     expect(state.isCollapsed("a")).toBe(true);
@@ -94,7 +94,7 @@ describe("TreeViewState", () => {
   });
 
   it("collapseAll([]) / setCollapsed([]) clear the set (empty-iterable boundary)", () => {
-    const state = new TreeViewState();
+    const state = new TreeViewState(DEFAULT_VIEW_LEVEL);
     state.collapseAll(["a", "b"]);
     state.collapseAll([]);
     expect(state.collapsedIds.size).toBe(0);
@@ -104,7 +104,7 @@ describe("TreeViewState", () => {
   });
 
   it("scrollTop defaults to 0 and persists when assigned", () => {
-    const state = new TreeViewState();
+    const state = new TreeViewState(DEFAULT_VIEW_LEVEL);
     expect(state.scrollTop).toBe(0);
     state.scrollTop = 300;
     expect(state.scrollTop).toBe(300);
@@ -115,7 +115,7 @@ describe("TreeViewState", () => {
     // erased at runtime, so a cast can mutate the backing Set in place. This is a
     // known gap — the reassign invariant is enforced by TS + the methods below,
     // not by a frozen collection. Writes must go through the methods, never here.
-    const state = new TreeViewState();
+    const state = new TreeViewState(DEFAULT_VIEW_LEVEL);
     state.toggle("a");
     (state.collapsedIds as unknown as Set<string>).add("z");
     expect(state.collapsedIds.has("z")).toBe(true);
@@ -123,7 +123,7 @@ describe("TreeViewState", () => {
 
   describe("view transitions", () => {
     it("starts with nothing pending", () => {
-      expect(new TreeViewState().pendingTransition).toBeNull();
+      expect(new TreeViewState(DEFAULT_VIEW_LEVEL).pendingTransition).toBeNull();
     });
 
     it("beginTransition() records the pair a reconciler needs", () => {
@@ -139,9 +139,11 @@ describe("TreeViewState", () => {
       expect(state.pendingTransition).toBeNull();
     });
 
-    it("activeLevel seeds from the constructor and defaults to the app default", () => {
-      expect(new TreeViewState().activeLevel).toBe(DEFAULT_VIEW_LEVEL);
+    it("activeLevel seeds from the constructor, which every caller must supply", () => {
+      // No default: the seed is the key the first parked offset is filed under,
+      // so a caller that has a level and omits it must not compile.
       expect(new TreeViewState("flat").activeLevel).toBe("flat");
+      expect(new TreeViewState("milestones").activeLevel).toBe("milestones");
     });
 
     it("activeLevel still names the OUTGOING view while a transition is pending", () => {
@@ -177,23 +179,93 @@ describe("TreeViewState", () => {
     });
   });
 
-  describe("scroll reset", () => {
+  describe("per-view scroll memory", () => {
     it("starts at epoch 0", () => {
-      expect(new TreeViewState().scrollEpoch).toBe(0);
+      expect(new TreeViewState(DEFAULT_VIEW_LEVEL).scrollEpoch).toBe(0);
     });
 
-    it("resetScroll() zeroes the saved offset and advances the epoch", () => {
-      const state = new TreeViewState();
+    it("switchScroll() adopts 0 for a destination that has never been scrolled", () => {
+      const state = new TreeViewState(DEFAULT_VIEW_LEVEL);
       state.scrollTop = 420;
-      state.resetScroll();
+      state.switchScroll("none", "epics");
       expect(state.scrollTop).toBe(0);
       expect(state.scrollEpoch).toBe(1);
     });
 
-    it("resetScroll() advances the epoch every time, so repeated resets each retire ownership", () => {
-      const state = new TreeViewState();
-      state.resetScroll();
-      state.resetScroll();
+    it("switchScroll() gives the outgoing view's offset back on the way home", () => {
+      const state = new TreeViewState(DEFAULT_VIEW_LEVEL);
+      state.scrollTop = 500;
+      state.switchScroll("none", "epics");
+      expect(state.scrollTop).toBe(0);
+
+      state.switchScroll("epics", "none");
+      expect(state.scrollTop).toBe(500);
+    });
+
+    it("parks the offset under the view it was measured in, not the destination", () => {
+      // The failure this pins: filing 500 under `to` would hand it straight back
+      // on arrival, so the destination would inherit an offset from a view whose
+      // geometry it does not share.
+      const state = new TreeViewState(DEFAULT_VIEW_LEVEL);
+      state.scrollTop = 500;
+      state.switchScroll("none", "epics");
+      expect(state.scrollTop).toBe(0);
+
+      // ...and the destination keeps its OWN offset once it has one.
+      state.scrollTop = 120;
+      state.switchScroll("epics", "none");
+      expect(state.scrollTop).toBe(500);
+      state.switchScroll("none", "epics");
+      expect(state.scrollTop).toBe(120);
+    });
+
+    it("keeps a third view's slot independent of the other two", () => {
+      const state = new TreeViewState(DEFAULT_VIEW_LEVEL);
+      state.scrollTop = 100;
+      state.switchScroll("none", "epics");
+      state.scrollTop = 200;
+      state.switchScroll("epics", "milestones");
+      state.scrollTop = 300;
+
+      state.switchScroll("milestones", "none");
+      expect(state.scrollTop).toBe(100);
+      state.switchScroll("none", "epics");
+      expect(state.scrollTop).toBe(200);
+      state.switchScroll("epics", "milestones");
+      expect(state.scrollTop).toBe(300);
+    });
+
+    it("is inert on a self-transition — no epoch bump, no offset churn", () => {
+      // Reachable even though the planner refuses `from === to`: two switches
+      // inside one flush collapse into one slot, and the applier keys the origin
+      // on activeLevel, which the planner never sees.
+      const state = new TreeViewState("none");
+      state.scrollTop = 400;
+      state.switchScroll("none", "epics");
+      state.scrollTop = 900;
+      const epochBefore = state.scrollEpoch;
+
+      state.switchScroll("epics", "epics");
+
+      expect(state.scrollTop).toBe(900);
+      expect(state.scrollEpoch).toBe(epochBefore);
+      // Nor did it disturb the other view's parked offset.
+      state.switchScroll("epics", "none");
+      expect(state.scrollTop).toBe(400);
+
+      // The other boundary: a self-transition on a level that DOES hold a parked
+      // offset must leave that entry alone as well.
+      state.switchScroll("none", "none");
+      expect(state.scrollTop).toBe(400);
+      expect(state.scrollEpoch).toBe(epochBefore + 1);
+      state.switchScroll("none", "epics");
+      expect(state.scrollTop).toBe(900);
+    });
+
+    it("advances the epoch on every switch, so each one retires scroll ownership", () => {
+      const state = new TreeViewState(DEFAULT_VIEW_LEVEL);
+      state.switchScroll("none", "epics");
+      state.switchScroll("epics", "none");
       expect(state.scrollEpoch).toBe(2);
     });
   });

@@ -2,6 +2,7 @@ import { setContext, getContext } from 'svelte';
 import type { SelectionState } from './selection.svelte';
 import type { DragState } from './drag.svelte';
 import { TreeViewState } from './treeView.svelte';
+import { DEFAULT_VIEW_LEVEL } from './types';
 import type { ConfirmDialogState } from './composables/useConfirmDialog.svelte';
 import type { HistoryNav } from './composables/useHistoryNav.svelte';
 import type { ActiveView } from './composables/useActiveView.svelte';
@@ -90,7 +91,9 @@ export function makeTestContext(
   m.set(COLUMN_ADAPTERS_KEY, columnAdapters);
   // Always provide a tree-view so components that read collapse state work in
   // tests without extra setup.
-  m.set(TREE_VIEW_KEY, opts?.treeView ?? new TreeViewState());
+  // A test that cares which view is on screen passes its own TreeViewState; this
+  // fallback seeds the app default to match the view level a bare render shows.
+  m.set(TREE_VIEW_KEY, opts?.treeView ?? new TreeViewState(DEFAULT_VIEW_LEVEL));
   if (opts?.confirmDialog) m.set(CONFIRM_DIALOG_KEY, opts.confirmDialog);
   // Always provide an active-view so components that open/sync the unified nib
   // view (TreeTable rows, RowContextMenu) work in tests without extra setup.

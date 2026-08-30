@@ -33,8 +33,8 @@ export interface ViewTransitionPlan {
   retainIds: ReadonlySet<string> | null;
   /** -> selection.ensureVisible() */
   anchorId: string | null;
-  /** -> treeView.resetScroll() */
-  resetScroll: boolean;
+  /** -> treeView.switchScroll() */
+  switchScroll: boolean;
 }
 
 /**
@@ -54,11 +54,17 @@ export function planViewTransition(
   snapshot: ViewTransitionSnapshot,
 ): ViewTransitionPlan {
   // Re-picking the current lens is not a transition: nothing left the view, so
-  // pruning and a scroll reset would both destroy state the user never asked to
-  // lose. `switchViewLevel` already refuses this case before recording anything;
+  // pruning would destroy a selection the user never asked to lose.
+  // `switchViewLevel` already refuses this case before recording anything;
   // repeating it here keeps the plan correct for any caller, not just that one.
+  //
+  // This clause covers PRUNING only. It cannot speak for the scroll swap, whose
+  // origin the applier supplies from `treeView.activeLevel` — a value this
+  // function never sees, and one that differs from `transition.from` whenever two
+  // switches collapse into a single pending slot. The scroll's own identity
+  // refusal therefore lives in `TreeViewState.switchScroll`.
   if (transition.from === transition.to) {
-    return { retainIds: null, anchorId: null, resetScroll: false };
+    return { retainIds: null, anchorId: null, switchScroll: false };
   }
 
   const { memberIds, focusedNibId, selectedNibId } = snapshot;
@@ -75,7 +81,10 @@ export function planViewTransition(
         : null;
 
   // The scroll offset is measured in the outgoing view's pixel geometry, which
-  // the incoming view does not share, so it never carries over — the anchor
-  // above is what puts the viewport somewhere meaningful when one survives.
-  return { retainIds: memberIds, anchorId, resetScroll: true };
+  // the incoming view does not share, so it never carries ACROSS: it is parked
+  // under the view it belongs to and the incoming view's own remembered offset
+  // is adopted (0 the first time it is entered). A surviving anchor is then
+  // scrolled to from there, moving the viewport only when the row is not already
+  // visible at that offset. See the precedence note in TreeTable's applier effect.
+  return { retainIds: memberIds, anchorId, switchScroll: true };
 }

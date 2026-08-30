@@ -22,7 +22,7 @@ describe("planViewTransition", () => {
       snapshot({ focusedNibId: "m1", selectedNibId: "m1", memberIds: new Set(["m1"]) }),
     );
 
-    expect(plan).toEqual({ retainIds: null, anchorId: null, resetScroll: false });
+    expect(plan).toEqual({ retainIds: null, anchorId: null, switchScroll: false });
   });
 
   it("retains exactly the new view's members", () => {
@@ -32,12 +32,13 @@ describe("planViewTransition", () => {
     expect(plan.retainIds).toBe(memberIds);
   });
 
-  it("resets the scroll on every real transition", () => {
+  it("switches the scroll on every real transition", () => {
     // The outgoing view's pixel offset describes geometry the incoming view does
-    // not have, so it never carries over.
+    // not have, so it never carries across — it is parked under its own view and
+    // the destination's remembered offset is adopted instead.
     const plan = planViewTransition({ from: "none", to: "flat" }, snapshot());
 
-    expect(plan.resetScroll).toBe(true);
+    expect(plan.switchScroll).toBe(true);
   });
 
   it("anchors on the focused row when the new view still has one for it", () => {
@@ -97,7 +98,7 @@ describe("planViewTransition", () => {
       snapshot({ selectedNibId: "m1", memberIds: new Set(["e1"]) }),
     );
 
-    expect(Object.keys(plan).sort()).toEqual(["anchorId", "resetScroll", "retainIds"]);
+    expect(Object.keys(plan).sort()).toEqual(["anchorId", "retainIds", "switchScroll"]);
   });
 
   it("plans a transition between every ordered pair of distinct levels", () => {
@@ -109,7 +110,7 @@ describe("planViewTransition", () => {
           expect(plan.retainIds, `${from} -> ${to}`).toBeNull();
         } else {
           expect(plan.retainIds, `${from} -> ${to}`).not.toBeNull();
-          expect(plan.resetScroll, `${from} -> ${to}`).toBe(true);
+          expect(plan.switchScroll, `${from} -> ${to}`).toBe(true);
         }
       }
     }

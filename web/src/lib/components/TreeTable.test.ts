@@ -3466,7 +3466,7 @@ describe("TreeTable", () => {
     ];
 
     it("restores the saved scroll offset onto the scroll container on mount", async () => {
-      const tv = new TreeViewState();
+      const tv = new TreeViewState("none");
       tv.scrollTop = 500;
 
       mockQueryStore.mockReturnValue(
@@ -3482,7 +3482,7 @@ describe("TreeTable", () => {
     });
 
     it("re-restores the saved offset onto a fresh container after a refetch destroys and recreates it", async () => {
-      const tv = new TreeViewState();
+      const tv = new TreeViewState("none");
       tv.scrollTop = 500;
 
       // Writable query store lets us drive data → fetching → data. The
@@ -3890,9 +3890,11 @@ describe("view transition reconcile", () => {
     });
   });
 
-  it("resets the scroll offset instead of carrying the outgoing view's into the new one", async () => {
-    // The container is NOT recreated by a view switch, so element identity cannot
-    // see it — the epoch is what retires ownership and re-arms the restore.
+  it("does not carry the outgoing view's offset into a view that has never been scrolled", async () => {
+    // The destination has no remembered offset yet, so it opens at the top rather
+    // than at a position measured in the outgoing view's geometry. The container
+    // is NOT recreated by a view switch, so element identity cannot see it — the
+    // epoch is what retires ownership and re-arms the restore.
     const treeView = new TreeViewState("none");
     treeView.scrollTop = 500;
 
@@ -3907,14 +3909,155 @@ describe("view transition reconcile", () => {
       await tick();
 
       expect(treeView.scrollTop).toBe(0);
-      // Same element, reset offset — proving the applier's epoch bump reached the
-      // restore effect in the same flush.
+      // Same element, swapped-in offset — proving the applier's epoch bump reached
+      // the restore effect in the same flush.
       expect(container.querySelector(".scroll-container")).toBe(sc);
       expect(sc.scrollTop).toBe(0);
     });
   });
 
-  it("resets the scroll even when the incoming view has the same number of rows", async () => {
+  it("gives the outgoing view's offset back when the user switches home again", async () => {
+    // The round trip the memory exists for: Tree at 500 → Epics (never scrolled,
+    // so the top) → Tree, back at 500. No selection, so no anchor survives to
+    // claim the container — the remembered offset only applies when none does.
+    const treeView = new TreeViewState("none");
+    treeView.scrollTop = 500;
+
+    await withPersistedPreferences({ q: "", viewLevel: "none" }, async (prefs) => {
+      const { container } = mountTree(new SelectionState(), treeView, prefs);
+      await tick();
+
+      const sc = container.querySelector(".scroll-container") as HTMLElement;
+      expect(sc.scrollTop).toBe(500);
+
+      switchViewLevel(prefs, undefined, treeView, "none", "epics");
+      await tick();
+      expect(treeView.scrollTop).toBe(0);
+      expect(sc.scrollTop).toBe(0);
+
+      switchViewLevel(prefs, undefined, treeView, "epics", "none");
+      await tick();
+
+      expect(treeView.scrollTop).toBe(500);
+      // Restored onto the SAME element that was never remounted — the epoch bump
+      // is the only thing that could have re-armed restore() here.
+      expect(container.querySelector(".scroll-container")).toBe(sc);
+      expect(sc.scrollTop).toBe(500);
+    });
+  });
+
+  it("files the offset under the view that was on screen, not the one the collapsed slot names", async () => {
+    // Two switches inside one flush leave a single pending slot whose `from` is
+    // "epics" — a view that was never rendered. The 500 was measured in Tree, so
+    // that is the only view it can be filed under; the applier reads activeLevel
+    // rather than transition.from for exactly this case.
+    const treeView = new TreeViewState("none");
+    treeView.scrollTop = 500;
+
+    await withPersistedPreferences({ q: "", viewLevel: "none" }, async (prefs) => {
+      mountTree(new SelectionState(), treeView, prefs);
+      await tick();
+
+      switchViewLevel(prefs, undefined, treeView, "none", "epics");
+      switchViewLevel(prefs, undefined, treeView, "epics", "flat");
+      await tick();
+      expect(treeView.activeLevel).toBe("flat");
+      expect(treeView.scrollTop).toBe(0);
+
+      // Tree gets its offset back...
+      switchViewLevel(prefs, undefined, treeView, "flat", "none");
+      await tick();
+      expect(treeView.scrollTop).toBe(500);
+
+      // ...and Epics, which never rendered, was never credited with it.
+      switchViewLevel(prefs, undefined, treeView, "none", "epics");
+      await tick();
+      expect(treeView.scrollTop).toBe(0);
+    });
+  });
+
+  it("keeps the destination's remembered offset when a surviving anchor claims the container", async () => {
+    // claim() persists whatever the container is holding, so the destination's
+    // own offset has to be ON the element before the anchor measures it —
+    // otherwise the anchor writes the OUTGOING view's geometry into the
+    // destination's memory, and the loss lands on the next switch away.
+    const selection = new SelectionState();
+    const treeView = new TreeViewState("epics");
+    treeView.scrollTop = 700;
+
+    await withPersistedPreferences({ q: "", viewLevel: "epics" }, async (prefs) => {
+      const { container } = mountTree(selection, treeView, prefs);
+      await tick();
+
+      const sc = container.querySelector(".scroll-container") as HTMLElement;
+      expect(sc.scrollTop).toBe(700);
+
+      // Park 700 under Epics, then scroll Tree somewhere else entirely.
+      switchViewLevel(prefs, undefined, treeView, "epics", "none");
+      await tick();
+      sc.scrollTop = 2000;
+      sc.dispatchEvent(new Event("scroll"));
+      expect(treeView.scrollTop).toBe(2000);
+
+      // A row Epics still has, so the switch back carries an anchor.
+      selection.select("nibs-t1");
+      await tick();
+
+      switchViewLevel(prefs, undefined, treeView, "none", "epics");
+      await tick();
+
+      expect(treeView.scrollTop).toBe(700);
+      expect(sc.scrollTop).toBe(700);
+
+      // The round trip: neither view's memory was overwritten by the other's.
+      switchViewLevel(prefs, undefined, treeView, "epics", "none");
+      await tick();
+      expect(treeView.scrollTop).toBe(2000);
+      switchViewLevel(prefs, undefined, treeView, "none", "epics");
+      await tick();
+      expect(treeView.scrollTop).toBe(700);
+    });
+  });
+
+  it("reaches an anchor behind a collapsed ancestor from the destination's remembered offset", async () => {
+    // The deferring branch of ensure-visible expands and returns WITHOUT
+    // claiming, so the remembered offset is already applied when the row finally
+    // appears. The anchor adjusts it only if the row is not visible there —
+    // which is why the precedence is "remembered offset first, anchor on top"
+    // rather than "anchor always wins".
+    const selection = new SelectionState();
+    const treeView = new TreeViewState("epics");
+    treeView.scrollTop = 700;
+
+    await withPersistedPreferences({ q: "", viewLevel: "epics" }, async (prefs) => {
+      const { container } = mountTree(selection, treeView, prefs);
+      await tick();
+      const sc = container.querySelector(".scroll-container") as HTMLElement;
+
+      switchViewLevel(prefs, undefined, treeView, "epics", "none");
+      await tick();
+      sc.scrollTop = 2000;
+      sc.dispatchEvent(new Event("scroll"));
+
+      selection.select("nibs-t1");
+      // Hide the anchor behind a collapsed ancestor, so the switch takes the
+      // expand-and-defer branch instead of claiming on its first pass.
+      treeView.setCollapsed(["nibs-e1"]);
+      await tick();
+      expect(container.querySelector("tr[data-nib-id='nibs-t1']")).toBeNull();
+
+      switchViewLevel(prefs, undefined, treeView, "none", "epics");
+      await waitFor(() => {
+        expect(container.querySelector("tr[data-nib-id='nibs-t1']")).not.toBeNull();
+      });
+
+      expect(treeView.isCollapsed("nibs-e1")).toBe(false);
+      expect(treeView.scrollTop).toBe(700);
+      expect(sc.scrollTop).toBe(700);
+    });
+  });
+
+  it("switches the scroll even when the incoming view has the same number of rows", async () => {
     // The Tree and Milestones lenses emit the same three rows for this fixture,
     // so neither the container binding nor the row count changes — the epoch is
     // the only thing that can tell the restore effect a switch happened.

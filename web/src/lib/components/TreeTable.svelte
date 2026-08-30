@@ -315,11 +315,40 @@
         selectedNibId: selection.selectedNibId,
         memberIds,
       });
+      // The view the live scrollTop was actually measured in, so the offset is
+      // filed under the geometry it describes. NOT transition.from: two switches
+      // inside one flush collapse into a single pending slot whose `from` names a
+      // view that was never rendered, and that view's memory would be overwritten
+      // with an offset belonging to someone else. Read BEFORE clearTransition(),
+      // which advances activeLevel to the destination.
+      const from = treeView.activeLevel;
       // Consume the slot first: every path out of here is done with it, and a
       // re-run triggered by these writes then returns at the guard above.
       treeView.clearTransition();
       if (plan.retainIds) selection.retainOnly(plan.retainIds);
-      if (plan.resetScroll) treeView.resetScroll();
+      if (plan.switchScroll) {
+        treeView.switchScroll(from, transition.to);
+        // Put the adopted offset on the ELEMENT here, not two effects later:
+        // everything downstream measures the DOM — ensureVisible decides whether
+        // the anchor row is already in view, and claim() persists whatever the
+        // container is holding as the destination's memory. The scroll-restore
+        // effect runs after both, so leaving the write to it lets the outgoing
+        // view's offset be measured and then filed under the incoming view.
+        // On the ordinary switch switchScroll has bumped the epoch, so this call
+        // takes ownership and the later effect finds the element already owned
+        // and no-ops. Two paths reach here without that, both benign and both
+        // left to the later effect: a self-transition takes no bump and nothing
+        // needs restoring, since the lens on screen never changed; and a
+        // destination with no rows has no container to write to yet.
+        scrollRestore.restore();
+      }
+      // Precedence: the destination's remembered offset is applied FIRST, and a
+      // surviving anchor adjusts it only when the row is not already visible at
+      // that offset (scrollIntoView({block:"nearest"}) is a no-op when it is).
+      // An anchor behind a collapsed ancestor is reached the same way — the
+      // ensure-visible effect expands and re-runs against the restored offset.
+      // Deliberate: a row the user was working with is brought on screen, but it
+      // does not throw away a position they left behind to do it.
       if (plan.anchorId) selection.ensureVisible(plan.anchorId);
     });
   });
@@ -541,14 +570,14 @@
   });
 
   // Re-attempt the restore whenever the container binds, the rows change, or a
-  // view transition retired the scroll: after a {#key} remount the fresh container
-  // starts at scrollTop=0, and restore() only applies the saved offset once
-  // content is present (then it's a no-op). The epoch is named as a dep of its
+  // view transition retired the scroll ownership: after a {#key} remount the fresh
+  // container starts at scrollTop=0, and restore() only applies the saved offset
+  // once content is present (then it's a no-op). The epoch is named as a dep of its
   // own even though `rows` happens to cover a view switch today — `rows` is a
   // fresh array on every recompute, so reading `.length` subscribes to identity
-  // rather than to the count — because what has to re-apply here is the RESET,
-  // and tying that to an incidental property of a neighbouring derived is how it
-  // would quietly stop happening.
+  // rather than to the count — because what has to re-apply here is the offset the
+  // switch swapped in, and tying that to an incidental property of a neighbouring
+  // derived is how it would quietly stop happening.
   $effect(() => {
     void scrollContainerEl; void rows.length; void treeView.scrollEpoch;
     // untrack the restore call so the effect keeps only its three intended deps

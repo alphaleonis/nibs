@@ -264,6 +264,32 @@ describe("useScrollRestore", () => {
     expect(saved).toBe(1600);
   });
 
+  // The three boundaries of restore()'s write against the container's clamp. The
+  // saved value is the view's REMEMBERED offset, not a mirror of the container:
+  // restore() never truncates it to what a momentarily shorter list allowed, so
+  // the offset survives a temporary shrink (a narrowing refetch, or the taller
+  // pane a dock toggle produces) and is honored again once the room is back.
+  it.each([
+    { name: "below the clamp — the write lands exactly", saved: 200, max: 400, top: 200 },
+    { name: "at the clamp — the boundary write lands exactly", saved: 400, max: 400, top: 400 },
+    { name: "above the clamp — the write is cut short, the memory is not", saved: 3000, max: 400, top: 400 },
+  ])("restore() applies the saved offset and keeps it whole — $name", ({ saved: initial, max, top }) => {
+    let saved = initial;
+    const container = clampingContainer(max);
+    const r = useScrollRestore({
+      getScrollContainer: () => container,
+      getSavedScrollTop: () => saved,
+      setSavedScrollTop: (n) => { saved = n; },
+      hasContent: () => true,
+      getEpoch: () => 0,
+    });
+
+    r.restore();
+
+    expect(container.scrollTop).toBe(top);
+    expect(saved).toBe(initial);
+  });
+
   it("a no-op restore write does not strand suppression: the next genuine scroll is recorded", () => {
     // Regression — now a consequence of value-keying rather
     // than a special "arm only when moved" branch. The common top-of-list case
@@ -326,7 +352,7 @@ describe("useScrollRestore", () => {
 
   // A view switch keeps the SAME container and changes what is in it, so the
   // element-identity key above cannot see it: nothing is recreated. The epoch is
-  // the second half of the ownership key, advanced by TreeViewState.resetScroll().
+  // the second half of the ownership key, advanced by TreeViewState.switchScroll().
   describe("epoch (view transition on a container that is not recreated)", () => {
     it("does not persist the clamp the incoming view forces, because the transition retired ownership", () => {
       // Without the epoch clause the element is still `ownedEl`, so the clamp the
@@ -346,7 +372,8 @@ describe("useScrollRestore", () => {
       r.restore();
       expect(container.scrollTop).toBe(5000);
 
-      // The switch: resetScroll() zeroes the saved offset and advances the epoch.
+      // The switch: switchScroll() swaps in the incoming view's offset (0, never
+      // scrolled) and advances the epoch.
       saved = 0;
       epoch = 1;
 
@@ -357,7 +384,7 @@ describe("useScrollRestore", () => {
       expect(saved).toBe(0);
     });
 
-    it("restores again onto the same element after a transition, so the incoming view starts at the reset offset", () => {
+    it("restores again onto the same element after a transition, so the incoming view starts at its own offset", () => {
       // Ownership is keyed to (element, epoch): the element is unchanged, so only
       // the epoch can re-arm restore() here.
       let saved = 500;
@@ -384,7 +411,7 @@ describe("useScrollRestore", () => {
     it("claim() takes ownership under the CURRENT epoch, so a later transition retires the claim too", () => {
       // claim() is the third participant in the ordering restore()'s own doc calls
       // "order-dependent, not absolute". An epoch-less claim would hold ownership
-      // across the transition and silently defeat the reset.
+      // across the transition and silently defeat the swap.
       let saved = 0;
       let epoch = 0;
       const container = fakeContainer();
@@ -406,7 +433,8 @@ describe("useScrollRestore", () => {
       r.restore();
       expect(container.scrollTop).toBe(500);
 
-      // The transition retires the claim: the incoming view starts from the reset.
+      // The transition retires the claim: the incoming view starts from its own
+      // swapped-in offset.
       saved = 0;
       epoch = 1;
       r.restore();
