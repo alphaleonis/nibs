@@ -561,8 +561,8 @@ function buildGroupedTree<T extends TreeNib>(
   // `containingSectionRowId` leans on exactly that and asks again outside the
   // build rather than sharing this map.
   //
-  // It is worth being blunt about what this map is NOT, because two earlier
-  // readings of it were wrong. It is not load-bearing for correctness: the
+  // It is worth being blunt about what this map is NOT, because both tempting
+  // readings of it are wrong. It is not load-bearing for correctness: the
   // assembly below reads each placement exactly once, at one of two mutually
   // exclusive sites, so an inconsistent lens could not render a nib twice even
   // without it. Nor is it a speed optimization — it is eager, one call per nib,
