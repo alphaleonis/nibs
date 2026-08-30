@@ -144,6 +144,9 @@ function planFor(draggedIds: string[], targetId: string, zone: DropZone): DropPl
   return planDrop({
     draggedIds,
     rowsById: ROWS_BY_ID,
+    // Same map: these cases vary the drag, not what the view did mid-gesture.
+    // The one case that pulls them apart builds its own pair.
+    draggedRowsById: ROWS_BY_ID,
     target,
     zone,
     // Production's own collector, over the fixture rows.
@@ -552,10 +555,34 @@ const CASES: Case[] = [
     expected: { ok: false, reason: "drop-on-self" },
   },
   {
+    // The middle zone asks to enter the target, and B1 is a leaf that can be
+    // entered by nothing — but the row IS the one being dragged, so the drag was
+    // canceled rather than aimed anywhere. Reporting the destination's problem
+    // here would describe a drop the user never asked for, which is why the
+    // self/descendant answers are decided before the destination is.
+    name: "releasing on the middle of the dragged row is a cancel, not a bad destination",
+    drag: ["B1"],
+    target: "B1",
+    zone: "reparent",
+    expected: { ok: false, reason: "drop-on-self" },
+  },
+  {
     name: "a row cannot be dropped into its own subtree",
     drag: ["FT"],
     target: "B5",
     zone: "before",
+    expected: { ok: false, reason: "drop-on-descendant" },
+  },
+  {
+    // The descendant half of "self/descendant is decided before the destination
+    // is". B5 is a leaf, so the middle zone has no group to enter and the
+    // destination computation refuses `invalid-parent-type` — but only from the
+    // "reparent" zone. The `before` case above never reaches that branch, so it
+    // holds under either ordering and cannot pin this on its own.
+    name: "releasing on the middle of a descendant is a subtree refusal, not a bad destination",
+    drag: ["FT"],
+    target: "B5",
+    zone: "reparent",
     expected: { ok: false, reason: "drop-on-descendant" },
   },
   {
@@ -775,5 +802,46 @@ describe("dropPlan.ts import isolation", () => {
     for (const line of importLines) {
       if (line.includes(".svelte")) expect(line.startsWith("import type ")).toBe(true);
     }
+  });
+});
+
+describe("the dragged rows are read from the grab, not from the live list", () => {
+  // `rowsById` is live so a row arriving mid-drag can be aimed at; the dragged
+  // set is frozen because what is being dragged is settled when the gesture picks
+  // it up. Resolving the dragged rows against the live list instead makes one
+  // that scrolls out of view read as a selection the filter hides — and
+  // `hidden-member` is decided before the drop-on-self check, so it would turn
+  // the ordinary cancel gesture into an error toast.
+  it("plans normally when a dragged row has left the live list", () => {
+    const live = new Map(ROWS_BY_ID);
+    live.delete("B1");
+
+    const plan = planDrop({
+      draggedIds: ["B1"],
+      rowsById: live,
+      draggedRowsById: ROWS_BY_ID,
+      target: ROWS_BY_ID.get("B1")!,
+      zone: "reparent",
+      descendantIds: collectDescendantIds(["B1"], ROWS),
+    });
+
+    expect(plan.ok).toBe(false);
+    if (plan.ok) return;
+    expect(plan.refusal.reason).toBe("drop-on-self");
+  });
+
+  it("still refuses a selection member the view never had", () => {
+    const plan = planDrop({
+      draggedIds: ["B1", "GHOST"],
+      rowsById: ROWS_BY_ID,
+      draggedRowsById: ROWS_BY_ID,
+      target: ROWS_BY_ID.get("B2")!,
+      zone: "before",
+      descendantIds: collectDescendantIds(["B1", "GHOST"], ROWS),
+    });
+
+    expect(plan.ok).toBe(false);
+    if (plan.ok) return;
+    expect(plan.refusal.reason).toBe("hidden-member");
   });
 });

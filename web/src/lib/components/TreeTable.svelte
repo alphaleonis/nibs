@@ -18,7 +18,7 @@
   import { Button } from "$lib/components/ui/button/index.js";
   import TreeTableRow from "./TreeTableRow.svelte";
   import TableHeader from "./TableHeader.svelte";
-  import type { DropZone } from "../drag.svelte";
+  import type { DropPlan } from "../ordering/dropPlan";
   import type { PanelPolicy } from "../selection.svelte";
   import { useSelection, useDrag, useActiveView, useTreeView, useConnection } from "../contexts";
   import { useColumnResize } from "../composables/useColumnResize.svelte";
@@ -64,7 +64,8 @@
     blockedEmphasis?: BlockedEmphasis;
     /** Which row gesture opens the detail panel. Unused when `prefs` is supplied. */
     openDetailOn?: OpenDetailGesture;
-    ondrop?: (targetNibId: string, zone: DropZone, targetParentId: string | null) => void;
+    /** The drop a finished drag decided on, refusals included. */
+    ondrop?: (plan: DropPlan) => void;
   }
 
   let {
@@ -594,7 +595,7 @@
     getRows: () => rows,
     getScrollContainer: () => scrollContainerEl ?? null,
     getDragBlock: () => dragBlock,
-    ondrop: (targetNibId, zone, targetParentId) => ondrop?.(targetNibId, zone, targetParentId),
+    ondrop: (plan) => ondrop?.(plan),
     onblockeddrag: (block) => {
       toast.info(block.message, {
         id: DRAG_BLOCK_TOAST_ID,

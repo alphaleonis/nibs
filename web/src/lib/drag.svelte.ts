@@ -5,9 +5,6 @@ export class DragState {
   draggedIds: string[] = $state([]);
   isDragging: boolean = $derived(this.draggedIds.length > 0);
 
-  /** Shared parent of dragged items (undefined = mixed parents) */
-  draggedParentId: string | null | undefined = $state(undefined);
-
   /** Current drop target */
   dropTargetId: string | null = $state(null);
   dropZone: DropZone | null = $state(null);
@@ -17,9 +14,8 @@ export class DragState {
   cursorX: number = $state(0);
   cursorY: number = $state(0);
 
-  startDrag(ids: string[], parentId?: string | null): void {
+  startDrag(ids: string[]): void {
     this.draggedIds = ids;
-    this.draggedParentId = parentId;
   }
 
   setDropTarget(nibId: string | null, zone: DropZone | null, valid: boolean): void {
@@ -36,7 +32,6 @@ export class DragState {
 
   endDrag(): void {
     this.draggedIds = [];
-    this.draggedParentId = undefined;
     this.clearDropTarget();
     this.cursorX = 0;
     this.cursorY = 0;

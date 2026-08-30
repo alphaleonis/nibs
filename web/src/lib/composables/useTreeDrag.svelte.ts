@@ -1,14 +1,18 @@
 import type { SelectionState } from "../selection.svelte";
 import type { DragState, DropZone } from "../drag.svelte";
 import type { RowData } from "../tableData";
-import type { TreeTableNib } from "../types";
-import { computeDropZone, isValidDropTarget, isValidCrossParentDrop, collectDescendantIds } from "../dropZone";
-import { canHaveChildren } from "../typeHierarchy";
+import { computeDropZone, collectDescendantIds } from "../dropZone";
+import { planDrop, type DropIndicator, type DropPlan } from "../ordering/dropPlan";
 import type { DragBlock } from "../dragBlock";
 
 const DRAG_THRESHOLD = 5;
 const AUTO_SCROLL_EDGE = 50;
 const AUTO_SCROLL_SPEED = 8;
+
+/** A plan's indicator in the vocabulary `TreeTableRow`'s drop classes are keyed on. */
+function dropZoneOf(indicator: DropIndicator): DropZone {
+  return indicator === "into" ? "reparent" : indicator;
+}
 
 export function useTreeDrag(opts: {
   selection: SelectionState;
@@ -17,7 +21,12 @@ export function useTreeDrag(opts: {
   getScrollContainer: () => HTMLElement | null;
   /** The gate currently suppressing drag-reorder, or null when drag is available. */
   getDragBlock?: () => DragBlock | null;
-  ondrop?: (targetNibId: string, zone: DropZone, targetParentId: string | null) => void;
+  /**
+   * The drop the gesture ended on — the same plan the indicator was drawn from,
+   * REFUSALS INCLUDED. A refused drop is reported rather than swallowed, so the
+   * caller can say why nothing moved.
+   */
+  ondrop?: (plan: DropPlan) => void;
   /** A drag was attempted on a blocked row — raise the explanation to the user. */
   onblockeddrag?: (block: DragBlock) => void;
 }): {
@@ -26,14 +35,25 @@ export function useTreeDrag(opts: {
 } {
   const { selection, drag } = opts;
 
-  // Cached state for current drag
+  // The row list stays LIVE for the whole gesture: the table refetches on
+  // `nibChanged` events, and an ArrowRight expand rebuilds it with nothing gating
+  // on a drag being in flight. A row missing from the lookup resolves to NO
+  // target, which clears the plan and ends the release in silence — so this is a
+  // cache keyed on the list's IDENTITY, not a snapshot. `getRows` reaches here as
+  // a Svelte `$derived`, which hands back the same array until the table is
+  // rebuilt, so an unchanged list costs one comparison per pointermove.
+  let cachedRows: RowData[] | null = null;
+  let rowsById: Map<string, RowData> = new Map();
+  // Both fixed at startDrag, because both describe what the gesture PICKED UP,
+  // which no later render changes: the subtree it carries, and the rows
+  // themselves. Resolving the dragged rows against the live list instead would
+  // make one that scrolls out of view mid-gesture read as a selection the filter
+  // hides, and answer `hidden-member` for the rest of the drag.
   let dragDescendantIds: Set<string> = new Set();
-  let draggedTypes: string[] = [];
-  let draggedParentId: string | null | undefined = undefined;
-  // The dragged rows' shared REAL nib.parentId (undefined = mixed real parents).
-  // Distinct from draggedParentId, which is the shared DISPLAY parent. Needed to
-  // reject a same-display-container / different-real-parent reorder.
-  let draggedRealParentId: string | null | undefined = undefined;
+  let draggedRowsById: Map<string, RowData> = new Map();
+  // The plan behind the indicator currently on screen, or null when the cursor is
+  // over no row. The drop executes THIS value rather than deciding a second time.
+  let dropPlan: DropPlan | null = null;
   let autoScrollRAF: number | null = null;
 
   // Pending drag state (before threshold)
@@ -46,14 +66,6 @@ export function useTreeDrag(opts: {
   let dragPreviewEl: HTMLElement | null = null;
   let dragOffsetX = 0;
   let dragOffsetY = 0;
-
-  function nibMapFromRows(): Map<string, TreeTableNib> {
-    const map = new Map<string, TreeTableNib>();
-    for (const row of opts.getRows()) {
-      map.set(row.nib.id, row.nib);
-    }
-    return map;
-  }
 
   function createDragPreview(nibId: string) {
     const scrollContainer = opts.getScrollContainer();
@@ -118,6 +130,20 @@ export function useTreeDrag(opts: {
     }
   }
 
+  /**
+   * The current row list, with `rowsById` rebuilt only when the list itself was
+   * replaced. Keyed by nib id, which the `RowData` row-list invariant states a
+   * real nib holds at most once across the rendered rows.
+   */
+  function syncRows(): RowData[] {
+    const rows = opts.getRows();
+    if (rows !== cachedRows) {
+      cachedRows = rows;
+      rowsById = new Map(rows.map(row => [row.nib.id, row]));
+    }
+    return rows;
+  }
+
   function startDrag(nibId: string) {
     const ids = selection.selectedIds.has(nibId) && selection.selectedIds.size > 1
       ? [...selection.selectedIds]
@@ -127,25 +153,13 @@ export function useTreeDrag(opts: {
     createDragPreview(nibId);
     updateDragPreview(dragStartX, dragStartY);
 
-    const rows = opts.getRows();
+    const rows = syncRows();
     dragDescendantIds = collectDescendantIds(ids, rows);
+    draggedRowsById = new Map(
+      ids.flatMap(id => { const row = rowsById.get(id); return row ? [[id, row] as const] : []; }),
+    );
 
-    const nibMap = nibMapFromRows();
-    draggedTypes = ids.map(id => nibMap.get(id)?.type ?? "").filter(Boolean);
-
-    // Resolve the source's parent through the same display-parent authority as
-    // the target (RowData.displayParentId), not the raw nib.parentId. This keeps
-    // the shared-parent check in handleDrop lens-agnostic and symmetric.
-    const parents = new Set(ids.map(id => rows.find(r => r.nib.id === id)?.displayParentId));
-    draggedParentId = parents.size === 1 ? [...parents][0] : undefined;
-
-    // Also cache the shared REAL parent (nib.parentId). Two rows can share a
-    // display container (equal displayParentId) yet have different real parents;
-    // a before/after reorder is only meaningful within a single real parent.
-    const realParents = new Set(ids.map(id => rows.find(r => r.nib.id === id)?.nib.parentId));
-    draggedRealParentId = realParents.size === 1 ? [...realParents][0] : undefined;
-
-    drag.startDrag(ids, draggedParentId);
+    drag.startDrag(ids);
     document.body.style.cursor = "grabbing";
   }
 
@@ -172,6 +186,7 @@ export function useTreeDrag(opts: {
 
     if (!drag.isDragging) return;
 
+    syncRows();
     drag.cursorX = e.clientX;
     drag.cursorY = e.clientY;
     updateDragPreview(e.clientX, e.clientY);
@@ -179,73 +194,42 @@ export function useTreeDrag(opts: {
     const el = document.elementFromPoint(e.clientX, e.clientY);
     const tr = el?.closest("tr[data-nib-id]") as HTMLElement | null;
     if (!tr) {
-      drag.clearDropTarget();
+      clearDrop();
       stopAutoScroll();
       handleAutoScroll(e);
       return;
     }
 
-    const targetNibId = tr.dataset.nibId!;
-    const rows = opts.getRows();
-    const targetRow = rows.find(r => r.nib.id === targetNibId);
+    const targetRow = rowsById.get(tr.dataset.nibId!);
     if (!targetRow) {
-      drag.clearDropTarget();
+      clearDrop();
       handleAutoScroll(e);
       return;
     }
 
-    const rect = tr.getBoundingClientRect();
-    let zone = computeDropZone(e.clientY, rect);
-
-    // Dropping "after" a non-leaf nib → reparent (become first child).
-    // This matches standard tree-view UX: dropping below a parent node
-    // makes the item a child rather than a sibling.
-    if (zone === "after" && canHaveChildren(targetRow.nib.type)) {
-      zone = "reparent";
-    }
-
-    let valid = isValidDropTarget(
-      draggedTypes,
-      targetRow.nib,
+    // `planDrop` owns the whole decision — the container-entry promotion the
+    // "after" zone can take, every refusal, and the command each accepted drop
+    // writes. Nothing may be added here: a check at this seam would be a second
+    // reading of the drag, separate from the one the drop goes on to execute.
+    const zone = computeDropZone(e.clientY, tr.getBoundingClientRect());
+    const plan = planDrop({
+      draggedIds: drag.draggedIds,
+      rowsById,
+      draggedRowsById,
+      target: targetRow,
       zone,
-      drag.draggedIds,
-      dragDescendantIds,
-    );
-
-    // For before/after on a different parent, validate the type hierarchy.
-    // Compare and look up the parent through displayParentId so move-validation
-    // and the drop agree. The producer (tableData's flatten) guarantees it is a
-    // real nib id that could hold the row as a child, or null — never a display
-    // container, whether that is a synthetic bucket or a real nib heading a
-    // section (see the RowData.displayParentId invariant) — so no guard of any
-    // kind is needed here.
-    if (valid && (zone === "before" || zone === "after")) {
-      if (draggedParentId !== undefined && targetRow.displayParentId !== draggedParentId) {
-        const nibMap = nibMapFromRows();
-        const dp = targetRow.displayParentId;
-        const targetParent = dp ? nibMap.get(dp) ?? null : null;
-        valid = isValidCrossParentDrop(draggedTypes, targetParent?.type ?? null);
-      } else if (draggedRealParentId === undefined || targetRow.nib.parentId !== draggedRealParentId) {
-        // Same DISPLAY container (equal displayParentId) but no PROVABLE single
-        // shared real parent for the reorder. This fires when either:
-        //   - the dragged set has no single real parent (draggedRealParentId
-        //     undefined) — a multi-select spanning mixed real parents, or a
-        //     selected-but-hidden row that misses rows.find; or
-        //   - the target's real parent differs from the dragged set's shared real
-        //     parent — e.g. a promoted header (real parent a hidden container) and
-        //     a loose "No X" bucket item both displaying at root.
-        // A plain before/after reorder here fires a parent-less reorderNibCmd, but
-        // the backend computes siblings from the dragged item's UNCHANGED real
-        // parent and rejects it ("not a sibling"). Reorder is only meaningful
-        // within a single real parent, so FAIL CLOSED: mark the drop INVALID rather
-        // than offer a valid-looking affordance that errors on drop.
-        // The cross-DISPLAY-parent reparentAndReorder case above is unaffected.
-        valid = false;
-      }
-    }
-
-    drag.setDropTarget(targetNibId, zone, valid);
+      descendantIds: dragDescendantIds,
+    });
+    dropPlan = plan;
+    // A refusal forwards the raw zone: `.drop-invalid` is the only class an
+    // invalid target takes, so the zone is unread there.
+    drag.setDropTarget(targetRow.nib.id, plan.ok ? dropZoneOf(plan.indicator) : zone, plan.ok);
     handleAutoScroll(e);
+  }
+
+  function clearDrop() {
+    dropPlan = null;
+    drag.clearDropTarget();
   }
 
   function onGlobalKeyDown(e: KeyboardEvent) {
@@ -263,40 +247,26 @@ export function useTreeDrag(opts: {
     document.body.style.cursor = "";
     removeDragPreview();
     drag.endDrag();
+    cachedRows = null;
+    rowsById = new Map();
     dragDescendantIds = new Set();
-    draggedTypes = [];
-    draggedParentId = undefined;
-    draggedRealParentId = undefined;
+    draggedRowsById = new Map();
+    dropPlan = null;
     dragPending = false;
     dragStartNibId = null;
     stopAutoScroll();
   }
 
   function onDragPointerUp(_e: PointerEvent) {
-    if (dragPending) {
+    if (dragPending || !drag.isDragging) {
       cleanupDrag();
       return;
     }
 
-    if (!drag.isDragging) {
-      cleanupDrag();
-      return;
-    }
-
-    if (drag.dropTargetId && drag.dropZone && drag.dropValid && opts.ondrop) {
-      const rows = opts.getRows();
-      const targetRow = rows.find(r => r.nib.id === drag.dropTargetId);
-      // Resolve the target's DISPLAY parent (the container it sits under in the
-      // current view tree), which tableData derives from the node's display
-      // position rather than its raw nib.parentId. Both the drag source
-      // (draggedParentId) and the target are resolved through displayParentId, so
-      // a reorder never adopts a hidden container as the new parent: a promoted
-      // header resolves to root, siblings under the same hidden container keep
-      // that shared container, and an item under a *different* hidden container
-      // resolves to its own display parent.
-      const targetParentId = targetRow?.displayParentId ?? null;
-      opts.ondrop(drag.dropTargetId, drag.dropZone, targetParentId);
-    }
+    // Reported whether or not the plan is an accepted one: a gesture that reached
+    // a row and cannot happen is exactly the case that needs an explanation, and
+    // gating on validity here is what made it silent.
+    if (dropPlan !== null) opts.ondrop?.(dropPlan);
 
     cleanupDrag();
   }

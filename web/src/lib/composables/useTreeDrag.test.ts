@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { SelectionState } from "../selection.svelte";
 import { DragState } from "../drag.svelte";
+import { batch, reorderNib, reparentAndReorder, setParent } from "../mutations/commands";
+import type { DropPlan } from "../ordering/dropPlan";
 import type { RowData } from "../tableData";
 import { buildTableData, rowRegion } from "../tableData";
 import type { TreeTableNib } from "../types";
@@ -53,8 +55,20 @@ describe("useTreeDrag", () => {
   // Track the composable's cleanup so we can call it after each test
   let cleanup: (() => void) | undefined;
 
+  // The two pieces of global state a hover fakes. Their undo runs here rather
+  // than only at the end of a test body: an assertion between the fake and its
+  // undo throws on exactly the runs where a test is catching a regression, and a
+  // leaked stub then decides the drop target of every test after it — the first
+  // pointermove of the next `startDragOn` already reads `elementFromPoint`.
+  const realElementFromPoint = document.elementFromPoint;
+
   beforeEach(() => {
     cleanup = undefined;
+  });
+
+  afterEach(() => {
+    document.elementFromPoint = realElementFromPoint;
+    document.body.querySelectorAll("tr[data-nib-id]").forEach(tr => tr.remove());
   });
 
   /** Helper to create drag composable with common defaults */
@@ -62,7 +76,7 @@ describe("useTreeDrag", () => {
     selection?: SelectionState;
     drag?: DragState;
     rows?: RowData[];
-    ondrop?: (targetNibId: string, zone: import("../drag.svelte").DropZone) => void;
+    ondrop?: (plan: DropPlan) => void;
     scrollContainer?: HTMLElement | null;
     dragBlock?: import("../dragBlock").DragBlock | null;
     onblockeddrag?: (block: import("../dragBlock").DragBlock) => void;
@@ -70,7 +84,7 @@ describe("useTreeDrag", () => {
     const selection = overrides.selection ?? new SelectionState();
     const drag = overrides.drag ?? new DragState();
     const ondrop = overrides.ondrop ?? vi.fn();
-    const rows = overrides.rows ?? [];
+    let rows = overrides.rows ?? [];
     const onblockeddrag = overrides.onblockeddrag ?? vi.fn();
 
     const result = useTreeDrag({
@@ -89,7 +103,16 @@ describe("useTreeDrag", () => {
       window.dispatchEvent(upEvent);
     };
 
-    return { ...result, selection, drag, ondrop, onblockeddrag };
+    /**
+     * Hand the composable a NEW row list, which is the only shape a change
+     * reaches it in: `rows` is a Svelte `$derived` over a freshly built array,
+     * so a refetch or an expand replaces it rather than mutating it in place.
+     */
+    const setRows = (next: RowData[]) => {
+      rows = next;
+    };
+
+    return { ...result, selection, drag, ondrop, onblockeddrag, setRows };
   }
 
   it("pointer down sets pending state, move past threshold starts drag", () => {
@@ -202,73 +225,17 @@ describe("useTreeDrag", () => {
     }));
   }
 
-  it("pointer up calls ondrop when valid drop target exists", () => {
-    const nib1 = makeNib({ id: "nibs-001", type: "task" });
-    const nib2 = makeNib({ id: "nibs-002", type: "milestone" });
-    const rows = [
-      makeRow(nib2, { hasChildren: true }),
-      makeRow(nib1),
-    ];
-
-    const drag = new DragState();
-    const ondrop = vi.fn();
-    const composable = setup({ drag, rows, ondrop });
-
-    // Start drag on nib1
-    startDragOn("nibs-001", composable);
-    expect(drag.isDragging).toBe(true);
-
-    // Manually set a valid drop target (simulating what pointer move would do)
-    drag.setDropTarget("nibs-002", "reparent", true);
-
-    // Pointer up should trigger ondrop
-    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
-
-    expect(ondrop).toHaveBeenCalledWith("nibs-002", "reparent", null);
-    expect(drag.isDragging).toBe(false);
-  });
-
-  it("cross-container before/after drop onto a loose bucket item stays valid (real onDragPointerMove path)", () => {
-    // Regression guard for the #jeu5 producer invariant, driving the REAL
-    // onDragPointerMove cross-parent type-validation branch — the resolution
-    // tests below deliberately bypass it via setDropTarget(..., true), which is
-    // why the original regression went uncaught. Rows come from the real
-    // buildTableData pipeline so the producer fix's effect on a loose bucket
-    // item's displayParentId is exercised end-to-end.
-    //
-    // Epics lens: E1 (epic header) → F1 (feature child, displayParentId "E1") is
-    // dragged; T1 (loose task) lands in the "No epic" bucket. Dropping F1 BEFORE
-    // the loose bucket item T1 is a cross-container reorder to root. Before the
-    // producer fix, T1's displayParentId was the synthetic bucket id, so the
-    // validation looked up the bucket pseudo-nib (type "") and
-    // isValidCrossParentDrop(["feature"], "") rejected the drop (dropValid=false).
-    // After the fix T1 resolves to null (root) → the drop is valid.
-    const nibs: TreeTableNib[] = [
-      makeNib({ id: "E1", type: "epic", parentId: null }),
-      makeNib({ id: "F1", type: "feature", parentId: "E1" }),
-      makeNib({ id: "T1", type: "task", parentId: null }),
-    ];
-    const { rows } = buildTableData(nibs, {}, "epics", new Set<string>());
-
-    // The synthetic bucket row is present in the rows fed to the composable, so
-    // nibMap includes the pseudo-nib (type "") — reproducing the exact bug
-    // surface. The discriminating assertion below is drag.dropValid: with the
-    // producer fix reverted, T1's displayParentId is the bucket id and the drop
-    // is rejected there.
-    expect(rows.some(r => r.nib.id === "/__no_epic__")).toBe(true);
-
-    const drag = new DragState();
-    const composable = setup({ drag, rows });
-
-    // Drag F1 (feature under the visible E1 header → draggedParentId "E1").
-    startDragOn("F1", composable);
-    expect(drag.isDragging).toBe(true);
-
-    // Build a <tr data-nib-id="T1"> and point elementFromPoint at it. Cursor in
-    // the top 30% of the row → "before" zone (cross-container reorder, not
-    // reparent).
+  /**
+   * Move the cursor `ratio` of the way down `targetNibId`'s row, through the path
+   * production uses: `document.elementFromPoint` plus the row's rect are the only
+   * things the composable reads to find a target, so calling `setDropTarget`
+   * directly instead would skip the decision under test. `computeDropZone` reads
+   * the ratio — below 0.3 is "before", above 0.7 "after", between them the
+   * container zone. Returns the undo.
+   */
+  function hoverRow(targetNibId: string, ratio: number): () => void {
     const tr = document.createElement("tr");
-    tr.dataset.nibId = "T1";
+    tr.dataset.nibId = targetNibId;
     tr.getBoundingClientRect = () => ({
       top: 200, bottom: 240, left: 0, right: 800,
       height: 40, width: 800, x: 0, y: 200,
@@ -278,31 +245,123 @@ describe("useTreeDrag", () => {
     const origElementFromPoint = document.elementFromPoint;
     document.elementFromPoint = () => tr;
 
-    // clientY=205 → 5px into a 40px row → ratio 0.125 < 0.3 → "before".
     window.dispatchEvent(new PointerEvent("pointermove", {
-      clientX: 200, clientY: 205, bubbles: true,
+      clientX: 200, clientY: 200 + 40 * ratio, bubbles: true,
     }));
+
+    return () => {
+      document.elementFromPoint = origElementFromPoint;
+      tr.remove();
+    };
+  }
+
+  /** The single plan a finished drag handed to `ondrop`. */
+  function droppedPlan(ondrop: ReturnType<typeof vi.fn>): DropPlan {
+    expect(ondrop).toHaveBeenCalledTimes(1);
+    return ondrop.mock.calls[0][0] as DropPlan;
+  }
+
+  it("pointer up hands ondrop the same plan the affordance was drawn from", () => {
+    const nib1 = makeNib({ id: "nibs-001", type: "task" });
+    const nib2 = makeNib({ id: "nibs-002", type: "epic" });
+    const rows = [
+      makeRow(nib2, { hasChildren: true }),
+      makeRow(nib1),
+    ];
+
+    const drag = new DragState();
+    const ondrop = vi.fn();
+    const composable = setup({ drag, rows, ondrop });
+
+    startDragOn("nibs-001", composable);
+    expect(drag.isDragging).toBe(true);
+
+    const unhover = hoverRow("nibs-002", 0.5);
+    expect(drag.dropValid).toBe(true);
+
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+    expect(droppedPlan(ondrop)).toMatchObject({
+      ok: true,
+      region: { axis: "parent", parentId: "nibs-002" },
+      indicator: "into",
+      command: batch([setParent("nibs-001", "nibs-002")]),
+    });
+    expect(drag.isDragging).toBe(false);
+
+    unhover();
+  });
+
+  it("cross-region before/after drop onto a loose bucket item is planned as a reparent", () => {
+    // The one test here whose rows come from the real `buildTableData` pipeline
+    // rather than hand-built `makeRow`s, so a synthetic bucket row and its loose
+    // members are exactly as the producer emits them.
+    //
+    // Epics lens: E1 (epic header) → F1 (feature child) is dragged; T1 (loose
+    // task) lands in the "No epic" bucket. Dropping F1 BEFORE T1 crosses ordering
+    // regions — F1 is ordered among E1's children, T1 at the top level — so the
+    // plan is a reparent POSITIONED against T1, not a bare reorder.
+    //
+    // The #jeu5 producer invariant this fixture was built for (a loose bucket
+    // item's `displayParentId` must be the bucket's own display parent, never the
+    // synthetic bucket id) no longer decides this drop — the plan follows
+    // ordering REGIONS, and these rows declare none, so theirs come from
+    // `nib.parentId`. The invariant's own guard is `tableData.test.ts`'s "a loose
+    // bucket item inherits the bucket's own display parent" case: reverting the
+    // producer fix reddens that file with 5 failures and leaves this one green.
+    const nibs: TreeTableNib[] = [
+      makeNib({ id: "E1", type: "epic", parentId: null }),
+      makeNib({ id: "F1", type: "feature", parentId: "E1" }),
+      makeNib({ id: "T1", type: "task", parentId: null }),
+    ];
+    const { rows } = buildTableData(nibs, {}, "epics", new Set<string>());
+
+    // The synthetic bucket row really is in the rows handed to the composable, so
+    // the plan is computed against a list that contains a non-nib row.
+    expect(rows.some(r => r.nib.id === "/__no_epic__")).toBe(true);
+
+    const drag = new DragState();
+    const ondrop = vi.fn();
+    const composable = setup({ drag, rows, ondrop });
+
+    startDragOn("F1", composable);
+    expect(drag.isDragging).toBe(true);
+
+    // Top 30% of T1's row → the "before" zone (a positioned drop, not an entry).
+    const unhover = hoverRow("T1", 0.125);
 
     expect(drag.dropTargetId).toBe("T1");
     expect(drag.dropZone).toBe("before");
     expect(drag.dropValid).toBe(true);
 
-    document.elementFromPoint = origElementFromPoint;
-    document.body.removeChild(tr);
-    cleanup?.();
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+    expect(droppedPlan(ondrop)).toMatchObject({
+      ok: true,
+      region: { axis: "parent", parentId: null },
+      indicator: "before",
+      command: reparentAndReorder(["F1"], null, "T1", "before"),
+    });
+
+    unhover();
   });
 
-  it("before/after reorder where dragged & target share a display container but have DIFFERENT real parents is INVALID", () => {
-    // In a grouping lens two rows can share the same DISPLAY
-    // container (both display at root → displayParentId null) while having
-    // DIFFERENT real nib.parentId — e.g. a promoted feature header (real parent
-    // a hidden epic) and a loose "No X" bucket task (real parent null). A plain
-    // before/after reorder here fires a parent-less reorderNibCmd, but the
-    // backend computes siblings from the dragged item's UNCHANGED real parent and
-    // rejects ("not a sibling (different parent)"). "Reorder" only means something
-    // within a single real parent, so the affordance must read INVALID and the
-    // drop must never be offered. This drives the REAL onDragPointerMove validity
-    // path (not setDropTarget), which is where the false-valid slips through.
+  it("before/after next to a row with a DIFFERENT real parent is an accepted cross-parent reparent", () => {
+    // In a grouping lens two rows can share the same DISPLAY container (both
+    // display at root → displayParentId null) while having DIFFERENT real
+    // nib.parentId — a promoted feature header (real parent a hidden epic) beside
+    // a loose "No X" bucket task (real parent null).
+    //
+    // The gesture is offered now, where it was refused before. The refusal was
+    // never about the gesture: a plain before/after here would fire a parent-less
+    // reorderNib, which the backend rejects ("not a sibling (different parent)")
+    // because it groups by the DRAGGED row's own unchanged real parent. Without a
+    // way to name the destination group, refusing was the only safe answer.
+    // `planDrop` names it — the destination is the target's real parent group
+    // (root here), the dragged row is not in it, so the plan is a reparent
+    // POSITIONED against the target rather than a bare reorder, which is a write
+    // the server accepts. The affordance follows the same value, so it reads
+    // valid.
     const dragged = makeNib({ id: "F1", type: "feature", parentId: "hidden-epic" });
     const target = makeNib({ id: "T1", type: "task", parentId: null });
     const rows = [
@@ -313,42 +372,38 @@ describe("useTreeDrag", () => {
     ];
 
     const drag = new DragState();
-    const composable = setup({ drag, rows });
+    const ondrop = vi.fn();
+    const composable = setup({ drag, rows, ondrop });
 
     startDragOn("F1", composable);
     expect(drag.isDragging).toBe(true);
 
-    const tr = document.createElement("tr");
-    tr.dataset.nibId = "T1";
-    tr.getBoundingClientRect = () => ({
-      top: 200, bottom: 240, left: 0, right: 800,
-      height: 40, width: 800, x: 0, y: 200,
-      toJSON: () => {},
-    }) as DOMRect;
-    document.body.appendChild(tr);
-    const origElementFromPoint = document.elementFromPoint;
-    document.elementFromPoint = () => tr;
-
-    // clientY=205 → 5px into a 40px row → ratio 0.125 < 0.3 → "before" (reorder).
-    window.dispatchEvent(new PointerEvent("pointermove", {
-      clientX: 200, clientY: 205, bubbles: true,
-    }));
+    const unhover = hoverRow("T1", 0.125);
 
     expect(drag.dropTargetId).toBe("T1");
     expect(drag.dropZone).toBe("before");
-    // Equal display parent (null) but different real parent → INVALID.
-    expect(drag.dropValid).toBe(false);
+    expect(drag.dropValid).toBe(true);
 
-    document.elementFromPoint = origElementFromPoint;
-    document.body.removeChild(tr);
-    cleanup?.();
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+    // A reparent that carries the position, not a bare reorder: the hidden epic
+    // is left behind and F1 lands at the top level, before T1.
+    expect(droppedPlan(ondrop)).toMatchObject({
+      ok: true,
+      region: { axis: "parent", parentId: null },
+      indicator: "before",
+      command: reparentAndReorder(["F1"], null, "T1", "before"),
+    });
+
+    unhover();
   });
 
-  it("before/after reorder between genuine real siblings (same display + same real parent) stays VALID (guardrail)", () => {
-    // Scope guardrail for the real-parent guard: when the dragged and target rows are
-    // real siblings (same real nib.parentId) and share the same display
-    // container, a before/after reorder must remain VALID — the new real-parent
-    // guard only rejects the equal-display / DIFFERENT-real-parent case.
+  it("before/after reorder between rows of one ordering region stays VALID (guardrail)", () => {
+    // Scope guardrail: dragged and target sit in ONE ordering region
+    // ({axis:"parent", parentId:"epic-A"}), so the plan is the bare `reorderNib`
+    // and the affordance reads valid. The equal-display / DIFFERENT-real-parent
+    // case is a separate population and is now an ACCEPTED cross-region reparent
+    // — see the test above.
     const dragged = makeNib({ id: "C1", type: "task", parentId: "epic-A" });
     const target = makeNib({ id: "C2", type: "task", parentId: "epic-A" });
     const rows = [
@@ -357,51 +412,42 @@ describe("useTreeDrag", () => {
     ];
 
     const drag = new DragState();
-    const composable = setup({ drag, rows });
+    const ondrop = vi.fn();
+    const composable = setup({ drag, rows, ondrop });
 
     startDragOn("C1", composable);
     expect(drag.isDragging).toBe(true);
 
-    const tr = document.createElement("tr");
-    tr.dataset.nibId = "C2";
-    tr.getBoundingClientRect = () => ({
-      top: 200, bottom: 240, left: 0, right: 800,
-      height: 40, width: 800, x: 0, y: 200,
-      toJSON: () => {},
-    }) as DOMRect;
-    document.body.appendChild(tr);
-    const origElementFromPoint = document.elementFromPoint;
-    document.elementFromPoint = () => tr;
-
-    window.dispatchEvent(new PointerEvent("pointermove", {
-      clientX: 200, clientY: 205, bubbles: true,
-    }));
+    const unhover = hoverRow("C2", 0.125);
 
     expect(drag.dropTargetId).toBe("C2");
     expect(drag.dropZone).toBe("before");
-    // Genuine same-real-parent reorder → still VALID.
     expect(drag.dropValid).toBe(true);
 
-    document.elementFromPoint = origElementFromPoint;
-    document.body.removeChild(tr);
-    cleanup?.();
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+    expect(droppedPlan(ondrop)).toMatchObject({
+      ok: true,
+      region: { axis: "parent", parentId: "epic-A" },
+      indicator: "before",
+      command: reorderNib("C1", { beforeId: "C2" }),
+    });
+
+    unhover();
   });
 
-  it("before/after reorder for a MULTI-SELECT drag spanning MIXED real parents is INVALID (fail-closed)", () => {
-    // Completeness gap in the real-parent guard: for a multi-select drag whose
-    // selected rows span DIFFERENT real parents, the shared-real-parent Set
-    // collapses to size≠1 → draggedRealParentId === undefined. A guard that only
-    // rejects when draggedRealParentId is DEFINED-and-different fails OPEN here —
-    // the drop reads valid, then handleDrop fires a parent-less reorder the
-    // backend rejects ("not a sibling"). With no single PROVABLE shared real
-    // parent we cannot establish real-sibling-hood, so a before/after reorder
-    // must be INVALID (fail closed). Drives the real onDragPointerMove path.
+  it("before/after for a MULTI-SELECT drag spanning MIXED ordering regions is refused", () => {
+    // One move positions rows within a SINGLE ordering region, and these two do
+    // not share one: D1 is ordered among epic-A's children, D2 among epic-B's.
+    // `commonRegion` has no answer, so the plan refuses `mixed-source` and the
+    // affordance follows it. Sharing a display container (both draw at root)
+    // changes nothing — these rows declare no region, so theirs come from
+    // `nib.parentId` rather than from where the view drew them. Drives the real
+    // onDragPointerMove path.
     const d1 = makeNib({ id: "D1", type: "feature", parentId: "epic-A" });
     const d2 = makeNib({ id: "D2", type: "task", parentId: "epic-B" });
     const target = makeNib({ id: "T1", type: "task", parentId: "epic-C" });
     const rows = [
-      // Both dragged rows display at root (equal displayParentId null) but have
-      // DIFFERENT real parents → draggedRealParentId becomes undefined.
       makeRow(d1, { displayParentId: null }),
       makeRow(d2, { displayParentId: null }),
       makeRow(target, { displayParentId: null }),
@@ -412,48 +458,39 @@ describe("useTreeDrag", () => {
     selection.selectedIds = new Set(["D1", "D2"]);
 
     const drag = new DragState();
-    const composable = setup({ selection, drag, rows });
+    const ondrop = vi.fn();
+    const composable = setup({ selection, drag, rows, ondrop });
 
     startDragOn("D1", composable);
     expect(drag.isDragging).toBe(true);
     expect(drag.draggedIds).toEqual(expect.arrayContaining(["D1", "D2"]));
 
-    const tr = document.createElement("tr");
-    tr.dataset.nibId = "T1";
-    tr.getBoundingClientRect = () => ({
-      top: 200, bottom: 240, left: 0, right: 800,
-      height: 40, width: 800, x: 0, y: 200,
-      toJSON: () => {},
-    }) as DOMRect;
-    document.body.appendChild(tr);
-    const origElementFromPoint = document.elementFromPoint;
-    document.elementFromPoint = () => tr;
-
-    // clientY=205 → "before" zone (reorder).
-    window.dispatchEvent(new PointerEvent("pointermove", {
-      clientX: 200, clientY: 205, bubbles: true,
-    }));
+    // Top 30% of the row → the "before" zone (a positioned drop, not an entry).
+    const unhover = hoverRow("T1", 0.125);
 
     expect(drag.dropTargetId).toBe("T1");
     expect(drag.dropZone).toBe("before");
-    // No single provable shared real parent → INVALID.
     expect(drag.dropValid).toBe(false);
 
-    document.elementFromPoint = origElementFromPoint;
-    document.body.removeChild(tr);
-    cleanup?.();
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+    const plan = droppedPlan(ondrop);
+    expect(plan.ok).toBe(false);
+    if (plan.ok) throw new Error("unreachable");
+    // Pins the reason this fixture actually exercises: without it the case would
+    // still pass on any refusal at all.
+    expect(plan.refusal.reason).toBe("mixed-source");
+
+    unhover();
   });
 
-  it("before/after drop forwards a promoted header's display parent (null), not its hidden real parent", () => {
-    // What this verifies at the useTreeDrag layer: onDragPointerUp forwards the
-    // TARGET row's displayParentId verbatim — it does NOT read nib.parentId. The
-    // target is a promoted header (a feature whose real parent is an epic/
-    // milestone hidden by the lens), which tableData emits with
-    // displayParentId === null though nib.parentId is non-null. Forwarding null
-    // (not the hidden real parent) is what keeps a reorder from silently
-    // reparenting under the hidden container.
-    // (Forwarding targetRow.nib.parentId instead would send "nibs-hidden-epic"
-    // here and fail this test.)
+  it("a destination this view carries no nib for is refused, and the refusal reaches ondrop", () => {
+    // The target is a promoted header — a feature whose real parent is a
+    // container the lens hid — so the group a before/after drop lands in is that
+    // hidden container, and nothing here can say whether it may hold a feature:
+    // it has no row, and the row does not carry it as `parentNib` either. The
+    // plan refuses rather than guessing, and the refusal is what `ondrop`
+    // receives, so the gesture can be explained instead of just not happening.
     const dragged = makeNib({ id: "nibs-drag", type: "feature", parentId: null });
     const header = makeNib({ id: "nibs-header", type: "feature", parentId: "nibs-hidden-epic" });
     const rows = [
@@ -469,29 +506,27 @@ describe("useTreeDrag", () => {
     startDragOn("nibs-drag", composable);
     expect(drag.isDragging).toBe(true);
 
-    // Before/after (reorder) drop near the promoted header.
-    drag.setDropTarget("nibs-header", "before", true);
+    const unhover = hoverRow("nibs-header", 0.125);
+    expect(drag.dropValid).toBe(false);
+
     window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
 
-    // Display parent is root (null), NOT the hidden epic id.
-    expect(ondrop).toHaveBeenCalledWith("nibs-header", "before", null);
+    const plan = droppedPlan(ondrop);
+    expect(plan.ok).toBe(false);
+    expect(plan).toMatchObject({
+      refusal: { reason: "unknown-destination", region: { axis: "parent", parentId: "nibs-hidden-epic" } },
+    });
+
+    unhover();
   });
 
-  it("before/after drop forwards the target row's non-null displayParentId (same-container reorder keeps the container, not null)", () => {
-    // What this verifies at the useTreeDrag layer: when the target row has a
-    // non-null display parent, onDragPointerUp forwards THAT value rather than
-    // collapsing to null (which would make handleDrop see a cross-parent move and
-    // re-root the item). Both rows share the same real display container here — a
-    // plain same-container reorder — so the forwarded value is that container.
-    //
-    // This test does NOT discriminate a source/target swap (both rows carry the
-    // same displayParentId, so reading the source would yield the same value):
-    // that swap is owned by the sibling "DIFFERENT display container" test below,
-    // which gives source and target distinct values. What this test does pin is
-    // the "not null" half — forwarding targetRow.nib.parentId (null here) would
-    // send null and fail this assertion. The symmetric property (two loose
-    // siblings resolving to the SAME container) lives in tableData.flatten and is
-    // tested in tableData.test.ts.
+  it("a reorder within one region sends the bare reorderNib, whatever container the view draws the rows under", () => {
+    // Both rows are top-level nibs the view happens to draw inside a container
+    // (equal, non-null displayParentId). The drop follows the ordering REGION —
+    // which comes from `nib.parentId` — so it is a plain same-group reorder, and
+    // the command names no parent at all. A path still reading `displayParentId`
+    // would have to invent a destination out of "nibs-shared-epic", which is not
+    // where either row is ordered.
     const e1 = makeNib({ id: "nibs-e1", type: "feature", parentId: null });
     const e2 = makeNib({ id: "nibs-e2", type: "feature", parentId: null });
     const rows = [
@@ -506,25 +541,31 @@ describe("useTreeDrag", () => {
     startDragOn("nibs-e1", composable);
     expect(drag.isDragging).toBe(true);
 
-    // Reorder before E2; the drop must forward E2's non-null display parent.
-    drag.setDropTarget("nibs-e2", "before", true);
+    const unhover = hoverRow("nibs-e2", 0.125);
     window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
 
-    expect(ondrop).toHaveBeenCalledWith("nibs-e2", "before", "nibs-shared-epic");
+    expect(droppedPlan(ondrop)).toMatchObject({
+      ok: true,
+      region: { axis: "parent", parentId: null },
+      indicator: "before",
+      command: reorderNib("nibs-e1", { beforeId: "nibs-e2" }),
+    });
+
+    unhover();
   });
 
-  it("before/after drop next to an item under a DIFFERENT display container resolves the target's container", () => {
-    // The dragged item and the target sit under DIFFERENT display containers
-    // (here two distinct buckets/parents). Re-rooting the drop to null whenever
-    // the target's real parent isn't a visible row is the trap; resolving
-    // through displayParentId instead
-    // keeps the target's own container, so handleDrop performs a correct
-    // cross-parent move rather than dumping the item at root.
+  it("a cross-region drop names the target's REAL parent, not the container the view draws it under", () => {
+    // The target is drawn inside a bucket (displayParentId "/__no_milestone__")
+    // while really being a child of nibs-other-epic, which has no row here — only
+    // the target's `parentNib` can answer the type question for it. The
+    // destination is that real parent, so the drop reparents there; naming the
+    // bucket instead would be a move to a container that is not a nib.
+    const otherEpic = makeNib({ id: "nibs-other-epic", type: "epic", parentId: null });
     const dragged = makeNib({ id: "nibs-drag", type: "feature", parentId: null });
-    const target = makeNib({ id: "nibs-target", type: "feature", parentId: null });
+    const target = makeNib({ id: "nibs-target", type: "feature", parentId: "nibs-other-epic" });
     const rows = [
       makeRow(dragged, { displayParentId: "/__no_milestone__" }),
-      makeRow(target, { displayParentId: "nibs-other-epic" }),
+      makeRow(target, { parentNib: otherEpic, displayParentId: "/__no_milestone__" }),
     ];
 
     const drag = new DragState();
@@ -532,25 +573,30 @@ describe("useTreeDrag", () => {
     const composable = setup({ drag, rows, ondrop });
 
     startDragOn("nibs-drag", composable);
-    drag.setDropTarget("nibs-target", "before", true);
+    const unhover = hoverRow("nibs-target", 0.125);
     window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
 
-    // Resolves to the target's display container (NOT null): a genuine
-    // cross-parent move, not a silent re-root.
-    expect(ondrop).toHaveBeenCalledWith("nibs-target", "before", "nibs-other-epic");
+    expect(droppedPlan(ondrop)).toMatchObject({
+      ok: true,
+      region: { axis: "parent", parentId: "nibs-other-epic" },
+      indicator: "before",
+      command: reparentAndReorder(["nibs-drag"], "nibs-other-epic", "nibs-target", "before"),
+    });
+
+    unhover();
   });
 
-  it("before/after drop where the target's display parent is a visible parent resolves that parent id", () => {
-    // Guards against an always-null over-correction: the target sits under a
-    // normally-expanded parent row present in the visible rows, so its display
-    // parent id must be preserved for the cross-parent move to work.
-    const dragged = makeNib({ id: "nibs-drag", type: "feature", parentId: null });
+  it("the bottom edge of a container enters it, and the row draws the reparent zone for it", () => {
+    // The composable's one piece of translation: a plan whose indicator is "into"
+    // reaches the row as the "reparent" DropZone, which is the class
+    // TreeTableRow keys the container highlight on. The zone the cursor read here
+    // is "after" — `planDrop` owns the promotion, and the drag path no longer
+    // does it before asking.
+    const dragged = makeNib({ id: "nibs-drag", type: "task", parentId: null });
     const epic = makeNib({ id: "nibs-epic", type: "epic", parentId: null });
-    const child = makeNib({ id: "nibs-child", type: "feature", parentId: "nibs-epic" });
     const rows = [
-      makeRow(dragged, { displayParentId: null }),
-      makeRow(epic, { hasChildren: true, displayParentId: null }),
-      makeRow(child, { depth: 1, parentNib: epic, displayParentId: "nibs-epic" }),
+      makeRow(dragged),
+      makeRow(epic, { hasChildren: true }),
     ];
 
     const drag = new DragState();
@@ -558,17 +604,28 @@ describe("useTreeDrag", () => {
     const composable = setup({ drag, rows, ondrop });
 
     startDragOn("nibs-drag", composable);
-    drag.setDropTarget("nibs-child", "after", true);
+    const unhover = hoverRow("nibs-epic", 0.875);
+
+    expect(drag.dropZone).toBe("reparent");
+    expect(drag.dropValid).toBe(true);
+
     window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
 
-    // The epic parent IS visible → resolve its id as the display parent.
-    expect(ondrop).toHaveBeenCalledWith("nibs-child", "after", "nibs-epic");
+    expect(droppedPlan(ondrop)).toMatchObject({
+      ok: true,
+      region: { axis: "parent", parentId: "nibs-epic" },
+      indicator: "into",
+      command: batch([setParent("nibs-drag", "nibs-epic")]),
+    });
+
+    unhover();
   });
 
-  it("reparent-zone drop resolves a promoted header's display parent to null", () => {
-    // Reparent zone: the target itself becomes the new parent (handleDrop uses
-    // the target id and ignores targetParentId), so dropping onto a promoted
-    // header whose display parent is root must still fire the reparent path.
+  it("entering a promoted header names the header, not the container it really sits under", () => {
+    // The target is an epic the lens promoted to the display root while its real
+    // parent (a milestone) has no row. Entering it must set the header itself as
+    // the new parent — the hidden container is where the header lives, not where
+    // its children go.
     const dragged = makeNib({ id: "nibs-drag", type: "feature", parentId: null });
     const epic = makeNib({ id: "nibs-epic", type: "epic", parentId: "nibs-hidden-ms" });
     const rows = [
@@ -581,28 +638,147 @@ describe("useTreeDrag", () => {
     const composable = setup({ drag, rows, ondrop });
 
     startDragOn("nibs-drag", composable);
-    drag.setDropTarget("nibs-epic", "reparent", true);
+    const unhover = hoverRow("nibs-epic", 0.5);
     window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
 
-    // Reparent still fires; targetParentId is resolved to null (display parent is
-    // root) but handleDrop ignores it for the reparent zone.
-    expect(ondrop).toHaveBeenCalledWith("nibs-epic", "reparent", null);
+    expect(droppedPlan(ondrop)).toMatchObject({
+      ok: true,
+      region: { axis: "parent", parentId: "nibs-epic" },
+      indicator: "into",
+      command: batch([setParent("nibs-drag", "nibs-epic")]),
+    });
+
+    unhover();
   });
 
-  it("Escape during drag cancels without calling ondrop", () => {
-    const nib1 = makeNib({ id: "nibs-001" });
-    const rows = [makeRow(nib1)];
+  it("a refused drop reaches ondrop carrying the reason and a message to show", () => {
+    // The behavior this lap adds: a drop the plan refuses used to be swallowed
+    // before `ondrop`, so the gesture just did nothing. Now the refusal is
+    // delivered, and it is the only thing the caller has to explain the drag
+    // with. The middle of a leaf is a container entry into a row that holds no
+    // children.
+    const dragged = makeNib({ id: "nibs-drag", type: "task", parentId: null });
+    const leaf = makeNib({ id: "nibs-leaf", type: "task", parentId: null });
+    const rows = [makeRow(dragged), makeRow(leaf)];
 
     const drag = new DragState();
     const ondrop = vi.fn();
     const composable = setup({ drag, rows, ondrop });
 
-    // Start drag
+    startDragOn("nibs-drag", composable);
+    const unhover = hoverRow("nibs-leaf", 0.5);
+
+    // The affordance refuses it too — one value behind both.
+    expect(drag.dropValid).toBe(false);
+
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+    const plan = droppedPlan(ondrop);
+    expect(plan.ok).toBe(false);
+    if (plan.ok) throw new Error("unreachable");
+    expect(plan.refusal.reason).toBe("invalid-parent-type");
+    expect(plan.refusal.message).toContain("task");
+
+    unhover();
+  });
+
+  it("a drag released over no row reports nothing", () => {
+    // The gate that replaced `dropValid`: `ondrop` fires on the plan the cursor
+    // last stood on, and there is none when the drag never reached a row. A
+    // refusal is a decision about a target; this is the absence of one.
+    const rows = [makeRow(makeNib({ id: "nibs-001" }))];
+    const drag = new DragState();
+    const ondrop = vi.fn();
+    const composable = setup({ drag, rows, ondrop });
+
     startDragOn("nibs-001", composable);
     expect(drag.isDragging).toBe(true);
 
-    // Set a valid drop target
-    drag.setDropTarget("nibs-002", "reparent", true);
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+    expect(ondrop).not.toHaveBeenCalled();
+  });
+
+  it("leaving a row before release reports nothing, rather than the plan that row had", () => {
+    const dragged = makeNib({ id: "nibs-drag", type: "task", parentId: null });
+    const epic = makeNib({ id: "nibs-epic", type: "epic", parentId: null });
+    const rows = [makeRow(dragged), makeRow(epic, { hasChildren: true })];
+
+    const drag = new DragState();
+    const ondrop = vi.fn();
+    const composable = setup({ drag, rows, ondrop });
+
+    startDragOn("nibs-drag", composable);
+    const unhover = hoverRow("nibs-epic", 0.5);
+    expect(drag.dropValid).toBe(true);
+
+    // Off every row: elementFromPoint finds nothing.
+    document.elementFromPoint = () => null;
+    window.dispatchEvent(new PointerEvent("pointermove", {
+      clientX: 200, clientY: 900, bubbles: true,
+    }));
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+    expect(ondrop).not.toHaveBeenCalled();
+
+    unhover();
+  });
+
+  it("a row that arrives mid-drag can still be dropped on", () => {
+    // The row list is LIVE for the whole gesture: a `nibChanged` refetch, an
+    // ArrowRight expand, and `handleDrop`'s own `ensureVisible` each hand the
+    // composable a new list while a drag is in flight. A list read once at
+    // `startDrag` has no row for the arrival, so the cursor resolves to nothing,
+    // the plan is cleared, and the release reports NOTHING — the silently
+    // swallowed gesture this seam exists to remove, reached without a second
+    // client.
+    const dragged = makeNib({ id: "nibs-drag", type: "task", parentId: null });
+    const rows = [makeRow(dragged)];
+
+    const drag = new DragState();
+    const ondrop = vi.fn();
+    const composable = setup({ drag, rows, ondrop });
+
+    startDragOn("nibs-drag", composable);
+    expect(drag.isDragging).toBe(true);
+
+    const epic = makeNib({ id: "nibs-new", type: "epic", parentId: null });
+    composable.setRows([...rows, makeRow(epic, { hasChildren: true })]);
+
+    const unhover = hoverRow("nibs-new", 0.5);
+    expect(drag.dropTargetId).toBe("nibs-new");
+    expect(drag.dropValid).toBe(true);
+
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+    expect(droppedPlan(ondrop)).toMatchObject({
+      ok: true,
+      region: { axis: "parent", parentId: "nibs-new" },
+      indicator: "into",
+      command: batch([setParent("nibs-drag", "nibs-new")]),
+    });
+
+    unhover();
+  });
+
+  // Both Escape tests stand on a drag that WOULD have dropped: the cursor is over
+  // a row whose plan is accepted, so a cancel that stopped working would be
+  // caught. Setting the drop target directly instead leaves no plan behind, and
+  // "ondrop was not called" would then hold for the wrong reason.
+  it("Escape during drag cancels without calling ondrop", () => {
+    const nib1 = makeNib({ id: "nibs-001", type: "task" });
+    const epic = makeNib({ id: "nibs-002", type: "epic" });
+    const rows = [makeRow(nib1), makeRow(epic, { hasChildren: true })];
+
+    const drag = new DragState();
+    const ondrop = vi.fn();
+    const composable = setup({ drag, rows, ondrop });
+
+    startDragOn("nibs-001", composable);
+    expect(drag.isDragging).toBe(true);
+
+    const unhover = hoverRow("nibs-002", 0.5);
+    expect(drag.dropValid).toBe(true);
 
     // Press Escape via onDragKeyDown
     const escEvent = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
@@ -612,11 +788,14 @@ describe("useTreeDrag", () => {
     expect(drag.isDragging).toBe(false);
     expect(ondrop).not.toHaveBeenCalled();
     expect(escEvent.defaultPrevented).toBe(true);
+
+    unhover();
   });
 
   it("global Escape keydown cancels drag (no focus required)", () => {
-    const nib1 = makeNib({ id: "nibs-001" });
-    const rows = [makeRow(nib1)];
+    const nib1 = makeNib({ id: "nibs-001", type: "task" });
+    const epic = makeNib({ id: "nibs-002", type: "epic" });
+    const rows = [makeRow(nib1), makeRow(epic, { hasChildren: true })];
 
     const drag = new DragState();
     const ondrop = vi.fn();
@@ -625,7 +804,8 @@ describe("useTreeDrag", () => {
     startDragOn("nibs-001", composable);
     expect(drag.isDragging).toBe(true);
 
-    drag.setDropTarget("nibs-002", "reparent", true);
+    const unhover = hoverRow("nibs-002", 0.5);
+    expect(drag.dropValid).toBe(true);
 
     // Dispatch Escape on window (not through the composable's onDragKeyDown)
     const escEvent = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
@@ -633,6 +813,8 @@ describe("useTreeDrag", () => {
 
     expect(drag.isDragging).toBe(false);
     expect(ondrop).not.toHaveBeenCalled();
+
+    unhover();
   });
 
   describe("drag preview", () => {

@@ -42,6 +42,15 @@ export type DropRefusalReason =
   /** Expressible only by clearing a milestone assignment first. */
   | "needs-unassignment";
 
+/**
+ * Toast id shared by every drop refusal, so a run of refused releases replaces
+ * the live toast instead of stacking up copies (svelte-sonner dedupes by id and
+ * restarts the dismissed timer on update). Mirrors `DRAG_BLOCK_TOAST_ID`, whose
+ * gesture this one continues: a refused drop is what a drag that was NOT blocked
+ * can still end in, and retrying slightly differently is the natural response.
+ */
+export const DROP_REFUSAL_TOAST_ID = "drop-refusal";
+
 export interface DropRefusal {
   reason: DropRefusalReason;
   message: string;
@@ -65,8 +74,18 @@ export type DropPlan =
 export interface DropRequest {
   /** The ids being dragged, in selection order. */
   readonly draggedIds: string[];
-  /** The rows the table renders, by id. */
+  /** The rows the table renders, by id — LIVE, so a row arriving mid-drag can be
+   *  aimed at. */
   readonly rowsById: ReadonlyMap<string, RowData>;
+  /**
+   * The dragged rows, by id, as they were when the gesture picked them up.
+   *
+   * Frozen where `rowsById` is live, because what is being dragged is settled at
+   * grab time: resolving it against the live list would make a dragged row that
+   * scrolls out of the view mid-gesture look like a selection the filter hides,
+   * and the whole rest of the drag would answer `hidden-member`.
+   */
+  readonly draggedRowsById: ReadonlyMap<string, RowData>;
   /** The row under the cursor. */
   readonly target: RowData;
   /** What `computeDropZone` read off the cursor, before container promotion. */
@@ -104,7 +123,7 @@ export function entryRegionOf(row: RowData): Region | null {
  * indicator and again on pointerup for the mutation, or keep the one it has.
  */
 export function planDrop(req: DropRequest): DropPlan {
-  const { draggedIds, rowsById, target, zone, descendantIds } = req;
+  const { draggedIds, rowsById, draggedRowsById, target, zone, descendantIds } = req;
 
   if (draggedIds.length === 0) {
     return refuse("no-source", "Nothing is being dragged.");
@@ -112,7 +131,7 @@ export function planDrop(req: DropRequest): DropPlan {
 
   const dragged: RowData[] = [];
   for (const id of draggedIds) {
-    const row = rowsById.get(id);
+    const row = draggedRowsById.get(id);
     if (row === undefined) {
       // Distinct from a mixed selection below: the selection survives a filter
       // change, so a selected row can be absent from the view rather than
@@ -147,6 +166,30 @@ export function planDrop(req: DropRequest): DropPlan {
     );
   }
 
+  const draggedTypes = dragged.map((r) => r.nib.type);
+  // The zone-independent guards — the dragged set itself, its own subtree, and a
+  // target naming no nib — which is exactly what `isValidDropTarget`'s
+  // before/after arm is. Its "reparent" arm bundles a type-hierarchy check keyed
+  // on the TARGET's type, and the target is the destination container only when
+  // it is the one being entered: a section header declaring where its rows order
+  // is not. So the type question is asked once further down, against the
+  // destination this plan names, and a queue destination is not asked at all —
+  // joining a queue changes no parent link (`reorderNib` refuses `parentId` with
+  // `scope: MILESTONE`).
+  //
+  // Asked BEFORE the destination is worked out, because these two answers do not
+  // depend on it and they are the better explanation when both apply: releasing
+  // on the row you grabbed is a CANCELED drag, and reporting it as whatever the
+  // destination would have been ("a milestone holds no children") describes a
+  // drop the user never asked for.
+  if (!isValidDropTarget(draggedTypes, target.nib, "before", draggedIds, descendantIds)) {
+    // It stays the authority on WHETHER the drop is refused; this only picks
+    // which refusal to show, and a fabricated target was already refused above.
+    return draggedIds.includes(target.nib.id)
+      ? refuse("drop-on-self", "A nib cannot be dropped onto itself.")
+      : refuse("drop-on-descendant", "A nib cannot be moved into its own subtree.");
+  }
+
   const entry = entryRegionOf(target);
   // The bottom edge of a container reads as "enter it" for the same reason its
   // middle does: below an expanded container is where its first row sits. One
@@ -169,24 +212,6 @@ export function planDrop(req: DropRequest): DropPlan {
   } else {
     indicator = "into";
     dest = entry;
-  }
-
-  const draggedTypes = dragged.map((r) => r.nib.type);
-  // The zone-independent guards — the dragged set itself, its own subtree, and a
-  // target naming no nib — which is exactly what `isValidDropTarget`'s
-  // before/after arm is. Its "reparent" arm bundles a type-hierarchy check keyed
-  // on the TARGET's type, and the target is the destination container only when
-  // it is the one being entered: a section header declaring where its rows order
-  // is not. So the type question is asked once below, against the destination
-  // this plan names, and a queue destination is not asked at all — joining a
-  // queue changes no parent link (`reorderNib` refuses `parentId` with
-  // `scope: MILESTONE`).
-  if (!isValidDropTarget(draggedTypes, target.nib, "before", draggedIds, descendantIds)) {
-    // It stays the authority on WHETHER the drop is refused; this only picks
-    // which refusal to show, and a fabricated target was already refused above.
-    return draggedIds.includes(target.nib.id)
-      ? refuse("drop-on-self", "A nib cannot be dropped onto itself.")
-      : refuse("drop-on-descendant", "A nib cannot be moved into its own subtree.");
   }
 
   // A parent-axis destination that differs from where the rows already are is a
