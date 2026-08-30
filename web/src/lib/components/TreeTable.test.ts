@@ -6,12 +6,13 @@ import { tick } from "svelte";
 import TreeTable from "./TreeTable.svelte";
 import type { TreeTableNib, ViewLevel, ColumnKey } from "../types";
 import { DEFAULT_COLUMN_WIDTHS } from "../types";
-import { bucketIdForItem, isBucketId } from "../tree";
+import { containingSectionRowId, isSyntheticRowId } from "../tree";
 import { OPEN_STATUSES } from "../constants";
 import { SelectionState } from "../selection.svelte";
 import { DragState } from "../drag.svelte";
 import { TreeViewState } from "../treeView.svelte";
 import { makeTestContext } from "../contexts";
+import { switchViewLevel } from "../resolvePrefs";
 import { NibChangeTracker } from "../changeTracker.svelte";
 import { Preferences } from "../preferences.svelte";
 
@@ -27,6 +28,8 @@ function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
     createdAt: "2026-03-15T10:00:00Z",
     updatedAt: "2026-03-20T10:00:00Z",
     parentId: null,
+    milestone: "",
+    milestoneOrder: "",
     blockingIds: [],
     blockedByIds: [],
     etag: "etag-test",
@@ -2408,9 +2411,9 @@ describe("TreeTable", () => {
     }
 
     function milestoneBucketId(nibs: TreeTableNib[]): string {
-      const bucketId = bucketIdForItem(new Map(nibs.map(n => [n.id, n])), "nibs-loose", "milestones");
+      const bucketId = containingSectionRowId(new Map(nibs.map(n => [n.id, n])), "nibs-loose", "milestones");
       expect(bucketId).not.toBeNull();
-      expect(isBucketId(bucketId!)).toBe(true);
+      expect(isSyntheticRowId(bucketId!)).toBe(true);
       return bucketId!;
     }
 
@@ -2908,7 +2911,7 @@ describe("TreeTable", () => {
       );
 
       const bucketRow = Array.from(container.querySelectorAll("tr[data-nib-id]")).find((tr) =>
-        isBucketId(tr.getAttribute("data-nib-id")!),
+        isSyntheticRowId(tr.getAttribute("data-nib-id")!),
       ) as HTMLElement;
       expect(bucketRow).toBeTruthy();
       expect(screen.getByText("Loose Task")).toBeInTheDocument();
@@ -3731,5 +3734,361 @@ describe("TreeTable — per-view column order + reorder drag", () => {
     expect(oncolumnwidthschange).toHaveBeenCalled();
     // ...and the header-drag guard bailed on the resize handle — no reorder.
     expect(oncolumnorderchange).not.toHaveBeenCalled();
+  });
+});
+
+// A grouping lens is lossless in WORK ITEMS but not in ROWS: buildViewTree hides
+// a container ranked above the lens's tier while descending into it, so a
+// milestone selected in the Tree view has no row at all under the Epics lens.
+// These drive the whole seam — switchViewLevel → TreeViewState slot → the
+// applier effect → SelectionState/useScrollRestore — through the real component.
+describe("view transition reconcile", () => {
+  const nibs: TreeTableNib[] = [
+    makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+    makeTreeTableNib({ id: "nibs-e1", title: "Epic", type: "epic", parentId: "nibs-m1" }),
+    makeTreeTableNib({ id: "nibs-t1", title: "Task", type: "task", parentId: "nibs-e1" }),
+  ];
+
+  async function withPersistedPreferences(
+    blob: Record<string, unknown>,
+    body: (prefs: Preferences) => Promise<void>,
+  ): Promise<void> {
+    localStorage.setItem("nibs-filter-preferences", JSON.stringify(blob));
+    try {
+      await body(new Preferences());
+    } finally {
+      localStorage.removeItem("nibs-filter-preferences");
+    }
+  }
+
+  function mountTree(selection: SelectionState, treeView: TreeViewState, prefs: Preferences) {
+    // Self-contained rather than leaning on a sibling describe's beforeEach, so a
+    // filtered run (`-t`) of this block alone still mounts a working table.
+    mockSubscriptionStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: undefined, stale: false }) as any
+    );
+    mockQueryStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+    );
+    return renderTreeTable({ prefs }, { selection, treeView });
+  }
+
+  it("has no row for the milestone under the Epics lens (the premise)", async () => {
+    await withPersistedPreferences({ q: "", viewLevel: "epics" }, async (prefs) => {
+      const { container } = mountTree(new SelectionState(), new TreeViewState("epics"), prefs);
+      await tick();
+
+      expect(container.querySelector("tr[data-nib-id='nibs-e1']")).not.toBeNull();
+      expect(container.querySelector("tr[data-nib-id='nibs-m1']")).toBeNull();
+    });
+  });
+
+  it("drops the selection, focus and anchor the incoming lens has no row for", async () => {
+    const selection = new SelectionState();
+    const treeView = new TreeViewState("none");
+
+    await withPersistedPreferences({ q: "", viewLevel: "none" }, async (prefs) => {
+      mountTree(selection, treeView, prefs);
+      await tick();
+
+      selection.select("nibs-m1");
+      await tick();
+      expect(selection.selectedIds.has("nibs-m1")).toBe(true);
+
+      switchViewLevel(prefs, undefined, treeView, "none", "epics");
+      await tick();
+
+      expect(selection.selectedIds.has("nibs-m1")).toBe(false);
+      expect(selection.focusedNibId).toBeNull();
+      expect(selection.anchorId).toBeNull();
+    });
+  });
+
+  it("leaves the detail panel open on that nib — nib-keyed state is not per-view", async () => {
+    // `selectedNibId` is also the `?nib=` URL, and closing it would need the
+    // replaceClosed() heal plus the unsaved-body-buffer guard. Reconciling
+    // selection and focus is deliberately the whole job.
+    const selection = new SelectionState();
+    const treeView = new TreeViewState("none");
+
+    await withPersistedPreferences({ q: "", viewLevel: "none" }, async (prefs) => {
+      mountTree(selection, treeView, prefs);
+      await tick();
+
+      selection.select("nibs-m1");
+      await tick();
+
+      switchViewLevel(prefs, undefined, treeView, "none", "epics");
+      await tick();
+
+      expect(selection.selectedNibId).toBe("nibs-m1");
+      expect(selection.panelOpen).toBe(true);
+    });
+  });
+
+  it("keeps a selection the incoming lens still has a row for", async () => {
+    const selection = new SelectionState();
+    const treeView = new TreeViewState("none");
+
+    await withPersistedPreferences({ q: "", viewLevel: "none" }, async (prefs) => {
+      mountTree(selection, treeView, prefs);
+      await tick();
+
+      selection.select("nibs-t1");
+      await tick();
+
+      switchViewLevel(prefs, undefined, treeView, "none", "epics");
+      await tick();
+
+      expect(selection.selectedIds.has("nibs-t1")).toBe(true);
+      expect(selection.focusedNibId).toBe("nibs-t1");
+    });
+  });
+
+  it("reveals the surviving row, expanding whatever hides it in the new view", async () => {
+    // The anchor is handed to the existing ensureVisible sink, which expands
+    // collapsed ancestors — so a row that survives the switch but sits inside a
+    // collapsed branch is brought back on screen rather than merely kept selected.
+    const selection = new SelectionState();
+    const treeView = new TreeViewState("none");
+
+    await withPersistedPreferences({ q: "", viewLevel: "none" }, async (prefs) => {
+      const { container } = mountTree(selection, treeView, prefs);
+      await tick();
+
+      selection.select("nibs-t1");
+      treeView.setCollapsed(["nibs-e1"]);
+      await tick();
+      expect(container.querySelector("tr[data-nib-id='nibs-t1']")).toBeNull();
+
+      switchViewLevel(prefs, undefined, treeView, "none", "epics");
+      await waitFor(() => {
+        expect(container.querySelector("tr[data-nib-id='nibs-t1']")).not.toBeNull();
+      });
+      expect(treeView.isCollapsed("nibs-e1")).toBe(false);
+    });
+  });
+
+  it("consumes the transition, so a later unrelated re-render does not re-reconcile", async () => {
+    const selection = new SelectionState();
+    const treeView = new TreeViewState("none");
+
+    await withPersistedPreferences({ q: "", viewLevel: "none" }, async (prefs) => {
+      mountTree(selection, treeView, prefs);
+      await tick();
+
+      switchViewLevel(prefs, undefined, treeView, "none", "epics");
+      await tick();
+      expect(treeView.pendingTransition).toBeNull();
+      expect(treeView.activeLevel).toBe("epics");
+
+      // A selection made AFTER the switch must survive: nothing is pending, so
+      // the applier has no reason to run again.
+      selection.select("nibs-t1");
+      await tick();
+      expect(selection.selectedIds.has("nibs-t1")).toBe(true);
+    });
+  });
+
+  it("resets the scroll offset instead of carrying the outgoing view's into the new one", async () => {
+    // The container is NOT recreated by a view switch, so element identity cannot
+    // see it — the epoch is what retires ownership and re-arms the restore.
+    const treeView = new TreeViewState("none");
+    treeView.scrollTop = 500;
+
+    await withPersistedPreferences({ q: "", viewLevel: "none" }, async (prefs) => {
+      const { container } = mountTree(new SelectionState(), treeView, prefs);
+      await tick();
+
+      const sc = container.querySelector(".scroll-container") as HTMLElement;
+      expect(sc.scrollTop).toBe(500);
+
+      switchViewLevel(prefs, undefined, treeView, "none", "epics");
+      await tick();
+
+      expect(treeView.scrollTop).toBe(0);
+      // Same element, reset offset — proving the applier's epoch bump reached the
+      // restore effect in the same flush.
+      expect(container.querySelector(".scroll-container")).toBe(sc);
+      expect(sc.scrollTop).toBe(0);
+    });
+  });
+
+  it("resets the scroll even when the incoming view has the same number of rows", async () => {
+    // The Tree and Milestones lenses emit the same three rows for this fixture,
+    // so neither the container binding nor the row count changes — the epoch is
+    // the only thing that can tell the restore effect a switch happened.
+    const treeView = new TreeViewState("none");
+    treeView.scrollTop = 500;
+
+    await withPersistedPreferences({ q: "", viewLevel: "none" }, async (prefs) => {
+      const { container } = mountTree(new SelectionState(), treeView, prefs);
+      await tick();
+
+      const sc = container.querySelector(".scroll-container") as HTMLElement;
+      const before = container.querySelectorAll("tr[data-nib-id]").length;
+      expect(sc.scrollTop).toBe(500);
+
+      switchViewLevel(prefs, undefined, treeView, "none", "milestones");
+      await tick();
+
+      expect(container.querySelectorAll("tr[data-nib-id]").length).toBe(before);
+      expect(sc.scrollTop).toBe(0);
+    });
+  });
+
+  it("does not reconcile when the current lens is re-picked", async () => {
+    const selection = new SelectionState();
+    const treeView = new TreeViewState("epics");
+
+    await withPersistedPreferences({ q: "", viewLevel: "epics" }, async (prefs) => {
+      mountTree(selection, treeView, prefs);
+      await tick();
+
+      selection.select("nibs-t1");
+      treeView.scrollTop = 300;
+      await tick();
+
+      switchViewLevel(prefs, undefined, treeView, "epics", "epics");
+      await tick();
+
+      expect(selection.selectedIds.has("nibs-t1")).toBe(true);
+      expect(treeView.scrollTop).toBe(300);
+    });
+  });
+
+  // Until the list query lands there is no membership to reconcile against —
+  // viewMemberIds is empty, and reconciling would drop a selection nothing
+  // invalidated (a cold deep-link populates it via syncFromUrl before data
+  // arrives). The switch is still owed a reconcile, so the slot has to survive
+  // the wait rather than be consumed by it.
+  describe("with the list query still in flight", () => {
+    /** Mount before the result lands; `settle` delivers it mid-test. */
+    function mountLoadingTree(selection: SelectionState, treeView: TreeViewState, prefs: Preferences) {
+      mockSubscriptionStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: undefined, stale: false }) as any
+      );
+      const store = writable<any>({ fetching: true, error: undefined, data: undefined, stale: false });
+      mockQueryStore.mockReturnValue(store as any);
+      const rendered = renderTreeTable({ prefs }, { selection, treeView });
+      return {
+        ...rendered,
+        settle: () => store.set({ fetching: false, error: undefined, data: { nibs }, stale: false }),
+      };
+    }
+
+    it("holds the transition rather than pruning against the empty dataset", async () => {
+      const selection = new SelectionState();
+      const treeView = new TreeViewState("none");
+
+      await withPersistedPreferences({ q: "", viewLevel: "none" }, async (prefs) => {
+        mountLoadingTree(selection, treeView, prefs);
+        await tick();
+
+        selection.select("nibs-t1");
+        await tick();
+
+        switchViewLevel(prefs, undefined, treeView, "none", "epics");
+        await tick();
+
+        expect(selection.selectedIds.has("nibs-t1")).toBe(true);
+        expect(selection.focusedNibId).toBe("nibs-t1");
+        expect(selection.anchorId).toBe("nibs-t1");
+        // Unconsumed — deferred, not skipped.
+        expect(treeView.pendingTransition).toEqual({ from: "none", to: "epics" });
+      });
+    });
+
+    it("reconciles the held transition once the result lands", async () => {
+      const selection = new SelectionState();
+      const treeView = new TreeViewState("none");
+
+      await withPersistedPreferences({ q: "", viewLevel: "none" }, async (prefs) => {
+        const { settle } = mountLoadingTree(selection, treeView, prefs);
+        await tick();
+
+        selection.select("nibs-m1");
+        await tick();
+
+        switchViewLevel(prefs, undefined, treeView, "none", "epics");
+        await tick();
+        expect(selection.selectedIds.has("nibs-m1")).toBe(true);
+
+        settle();
+
+        // The Epics lens has no row for the milestone: a hold that never fired
+        // would leave it selected, focused and off screen — the very state the
+        // reconcile exists to clear.
+        await waitFor(() => {
+          expect(selection.selectedIds.has("nibs-m1")).toBe(false);
+        });
+        expect(selection.focusedNibId).toBeNull();
+        expect(selection.anchorId).toBeNull();
+        expect(treeView.pendingTransition).toBeNull();
+        expect(treeView.activeLevel).toBe("epics");
+      });
+    });
+
+    it("keeps a survivor and resets the scroll when the held transition fires", async () => {
+      const selection = new SelectionState();
+      const treeView = new TreeViewState("none");
+      treeView.scrollTop = 500;
+
+      await withPersistedPreferences({ q: "", viewLevel: "none" }, async (prefs) => {
+        const { settle } = mountLoadingTree(selection, treeView, prefs);
+        await tick();
+
+        selection.select("nibs-t1");
+        await tick();
+
+        switchViewLevel(prefs, undefined, treeView, "none", "epics");
+        await tick();
+        // Deferring the scroll reset with the prune is safe: restore() bails at
+        // hasContent() while there are no rows, so nothing is clamped meanwhile.
+        expect(treeView.scrollTop).toBe(500);
+
+        settle();
+
+        await waitFor(() => {
+          expect(treeView.pendingTransition).toBeNull();
+        });
+        expect(selection.selectedIds.has("nibs-t1")).toBe(true);
+        expect(selection.focusedNibId).toBe("nibs-t1");
+        expect(treeView.scrollTop).toBe(0);
+      });
+    });
+
+    it("reconciles immediately while a REFETCH is in flight, because the rows are already on screen", async () => {
+      const selection = new SelectionState();
+      const treeView = new TreeViewState("none");
+
+      await withPersistedPreferences({ q: "", viewLevel: "none" }, async (prefs) => {
+        mockSubscriptionStore.mockReturnValue(
+          readable({ fetching: false, error: undefined, data: undefined, stale: false }) as any
+        );
+        // queryStore MERGES emissions, so a refetch keeps the previous data and
+        // only a re-key starts at undefined. The table refetches on every
+        // nibChanged event, so this is the state after any create, update or
+        // delete — the incoming lens is rendered and there is real membership to
+        // reconcile against, so holding the transition here would leave the
+        // milestone selected with no row, which is the bug the seam closes.
+        const store = writable<any>({ fetching: true, error: undefined, data: { nibs }, stale: true });
+        mockQueryStore.mockReturnValue(store as any);
+        renderTreeTable({ prefs }, { selection, treeView });
+        await tick();
+
+        selection.select("nibs-m1");
+        await tick();
+
+        switchViewLevel(prefs, undefined, treeView, "none", "epics");
+
+        await waitFor(() => {
+          expect(treeView.pendingTransition).toBeNull();
+        });
+        expect(selection.selectedIds.has("nibs-m1")).toBe(false);
+        expect(selection.focusedNibId).toBeNull();
+        expect(selection.anchorId).toBeNull();
+      });
+    });
   });
 });

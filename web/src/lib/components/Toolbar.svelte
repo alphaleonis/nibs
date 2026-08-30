@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { VIEW_LEVELS, DEFAULT_THEME, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_OPEN_DETAIL_ON, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE } from "../types";
+  import { VIEW_LEVELS, VIEW_LEVEL_LABELS, DEFAULT_THEME, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_OPEN_DETAIL_ON, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE } from "../types";
   import type { NibFilter, ViewLevel, RowDensity, FontSize, Theme, DetailPanelPosition, OpenDetailGesture, BlockedEmphasis } from "../types";
   import { ALL_COLUMN_KEYS, COLUMNS } from "../columns";
   import type { ColumnKey } from "../columns";
@@ -19,7 +19,8 @@
   import { typeIcons } from "../icons";
   import { priorityIndicators } from "../badges";
   import type { TypeIconInfo } from "../icons";
-  import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnOrder, emitFilter as emitFilterHelper } from "../resolvePrefs";
+  import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnOrder, emitFilter as emitFilterHelper, switchViewLevel } from "../resolvePrefs";
+  import type { TreeViewState } from "../treeView.svelte";
   import { parseQuery, serializeQuery, getCompletion, tokenGroups, tokenSegments, relTokenValueContext } from "../query";
   import type { Completion, QueryFilter, SpanKind, RelValueContext, NibSuggestion } from "../query";
   import { createNibSearch, type SearchNibsFn } from "../searchNibs";
@@ -45,6 +46,7 @@
     onchange = undefined as ((filter: NibFilter) => void) | undefined,
     viewLevel = undefined as ViewLevel | undefined,
     onviewlevelchange = undefined as ((level: ViewLevel) => void) | undefined,
+    treeView = undefined as TreeViewState | undefined,
     visibleColumns = undefined as ColumnKey[] | undefined,
     oncolumnschange = undefined as ((columns: ColumnKey[]) => void) | undefined,
     columnOrder = undefined as ColumnKey[] | undefined,
@@ -71,6 +73,11 @@
     onchange?: (filter: NibFilter) => void;
     viewLevel?: ViewLevel;
     onviewlevelchange?: (level: ViewLevel) => void;
+    /** Threaded from App rather than read from context: `useTreeView()` throws
+     *  when absent, and the toolbar renders standalone in its own tests with no
+     *  table to reconcile. Absent, the view still switches — nothing reconciles
+     *  it. */
+    treeView?: TreeViewState;
     visibleColumns?: ColumnKey[];
     oncolumnschange?: (columns: ColumnKey[]) => void;
     columnOrder?: ColumnKey[];
@@ -190,7 +197,7 @@
   // Static trigger labels shared by each control's aria-label and its Tooltip.Content,
   // defined once so the accessible name and the visible tooltip can't drift apart.
   const newItemLabel = "New item";
-  const groupByLabel = "Group by";
+  const viewLabel = "View";
   const columnsLabel = "Columns";
   const clearKeywordLabel = "Clear keyword";
   // The token hint is tooltip text only, never an accessible name: the layer it
@@ -208,24 +215,15 @@
   // normal toggleable column in every lens now.
   let columnOptions = $derived(ALL_COLUMN_KEYS.map((key) => COLUMNS[key]));
 
-  const VIEW_LEVEL_LABELS: Record<ViewLevel, string> = {
-    none: "Tree",
-    flat: "Flat",
-    milestones: "Milestones",
-    epics: "Epics",
-    features: "Features & Bugs",
-  };
-
   function emitFilter(updated: NibFilter) {
     emitFilterHelper(prefs, onchange, updated);
   }
 
   function handleSelectViewLevel(level: ViewLevel) {
-    if (prefs) {
-      prefs.viewLevel = level;
-    } else {
-      onviewlevelchange?.(level);
-    }
+    // Through the seam, never straight at the preference: switching lenses can
+    // leave the focused/selected rows without a row to be on, and the write alone
+    // cannot tell the table that happened.
+    switchViewLevel(prefs, onviewlevelchange, treeView, resolvedViewLevel, level);
     viewLevelOpen = false;
   }
 
@@ -839,13 +837,13 @@
     <!-- Separator -->
     <div class="mx-1 h-5 w-px bg-border shrink-0"></div>
 
-    <!-- View selector (group-by) -->
+    <!-- View selector -->
     <DropdownMenu.Root bind:open={viewLevelOpen}>
-      <WithTooltip tooltip={groupByLabel}>
+      <WithTooltip tooltip={viewLabel}>
         {#snippet trigger({ props })}
           <DropdownMenu.Trigger
             {...props}
-            aria-label={`${groupByLabel}: ${VIEW_LEVEL_LABELS[resolvedViewLevel]}`}
+            aria-label={`${viewLabel}: ${VIEW_LEVEL_LABELS[resolvedViewLevel]}`}
             class={buttonVariants({ variant: "outline", size: "default" })}
           >
             <ViewLevelIcon size={14} style="color: {viewLevelIconInfo.color};" />

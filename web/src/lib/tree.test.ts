@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildTree, buildViewTree, isBucketId, bucketIdForItem, collectDescendantIds, BUCKET_IDS } from "./tree";
+import { buildTree, buildViewTree, buildShapedViewTree, viewShapeFor, isSyntheticRowId, holdsChildrenByDisplay, containingSectionRowId, collectDescendantIds, BUCKET_IDS } from "./tree";
+import type { GroupingLens, Placement, ViewShape } from "./tree";
 import { makeNibComparator } from "./tableSort";
 import { typeRank } from "./typeHierarchy";
 import type { TreeNib, TreeTableNib, TreeNode, ViewLevel, TableSort } from "./types";
@@ -16,6 +17,8 @@ function makeTreeNib(overrides: Partial<TreeNib> = {}): TreeNib {
     createdAt: "2026-03-15T10:00:00Z",
     updatedAt: "2026-03-20T10:00:00Z",
     parentId: null,
+    milestone: "",
+    milestoneOrder: "",
     ...overrides,
   };
 }
@@ -277,8 +280,34 @@ describe("buildTree", () => {
         makeTreeNib({ id: "a", type: "epic", parentId: "b" }),
         makeTreeNib({ id: "b", type: "task", parentId: "a" }),
       ];
-      const ids = collectIds(buildViewTree(nibs, "epics")).filter((id) => !isBucketId(id));
+      const ids = collectIds(buildViewTree(nibs, "epics")).filter((id) => !isSyntheticRowId(id));
       expect(ids.sort()).toEqual(["a", "b"]);
+    });
+
+    // Presence is not the whole story: a lens decides a nib's section from its
+    // ancestor chain, and a cycle HAS no outermost ancestor of its own. The rule
+    // is that the chain is read only as far as the member `buildTree` promoted
+    // to a root, which is where the rendered path starts — so the lens follows
+    // the forest instead of second-guessing it.
+    it("arranges a cycle in a grouping lens the way buildTree rooted it", () => {
+      const twoCycle: TreeNib[] = [
+        makeTreeNib({ id: "a", type: "epic", parentId: "b" }),
+        makeTreeNib({ id: "b", type: "task", parentId: "a" }),
+      ];
+      // "a" is the promoted root AND an epic, so it heads its own section and
+      // keeps "b" beneath it — no bucket is minted at all.
+      const twoCycleTree = buildViewTree(twoCycle, "epics");
+      expect(twoCycleTree.map((r) => r.nib.id)).toEqual(["a"]);
+      expect(twoCycleTree[0].children.map((c) => c.nib.id)).toEqual(["b"]);
+
+      // A cycle spanning the tier: the two milestones are still hidden and the
+      // epic still surfaces as the header, exactly as an acyclic chain would.
+      const spanning: TreeNib[] = [
+        makeTreeNib({ id: "d1", type: "milestone", parentId: "d3" }),
+        makeTreeNib({ id: "d2", type: "milestone", parentId: "d1" }),
+        makeTreeNib({ id: "d3", type: "epic", parentId: "d2" }),
+      ];
+      expect(buildViewTree(spanning, "epics").map((r) => r.nib.id)).toEqual(["d3"]);
     });
   });
 
@@ -362,7 +391,7 @@ describe("buildViewTree", () => {
         "nibs-004",
         "nibs-005",
       ]);
-      expect(result.some((n) => isBucketId(n.nib.id))).toBe(false);
+      expect(result.some((n) => isSyntheticRowId(n.nib.id))).toBe(false);
     });
 
     it("returns an empty forest for empty input", () => {
@@ -391,7 +420,7 @@ describe("buildViewTree", () => {
       expect(result[0].children[0].children[0].depth).toBe(2);
 
       // Single "No milestone" bucket holds the loose feature and bug
-      const bucket = result.find(r => isBucketId(r.nib.id))!;
+      const bucket = result.find(r => isSyntheticRowId(r.nib.id))!;
       expect(bucket).toBeDefined();
       expect(bucket.nib.id).toBe("/__no_milestone__");
       const bucketChildIds = bucket.children.map(c => c.nib.id);
@@ -486,7 +515,7 @@ describe("buildViewTree", () => {
       expect(result[0].children[0].nib.id).toBe("nibs-004");
 
       // The task under the epic (no feature/bug ancestor) lands in the bucket
-      const bucket = result.find(r => isBucketId(r.nib.id))!;
+      const bucket = result.find(r => isSyntheticRowId(r.nib.id))!;
       expect(bucket).toBeDefined();
       expect(bucket.nib.id).toBe("/__no_feature_or_bug__");
       expect(bucket.children.map(c => c.nib.id)).toEqual(["nibs-005"]);
@@ -528,7 +557,7 @@ describe("buildViewTree", () => {
         const result = buildViewTree(MESSY_FIXTURE, lens);
 
         // Real nib ids only (drop synthetic bucket nodes)
-        const outputIds = collectIds(result).filter(id => !isBucketId(id));
+        const outputIds = collectIds(result).filter(id => !isSyntheticRowId(id));
 
         const counts = new Map<string, number>();
         for (const id of outputIds) counts.set(id, (counts.get(id) ?? 0) + 1);
@@ -563,7 +592,7 @@ describe("buildViewTree", () => {
 
       const result = buildViewTree(nibs, "epics");
 
-      const bucket = result.find(r => isBucketId(r.nib.id))!;
+      const bucket = result.find(r => isSyntheticRowId(r.nib.id))!;
       // Count is direct children only — the nested task is (3) if recursive, (2) if direct.
       expect(bucket.nib.title).toBe("No epic (2)");
       expect(bucket.children).toHaveLength(2);
@@ -602,6 +631,23 @@ describe("buildViewTree", () => {
         expect(result.map((r) => r.nib.id)).toEqual(["eM", "eZ", "eA"]);
       });
 
+      // The control above cannot tell a DFS emission from an INPUT-ORDER one:
+      // the fixture lists each milestone immediately before its own epic, so
+      // both orders read [eM, eZ, eA] and the assertion holds either way. The
+      // unsorted header order is the DFS walk, and only a fixture whose epics
+      // appear in the input in a DIFFERENT order from the walk says so.
+      it("no comparator → headers follow the DFS walk, NOT the input order", () => {
+        const scrambled: TreeTableNib[] = [
+          makeTreeTableNib({ id: "eB", title: "Bravo", type: "epic", parentId: "m2" }),
+          makeTreeTableNib({ id: "m1", title: "Mmm1", type: "milestone" }),
+          makeTreeTableNib({ id: "eA", title: "Alpha", type: "epic", parentId: "m1" }),
+          makeTreeTableNib({ id: "m2", title: "Mmm2", type: "milestone" }),
+        ];
+        // Walk: m1 (hidden) → eA, then m2 (hidden) → eB. Input order is [eB, eA].
+        const result = buildViewTree(scrambled, "epics");
+        expect(result.map((r) => r.nib.id)).toEqual(["eA", "eB"]);
+      });
+
       it("title asc → promoted headers in GLOBAL order [Apple, Mango, Zebra]", () => {
         const cmp = cmpFor(nibs, { field: "title", direction: "asc" });
         const result = buildViewTree(nibs, "epics", cmp);
@@ -636,6 +682,20 @@ describe("buildViewTree", () => {
         expect(result.map((r) => r.nib.id)).toEqual(["fM", "fZ", "fA"]);
       });
 
+      // Same blind spot as the epics block, same remedy: this fixture's features
+      // appear in the input in the reverse of the order the walk reaches them.
+      it("no comparator → headers follow the DFS walk, NOT the input order", () => {
+        const scrambled: TreeTableNib[] = [
+          makeTreeTableNib({ id: "fB", title: "Bravo", type: "feature", parentId: "e2" }),
+          makeTreeTableNib({ id: "e1", title: "Eee1", type: "epic" }),
+          makeTreeTableNib({ id: "fA", title: "Alpha", type: "feature", parentId: "e1" }),
+          makeTreeTableNib({ id: "e2", title: "Eee2", type: "epic" }),
+        ];
+        // Walk: e1 (hidden) → fA, then e2 (hidden) → fB. Input order is [fB, fA].
+        const result = buildViewTree(scrambled, "features");
+        expect(result.map((r) => r.nib.id)).toEqual(["fA", "fB"]);
+      });
+
       it("title asc → promoted headers in GLOBAL order [Apple, Mango, Zebra]", () => {
         const cmp = cmpFor(nibs, { field: "title", direction: "asc" });
         const result = buildViewTree(nibs, "features", cmp);
@@ -662,14 +722,31 @@ describe("buildViewTree", () => {
 
       it("no comparator → grouped DFS bucket-item order (control)", () => {
         const result = buildViewTree(nibs, "epics");
-        const bucket = result.find((r) => isBucketId(r.nib.id))!;
+        const bucket = result.find((r) => isSyntheticRowId(r.nib.id))!;
         expect(bucket.children.map((c) => c.nib.id)).toEqual(["tZ", "tA"]);
+      });
+
+      // The control shares the epics/features blind spot — its tasks happen to
+      // sit in the input in walk order. A bucket's loose items are emitted in
+      // the order the walk reaches them, which this fixture separates from the
+      // order they were handed in.
+      it("no comparator → bucket items follow the DFS walk, NOT the input order", () => {
+        const scrambled: TreeTableNib[] = [
+          makeTreeTableNib({ id: "tB", title: "Bravo", type: "task", parentId: "m2" }),
+          makeTreeTableNib({ id: "m1", title: "Mmm1", type: "milestone" }),
+          makeTreeTableNib({ id: "tA", title: "Alpha", type: "task", parentId: "m1" }),
+          makeTreeTableNib({ id: "m2", title: "Mmm2", type: "milestone" }),
+        ];
+        // Walk: m1 (hidden) → tA, then m2 (hidden) → tB. Input order is [tB, tA].
+        const result = buildViewTree(scrambled, "epics");
+        const bucket = result.find((r) => isSyntheticRowId(r.nib.id))!;
+        expect(bucket.children.map((c) => c.nib.id)).toEqual(["tA", "tB"]);
       });
 
       it("title asc → bucket items in GLOBAL order [Apple, Zebra]", () => {
         const cmp = cmpFor(nibs, { field: "title", direction: "asc" });
         const result = buildViewTree(nibs, "epics", cmp);
-        const bucket = result.find((r) => isBucketId(r.nib.id))!;
+        const bucket = result.find((r) => isSyntheticRowId(r.nib.id))!;
         expect(bucket.children.map((c) => c.nib.id)).toEqual(["tA", "tZ"]);
       });
     });
@@ -710,33 +787,235 @@ describe("buildViewTree", () => {
   });
 });
 
-describe("bucketIdForItem", () => {
+/**
+ * The seam itself, exercised through lenses this module does not ship.
+ *
+ * No view level selects a membership lens yet, so these are written here rather
+ * than wired: the point is that grouping by an ASSIGNMENT — which does not run
+ * along the parent chain the type lenses walk — needs nothing from
+ * `buildShapedViewTree` but a different `GroupingLens`.
+ */
+describe("GroupingLens seam", () => {
+  const BACKLOG = "/__backlog__";
+
+  /**
+   * Sections are milestone nibs; membership is the nearest assignment on the
+   * parent chain (a child of an assigned epic is planned, not backlog); nothing
+   * is hidden, because a membership view has no tier to be above.
+   */
+  const membershipLens: GroupingLens = {
+    leftover: { key: BACKLOG, label: "Backlog" },
+    nestHeadersStructurally: false,
+    orderWithinSection: () => (a, b) => a.milestoneOrder.localeCompare(b.milestoneOrder),
+    place(nib, byId): Placement {
+      if (nib.type === "milestone") return { kind: "header", section: nib.id };
+      const visited = new Set<string>();
+      let current: TreeNib | undefined = nib;
+      while (current !== undefined && !visited.has(current.id)) {
+        visited.add(current.id);
+        if (current.milestone !== "") return { kind: "member", section: current.milestone };
+        current = current.parentId !== null ? byId.get(current.parentId) : undefined;
+      }
+      return { kind: "member", section: BACKLOG };
+    },
+  };
+  const membershipShape: ViewShape = { kind: "grouped", lens: membershipLens };
+
+  it("renders an assigned epic under its milestone, structural children and all", () => {
+    // E1 names NO parent — a milestone accepts no children of any type — so
+    // nothing but the assignment can put it under M1.
+    const nibs: TreeNib[] = [
+      makeTreeNib({ id: "M1", type: "milestone", title: "v2.0" }),
+      makeTreeNib({ id: "E1", type: "epic", parentId: null, milestone: "M1", milestoneOrder: "a0" }),
+      makeTreeNib({ id: "F1", type: "feature", parentId: "E1" }),
+      makeTreeNib({ id: "T1", type: "task", parentId: "F1" }),
+      makeTreeNib({ id: "T9", type: "task" }),
+    ];
+
+    const tree = buildShapedViewTree(nibs, membershipShape);
+
+    const m1 = tree.find((r) => r.nib.id === "M1")!;
+    expect(m1).toBeDefined();
+    expect(m1.children.map((c) => c.nib.id)).toEqual(["E1"]);
+    // The epic keeps its own structural subtree beneath it, inherited membership
+    // and all — F1 and T1 carry no assignment of their own.
+    const e1 = m1.children[0];
+    expect(e1.children.map((c) => c.nib.id)).toEqual(["F1"]);
+    expect(e1.children[0].children.map((c) => c.nib.id)).toEqual(["T1"]);
+    // Depths are relative to the new roots.
+    expect([m1.depth, e1.depth, e1.children[0].depth]).toEqual([0, 1, 2]);
+    // M1 holds rows no nib names as its parent — the arrangement question the
+    // table asks to decide collapse and reorder targets.
+    expect(holdsChildrenByDisplay(m1)).toBe(true);
+    expect(isSyntheticRowId(m1.nib.id)).toBe(false);
+
+    const backlog = tree.find((r) => r.nib.id === BACKLOG)!;
+    expect(backlog.children.map((c) => c.nib.id)).toEqual(["T9"]);
+  });
+
+  it("orders a section's top-level members by the lens, and lets a column sort outrank it", () => {
+    const nibs: TreeNib[] = [
+      makeTreeNib({ id: "M1", type: "milestone" }),
+      makeTreeNib({ id: "Q3", type: "task", title: "Aaa", milestone: "M1", milestoneOrder: "c" }),
+      makeTreeNib({ id: "Q1", type: "task", title: "Zzz", milestone: "M1", milestoneOrder: "a" }),
+      makeTreeNib({ id: "Q2", type: "task", title: "Mmm", milestone: "M1", milestoneOrder: "b" }),
+    ];
+
+    const queued = buildShapedViewTree(nibs, membershipShape);
+    expect(queued[0].children.map((c) => c.nib.id)).toEqual(["Q1", "Q2", "Q3"]);
+
+    // Sorting a column means the user asked for THAT order specifically.
+    const byTitle = buildShapedViewTree(nibs, membershipShape, (a, b) => a.title.localeCompare(b.title));
+    expect(byTitle[0].children.map((c) => c.nib.id)).toEqual(["Q3", "Q2", "Q1"]);
+  });
+
+  /**
+   * The exactly-once audit, over every shape that could plausibly lose or
+   * duplicate a row under a membership model: an assignment naming no nib at
+   * all, an assignment naming a nib that is NOT a section (and renders
+   * elsewhere), a nib nested under a milestone that cannot legally hold it, and
+   * a parent cycle.
+   */
+  const messyMembership: TreeNib[] = [
+    makeTreeNib({ id: "M1", type: "milestone" }),
+    makeTreeNib({ id: "E1", type: "epic", milestone: "M1", milestoneOrder: "a" }),
+    makeTreeNib({ id: "T1", type: "task", parentId: "E1" }),
+    makeTreeNib({ id: "D1", type: "task", milestone: "M9" }),
+    makeTreeNib({ id: "N1", type: "task", parentId: "M1" }),
+    makeTreeNib({ id: "X1", type: "task", parentId: "X2" }),
+    makeTreeNib({ id: "X2", type: "task", parentId: "X1" }),
+    makeTreeNib({ id: "L1", type: "task" }),
+    makeTreeNib({ id: "A1", type: "task", milestone: "T1" }),
+  ];
+
+  it("renders every nib of a messy membership fixture exactly once", () => {
+    const ids = collectIds(buildShapedViewTree(messyMembership, membershipShape))
+      .filter((id) => !isSyntheticRowId(id));
+    const counts = new Map<string, number>();
+    for (const id of ids) counts.set(id, (counts.get(id) ?? 0) + 1);
+    for (const nib of messyMembership) {
+      expect(counts.get(nib.id), `${nib.id} should render exactly once`).toBe(1);
+    }
+    expect(ids).toHaveLength(messyMembership.length);
+  });
+
+  it("gives a dangling assignment a section of its own rather than dropping its rows", () => {
+    const tree = buildShapedViewTree(messyMembership, membershipShape);
+    // D1 names M9, which is in no result set. The union-of-sections rule creates
+    // the section anyway, so the row surfaces as an oddity instead of vanishing.
+    const stray = tree.find((r) => collectIds([r]).includes("D1"))!;
+    expect(stray.nib.id).not.toBe("M9");
+    expect(stray.nib.title).toContain("M9");
+    expect(isSyntheticRowId(stray.nib.id)).toBe(true);
+  });
+
+  it("keeps a section keyed on a real nib from rendering that nib's id twice", () => {
+    // A1 is assigned to T1 — a task, which heads nothing and is itself rendered
+    // under M1. A container carrying the key verbatim would put "T1" in the
+    // table twice, breaking every consumer that addresses a row by id.
+    const tree = buildShapedViewTree(messyMembership, membershipShape);
+    const ids = collectIds(tree);
+    expect(ids.filter((id) => id === "T1")).toHaveLength(1);
+    const container = tree.find((r) => r.children.some((c) => c.nib.id === "A1"))!;
+    expect(container.nib.id).not.toBe("T1");
+    expect(isSyntheticRowId(container.nib.id)).toBe(true);
+  });
+
+  it("renders a garbage section key once, under a section of that name", () => {
+    const garbage = "not a nib id at all";
+    const strayLens: GroupingLens = {
+      leftover: { key: "/__nowhere__", label: "Nowhere" },
+      nestHeadersStructurally: false,
+      place: (nib): Placement =>
+        nib.id === "stray"
+          ? { kind: "member", section: garbage }
+          : { kind: "member", section: "/__nowhere__" },
+    };
+    const nibs: TreeNib[] = [
+      makeTreeNib({ id: "stray", type: "task" }),
+      makeTreeNib({ id: "ordinary", type: "task" }),
+    ];
+
+    const tree = buildShapedViewTree(nibs, { kind: "grouped", lens: strayLens });
+
+    const ids = collectIds(tree).filter((id) => !isSyntheticRowId(id));
+    expect(ids.filter((id) => id === "stray")).toHaveLength(1);
+    const section = tree.find((r) => r.children.some((c) => c.nib.id === "stray"))!;
+    expect(section.nib.title).toContain(garbage);
+    // Named after the key but not addressed by it, so an arbitrary key can never
+    // collide with a nib id.
+    expect(section.nib.id).not.toBe(garbage);
+    expect(isSyntheticRowId(section.nib.id)).toBe(true);
+  });
+
+  // One ask per nib, no more and no fewer, in BOTH arrangements. "No fewer" is
+  // the substantive half: under `nestHeadersStructurally` the walk stops at a
+  // claimed section and never looks inside it, so `place` answering for the whole
+  // input is not incidental — `containingSectionRowId` goes on to ask about nibs
+  // the walk never reached. "No more" keeps the memo doing the one thing it is
+  // for, confining a contract-breaking lens to a single decision per build.
+  describe("the placement memo asks the lens exactly once per nib", () => {
+    function countingLens(inner: GroupingLens, calls: string[]): GroupingLens {
+      return { ...inner, place: (nib, byId) => (calls.push(nib.id), inner.place(nib, byId)) };
+    }
+
+    it("under a membership lens", () => {
+      const calls: string[] = [];
+      buildShapedViewTree(messyMembership, {
+        kind: "grouped",
+        lens: countingLens(membershipLens, calls),
+      });
+      expect(calls).toHaveLength(messyMembership.length);
+      expect(new Set(calls)).toEqual(new Set(messyMembership.map((n) => n.id)));
+    });
+
+    it("under a type lens, whose walk stops at every header", () => {
+      const calls: string[] = [];
+      const shape = viewShapeFor("epics");
+      // Guards the case against going vacuous if "epics" ever stops grouping.
+      expect(shape.kind).toBe("grouped");
+      if (shape.kind !== "grouped") return;
+      buildShapedViewTree(MESSY_FIXTURE, {
+        kind: "grouped",
+        lens: countingLens(shape.lens, calls),
+      });
+      expect(calls).toHaveLength(MESSY_FIXTURE.length);
+      expect(new Set(calls)).toEqual(new Set(MESSY_FIXTURE.map((n) => n.id)));
+    });
+  });
+});
+
+describe("containingSectionRowId", () => {
   function nibMapOf(nibs: TreeNib[]): Map<string, TreeNib> {
     return new Map(nibs.map(n => [n.id, n]));
   }
 
-  it("returns null for the none lens (no buckets)", () => {
+  it("returns null for the none lens (no sections)", () => {
     const map = nibMapOf([makeTreeNib({ id: "t1", type: "task" })]);
-    expect(bucketIdForItem(map, "t1", "none")).toBeNull();
+    expect(containingSectionRowId(map, "t1", "none")).toBeNull();
   });
 
   it("returns the lens bucket for a loose item with no grouping ancestor", () => {
     const map = nibMapOf([makeTreeNib({ id: "t1", type: "task" })]);
-    expect(bucketIdForItem(map, "t1", "epics")).toBe("/__no_epic__");
+    expect(containingSectionRowId(map, "t1", "epics")).toBe("/__no_epic__");
   });
 
-  it("returns null when the item sits under a grouping header", () => {
+  // Asks which row CONTAINS the item, so an item under a header names that
+  // header. The caller un-collapses it, which for a type lens the ancestor-chain
+  // walk beside it would also have done — but a membership section header is no
+  // ancestor of its members, and only this answer reaches it.
+  it("returns the header when the item sits under a grouping header", () => {
     const map = nibMapOf([
       makeTreeNib({ id: "e1", type: "epic" }),
       makeTreeNib({ id: "f1", type: "feature", parentId: "e1" }),
       makeTreeNib({ id: "t1", type: "task", parentId: "f1" }),
     ]);
-    expect(bucketIdForItem(map, "t1", "epics")).toBeNull();
+    expect(containingSectionRowId(map, "t1", "epics")).toBe("e1");
   });
 
   it("returns null when the item IS a grouping header itself", () => {
     const map = nibMapOf([makeTreeNib({ id: "e1", type: "epic" })]);
-    expect(bucketIdForItem(map, "e1", "epics")).toBeNull();
+    expect(containingSectionRowId(map, "e1", "epics")).toBeNull();
   });
 
   it("buckets a loose task under a milestone (above-tier ancestor, no epic)", () => {
@@ -744,7 +1023,7 @@ describe("bucketIdForItem", () => {
       makeTreeNib({ id: "m1", type: "milestone" }),
       makeTreeNib({ id: "t1", type: "task", parentId: "m1" }),
     ]);
-    expect(bucketIdForItem(map, "t1", "epics")).toBe("/__no_epic__");
+    expect(containingSectionRowId(map, "t1", "epics")).toBe("/__no_epic__");
   });
 
   it("features lens: task under an epic (no feature/bug) lands in the bucket", () => {
@@ -752,54 +1031,242 @@ describe("bucketIdForItem", () => {
       makeTreeNib({ id: "e1", type: "epic" }),
       makeTreeNib({ id: "t1", type: "task", parentId: "e1" }),
     ]);
-    expect(bucketIdForItem(map, "t1", "features")).toBe("/__no_feature_or_bug__");
+    expect(containingSectionRowId(map, "t1", "features")).toBe("/__no_feature_or_bug__");
   });
 
-  it("features lens: task under a feature is under a header (null)", () => {
+  it("features lens: task under a feature names that feature", () => {
     const map = nibMapOf([
       makeTreeNib({ id: "f1", type: "feature" }),
       makeTreeNib({ id: "t1", type: "task", parentId: "f1" }),
     ]);
-    expect(bucketIdForItem(map, "t1", "features")).toBeNull();
+    expect(containingSectionRowId(map, "t1", "features")).toBe("f1");
   });
 
-  // An item whose OWN rank is above the grouping tier is hidden outright by
-  // buildViewTree (not swept into a bucket), so it has no enclosing bucket —
-  // bucketIdForItem must agree and return null, else ensure-visible would
-  // spuriously un-collapse a bucket when deep-linking to such a container.
+  // An item whose OWN rank is above the grouping tier is hidden outright by the
+  // lens (not swept into a bucket), so it is inside no section — this must agree
+  // and return null, else ensure-visible would spuriously un-collapse a bucket
+  // when deep-linking to such a container.
   it("returns null for an above-tier container queried in a lower lens", () => {
     const map = nibMapOf([
       makeTreeNib({ id: "m1", type: "milestone" }),
       makeTreeNib({ id: "e1", type: "epic", parentId: "m1" }),
     ]);
-    expect(bucketIdForItem(map, "m1", "epics")).toBeNull(); // milestone hidden in epics lens
-    expect(bucketIdForItem(map, "m1", "features")).toBeNull(); // milestone hidden in features lens
-    expect(bucketIdForItem(map, "e1", "features")).toBeNull(); // epic hidden in features lens
+    expect(containingSectionRowId(map, "m1", "epics")).toBeNull(); // milestone hidden in epics lens
+    expect(containingSectionRowId(map, "m1", "features")).toBeNull(); // milestone hidden in features lens
+    expect(containingSectionRowId(map, "e1", "features")).toBeNull(); // epic hidden in features lens
+  });
+
+  it("returns null for an id the map does not hold", () => {
+    expect(containingSectionRowId(nibMapOf([]), "nibs-gone", "epics")).toBeNull();
+  });
+
+  // The whole point of routing this through `place`: the answer is read off the
+  // same decision the emitted tree was built from, so the two cannot disagree
+  // about where a row is. Checked against the real tree rather than asserted.
+  //
+  // Every nib in the fixture is asked, in every grouping lens, so a fixture only
+  // has to be a shape — nothing has to predict which nibs land in a section.
+  function expectEveryAnswerNamesAContainingRow(nibs: TreeNib[]): void {
+    const map = nibMapOf(nibs);
+    let answered = 0;
+    for (const viewLevel of ["milestones", "epics", "features"] as const) {
+      const tree = buildViewTree(nibs, viewLevel);
+      const rowIds = new Set<string>();
+      const walk = (nodes: TreeNode<TreeNib>[]): void => {
+        for (const node of nodes) {
+          rowIds.add(node.nib.id);
+          walk(node.children);
+        }
+      };
+      walk(tree);
+
+      for (const nib of nibs) {
+        // null is a legitimate answer — the nib heads a section, or the lens
+        // hides it — and carries no claim about a row.
+        const containerId = containingSectionRowId(map, nib.id, viewLevel);
+        if (containerId === null) continue;
+        answered++;
+        expect(
+          rowIds,
+          `${nib.id} named ${containerId} in the ${viewLevel} view, which is not a row there`,
+        ).toContain(containerId);
+        expect(
+          collectDescendantIds(tree, containerId),
+          `${containerId} should hold ${nib.id} in the ${viewLevel} view`,
+        ).toContain(nib.id);
+      }
+    }
+    expect(answered, "no nib named a container — this check would pass vacuously").toBeGreaterThan(0);
+  }
+
+  it("names a row that really does contain the item in the emitted tree", () => {
+    expectEveryAnswerNamesAContainingRow([
+      makeTreeNib({ id: "m1", type: "milestone" }),
+      makeTreeNib({ id: "e1", type: "epic", parentId: "m1" }),
+      makeTreeNib({ id: "t1", type: "task", parentId: "e1" }),
+      makeTreeNib({ id: "t2", type: "task" }),
+    ]);
+  });
+
+  // The sweep above skips a null answer, since heading a section and being hidden
+  // are both legitimate reasons for one. That makes it blind in one direction: an
+  // item wrongly placed `hidden` answers null, gets skipped, and never contradicts
+  // anything. This names the leftover direction outright so that regression has
+  // somewhere to fail.
+  it("names the leftover section for an item no header at this tier claims", () => {
+    const nibs = [
+      makeTreeNib({ id: "e1", type: "epic" }),
+      makeTreeNib({ id: "loose", type: "task" }),
+    ];
+    const map = nibMapOf(nibs);
+
+    const containerId = containingSectionRowId(map, "loose", "epics");
+
+    expect(containerId).not.toBeNull();
+    expect(collectDescendantIds(buildViewTree(nibs, "epics"), containerId!)).toContain("loose");
+  });
+
+  // A cycle has no root of its own, so `buildTree` promotes one member (lowest
+  // id) and severs its parent edge — which decides the rendered root-to-nib path
+  // for every nib in the cycle AND every nib merely hanging off one. `place` must
+  // reach the same conclusion, or it names a section the emitted tree does not
+  // contain. The sole caller today deletes the id from a collapse set, where an
+  // absent id is a silent no-op, so nothing but these fixtures would notice.
+  describe("under a parent cycle", () => {
+    it("holds when the item merely leads into the cycle", () => {
+      expectEveryAnswerNamesAContainingRow([
+        makeTreeNib({ id: "a", type: "milestone", parentId: "b" }),
+        makeTreeNib({ id: "b", type: "epic", parentId: "a" }),
+        makeTreeNib({ id: "t", type: "task", parentId: "b" }),
+      ]);
+    });
+
+    it("holds when the promoted member is not the last one the climb reaches", () => {
+      // Three epics in a cycle: "x" is promoted and becomes the root, so the
+      // path to "t" is x -> t and the section is x — not the last epic a climb
+      // from "t" happens to walk through.
+      expectEveryAnswerNamesAContainingRow([
+        makeTreeNib({ id: "x", type: "epic", parentId: "y" }),
+        makeTreeNib({ id: "y", type: "epic", parentId: "z" }),
+        makeTreeNib({ id: "z", type: "epic", parentId: "x" }),
+        makeTreeNib({ id: "t", type: "task", parentId: "x" }),
+      ]);
+    });
+
+    it("holds for a cycle of above-tier containers", () => {
+      expectEveryAnswerNamesAContainingRow([
+        makeTreeNib({ id: "m1", type: "milestone", parentId: "m2" }),
+        makeTreeNib({ id: "m2", type: "milestone", parentId: "m1" }),
+        makeTreeNib({ id: "e1", type: "epic", parentId: "m1" }),
+        makeTreeNib({ id: "t1", type: "task", parentId: "m2" }),
+      ]);
+    });
+
+    it("holds for a self-parent", () => {
+      expectEveryAnswerNamesAContainingRow([
+        makeTreeNib({ id: "s1", type: "epic", parentId: "s1" }),
+        makeTreeNib({ id: "s2", type: "task", parentId: "s1" }),
+        makeTreeNib({ id: "s3", type: "task", parentId: "s3" }),
+      ]);
+    });
   });
 });
 
-describe("isBucketId", () => {
+describe("holdsChildrenByDisplay", () => {
+  /**
+   * Nodes are built by hand rather than through `buildViewTree`, and they have to
+   * be: `buildTree` nests a child only under the parent its `parentId` names, so
+   * the only node in any tree it emits whose children disagree is the synthetic
+   * bucket. A real nib heading a section of members that are not its children —
+   * the shape this predicate exists to recognize — is unreachable from a nib list,
+   * which would make every assertion below pass against the bucket-only predicate
+   * it replaces.
+   */
+  function nodeOf(nib: TreeNib, children: TreeNib[]): TreeNode<TreeNib> {
+    return { nib, children: children.map((c) => ({ nib: c, children: [], depth: 1 })), depth: 0 };
+  }
+
+  it("is false for a container whose children all name it as their parent", () => {
+    const epic = makeTreeNib({ id: "e1", type: "epic" });
+    const node = nodeOf(epic, [
+      makeTreeNib({ id: "t1", type: "task", parentId: "e1" }),
+      makeTreeNib({ id: "t2", type: "task", parentId: "e1" }),
+    ]);
+    expect(holdsChildrenByDisplay(node)).toBe(false);
+  });
+
+  it("is false for a leaf, which holds nothing either way", () => {
+    expect(holdsChildrenByDisplay(nodeOf(makeTreeNib({ id: "t1", type: "task" }), []))).toBe(false);
+  });
+
+  it("is true for a synthetic bucket, whose loose items name some other parent or none", () => {
+    const node = nodeOf(makeTreeNib({ id: "/__no_epic__", type: "" }), [
+      makeTreeNib({ id: "t1", type: "task", parentId: null }),
+      makeTreeNib({ id: "t2", type: "task", parentId: "m1" }),
+    ]);
+    expect(holdsChildrenByDisplay(node)).toBe(true);
+  });
+
+  it("is true for a real nib heading a section of members that are not its children", () => {
+    // A task cannot BE a milestone's child — VALID_CHILD_TYPES.milestone is []
+    // (asserted in typeHierarchy.test.ts), so `nibs new "Ship it" -t task
+    // --parent nibs-mile1` is refused by the server. Membership is therefore
+    // always by arrangement here, never by parentage, and the disagreement below
+    // is the only signal available.
+    const node = nodeOf(makeTreeNib({ id: "nibs-mile1", type: "milestone" }), [
+      makeTreeNib({ id: "t1", type: "task", parentId: null }),
+    ]);
+    expect(holdsChildrenByDisplay(node)).toBe(true);
+    // ...and it is emphatically not synthetic. The two questions are independent.
+    expect(isSyntheticRowId(node.nib.id)).toBe(false);
+  });
+
+  it("is true when only SOME children disagree", () => {
+    const node = nodeOf(makeTreeNib({ id: "e1", type: "epic" }), [
+      makeTreeNib({ id: "t1", type: "task", parentId: "e1" }),
+      makeTreeNib({ id: "t2", type: "task", parentId: null }),
+    ]);
+    expect(holdsChildrenByDisplay(node)).toBe(true);
+  });
+});
+
+describe("isSyntheticRowId", () => {
   it("is true for synthetic bucket ids and false for real nib ids", () => {
-    expect(isBucketId("/__no_epic__")).toBe(true);
-    expect(isBucketId("/__no_milestone__")).toBe(true);
-    expect(isBucketId("/__no_feature_or_bug__")).toBe(true);
-    expect(isBucketId("nibs-abc1")).toBe(false);
-    expect(isBucketId("")).toBe(false);
-    // Membership is exact, not prefix- or substring-based: an id that merely
-    // resembles a bucket id is still an ordinary nib id.
-    expect(isBucketId("__proj-abc1")).toBe(false);
-    expect(isBucketId("/__no_epic__x")).toBe(false);
-    expect(isBucketId("no_epic")).toBe(false);
+    expect(isSyntheticRowId("/__no_epic__")).toBe(true);
+    expect(isSyntheticRowId("/__no_milestone__")).toBe(true);
+    expect(isSyntheticRowId("/__no_feature_or_bug__")).toBe(true);
+    expect(isSyntheticRowId("nibs-abc1")).toBe(false);
+    expect(isSyntheticRowId("")).toBe(false);
+    // Both halves are required, so an id missing either is an ordinary nib id —
+    // which is what keeps one that merely RESEMBLES a bucket out.
+    expect(isSyntheticRowId("__proj-abc1")).toBe(false); // no leading slash
+    expect(isSyntheticRowId("/__no_epic__x")).toBe(false); // ends inside [0-9a-z]
+    expect(isSyntheticRowId("no_epic")).toBe(false); // neither half
+    // ...and it admits ANY id holding both halves, not only the shipped keys:
+    // that is what lets `sectionRowId` derive a container id from a section key
+    // it has never seen.
+    expect(isSyntheticRowId("/section:tnib-a1b2_")).toBe(true);
     // The underscore-fenced strings are ordinary nib ids: a filename holds every
     // character in them, so `__no_epic__.md` parses back to exactly this id and
     // it must NOT be mistaken for a bucket.
-    expect(isBucketId("__no_epic__")).toBe(false);
-    expect(isBucketId("__no_milestone__")).toBe(false);
-    expect(isBucketId("__no_feature_or_bug__")).toBe(false);
+    expect(isSyntheticRowId("__no_epic__")).toBe(false);
+    expect(isSyntheticRowId("__no_milestone__")).toBe(false);
+    expect(isSyntheticRowId("__no_feature_or_bug__")).toBe(false);
   });
 
-  // The disjointness `isBucketId` rests on needs TWO properties of every bucket
-  // id, and neither is sufficient alone (see GROUPING_LENSES): the leading "/"
+  // The property every caller of this predicate leans on. It asks whether a row
+  // has a nib behind it — NOT whether the row is a section header, which is a
+  // separate question `holdsChildrenByDisplay` answers from the node. A real nib
+  // heading a section of its own is still a nib: selection, detail-open, the
+  // action-target resolver, drag and the id column all admit it, and a predicate
+  // that swept section headers in would take every one of those away at once.
+  it("is false for a real nib that heads a section", () => {
+    const header = makeTreeNib({ id: "nibs-mile1", type: "milestone", title: "v2.0" });
+    expect(isSyntheticRowId(header.id)).toBe(false);
+  });
+
+  // The disjointness `isSyntheticRowId` rests on needs TWO properties of every bucket
+  // id, and neither is sufficient alone (see isSyntheticRowId): the leading "/"
   // keeps it out of the filename-derived id space, and a last character outside
   // [0-9a-z] keeps it out of `nib.NewID`'s prefix-plus-nanoid space. This rule
   // has already been written down wrongly once as prose, which has no compiler —

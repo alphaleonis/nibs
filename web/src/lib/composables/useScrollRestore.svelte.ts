@@ -15,11 +15,19 @@
  * Coordination model. Two INDEPENDENT pieces of state, each self-describing so no
  * entry point can leave the other misattributed to the wrong element:
  *
- *   ownedEl           the element we've taken over — restore() applied the saved
+ *   owned {el,epoch}  the element we've taken over — restore() applied the saved
  *                     offset to it, OR claim() adopted it after ensureVisible.
  *                     Keyed to element IDENTITY (not composable-instance lifetime)
  *                     so a container recreated within the same TreeTable instance
- *                     (urql refetch / empty-filter clear) is treated as fresh.
+ *                     (urql refetch / empty-filter clear) is treated as fresh —
+ *                     AND to the scroll epoch, which covers the case identity
+ *                     cannot see: a VIEW SWITCH keeps the same container and
+ *                     replaces its content, so the offset saved for the outgoing
+ *                     view describes geometry the incoming one does not have.
+ *                     Advancing the epoch retires ownership without recreating
+ *                     anything, which both re-arms restore() onto the reset offset
+ *                     and stops onScroll from recording the clamp the shorter
+ *                     incoming view provokes as if it were user intent.
  *   lastWrite {el,top} the exact element + value of our most recent PROGRAMMATIC
  *                     scroll write. A scroll event on THAT element whose scrollTop
  *                     still equals THAT value is that write's own echo (including
@@ -42,19 +50,26 @@ export function useScrollRestore(opts: {
   getSavedScrollTop: () => number;
   setSavedScrollTop: (n: number) => void;
   hasContent: () => boolean;
+  /** The scroll-ownership generation (TreeViewState.scrollEpoch). */
+  getEpoch: () => number;
 }): { onScroll: (event: Event) => void; restore: () => void; claim: () => void } {
-  let ownedEl: HTMLElement | null = null;
+  let owned: { el: HTMLElement; epoch: number } | null = null;
   let lastWrite: { el: HTMLElement; top: number } | null = null;
+
+  /** True while this element is ours under the CURRENT epoch. */
+  function isOwned(container: HTMLElement): boolean {
+    return owned !== null && owned.el === container && owned.epoch === opts.getEpoch();
+  }
 
   function restore(): void {
     const container = opts.getScrollContainer();
-    if (!container || container === ownedEl) return; // no container, or already ours
-    // Leave ownedEl unset until content exists, so a later call can still restore
+    if (!container || isOwned(container)) return; // no container, or already ours
+    // Leave ownership unset until content exists, so a later call can still restore
     // once rows populate after the remount (else scrollTop would clamp to 0 against
     // an empty table).
     if (!opts.hasContent()) return;
     container.scrollTop = opts.getSavedScrollTop();
-    ownedEl = container;
+    owned = { el: container, epoch: opts.getEpoch() };
     // Read scrollTop back so lastWrite.top captures the browser's clamp: the echo
     // this write provokes reports this exact value on this exact element, so
     // onScroll can recognize and skip it. A no-op write (saved === current, e.g. the
@@ -68,10 +83,11 @@ export function useScrollRestore(opts: {
     // container), not an ambient getScrollContainer() read — so a stale event from a
     // just-detached container is attributed to that container, never the live one.
     const container = event.currentTarget as HTMLElement | null;
-    // Record only once THIS element is ours — ignores the fresh container's
-    // scrollTop=0 noise before restore, so it can't overwrite the saved value we
-    // still need to apply.
-    if (!container || container !== ownedEl) return;
+    // Record only once THIS element is ours under the current epoch — ignores the
+    // fresh container's scrollTop=0 noise before restore, and the clamp a view
+    // switch provokes after ownership was retired, so neither can overwrite the
+    // saved value we still need to apply.
+    if (!container || !isOwned(container)) return;
     // Skip the echo of our own programmatic write: same element, same (clamped)
     // value. Consume it once; a genuine user scroll reports a different value and is
     // persisted.
@@ -88,6 +104,9 @@ export function useScrollRestore(opts: {
     // ensureVisible scrolled the deep-linked row into view. Persist that offset
     // synchronously so it is durable even if a refetch unmounts the container before
     // the async scroll event fires; take ownership so restore() won't overwrite it.
+    // The claim is epoch-keyed like restore()'s: a claim that outlived a view
+    // switch would hold ownership across it and defeat the reset the switch owes
+    // the incoming view.
     // Self-locates via getScrollContainer() (single source of truth), matching
     // restore() and the sibling composables.
     //
@@ -104,7 +123,7 @@ export function useScrollRestore(opts: {
     // deep-link offset. Callers that need the deep-link offset specifically must
     // ensure ensureVisible runs before restore().
     opts.setSavedScrollTop(container.scrollTop);
-    ownedEl = container;
+    owned = { el: container, epoch: opts.getEpoch() };
   }
 
   return { onScroll, restore, claim };

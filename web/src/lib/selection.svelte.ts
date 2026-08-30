@@ -1,4 +1,4 @@
-import { isBucketId } from "./tree";
+import { isSyntheticRowId } from "./tree";
 
 /** Whether the detail panel follows the selection when a bulk gesture collapses
  *  it to exactly one row. Required at every bulk call site: a caller that omits
@@ -31,7 +31,7 @@ export class SelectionState {
    *  a right-click, or a stale `?nib=<bucket>` URL; the mouse row-click path is
    *  already intercepted by TreeTable's `openOrToggleBucket`. */
   select(nibId: string): void {
-    if (isBucketId(nibId)) return;
+    if (isSyntheticRowId(nibId)) return;
     this.selectedNibId = nibId;
     this.focusedNibId = nibId;
     this.selectedIds = new Set([nibId]);
@@ -52,7 +52,7 @@ export class SelectionState {
    *  `toggleSelect` / `rangeSelect` — one of the four `selectedIds` add-writers
    *  that enforce that invariant. */
   selectOnly(nibId: string): void {
-    if (isBucketId(nibId)) return;
+    if (isSyntheticRowId(nibId)) return;
     this.focusedNibId = nibId;
     this.selectedIds = new Set([nibId]);
     this.anchorId = nibId;
@@ -82,7 +82,7 @@ export class SelectionState {
    *  `panel` — whether the detail panel follows a collapse to exactly one row;
    *  see PanelPolicy. */
   toggleSelect(nibId: string, panel: PanelPolicy): void {
-    if (isBucketId(nibId)) return;
+    if (isSyntheticRowId(nibId)) return;
     const next = new Set(this.selectedIds);
     if (next.has(nibId)) {
       next.delete(nibId);
@@ -109,10 +109,12 @@ export class SelectionState {
    * Synthetic "No X" grouping-bucket rows are interleaved with nib rows in
    * `visibleIds`, so a range that spans a bucket would otherwise sweep that
    * bucket's unresolvable synthetic id into `selectedIds` (and on to any bulk
-   * action). We filter bucket ids OUT of the sliced range rather than truncating
-   * at the bucket: a range's visual meaning is "the nibs I swept across", and a
-   * bucket row is a header, not a member — so the nibs on both sides stay
-   * selected. If an endpoint (anchor or target) is itself a bucket it simply
+   * action). We filter synthetic ids OUT of the sliced range rather than
+   * truncating at the bucket: a range's visual meaning is "the nibs I swept
+   * across", and a bucket row is not one of them — so the nibs on both sides stay
+   * selected. Heading a section is not what disqualifies a row here, naming no
+   * nib is; a real nib heading one sweeps into the range like any other. If an
+   * endpoint (anchor or target) is itself a bucket it simply
    * contributes no id while the surrounding nib range still resolves; a range
    * containing only bucket rows collapses to an empty selection. Both range
    * callers — the mouse path (TreeTable) and the keyboard path (useKeyboardNav
@@ -133,7 +135,7 @@ export class SelectionState {
 
     const lo = Math.min(startIndex, endIndex);
     const hi = Math.max(startIndex, endIndex);
-    const rangeIds = visibleIds.slice(lo, hi + 1).filter((id) => !isBucketId(id));
+    const rangeIds = visibleIds.slice(lo, hi + 1).filter((id) => !isSyntheticRowId(id));
 
     this.selectedIds = new Set(rangeIds);
     this.focusedNibId = nibId;
@@ -153,8 +155,9 @@ export class SelectionState {
 
   /**
    * Prunes the multi-select set (and anchor/focus) down to only the ids present
-   * in `matchingIds`, dropping any that are no longer selectable (e.g. filtered
-   * out of the current view). The detail-panel selection (`selectedNibId`) is
+   * in `matchingIds`, dropping any that are no longer selectable — filtered out
+   * of the dataset, or left without a row by a view switch (a grouping lens hides
+   * containers ranked above its tier). The detail-panel selection (`selectedNibId`) is
    * intentionally left untouched — pruning targets the bulk-action set only so a
    * multi-drag / bulk mutation never applies to rows the user can no longer see.
    *
@@ -162,7 +165,7 @@ export class SelectionState {
    * something is actually dropped, so an unchanged selection produces no writes
    * and cannot feed a reactive update loop.
    */
-  retainOnly(matchingIds: Set<string>): void {
+  retainOnly(matchingIds: ReadonlySet<string>): void {
     let changed = false;
     const next = new Set<string>();
     for (const id of this.selectedIds) {

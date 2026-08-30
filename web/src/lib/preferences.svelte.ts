@@ -3,7 +3,7 @@ import { loadPreferences, savePreferences } from "./storage";
 import { parseQuery, serializeQuery } from "./query";
 import { PerViewColumnMap } from "./perViewColumnMap.svelte";
 import type { SaveMode } from "./perViewColumnMap.svelte";
-import { ALL_COLUMN_KEYS, DEFAULT_VISIBLE_COLUMNS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_OPEN_DETAIL_ON, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE, DEFAULT_THEME, DEFAULT_PREVIEW_OPEN } from "./types";
+import { ALL_COLUMN_KEYS, DEFAULT_VISIBLE_COLUMNS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_OPEN_DETAIL_ON, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE, DEFAULT_THEME, DEFAULT_PREVIEW_OPEN, DEFAULT_VIEW_LEVEL } from "./types";
 import type { NibFilter, ViewLevel, ColumnKey, RowDensity, Theme, DetailPanelPosition, OpenDetailGesture, BlockedEmphasis, FontSize, TableSort } from "./types";
 
 export class Preferences {
@@ -12,7 +12,7 @@ export class Preferences {
   // persisted + shared unit; `setQuery` reconstructs them from such a string.
   filter: NibFilter = $state({});
   invalidTokens: string[] = $state([]);
-  viewLevel: ViewLevel = $state("none");
+  viewLevel: ViewLevel = $state(DEFAULT_VIEW_LEVEL);
 
   // Per-view column state, unified behind one primitive. Each concern stays a
   // separate reactive slice with its own serialized field; the only differences

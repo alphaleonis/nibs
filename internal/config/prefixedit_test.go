@@ -8,18 +8,18 @@ import (
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/store"
+	"github.com/alphaleonis/nibs/internal/testskip"
 )
 
-// writePrefixEditStore materializes cfg as a store's config.yml with the given
-// mode and returns the store directory. The mode is a parameter because the
-// round trip claims to keep it.
-func writePrefixEditStore(t *testing.T, cfg string, perm os.FileMode) string {
+// writePrefixEditStore materializes cfg as a store's config.yml and returns the
+// store directory.
+func writePrefixEditStore(t *testing.T, cfg string) string {
 	t.Helper()
 	storeDir := filepath.Join(t.TempDir(), store.DirName)
 	if err := os.MkdirAll(storeDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(store.NewLayout(storeDir).ConfigPath(), []byte(cfg), perm); err != nil {
+	if err := os.WriteFile(store.NewLayout(storeDir).ConfigPath(), []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return storeDir
@@ -99,7 +99,7 @@ nibs: *base
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			storeDir := writePrefixEditStore(t, tt.config, 0o644)
+			storeDir := writePrefixEditStore(t, tt.config)
 
 			edit, err := PlanSetStoredPrefix(storeDir, "zz-")
 			if err == nil {
@@ -127,7 +127,7 @@ nibs: *base
 // when the bytes land.
 func TestPlanSetStoredPrefixWritesNothingUntilWrite(t *testing.T) {
 	const authored = "nibs:\n    prefix: tnib-\n    id_length: 4\n"
-	storeDir := writePrefixEditStore(t, authored, 0o644)
+	storeDir := writePrefixEditStore(t, authored)
 
 	edit, err := PlanSetStoredPrefix(storeDir, "zz-")
 	if err != nil {
@@ -195,7 +195,7 @@ func TestPlanSetStoredPrefixMakesTheFileSayThePrefix(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				storeDir = writePrefixEditStore(t, tt.config, 0o644)
+				storeDir = writePrefixEditStore(t, tt.config)
 			}
 
 			if _, err := SetStoredPrefix(storeDir, "zz-"); err != nil {
@@ -246,7 +246,7 @@ future_key:
     a_newer_nibs_wrote_this: true
 # The last word.
 `
-	storeDir := writePrefixEditStore(t, authored, 0o640)
+	storeDir := writePrefixEditStore(t, authored)
 	if _, err := SetStoredPrefix(storeDir, "zz-"); err != nil {
 		t.Fatalf("SetStoredPrefix: %v", err)
 	}
@@ -283,13 +283,6 @@ future_key:
 			t.Errorf("the edit wrote the merged read model — %q appeared:\n%s", unwanted, got)
 		}
 	}
-	info, err := os.Stat(store.NewLayout(storeDir).ConfigPath())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if perm := info.Mode().Perm(); perm != 0o640 {
-		t.Errorf("mode = %v, want 0640 — a config kept private must stay private", perm)
-	}
 
 	// The other half of the doc comment, which is the half a reader is likelier
 	// to be surprised by: this is a re-marshal, so the file comes back with
@@ -310,6 +303,37 @@ future_key:
 	}
 	if strings.Contains(got, "\n\n") {
 		t.Errorf("blank lines are documented as dropped, but one survived:\n%s", got)
+	}
+}
+
+// TestStoredPrefixEditPreservesTheConfigsMode holds set-prefix to the contract
+// TestStoredAreaEditsPreserveMode holds the area edits to, and Save to through
+// TestSavePreservesTheConfigsPermissions: a config kept private stays private
+// across a rewrite that reads the file and writes it back.
+//
+// It stands apart from the round trip above rather than being one more assertion
+// inside it, because it needs a filesystem that stores permission bits and the
+// round trip does not. Folded together, a machine that cannot build this fixture
+// would lose the round trip's coverage as well — which is what took CI's windows
+// leg red rather than skipping there.
+func TestStoredPrefixEditPreservesTheConfigsMode(t *testing.T) {
+	testskip.NeedPosixFileModes(t, t.TempDir())
+
+	storeDir := writePrefixEditStore(t, "nibs:\n    prefix: tnib-\n    id_length: 4\n")
+	path := store.NewLayout(storeDir).ConfigPath()
+	// chmod rather than a mode handed to the write, which umask would narrow.
+	if err := os.Chmod(path, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SetStoredPrefix(storeDir, "zz-"); err != nil {
+		t.Fatalf("SetStoredPrefix: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o640 {
+		t.Errorf("mode = %v, want 0640 — a config kept private must stay private", perm)
 	}
 }
 
@@ -358,7 +382,7 @@ func TestStoredPrefixEditLosesWhatTheDocSaysItLoses(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			storeDir := writePrefixEditStore(t, tt.config, 0o644)
+			storeDir := writePrefixEditStore(t, tt.config)
 			if _, err := SetStoredPrefix(storeDir, "zz-"); err != nil {
 				t.Fatalf("SetStoredPrefix: %v", err)
 			}

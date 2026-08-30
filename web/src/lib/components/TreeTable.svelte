@@ -1,17 +1,18 @@
 <script lang="ts">
   import { getContextClient } from "@urql/svelte";
-  import { DEFAULT_BLOCKED_EMPHASIS, DEFAULT_OPEN_DETAIL_ON } from "../types";
+  import { DEFAULT_BLOCKED_EMPHASIS, DEFAULT_OPEN_DETAIL_ON, DEFAULT_VIEW_LEVEL } from "../types";
   import type { NibFilter, ViewLevel, RowDensity, BlockedEmphasis, OpenDetailGesture, RowSubtreeActions, TreeTableNib, TableSort, SortField } from "../types";
   import type { ColumnKey } from "../columns";
   import type { Preferences } from "../preferences.svelte";
   import { buildTableData } from "../tableData";
-  import { isBucketId, bucketIdForItem, buildViewTree, collectDescendantIds } from "../tree";
+  import { isSyntheticRowId, containingSectionRowId, buildViewTree, collectDescendantIds } from "../tree";
   import { applySort, nextTableSort } from "../tableSort";
   import { prepareFilter, matchesFilter } from "../filter";
   import { dragBlockFor, DRAG_BLOCK_TOAST_ID } from "../dragBlock";
   import type { DragBlock } from "../dragBlock";
   import { toast } from "svelte-sonner";
-  import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnWidths, resolveColumnOrder, resolveTableSort, emitFilter, emitTableSort, emitColumnOrder, emitViewLevel } from "../resolvePrefs";
+  import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnWidths, resolveColumnOrder, resolveTableSort, emitFilter, emitTableSort, emitColumnOrder, switchViewLevel } from "../resolvePrefs";
+  import { planViewTransition } from "../viewTransition";
   import { hierarchyTokens, clearHierarchyFilters, contradictionTokens } from "../query";
   import { graphqlErrorCode, graphqlErrorMessage } from "../graphqlError";
   import { Button } from "$lib/components/ui/button/index.js";
@@ -252,6 +253,10 @@
   // buildTableData uses hasClientFilters/matchesFilter from filter.ts directly.
   let tableData = $derived(buildTableData(orderedNibs, resolvedFilter, resolvedViewLevel, treeView.collapsedIds, activeSort));
   let rows = $derived(tableData.rows);
+  // Which ids the CURRENT lens has a row for — collapse- and filter-independent
+  // (see TableData.viewMemberIds). The view-transition applier reconciles against
+  // this; nothing else reads it.
+  let viewMemberIds = $derived(tableData.viewMemberIds);
   let parentIds = $derived(tableData.parentIds);
   let visibleRowIds = $derived(rows.map(r => r.nib.id));
 
@@ -263,6 +268,61 @@
     }
     return true;
   }
+
+  // --- Apply a view transition ---
+  // A grouping lens is lossless in WORK ITEMS but not in ROWS: it hides a
+  // container ranked above its tier while descending into it, so a milestone
+  // selected in the Tree view has no row under the Epics lens. Left alone it
+  // stays selected, focused and a legal bulk-action target while off screen.
+  //
+  // Declared ahead of the two effects that consume its writes — ensure-visible
+  // (which claims the scroll container for the anchor) and the scroll-restore
+  // re-attempt — so they see reconciled state on their first pass instead of
+  // acting on the outgoing view's and being re-run. Correctness does NOT rest on
+  // that: Svelte re-runs dependents until effects settle, and moving this block
+  // after both leaves every assertion in the suite passing. It is declared here
+  // to keep the intermediate writes down, not to make the outcome right.
+  $effect(() => {
+    const transition = treeView.pendingTransition;
+    if (!transition) return;
+    // Nothing to reconcile against while the result is in flight AND the dataset
+    // is empty — a cold load, or a filter change that re-keys the query — since
+    // viewMemberIds is then empty and every id would look departed. The switch is
+    // still owed a reconcile, so the slot is left UNCONSUMED: reading
+    // dataSource.fetching re-subscribes this effect, which runs again with real
+    // membership once the result settles. Deferring the scroll reset along with
+    // it is safe: with no rows, restore() bails at hasContent() and takes no
+    // ownership, so no offset is clamped in the meantime.
+    //
+    // The emptiness half is load-bearing, not belt-and-braces. queryStore merges
+    // emissions, so a REFETCH keeps the previous data and only a re-key starts at
+    // undefined — and the table refetches on every nibChanged event, so any
+    // create, update or delete leaves this true while the incoming lens is
+    // already rendered. Guarding on fetching alone would hold the transition
+    // exactly when there is real membership to reconcile against, which is the
+    // stale-row state this seam exists to close.
+    if (dataSource.fetching && allNibs.length === 0) return;
+    const memberIds = viewMemberIds;
+    // The plan reads selection state that every sink below then writes. Read it
+    // inside untrack so this effect's dependencies stay exactly "a switch was
+    // recorded" plus the membership to reconcile against: subscribing to what it
+    // writes would re-run it on every selection change, and only the
+    // consumed-slot guard above — not the dependency set — would then stand
+    // between that and the loop the pruner warns about.
+    untrack(() => {
+      const plan = planViewTransition(transition, {
+        focusedNibId: selection.focusedNibId,
+        selectedNibId: selection.selectedNibId,
+        memberIds,
+      });
+      // Consume the slot first: every path out of here is done with it, and a
+      // re-run triggered by these writes then returns at the guard above.
+      treeView.clearTransition();
+      if (plan.retainIds) selection.retainOnly(plan.retainIds);
+      if (plan.resetScroll) treeView.resetScroll();
+      if (plan.anchorId) selection.ensureVisible(plan.anchorId);
+    });
+  });
 
   // --- Prune multi-select of filtered-out nibs ---
   // When a client-side filter narrows the dataset, any previously multi-selected
@@ -332,16 +392,19 @@
         next.delete(current.parentId);
         current = nibMap.get(current.parentId);
       }
-      // The target may sit inside a synthetic "No X" bucket, which is never any
-      // real nib's parentId — so the chain walk above cannot un-collapse it.
-      // Un-collapse the enclosing bucket for the current lens too.
-      const bucketId = bucketIdForItem(nibMap, nibId, resolvedViewLevel);
-      if (bucketId) next.delete(bucketId);
+      // The target may sit inside a container that holds it by ARRANGEMENT
+      // rather than by parentage — a fabricated "No X" section, or a header that
+      // is not the target's ancestor — which no real nib names as its parentId,
+      // so the chain walk above cannot reach it. Un-collapse the section the
+      // current lens puts this nib in too.
+      const containerId = containingSectionRowId(nibMap, nibId, resolvedViewLevel);
+      if (containerId) next.delete(containerId);
       // If expansion changes nothing yet the nib is still not visible, it is in
-      // the dataset but excluded from the visible rows by an active client
-      // filter, regardless of collapse state. (Grouping lenses are lossless —
-      // buildViewTree never drops a work item — so the lens alone cannot hide it.)
-      // Ancestor-expansion can never reveal it, so clear and bail — otherwise
+      // the dataset but has no row, regardless of collapse state — either an
+      // active client filter excludes it, or the current lens has no row for it
+      // (a grouping lens is lossless in WORK ITEMS but not in ROWS: it hides a
+      // container ranked above its tier while descending into it).
+      // Ancestor-expansion can reveal neither, so clear and bail — otherwise
       // reassigning `collapsedIds` to a new Set every pass would loop forever
       // (effect_update_depth_exceeded).
       if (sameSet(next, treeView.collapsedIds)) {
@@ -420,7 +483,8 @@
     const next = new Set(treeView.collapsedIds);
     // Collapse the row itself plus every descendant that actually has children,
     // so re-expanding the row reveals exactly one level at a time. parentIds
-    // already folds in synthetic buckets (tableData Stage 5a).
+    // already folds in the containers that hold their rows by display rather
+    // than by parentage (tableData Stage 5a).
     next.add(rootId);
     for (const id of descendantIds) {
       if (parentIds.has(id)) next.add(id);
@@ -473,16 +537,22 @@
     getSavedScrollTop: () => treeView.scrollTop,
     setSavedScrollTop: (n) => { treeView.scrollTop = n; },
     hasContent: () => rows.length > 0,
+    getEpoch: () => treeView.scrollEpoch,
   });
 
-  // Re-attempt the restore whenever the container binds or the rows change: after
-  // a {#key} remount the fresh container starts at scrollTop=0, and restore() only
-  // applies the saved offset once content is present (then it's a no-op). Touch
-  // both deps so the effect re-runs across the remount + first render.
+  // Re-attempt the restore whenever the container binds, the rows change, or a
+  // view transition retired the scroll: after a {#key} remount the fresh container
+  // starts at scrollTop=0, and restore() only applies the saved offset once
+  // content is present (then it's a no-op). The epoch is named as a dep of its
+  // own even though `rows` happens to cover a view switch today — `rows` is a
+  // fresh array on every recompute, so reading `.length` subscribes to identity
+  // rather than to the count — because what has to re-apply here is the RESET,
+  // and tying that to an incidental property of a neighbouring derived is how it
+  // would quietly stop happening.
   $effect(() => {
-    void scrollContainerEl; void rows.length;
-    // untrack the restore call so the effect keeps only its two intended deps
-    // (container binding + row count) and takes no incidental dependency on
+    void scrollContainerEl; void rows.length; void treeView.scrollEpoch;
+    // untrack the restore call so the effect keeps only its three intended deps
+    // (container binding + row count + epoch) and takes no incidental dependency on
     // treeView.scrollTop read inside restore(), mirroring the file's convention
     // for self-feeding side-effects.
     untrack(() => scrollRestore.restore());
@@ -520,7 +590,7 @@
         break;
       }
       case "flat":
-        emitViewLevel(prefs, onviewlevelchange, "none");
+        switchViewLevel(prefs, onviewlevelchange, treeView, resolvedViewLevel, DEFAULT_VIEW_LEVEL);
         break;
     }
   }
@@ -559,14 +629,15 @@
     return { action, el: actionEl };
   }
 
-  // Row-open guard for synthetic grouping buckets. A "No X" bucket row
-  // (isBucketId) is not a real nib, so routing its synthetic id through
-  // view.open resolves an empty detail query and fires the missing-nib
-  // ("no longer exists") heal path. Instead, opening a bucket
-  // toggles/collapses its group — the same effect as its caret — mirroring the
-  // drag handlers, which skip buckets via the same isBucketId test.
+  // Row-open guard for rows that name no nib. A "No X" bucket row is fabricated
+  // by the view layer, so routing its synthetic id through view.open resolves an
+  // empty detail query and fires the missing-nib ("no longer exists") heal path.
+  // Opening one toggles/collapses its group instead — the same effect as its
+  // caret — mirroring the drag handlers, which skip such rows via the same
+  // isSyntheticRowId test. The question is identity, not whether the row heads a
+  // section: a real nib heading one opens its own detail like any other row.
   function openOrToggleBucket(id: string) {
-    if (isBucketId(id)) {
+    if (isSyntheticRowId(id)) {
       toggleNode(id);
       return;
     }
@@ -602,7 +673,7 @@
     // select/toggleSelect reject a bucket id outright — so an interleaved or
     // keyboard-focused bucket never reaches selectedIds even where this
     // click-level guard does not see it.
-    if (isBucketId(nibId)) {
+    if (isSyntheticRowId(nibId)) {
       toggleNode(nibId);
       return;
     }
@@ -687,7 +758,7 @@
     // by a gate still goes through, so attempting a drag on it can explain why
     // nothing moves — useTreeDrag only reports once the gesture passes the drag
     // threshold, so a plain click stays silent.
-    if (isBucketId(nibId)) return;
+    if (isSyntheticRowId(nibId)) return;
 
     treeDrag.onRowPointerDown(nibId, e);
   }
@@ -804,7 +875,7 @@
           parentNib={row.parentNib}
           visibleColumns={resolvedVisibleColumns}
           columnOrder={resolvedColumnOrder}
-          draggable={!isBucketId(row.nib.id) && dragAllowed}
+          draggable={!isSyntheticRowId(row.nib.id) && dragAllowed}
           highlighted={dataSource.changed.isHighlighted(row.nib.id)}
           fading={dataSource.changed.isFading(row.nib.id)}
           {blockedEmphasis}

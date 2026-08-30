@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildTableData } from "./tableData";
-import { isBucketId } from "./tree";
+import { isSyntheticRowId } from "./tree";
 import { applySort } from "./tableSort";
 import { typeRank } from "./typeHierarchy";
 import { OPEN_STATUSES } from "./constants";
@@ -20,6 +20,8 @@ function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
     createdAt: "2026-03-15T10:00:00Z",
     updatedAt: "2026-03-20T10:00:00Z",
     parentId: null,
+    milestone: "",
+    milestoneOrder: "",
     blockingIds: [],
     blockedByIds: [],
     etag: "etag-test",
@@ -213,9 +215,9 @@ describe("buildTableData", () => {
 
       // The synthetic "No epic" bucket header is a structural container, never a
       // real nib in matchingIds, so it must never be dimmed. (RED before the
-      // flatten isBucketId guard: bucket ids are absent from matchingIds, so the
+      // flatten isSyntheticRowId guard: bucket ids are absent from matchingIds, so the
       // old `!matchingIds.has(id)` marked this row dimmed:true.)
-      const bucket = result.rows.find(r => isBucketId(r.nib.id));
+      const bucket = result.rows.find(r => isSyntheticRowId(r.nib.id));
       expect(bucket).toBeDefined();
       expect(bucket!.dimmed).toBe(false);
     });
@@ -308,6 +310,69 @@ describe("buildTableData", () => {
     });
   });
 
+  describe("viewMemberIds (what the lens has a row for)", () => {
+    // A milestone over an epic over a task. Under the Epics lens the milestone is
+    // descended into but never emitted, so it has no row to be selected on — the
+    // membership set is what lets a view switch notice that.
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "m1", type: "milestone", title: "Milestone" }),
+      makeTreeTableNib({ id: "e1", type: "epic", title: "Epic", parentId: "m1" }),
+      makeTreeTableNib({ id: "t1", type: "task", title: "Task", parentId: "e1" }),
+    ];
+
+    it("is empty for empty input", () => {
+      expect(buildTableData([], emptyFilter, "epics", noCollapsed).viewMemberIds).toEqual(new Set());
+    });
+
+    it("holds every nib in the Tree view", () => {
+      const result = buildTableData(nibs, emptyFilter, "none", noCollapsed);
+
+      expect(result.viewMemberIds).toEqual(new Set(["m1", "e1", "t1"]));
+    });
+
+    it("omits a container the lens hides while descending into it", () => {
+      const result = buildTableData(nibs, emptyFilter, "epics", noCollapsed);
+
+      expect(result.viewMemberIds.has("m1")).toBe(false);
+      expect(result.viewMemberIds).toEqual(new Set(["e1", "t1"]));
+    });
+
+    it("holds the lens's own synthetic bucket, which is a row like any other", () => {
+      const loose = [makeTreeTableNib({ id: "t9", type: "task", title: "Loose" })];
+      const result = buildTableData(loose, emptyFilter, "epics", noCollapsed);
+
+      expect(result.viewMemberIds).toEqual(new Set(["t9", "/__no_epic__"]));
+    });
+
+    it("is collapse-INDEPENDENT: a collapsed parent's children are still members", () => {
+      // Read off buildViewTree's output rather than the flattened rows, so a
+      // collapsed subtree never looks like a departed one — collapsing a branch
+      // must not deselect what is inside it.
+      const collapsed = buildTableData(nibs, emptyFilter, "epics", new Set(["e1"]));
+
+      expect(collapsed.rows.map(r => r.nib.id)).toEqual(["e1"]);
+      expect(collapsed.viewMemberIds).toEqual(new Set(["e1", "t1"]));
+    });
+
+    it("answers tree membership only — a client filter narrows rows, not members", () => {
+      // The continuous filter pruner already owns the filter dimension; folding it
+      // in here would make one set answer two different questions.
+      const filtered = buildTableData(nibs, { type: ["epic"] }, "none", noCollapsed);
+
+      expect(filtered.rows.some(r => r.dimmed)).toBe(true);
+      expect(filtered.viewMemberIds).toEqual(new Set(["m1", "e1", "t1"]));
+    });
+
+    it("names exactly the ids the lens emits as rows, in every view", () => {
+      // The set and the rows must agree, or a reconcile prunes away a row the user
+      // can see (or spares one they cannot).
+      for (const level of VIEW_LEVELS) {
+        const result = buildTableData(nibs, emptyFilter, level, noCollapsed);
+        expect(new Set(result.rows.map(r => r.nib.id)), level).toEqual(result.viewMemberIds);
+      }
+    });
+  });
+
   describe("completeness invariant (messy hierarchy)", () => {
     // Every type at root and mis-nested (tier-skipping / orphaned), plus a dangling
     // parentId. No hierarchy inversions, so rank comparisons are well-defined.
@@ -344,7 +409,7 @@ describe("buildTableData", () => {
         // Expand everything (no collapse) so all rows are emitted
         const result = buildTableData(messyFixture, emptyFilter, lens, noCollapsed);
 
-        const rowIds = result.rows.map(r => r.nib.id).filter(id => !isBucketId(id));
+        const rowIds = result.rows.map(r => r.nib.id).filter(id => !isSyntheticRowId(id));
         const counts = new Map<string, number>();
         for (const id of rowIds) counts.set(id, (counts.get(id) ?? 0) + 1);
 
@@ -369,10 +434,10 @@ describe("buildTableData", () => {
       makeTreeTableNib({ id: "nibs-003", type: "task", title: "Task under loose feature", parentId: "nibs-001" }),
     ];
 
-    it("bucket row passes isBucketId, includes a count in its title, and is collapsible", () => {
+    it("bucket row passes isSyntheticRowId, includes a count in its title, and is collapsible", () => {
       const expanded = buildTableData(looseNibs, emptyFilter, "epics", noCollapsed);
 
-      const bucketRow = expanded.rows.find(r => isBucketId(r.nib.id))!;
+      const bucketRow = expanded.rows.find(r => isSyntheticRowId(r.nib.id))!;
       expect(bucketRow).toBeDefined();
       expect(bucketRow.nib.id).toBe("/__no_epic__");
       expect(bucketRow.nib.title).toBe("No epic (2)");
@@ -410,7 +475,7 @@ describe("buildTableData", () => {
       expect(ids).toContain("T1");
       expect(ids).toContain("T2");
       // The synthetic bucket must be rendered as the container for T2.
-      expect(ids.some(id => isBucketId(id))).toBe(true);
+      expect(ids.some(id => isSyntheticRowId(id))).toBe(true);
     });
 
     it("renders loose matches when the filter matches ONLY bucket items (table not empty)", () => {
@@ -425,7 +490,7 @@ describe("buildTableData", () => {
       );
       const looseIds = looseOnly.rows.map(r => r.nib.id);
       expect(looseIds).toContain("T2");
-      expect(looseIds.some(id => isBucketId(id))).toBe(true);
+      expect(looseIds.some(id => isSyntheticRowId(id))).toBe(true);
     });
 
     it("never dims the 'No X' bucket header under an active client filter", () => {
@@ -433,7 +498,7 @@ describe("buildTableData", () => {
       // T2 (matching) lands in the "No epic" bucket. The bucket is a structural
       // container, never a real nib in matchingIds, so it must not be dimmed.
       const result = buildTableData(nibs, { type: ["task"] }, "epics", noCollapsed);
-      const bucket = result.rows.find(r => isBucketId(r.nib.id));
+      const bucket = result.rows.find(r => isSyntheticRowId(r.nib.id));
       expect(bucket).toBeDefined();
       expect(bucket!.dimmed).toBe(false);
     });
@@ -495,7 +560,7 @@ describe("buildTableData", () => {
 
       expect(ids).toContain("T1");
       expect(ids).toContain("T2");
-      expect(ids.some(id => isBucketId(id))).toBe(true);
+      expect(ids.some(id => isSyntheticRowId(id))).toBe(true);
       // Epic ancestor of the matching T1 stays as a dimmed context row.
       const epic = result.rows.find(r => r.nib.id === "E1")!;
       expect(epic).toBeDefined();
@@ -562,17 +627,19 @@ describe("buildTableData", () => {
         const result = buildTableData(nibs, emptyFilter, "epics", noCollapsed);
 
         // The bucket itself re-roots to null (it is a top-level display node).
-        const bucket = result.rows.find(r => isBucketId(r.nib.id))!;
+        const bucket = result.rows.find(r => isSyntheticRowId(r.nib.id))!;
         expect(bucket).toBeDefined();
         expect(bucket.displayParentId).toBeNull();
 
-        // RowData.displayParentId invariant: NEVER a synthetic bucket id. A loose
-        // bucket item inherits the bucket's OWN display parent (null here) rather
-        // than the unusable bucket id, so consumers can use it directly as a
-        // backend parentId without an isBucketId guard.
+        // RowData.displayParentId invariant: never a display container, and a
+        // synthetic bucket is one. A loose bucket item inherits the bucket's OWN
+        // display parent (null here) rather than the unusable bucket id, so
+        // consumers can use it directly as a backend parentId with no guard of
+        // their own. The membership-section half of the same invariant — a real
+        // nib heading a section — is covered in tableData.membership.test.ts.
         const item = result.rows.find(r => r.nib.id === "T1")!;
         expect(item.displayParentId).toBeNull();
-        expect(isBucketId(item.displayParentId ?? "")).toBe(false);
+        expect(isSyntheticRowId(item.displayParentId ?? "")).toBe(false);
       });
 
       it("two loose siblings in one bucket resolve to the identical display parent (symmetric property)", () => {
@@ -658,7 +725,7 @@ describe("buildTableData — sibling-sort from a pre-sorted array", () => {
     expect(result.rows[0].nib.id).toBe("m1");
     expect(result.rows[1].nib.id).toBe("m2");
     // ...then the synthetic "No milestone" bucket...
-    expect(isBucketId(result.rows[2].nib.id)).toBe(true);
+    expect(isSyntheticRowId(result.rows[2].nib.id)).toBe(true);
     // ...whose loose items also reorder (T-Alpha before T-Zulu).
     expect(result.rows[3].nib.id).toBe("t1");
     expect(result.rows[4].nib.id).toBe("t2");
@@ -745,7 +812,7 @@ describe("buildTableData — global promoted-header ordering under an active sor
       const sorted = applySort(nibs, titleAsc);
       const result = buildTableData(sorted, emptyFilter, "epics", noCollapsed);
       const itemIds = result.rows
-        .filter((r) => !isBucketId(r.nib.id))
+        .filter((r) => !isSyntheticRowId(r.nib.id))
         .map((r) => r.nib.id);
       expect(itemIds).toEqual(["tZ", "tA"]);
     });
@@ -754,10 +821,10 @@ describe("buildTableData — global promoted-header ordering under an active sor
       const sorted = applySort(nibs, titleAsc);
       const result = buildTableData(sorted, emptyFilter, "epics", noCollapsed, titleAsc);
       // Rows: the "No epic" bucket header, then its two items in global order.
-      const bucket = result.rows.find((r) => isBucketId(r.nib.id))!;
+      const bucket = result.rows.find((r) => isSyntheticRowId(r.nib.id))!;
       expect(bucket).toBeDefined();
       const itemIds = result.rows
-        .filter((r) => !isBucketId(r.nib.id))
+        .filter((r) => !isSyntheticRowId(r.nib.id))
         .map((r) => r.nib.id);
       expect(itemIds).toEqual(["tA", "tZ"]);
     });
@@ -965,7 +1032,7 @@ describe("buildTableData — an id appears at most once in rows (nibs-pxk4)", ()
    * the bucket put the id in `rows` twice.
    *
    * A bucket id now carries a leading "/", which no filename-derived id can hold
-   * (see GROUPING_LENSES), so these two spaces cannot meet however the store is
+   * (see isSyntheticRowId), so these two spaces cannot meet however the store is
    * populated. The cases below are the executable half of that claim: the
    * formerly-colliding nib renders once, and the lens's own bucket is a separate
    * row beside it.
@@ -983,8 +1050,8 @@ describe("buildTableData — an id appears at most once in rows (nibs-pxk4)", ()
     it(`a real nib carrying ${realId} renders once beside the ${viewLevel} lens's own bucket`, () => {
       // Fails loudly if a bucket id is ever moved back into the filename-derived
       // id space, which is what made this shape a duplicate in the first place.
-      expect(isBucketId(realId), `${realId} must not be a bucket id`).toBe(false);
-      expect(isBucketId(bucketId), `${bucketId} is no longer a bucket id`).toBe(true);
+      expect(isSyntheticRowId(realId), `${realId} must not be a bucket id`).toBe(false);
+      expect(isSyntheticRowId(bucketId), `${bucketId} is no longer a bucket id`).toBe(true);
       const nibs: TreeTableNib[] = [
         makeTreeTableNib({ id: realId, title: "Imported nib", type: "task" }),
         makeTreeTableNib({ id: "t9", title: "T-Nine", type: "task" }),

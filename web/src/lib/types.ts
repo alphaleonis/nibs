@@ -86,8 +86,18 @@ type _GeneratedKeysExistOnClient = keyof GeneratedNibFilter extends keyof NibFil
 const _generatedKeysCheck: _GeneratedKeysExistOnClient = true;
 void _generatedKeysCheck;
 
+// The assignment axis lives HERE rather than on TreeTableNib because
+// `buildViewTree` is generic over `T extends TreeNib`, and a grouping lens
+// cannot read a field the bound does not promise.
 export interface TreeNib extends NibSummary {
   parentId: string | null;
+  /** Milestone assignment as stored — the scheduling axis, empty when
+   *  unassigned. Reported verbatim, so an assignment naming a missing or
+   *  non-milestone nib arrives here as written. */
+  milestone: string;
+  /** Fractional position within the assigned milestone's queue; empty when the
+   *  nib has never been placed in one. */
+  milestoneOrder: string;
 }
 
 export interface TreeTableNib extends TreeNib {
@@ -123,6 +133,26 @@ export interface RowSubtreeActions {
 
 export const VIEW_LEVELS = ["none", "flat", "milestones", "epics", "features"] as const;
 export type ViewLevel = (typeof VIEW_LEVELS)[number];
+
+/** The view a session starts in, and the one the drag-block remedy offers to
+ *  return to. Those two readings coincide only while the default is the
+ *  hierarchical view: the remedy means "leave Flat for the tree", so pointing
+ *  this at "flat" would make it offer the view the user is already in. Split it
+ *  into a separate TREE_VIEW_LEVEL before changing the default to anything else. */
+export const DEFAULT_VIEW_LEVEL: ViewLevel = "none";
+
+/** The user-facing name of each view. Lives here rather than in Toolbar.svelte so
+ *  non-component modules can name a view the way the user sees it — a toast that
+ *  offers to leave a view has to spell it the same way the menu that selects it
+ *  does. VIEW_LEVEL_ICON_INFO deliberately stays in the toolbar: it pulls lucide
+ *  components, which do not belong in a module this one's importers share. */
+export const VIEW_LEVEL_LABELS: Record<ViewLevel, string> = {
+  none: "Tree",
+  flat: "Flat",
+  milestones: "Milestones",
+  epics: "Epics",
+  features: "Features & Bugs",
+};
 
 // Client-side table sort. Absent/null means "off" (manual `order` sequence).
 // Applied in every view: a flat sorted list in Flat, sibling-sort (siblings,

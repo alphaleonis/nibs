@@ -4,11 +4,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/store"
+	"github.com/alphaleonis/nibs/internal/testskip"
 )
 
 // areaEditFixture is a config written the way a project's own file reads: the
@@ -249,9 +249,7 @@ func TestRenameStoredAreaRefusesAResultTheLoaderWouldReject(t *testing.T) {
 // TestStoredAreaEditsPreserveMode holds the edits to the same contract
 // SetStoredPrefix has: a config kept private stays private.
 func TestStoredAreaEditsPreserveMode(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("unix permission bits do not survive on windows")
-	}
+	testskip.NeedPosixFileModes(t, t.TempDir())
 	storeDir := writeAreaEditStore(t, areaEditFixture)
 	path := store.NewLayout(storeDir).ConfigPath()
 	if err := os.Chmod(path, 0600); err != nil {

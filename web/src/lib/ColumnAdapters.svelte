@@ -34,7 +34,7 @@
   import TypeIcon from "./components/TypeIcon.svelte";
   import { RELATION_CONFIG } from "./relations";
   import { formatRelative, formatAbsolute } from "./date";
-  import { isBucketId } from "./tree";
+  import { isSyntheticRowId } from "./tree";
   import { blockedVariantFor } from "./types";
 
   /** The two snippets that render one column: its header content and its cell. */
@@ -135,7 +135,7 @@
 {#snippet cellId(ctx: RowContext)}
   {@const nib = ctx.nib}
   {@const shortId = nib.id.substring(nib.id.lastIndexOf("-") + 1)}
-  <td data-testid="nib-id" class="text-body px-3 cell-truncate row-cell" style="color: var(--muted-foreground);">{isBucketId(nib.id) ? "" : shortId}</td>
+  <td data-testid="nib-id" class="text-body px-3 cell-truncate row-cell" style="color: var(--muted-foreground);">{isSyntheticRowId(nib.id) ? "" : shortId}</td>
 {/snippet}
 
 <!-- Parent column -->

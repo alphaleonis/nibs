@@ -152,6 +152,23 @@ var (
 	// Windows still skips, and the tally is what makes that visible. Setting the
 	// var there would fail a leg where the capability genuinely does not exist.
 	NamedPipes = Capability{Name: "named pipes", EnvVar: "NIBS_REQUIRE_NAMED_PIPES"}
+
+	// PosixFileModes covers a filesystem that STORES a file's permission bits
+	// and reads them back unchanged. Windows has none to store: Go synthesizes
+	// FileMode.Perm() from the single read-only attribute, so 0666 and 0444 are
+	// the only values reachable there and a file created 0640 stats as 0666.
+	//
+	// A fixture that needs one is unbuildable rather than unnecessary. What
+	// these guards pin is that a config kept PRIVATE stays private across a
+	// rewrite, and a filesystem carrying one bit of permission cannot express
+	// the difference between private and not — so there is no assertion to
+	// make, rather than one that fails.
+	//
+	// REQUIRED ON THE LINUX LEG. Widening a config's mode is silent at the point
+	// it happens and shows up only as someone else being able to read the file,
+	// so these guards are the whole of the coverage, and leaving the var unset
+	// everywhere would let them stop running without anything going red.
+	PosixFileModes = Capability{Name: "posix file modes", EnvVar: "NIBS_REQUIRE_POSIX_FILE_MODES"}
 )
 
 var (
@@ -185,6 +202,58 @@ func Unavailable(t TB, c Capability, format string, args ...any) {
 func SymlinkUnavailable(t TB, err error) {
 	t.Helper()
 	Unavailable(t, Symlinks, "os.Symlink: %v", err)
+}
+
+// NeedPosixFileModes skips t — or FAILS it when NIBS_REQUIRE_POSIX_FILE_MODES is
+// set — unless dir's filesystem keeps a file's permission bits. Pass a directory
+// on the same filesystem the fixture will be built on, which for a fixture under
+// t.TempDir() is t.TempDir().
+//
+// It decides for the caller rather than being told, unlike SymlinkUnavailable,
+// because the absence has no error to hand over: chmod SUCCEEDS on every
+// filesystem this skips for and the mode simply is not there afterwards, so the
+// only way to learn the answer is to read the mode back.
+//
+// It probes dir rather than reading runtime.GOOS because the capability belongs
+// to the filesystem and not to the operating system. A checkout on a WSL DrvFs
+// mount is GOOS=linux where `chmod 640` returns success and the file then stats
+// 0777 (measured on /mnt/c, whose default mount has `metadata` off); FAT and
+// exFAT volumes behave the same way anywhere. A GOOS test would call the
+// capability present there and hand the reader a mode mismatch to debug instead
+// of a counted skip.
+func NeedPosixFileModes(t TB, dir string) {
+	t.Helper()
+	probe, err := os.CreateTemp(dir, "posix-mode-probe-")
+	if err != nil {
+		t.Fatalf("probing %s for posix file modes: %v", dir, err)
+		return
+	}
+	path := probe.Name()
+	defer func() { _ = os.Remove(path) }()
+	if err := probe.Close(); err != nil {
+		t.Fatalf("probing %s for posix file modes: %v", dir, err)
+		return
+	}
+	// A mode whose group triad differs from its owner triad, so that a
+	// filesystem synthesizing one mode for every file cannot match by accident:
+	// the two Windows reaches are 0666 and 0444, and both are symmetric.
+	const want os.FileMode = 0o640
+	// chmod rather than creating the file with the mode: os.CreateTemp and
+	// os.WriteFile both go through umask, so a machine running at 077 would
+	// report the capability missing when it is only the umask narrowing the
+	// mode.
+	if err := os.Chmod(path, want); err != nil {
+		Unavailable(t, PosixFileModes, "chmod %v: %v", want, err)
+		return
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("probing %s for posix file modes: %v", dir, err)
+		return
+	}
+	if got := info.Mode().Perm(); got != want {
+		Unavailable(t, PosixFileModes, "a file in %s chmodded to %v stats as %v", dir, want, got)
+	}
 }
 
 // Report writes the tally of skips taken through this package, and writes

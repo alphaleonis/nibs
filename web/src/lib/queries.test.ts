@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { print } from "graphql";
-import { NIB_DETAIL_QUERY, NIB_CONFLICT_SNAPSHOT_QUERY } from "./queries";
+import { NIB_DETAIL_QUERY, NIB_CONFLICT_SNAPSHOT_QUERY, TREE_TABLE_QUERY } from "./queries";
 
 // The queries are now generated TypedDocumentNodes (graphql-codegen client
 // preset), which serialize the AST WITHOUT location info — so `.loc` is
@@ -22,6 +22,25 @@ describe("NIB_DETAIL_QUERY", () => {
     expect(source).toMatch(/\bmentionedBy\s*\{/);
     expect(source).toMatch(/\bmentionedBy\s*\{[^}]*\bid\b/);
     expect(source).toMatch(/\bmentionedBy\s*\{[^}]*\btitle\b/);
+  });
+});
+
+describe("TREE_TABLE_QUERY", () => {
+  // The assignment axis a membership lens groups by. A grouping lens reads it
+  // off the row it was handed, so an unselected field is a lens that silently
+  // sorts every nib into the same section — a wrong table rather than a broken
+  // one. Named here so the failure says which selection went missing.
+  it("selects the milestone assignment fields a membership lens groups by", () => {
+    const source = print(TREE_TABLE_QUERY);
+    // Assert against the `nibs(...)` SELECTION SET, not the whole document, so
+    // a field name appearing only in the argument list cannot satisfy it. Each
+    // pattern is line-anchored so `milestone` is not satisfied by the
+    // `milestoneOrder` line.
+    const selection = source.match(/nibs\s*\([^)]*\)\s*\{([\s\S]*)\}/)?.[1] ?? "";
+    expect(selection).not.toBe("");
+    for (const field of ["milestone", "milestoneOrder"]) {
+      expect(selection).toMatch(new RegExp(`^\\s*${field}\\s*$`, "m"));
+    }
   });
 });
 

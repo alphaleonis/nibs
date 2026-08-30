@@ -1,5 +1,8 @@
 import { COLUMNS } from "./columns";
 import { isDragAllowed } from "./filter";
+import { viewShapeFor } from "./tree";
+import type { ViewShape } from "./tree";
+import { DEFAULT_VIEW_LEVEL, VIEW_LEVEL_LABELS } from "./types";
 import type { NibFilter, ViewLevel, TableSort } from "./types";
 
 /**
@@ -21,6 +24,24 @@ export interface DragBlock {
   reason: DragBlockReason;
   message: string;
   actionLabel: string;
+}
+
+/**
+ * Whether rows in this shape sit in an order the `order` key can express — the
+ * only kind a drop can rewrite.
+ *
+ * Exhaustive switch, no default arm: a fourth view shape is a compile error here
+ * rather than silently inheriting whichever answer a `=== "flat"` string test
+ * fell through to.
+ */
+function reorderableShape(shape: ViewShape): boolean {
+  switch (shape.kind) {
+    case "flat":
+      return false;
+    case "tree":
+    case "grouped":
+      return true;
+  }
 }
 
 /**
@@ -46,11 +67,11 @@ export function dragBlockFor(
   viewLevel: ViewLevel,
   activeSort: TableSort | null,
 ): DragBlock | null {
-  if (viewLevel === "flat") {
+  if (!reorderableShape(viewShapeFor(viewLevel))) {
     return {
       reason: "flat",
-      message: "Reordering is off in the Flat view",
-      actionLabel: "Switch to Tree",
+      message: `Reordering is off in the ${VIEW_LEVEL_LABELS.flat} view`,
+      actionLabel: `Switch to ${VIEW_LEVEL_LABELS[DEFAULT_VIEW_LEVEL]}`,
     };
   }
   if (!isDragAllowed(filter)) {

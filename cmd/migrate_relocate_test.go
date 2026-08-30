@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -431,9 +430,7 @@ func TestMigrateConfigRelocationRefusesANonRegularDestination(t *testing.T) {
 // widen permissions. The write hardcoded 0644, so a 0600 legacy config arrived
 // world-readable.
 func TestMigrateConfigRelocationPreservesTheSourceMode(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows does not carry POSIX permission bits through os.Chmod the way this asserts")
-	}
+	testskip.NeedPosixFileModes(t, t.TempDir())
 	t.Cleanup(resetRootPersistentFlags)
 	t.Cleanup(resetMigrateFlags)
 	resetMigrateFlags()

@@ -965,16 +965,60 @@ describe("App", () => {
     expect(screen.getByText("Test milestone")).toBeInTheDocument();
   });
 
-  it("renders toolbar icon buttons including the group-by control", () => {
+  it("renders toolbar icon buttons including the view control", () => {
     render(App);
 
     expect(screen.getByRole("button", { name: "New item" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Group by/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^View/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Columns" })).toBeInTheDocument();
 
-    // Group-by control should show "Tree" (default lens — the full hierarchy)
-    expect(screen.getByRole("button", { name: /^Group by/ })).toHaveTextContent("Tree");
+    // View control should show "Tree" (default lens — the full hierarchy)
+    expect(screen.getByRole("button", { name: /^View/ })).toHaveTextContent("Tree");
+  });
+
+  // The reconcile a view switch owes the selection reaches the table only through
+  // Toolbar's `treeView` prop, and App holds its one production wire. Driving the
+  // real picker means the whole path — Toolbar -> switchViewLevel -> the pending
+  // slot -> TreeTable's applier — has to be connected for this to pass; the prop
+  // is optional, so a dropped wire type-checks and reconciles nothing.
+  it("drops a selection the incoming lens has no row for when the view is switched", async () => {
+    const user = userEvent.setup();
+    // The switch persists the level, so restore whatever this file's other tests
+    // expect to find (a fresh, unwritten store).
+    const savedPrefs = localStorage.getItem("nibs-filter-preferences");
+    try {
+      const { container } = render(App);
+      const milestoneRow = () => container.querySelector("tr[data-nib-id='nibs-m1']");
+
+      await user.click(within(milestoneRow() as HTMLElement).getByTestId("title-text"));
+      await waitFor(() => {
+        expect(milestoneRow()).toHaveAttribute("aria-selected", "true");
+      });
+
+      // Epics ranks a milestone above its tier: buildViewTree descends into it
+      // without emitting a row, so the selection has nothing left to be on.
+      await user.click(screen.getByRole("button", { name: /^View/ }));
+      await user.click(await screen.findByRole("menuitemradio", { name: "Epics" }));
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: /^View/ })).toHaveTextContent("Epics");
+      });
+      expect(milestoneRow()).toBeNull();
+
+      // Back in Tree the row exists again — and must no longer be selected.
+      await user.click(screen.getByRole("button", { name: /^View/ }));
+      await user.click(await screen.findByRole("menuitemradio", { name: "Tree" }));
+      await waitFor(() => {
+        expect(milestoneRow()).not.toBeNull();
+      });
+      expect(milestoneRow()).toHaveAttribute("aria-selected", "false");
+    } finally {
+      if (savedPrefs === null) {
+        localStorage.removeItem("nibs-filter-preferences");
+      } else {
+        localStorage.setItem("nibs-filter-preferences", savedPrefs);
+      }
+    }
   });
 
   it("TreeTable DOM element persists when panel opens", async () => {
