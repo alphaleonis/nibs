@@ -1,4 +1,5 @@
 import type { TreeTableNib, NibFilter, ViewLevel, TreeNode, TableSort } from "./types";
+import type { Region } from "./ordering/region";
 import { buildShapedViewTree, holdsChildrenByDisplay, isSyntheticRowId, viewShapeFor } from "./tree";
 import type { ViewShape } from "./tree";
 import { makeNibComparator } from "./tableSort";
@@ -65,6 +66,33 @@ export interface RowData {
    * parent rather than the value threaded down.
    */
   displayParentId: string | null;
+  /**
+   * The ordering group this row's DISPLAY POSITION is governed by — the list a
+   * `reorderNib` moves it within to match what the user sees — or null when no
+   * reorder can address it. `rowRegion` is the rule.
+   *
+   * Single-valued, where server membership is not: a nib has an `order` key
+   * among its resolved parent's children and may ALSO have a `milestoneOrder`
+   * key in a queue. This picks the one the view put it in, so same region
+   * implies co-orderable but different regions does not imply the converse.
+   *
+   * NOT a replacement for `displayParentId` above, which answers who RENDERS
+   * this row as a child. A row inside a container that DECLARES a region takes
+   * that declaration, which need not be parent-axis at all. Only absent one does
+   * `region` follow `nib.parentId` — server-resolved against the whole store,
+   * where `displayParentId` comes from the view tree built out of this response,
+   * so in that fallback case the two diverge wherever those disagree: a lens
+   * hiding a container, a parent the filter left out, or a cycle member
+   * `promotedCycleRoots` severed.
+   */
+  region: Region | null;
+  /**
+   * The ordering group this row's children are members of, or null when it
+   * declares none — in which case each child falls back to its own resolved
+   * parent group. Read off the view tree, so only a container a lens declared one
+   * for carries anything here.
+   */
+  childRegion: Region | null;
 }
 
 export interface TableData {
@@ -85,6 +113,26 @@ export interface TableData {
    * already owns that dimension.
    */
   viewMemberIds: Set<string>;
+}
+
+/**
+ * The whole `RowData.region` rule, in one place so `flatten` and the row
+ * fixtures in tests cannot drift into describing different production.
+ *
+ * A row in the synthetic id space is a container the view fabricated: it names
+ * no nib, so no reorder can address it and it is a member of nothing. Every
+ * other row takes the group its enclosing container declared for its children,
+ * else the group of its own resolved parent — which is what `parentId` already
+ * carries, having arrived from the same function the server groups the PARENT
+ * scope by.
+ */
+export function rowRegion(
+  id: string,
+  parentId: string | null,
+  declaredByContainer: Region | null = null,
+): Region | null {
+  if (isSyntheticRowId(id)) return null;
+  return declaredByContainer ?? { axis: "parent", parentId };
 }
 
 /**
@@ -223,7 +271,11 @@ export function buildTableData(
   // Stage 6: Flatten tree with collapse gating, visibility filtering, dimming, parent resolution
   const rows: RowData[] = [];
 
-  function flatten(nodes: TreeNode<TreeTableNib>[], displayParentId: string | null): void {
+  function flatten(
+    nodes: TreeNode<TreeTableNib>[],
+    displayParentId: string | null,
+    enclosingChildRegion: Region | null,
+  ): void {
     for (const node of nodes) {
       // If we have visibility filtering, skip non-visible nodes
       if (visibleIds && !visibleIds.has(node.nib.id)) continue;
@@ -238,6 +290,9 @@ export function buildTableData(
         : node.children;
       const parentNib = node.nib.parentId ? nibMap.get(node.nib.parentId) ?? null : null;
 
+      const childRegion = node.childRegion ?? null;
+      const region = rowRegion(node.nib.id, node.nib.parentId, enclosingChildRegion);
+
       rows.push({
         nib: node.nib,
         depth: node.depth,
@@ -249,6 +304,8 @@ export function buildTableData(
         // node's DISPLAY position after buildViewTree's grouping reparenting,
         // not its raw nib.parentId.
         displayParentId,
+        region,
+        childRegion,
       });
 
       if (!collapsedIds.has(node.nib.id)) {
@@ -259,12 +316,22 @@ export function buildTableData(
         // and a milestone heading a section accepts no children of any type.
         // (If display containers ever nest, this must resolve the node's own
         // display parent rather than the value threaded down.)
-        flatten(node.children, holdsChildrenByDisplay(node) ? displayParentId : node.nib.id);
+        // The region declaration passed down is this node's OWN, not the one it
+        // received: a declaration covers a container's rows, not everything
+        // beneath them. Under a queued epic, a subtask carrying no assignment of
+        // its own is in no queue at all (ResolvedMilestoneID reads the nib's own
+        // `milestone:` and returns "" when it is empty, and an empty group id is
+        // memberless in the MILESTONE scope) — it orders under the epic. It
+        // normally carries none: the server refuses to assign a nib whose
+        // ancestor is already assigned. A hand-authored file can still hold that
+        // pair, and the rule is deliberately the same for it — the row is drawn
+        // under its parent, so that is the list its position governs.
+        flatten(node.children, holdsChildrenByDisplay(node) ? displayParentId : node.nib.id, childRegion);
       }
     }
   }
 
-  flatten(tree, null);
+  flatten(tree, null, null);
 
   return { rows, allTags, parentIds, viewMemberIds };
 }

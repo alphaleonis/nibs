@@ -1,5 +1,6 @@
 import { VIEW_LEVELS } from "./types";
 import type { TreeNib, TreeNode, TreeTableNib, ViewLevel } from "./types";
+import type { Region } from "./ordering/region";
 import { typeRank } from "./typeHierarchy";
 
 export function buildTree<T extends TreeNib>(nibs: T[]): TreeNode<T>[] {
@@ -157,6 +158,30 @@ export interface GroupingLens<T extends TreeNib = TreeNib> {
    */
   orderWithinSection?(section: SectionKey): ((a: T, b: T) => number) | null;
   /**
+   * The ordering group a section's rows are members of, or null to declare none
+   * — in which case each row falls back to its own resolved parent group.
+   *
+   * Required rather than optional, so a new lens has to answer: a lens grouping
+   * by an ASSIGNMENT puts rows in a queue keyed by that assignment, and a queue
+   * whose rows still claim their parent group would reorder against the wrong
+   * list. Every type lens declares null, because grouping by type moves no row
+   * out of its parent's sibling set.
+   *
+   * INVARIANT the lens owns: every row it puts in section S must satisfy the
+   * server's group resolution for `childRegion(S)`. The milestone arm must
+   * therefore carry the RESOLVED assignment, not the raw `milestone:` field,
+   * which arrives verbatim and can name a deleted nib or a non-milestone. The
+   * lens is the only place that can hold this up, and it can: `place` runs first
+   * and already receives `byId`, so a section key can be minted only for an
+   * assignment that resolves.
+   *
+   * A declaration overrides the fallback for EVERY member, so a parent-axis one
+   * on a catch-all section is wrong: `{axis:"parent", parentId:null}` claims the
+   * root group even for members whose resolved parent is not null. Declare null
+   * there and let each row fall back.
+   */
+  childRegion(section: SectionKey): Region | null;
+  /**
    * Whether a section's rows follow PARENTAGE or PLACEMENT.
    *
    * True (the type lenses): the emitted forest is the structural one, and a nib
@@ -202,6 +227,9 @@ function typeLens(grouping: string[], leftoverKey: SectionKey, leftoverLabel: st
     // items in its leftover section — whose order is the walk's, or the active
     // column sort's. There is no third order to declare.
     nestHeadersStructurally: true,
+    // Grouping by type rearranges which rows are DRAWN together; it moves no row
+    // into another ordering group, so every row keeps its own parent one.
+    childRegion: () => null,
 
     place(nib, byId) {
       // The section is decided by the OUTERMOST ancestor-or-self at or below the
@@ -290,7 +318,9 @@ export function viewShapeFor(viewLevel: ViewLevel): ViewShape {
  * enrolls a new lens only if someone remembers to — while the switch above
  * enrolls it or fails to compile. An unenrolled leftover key that misses the
  * `isSyntheticRowId` property makes its own section row classify as a REAL nib
- * on every render: selectable, a legal Delete/batch target, and a drop target.
+ * on every render: selectable, a legal Delete/batch target, a drop target, and
+ * a member of the root ordering group (`makeSectionNode` gives every fabricated
+ * container `parentId: null`, which is the fallback `rowRegion` then applies).
  *
  * Evaluated after the lens constants and after `viewShapeFor` (a hoisted
  * declaration), so the module-level initialization is well ordered.
@@ -668,11 +698,20 @@ function assembleSection<T extends TreeNib>(
     sortComparator ?? lens.orderWithinSection?.(section.key) ?? null;
   const members = order ? [...section.members].sort((x, y) => order(x.nib, y.nib)) : section.members;
 
+  // The declaration lands on the section's node, which is where `flatten` reads
+  // it from: it reaches that node's direct children and stops there. Under
+  // `nestHeadersStructurally` those children include the header's own structural
+  // subtree roots, so a lens that nests structurally AND declares a region would
+  // put them in it alongside the placed members. Nothing in the type system
+  // rules that pairing out; tree.test.ts asserts no shipped lens makes it.
+  const childRegion = lens.childRegion(section.key);
+
   if (section.header !== null) {
     // Under `nestHeadersStructurally` the header arrived with its own subtree
     // attached; anything placed into the section joins it.
-    return { ...section.header, children: [...section.header.children, ...members] };
+    return { ...section.header, children: [...section.header.children, ...members], childRegion };
   }
   const label = section.key === lens.leftover.key ? lens.leftover.label : section.key;
-  return makeSectionNode(sectionRowId(section.key, lens), `${label} (${members.length})`, members);
+  const node = makeSectionNode(sectionRowId(section.key, lens), `${label} (${members.length})`, members);
+  return { ...node, childRegion };
 }

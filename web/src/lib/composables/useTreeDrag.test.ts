@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { SelectionState } from "../selection.svelte";
 import { DragState } from "../drag.svelte";
 import type { RowData } from "../tableData";
-import { buildTableData } from "../tableData";
+import { buildTableData, rowRegion } from "../tableData";
 import type { TreeTableNib } from "../types";
 import { useTreeDrag } from "./useTreeDrag.svelte";
 
@@ -40,6 +40,11 @@ function makeRow(nib: TreeTableNib, opts: Partial<RowData> = {}): RowData {
     dimmed: false,
     parentNib: null,
     displayParentId: null,
+    // Production's own rule, called rather than restated — a fabricated bucket
+    // built through this helper must come out a member of nothing, as it does
+    // in a real table.
+    region: rowRegion(nib.id, nib.parentId),
+    childRegion: null,
     ...opts,
   };
 }

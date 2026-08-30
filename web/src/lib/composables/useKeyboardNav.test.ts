@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { SelectionState } from "../selection.svelte";
-import { buildTableData, type RowData } from "../tableData";
+import { buildTableData, rowRegion, type RowData } from "../tableData";
 import type { TreeTableNib, OpenDetailGesture } from "../types";
 import { DEFAULT_OPEN_DETAIL_ON } from "../types";
 import { useKeyboardNav } from "./useKeyboardNav.svelte";
@@ -34,6 +34,11 @@ function makeRow(nib: TreeTableNib, opts: Partial<RowData> = {}): RowData {
     dimmed: false,
     parentNib: null,
     displayParentId: null,
+    // Production's own rule, called rather than restated — a fabricated bucket
+    // built through this helper must come out a member of nothing, as it does
+    // in a real table.
+    region: rowRegion(nib.id, nib.parentId),
+    childRegion: null,
     ...opts,
   };
 }
