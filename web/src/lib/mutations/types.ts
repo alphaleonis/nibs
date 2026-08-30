@@ -1,3 +1,5 @@
+import type { OrderScope } from "../gql/graphql";
+
 // --- Leaf command types ---
 
 export type CreateNibInput = {
@@ -44,7 +46,7 @@ export type UpdateNibCommand = { kind: "update-nib"; id: string; input: UpdateNi
 export type DeleteNibCommand = { kind: "delete-nib"; id: string };
 export type ArchiveNibCommand = { kind: "archive-nib"; id: string };
 export type SetParentCommand = { kind: "set-parent"; id: string; parentId: string | null };
-export type ReorderNibCommand = { kind: "reorder-nib"; id: string; afterId?: string; beforeId?: string; first?: boolean; parentId?: string };
+export type ReorderNibCommand = { kind: "reorder-nib"; id: string; afterId?: string; beforeId?: string; first?: boolean; parentId?: string; scope?: OrderScope };
 
 export type LeafCommand =
   | CreateNibCommand

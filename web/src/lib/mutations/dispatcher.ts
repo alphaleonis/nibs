@@ -70,6 +70,7 @@ function getVariables(cmd: LeafCommand): Record<string, unknown> {
       if (cmd.beforeId !== undefined) vars.beforeId = cmd.beforeId;
       if (cmd.first !== undefined) vars.first = cmd.first;
       if (cmd.parentId !== undefined) vars.parentId = cmd.parentId;
+      if (cmd.scope !== undefined) vars.scope = cmd.scope;
       return vars;
     }
   }
