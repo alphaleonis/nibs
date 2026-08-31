@@ -44,6 +44,13 @@ export function useTreeDrag(opts: {
   // rebuilt, so an unchanged list costs one comparison per pointermove.
   let cachedRows: RowData[] | null = null;
   let rowsById: Map<string, RowData> = new Map();
+  // Titles for the ids a plan's prose names. Rebuilt beside `rowsById` and for
+  // the same reason: `planDrop` runs on every pointermove, and a scan of the
+  // rows per call is a cost this gesture does not pay. It also carries
+  // containers the lens gave NO row to, which reach here as some row's
+  // `parentNib` — where a promoted header's destination lives, and the route
+  // `destContainerType` already takes for that container's type.
+  let titlesById: Map<string, string> = new Map();
   // Both fixed at startDrag, because both describe what the gesture PICKED UP,
   // which no later render changes: the subtree it carries, and the rows
   // themselves. Resolving the dragged rows against the live list instead would
@@ -85,9 +92,13 @@ export function useTreeDrag(opts: {
     // Create fixed-position container
     const preview = document.createElement("div");
     preview.dataset.testid = "drag-preview";
+    // `--z-drag-ghost` is the layer both cursor-following ghosts share (the
+    // column-drag one in TableHeader is the other). Below `--z-modal`, which is
+    // where the drag badge sits — the badge names the destination this ghost is
+    // being dropped on, and a full-width row would otherwise cover it.
     preview.style.cssText =
       "position:fixed;pointer-events:none;opacity:0.6;border-radius:4px;overflow:hidden;" +
-      "box-shadow:0 4px 12px rgba(0,0,0,0.15);z-index:9999;";
+      "box-shadow:0 4px 12px rgba(0,0,0,0.15);z-index:var(--z-drag-ghost);";
 
     // Create table with matching layout so column widths are preserved
     const previewTable = document.createElement("table");
@@ -106,7 +117,12 @@ export function useTreeDrag(opts: {
     // Clone the row (before Svelte applies the .dragged class)
     const tbody = document.createElement("tbody");
     const clone = tr.cloneNode(true) as HTMLElement;
-    clone.classList.remove("dragged", "any-dragging");
+    // The band classes go too: they mark a seam between the row and the one
+    // ABOVE it in the table, and the ghost has no row above it. Left on, a
+    // grabbed boundary row trails a stray rule at its top edge — cyan on the
+    // queue axis, which is the badge's own color and would read as an axis
+    // signal the ghost is not carrying.
+    clone.classList.remove("dragged", "any-dragging", "region-band", "region-band-queue");
     clone.style.opacity = "";
     clone.style.backgroundColor = "var(--background)";
     tbody.appendChild(clone);
@@ -140,8 +156,18 @@ export function useTreeDrag(opts: {
     if (rows !== cachedRows) {
       cachedRows = rows;
       rowsById = new Map(rows.map(row => [row.nib.id, row]));
+      titlesById = new Map();
+      for (const row of rows) {
+        titlesById.set(row.nib.id, row.nib.title);
+        if (row.parentNib !== null) titlesById.set(row.parentNib.id, row.parentNib.title);
+      }
     }
     return rows;
+  }
+
+  /** Spells an id for `planDrop`'s prose; an id with no loaded nib keeps itself. */
+  function nameOf(id: string): string | undefined {
+    return titlesById.get(id);
   }
 
   function startDrag(nibId: string) {
@@ -219,11 +245,21 @@ export function useTreeDrag(opts: {
       target: targetRow,
       zone,
       descendantIds: dragDescendantIds,
+      nameOf,
     });
     dropPlan = plan;
     // A refusal forwards the raw zone: `.drop-invalid` is the only class an
-    // invalid target takes, so the zone is unread there.
-    drag.setDropTarget(targetRow.nib.id, plan.ok ? dropZoneOf(plan.indicator) : zone, plan.ok);
+    // invalid target takes, so the zone is unread there. It carries no accepted
+    // drop either, which is what empties the badge — the affordance for a target
+    // nothing can happen on. On release App.svelte's handleDrop raises the
+    // refusal's message, except for `drop-on-self`, which is the cancel gesture
+    // and stays silent.
+    drag.setDropTarget(
+      targetRow.nib.id,
+      plan.ok ? dropZoneOf(plan.indicator) : zone,
+      plan.ok,
+      plan.ok ? { label: plan.label, region: plan.region } : null,
+    );
     handleAutoScroll(e);
   }
 
@@ -249,6 +285,7 @@ export function useTreeDrag(opts: {
     drag.endDrag();
     cachedRows = null;
     rowsById = new Map();
+    titlesById = new Map();
     dragDescendantIds = new Set();
     draggedRowsById = new Map();
     dropPlan = null;

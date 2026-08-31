@@ -14,6 +14,13 @@ import type { OrderScope } from "../gql/graphql";
  * root group `""` to `null`, so `parentId: null` and group `""` are one group
  * under two spellings.
  *
+ * The milestone arm holds the same group id the server keys that scope by:
+ * `scopeTable[ScopeMilestone].group` is `resolvedMilestoneID` (orderer.go), the
+ * nib id a nib's `milestone:` field resolves to — not the field's raw text and
+ * not a title. No lens shipped today mints this arm, so every value of it in the
+ * tree is currently hand-built in a test; the lens that will mint them is
+ * nibs-iaqd's, and this sentence is what it has to satisfy.
+ *
  * Not to be confused with `reorderNib`'s own `parentId` argument, which is a
  * CONTAINER CHANGE under the opposite convention (`nil` = reparent nothing, `""`
  * = clear to the root) — a move that stays in one region omits it entirely.
@@ -111,19 +118,55 @@ export function commonRegion(regions: readonly (Region | null)[]): Region | null
 }
 
 /**
- * Names the LIST a region is, as a noun phrase a caller can put after a verb
- * ("Reorder in " + describeRegion(r)).
+ * Spells a nib id as something a reader recognizes, or returns undefined for an
+ * id it cannot place — where the id itself is the best answer available.
  *
- * By ID, and not title-capable at all: the phrase comes back finished, with the
- * id already in it. That is downstream of the module importing one generated
- * type and nothing else, so it has no nib to read a title off — an isolation
- * region.test.ts asserts, since nothing in `web/` enforces an import boundary.
+ * A function rather than a lookup table: the layer that can answer holds the
+ * rendered rows, and that list is replaced mid-gesture by a refetch or an
+ * expand.
  */
-export function describeRegion(region: Region): string {
+export type RegionNamer = (id: string) => string | undefined;
+
+/**
+ * The namer for a caller that can place no id — every phrase then spells its ids
+ * as ids, which is what a caller with nothing loaded should say.
+ *
+ * It exists so `nameOf` can be REQUIRED at every site instead of optional. An
+ * optional namer is threaded by habit: forgetting it at one of a dozen call
+ * sites reverts that one sentence to raw ids with no compile error, which is a
+ * defect the phrase itself has to be asserted to catch. Passing this constant is
+ * a decision the reader can see.
+ */
+export const BY_ID: RegionNamer = () => undefined;
+
+/**
+ * Names the LIST a region is, as a noun phrase a caller can put after a verb
+ * ("Reorder in " + describeRegion(r, nameOf)).
+ *
+ * The phrase comes back finished, so the single thing a caller can vary is how
+ * an id inside it is spelled: `nameOf` is asked, and the raw id stands in
+ * wherever it has no answer. That indirection is the whole title story here —
+ * this module imports one generated type and nothing else, so it has no nib to
+ * read a title off, an isolation region.test.ts asserts since nothing in `web/`
+ * enforces an import boundary.
+ */
+export function describeRegion(region: Region, nameOf: RegionNamer): string {
   switch (region.axis) {
     case "parent":
-      return region.parentId === null ? "the top level" : `the children of ${region.parentId}`;
+      return region.parentId === null ? "the top level" : `the children of ${spellId(region.parentId, nameOf)}`;
     case "milestone":
-      return `the ${region.milestoneId} queue`;
+      return `the ${spellId(region.milestoneId, nameOf)} queue`;
   }
+}
+
+/**
+ * One id, spelled the way `describeRegion` spells the ones inside its phrases —
+ * exported so a caller naming a nib BESIDE a region ("Move under X") reads the
+ * namer the same way rather than growing a second fallback rule.
+ *
+ * `||` rather than `??`: an empty title names nothing, and a phrase built around
+ * one reads as a missing word rather than as an untitled nib.
+ */
+export function spellId(id: string, nameOf: RegionNamer): string {
+  return nameOf(id) || id;
 }

@@ -731,6 +731,145 @@ describe("planDrop labels", () => {
   });
 });
 
+// The RFC's cursor badge wants "Reorder in the Q3 Launch queue", and a region
+// carries only ids — so the titles have to arrive from the caller. `nameOf`
+// resolves them against the fixture rows the way the drag path resolves them
+// against the rendered ones.
+describe("planDrop with a namer", () => {
+  const nameOf = (id: string) => ROWS_BY_ID.get(id)?.nib.title;
+
+  function namedPlan(draggedIds: string[], targetId: string, zone: DropZone): DropPlan {
+    const target = ROWS_BY_ID.get(targetId);
+    if (target === undefined) throw new Error(`no fixture row ${targetId}`);
+    return planDrop({
+      draggedIds,
+      rowsById: ROWS_BY_ID,
+      draggedRowsById: ROWS_BY_ID,
+      target,
+      zone,
+      descendantIds: collectDescendantIds(draggedIds, ROWS),
+      nameOf,
+    });
+  }
+
+  it.each([
+    // The queue phrase the RFC names, on the fixture's own milestone title.
+    { drag: ["E1"], target: "E2", zone: "before" as DropZone, label: "Reorder in the v1.0 queue" },
+    { drag: ["E1"], target: "M1", zone: "after" as DropZone, label: "Move to the front of the v1.0 queue" },
+    // The parent axis takes titles too: an id names the container no better
+    // there than it does in a queue.
+    { drag: ["B1"], target: "T1", zone: "before" as DropZone, label: "Move into the children of Epic one" },
+    { drag: ["B1"], target: "B3", zone: "after" as DropZone, label: "Move under Backlog epic" },
+    // Nothing to spell: the root group IS `parentId: null`.
+    { drag: ["B1"], target: "B2", zone: "before" as DropZone, label: "Reorder in the top level" },
+  ])("spells the destination as a title: $label", ({ drag, target, zone, label }) => {
+    const plan = namedPlan(drag, target, zone);
+    if (!plan.ok) throw new Error(plan.refusal.message);
+    expect(plan.label).toBe(label);
+  });
+
+  it("carries titles into the refusals and their remedies", () => {
+    const into = namedPlan(["B1"], "M1", "after");
+    if (into.ok) throw new Error("entering a queue from outside should be refused");
+    expect(into.refusal.message).toContain("the v1.0 queue");
+    expect(into.refusal.actionLabel).toBe("Assign to v1.0");
+    // The region still travels as DATA, in ids: a caller acting on the remedy
+    // needs the id, and the title is only how the sentence reads.
+    expect(into.refusal.region).toEqual(QUEUE_M1);
+
+    const mixed = namedPlan(["B1", "T1"], "B2", "before");
+    if (mixed.ok) throw new Error("a mixed selection should be refused");
+    expect(mixed.refusal.message).toContain("the children of Epic one");
+  });
+
+  it("keeps the id for a container the namer cannot place", () => {
+    // HS declares the children of E9, which has no row here. The same absence
+    // that stops the type check from being decidable stops the namer from
+    // answering, so the phrase falls back to the id — which is the one spelling
+    // that is always available.
+    const plan = namedPlan(["B1"], "HS", "reparent");
+    if (plan.ok) throw new Error("a destination this view does not carry should be refused");
+    expect(plan.refusal.reason).toBe("unknown-destination");
+    expect(plan.refusal.message).toContain("the children of E9");
+  });
+
+  // The WHOLE sentence for the four refusals no namer-covered assertion reached,
+  // plus `needs-assignment`, whose subject used to be spelled as a raw id in the
+  // same breath as a title ("B1 is not in the v1.0 queue"). `toContain` on one
+  // phrase cannot see that: it passes on the half that was threaded.
+  it.each([
+    {
+      reason: "invalid-parent-type",
+      drag: ["B3"],
+      target: "FT",
+      zone: "reparent" as DropZone,
+      message: "Cannot put epic in the children of Feature.",
+    },
+    {
+      reason: "needs-assignment",
+      drag: ["B1"],
+      target: "M1",
+      zone: "after" as DropZone,
+      message: "Backlog one is not in the v1.0 queue, and joining one is an assignment rather than a move.",
+    },
+    {
+      reason: "needs-unassignment",
+      drag: ["E1"],
+      target: "B1",
+      zone: "before" as DropZone,
+      message:
+        "Epic one is ordered in the v1.0 queue, so clear the milestone assignment before ordering in the top level.",
+    },
+    {
+      reason: "anchor-not-in-destination",
+      drag: ["DR1"],
+      target: "DR2",
+      zone: "before" as DropZone,
+      message: "Declared two is shown in the top level but is not a member of it, so nothing can be positioned against it.",
+    },
+    {
+      reason: "destination-inside-target",
+      drag: ["B1"],
+      target: "CY1",
+      zone: "before" as DropZone,
+      message: "the children of Cycle two is drawn inside Cycle one, so the drop would land below the row it points at.",
+    },
+  ])("spells the whole $reason sentence", ({ reason, drag, target, zone, message }) => {
+    const plan = namedPlan(drag, target, zone);
+    if (plan.ok) throw new Error(`${reason} should be refused`);
+    expect(plan.refusal.reason).toBe(reason);
+    expect(plan.refusal.message).toBe(message);
+  });
+
+  // The threading itself, rather than one phrase at a time. A required `nameOf`
+  // makes a DROPPED argument a compile error, but not a NEW phrase that
+  // interpolates an id directly — which is how `subjectIs` shipped spelling half
+  // its sentence in ids. This reads the finished sentence: an id this namer CAN
+  // place must not survive in one.
+  //
+  // Runs over the whole refusal table, so a case added there is swept without
+  // being enumerated here. Ids the namer cannot place (E9, F9, H9 — containers
+  // with no row) are legitimately spelled as ids and are absent from the set by
+  // construction, since the set IS the namer's domain.
+  it("leaves no placeable id raw in any refusal message", () => {
+    const placeable = [...ROWS_BY_ID.keys()].filter((id) => nameOf(id) !== undefined);
+    const refusals = CASES.filter((c) => !c.expected.ok);
+    // The sweep is only as good as its input: an empty or one-case filter would
+    // pass while saying nothing.
+    expect(refusals.length).toBeGreaterThan(8);
+
+    for (const { name, drag, target, zone } of refusals) {
+      const plan = namedPlan(drag, target, zone);
+      if (plan.ok) throw new Error(`${name}: expected a refusal`);
+      for (const id of placeable) {
+        expect(plan.refusal.message, `${name} — raw id ${id}`).not.toMatch(
+          new RegExp(`(^|[^\\w-])${id}([^\\w-]|$)`),
+        );
+      }
+    }
+  });
+});
+
 describe("entryRegionOf", () => {
   const row = (id: string) => {
     const found = ROWS_BY_ID.get(id);
@@ -778,7 +917,7 @@ describe("dropPlan.ts import isolation", () => {
       'import type { AnyCommand, CommandResult, SequenceStep } from "../mutations/types";',
       'import type { RowData } from "../tableData";',
       'import { canHaveChildren } from "../typeHierarchy";',
-      'import { commonRegion, describeRegion, sameRegion, scopeOf, type Region } from "./region";',
+      'import { BY_ID, commonRegion, describeRegion, sameRegion, scopeOf, spellId, type Region, type RegionNamer } from "./region";',
     ]);
     // A multi-line import still begins a line with `import`, so the equality
     // above is what catches it — its first line alone would not match. These

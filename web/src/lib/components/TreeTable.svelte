@@ -8,7 +8,7 @@
   import { isSyntheticRowId, containingSectionRowId, buildViewTree, collectDescendantIds } from "../tree";
   import { applySort, nextTableSort } from "../tableSort";
   import { prepareFilter, matchesFilter } from "../filter";
-  import { dragBlockFor, DRAG_BLOCK_TOAST_ID } from "../dragBlock";
+  import { adjacencyReflectsOrdering, dragBlockFor, DRAG_BLOCK_TOAST_ID } from "../dragBlock";
   import type { DragBlock } from "../dragBlock";
   import { toast } from "svelte-sonner";
   import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnWidths, resolveColumnOrder, resolveTableSort, emitFilter, emitTableSort, emitColumnOrder, switchViewLevel } from "../resolvePrefs";
@@ -19,6 +19,7 @@
   import TreeTableRow from "./TreeTableRow.svelte";
   import TableHeader from "./TableHeader.svelte";
   import type { DropPlan } from "../ordering/dropPlan";
+  import { regionBandAt, type BandAxis } from "../ordering/regionBand";
   import type { PanelPolicy } from "../selection.svelte";
   import { useSelection, useDrag, useActiveView, useTreeView, useConnection } from "../contexts";
   import { useColumnResize } from "../composables/useColumnResize.svelte";
@@ -260,6 +261,22 @@
   let viewMemberIds = $derived(tableData.viewMemberIds);
   let parentIds = $derived(tableData.parentIds);
   let visibleRowIds = $derived(rows.map(r => r.nib.id));
+
+  // Where one ordering region's run of rows ends and the next begins, per row.
+  //
+  // Gated on ADJACENCY, not on whether a reorder is permitted, because that is
+  // what the band claims: the list changes between these two rows. A flat view
+  // intermixes real parents, and a search or a client sort reorders rows away
+  // from the `order` key entirely — in all three, two neighbors say nothing
+  // about where a region's run starts or stops, so a rule drawn between them
+  // would be decoration at best and a lie at worst. Those three are also every
+  // gate `dragBlockFor` shuts today, so the two predicates agree; they are asked
+  // separately so a gate added for another reason cannot delete the bands.
+  let regionBands: (BandAxis | null)[] = $derived(
+    adjacencyReflectsOrdering(resolvedFilter, resolvedViewLevel, activeSort)
+      ? rows.map((row, i) => regionBandAt(row, i === 0 ? null : rows[i - 1]))
+      : [],
+  );
 
   // Structural equality for two string sets (size + membership).
   function sameSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
@@ -895,8 +912,9 @@
       onCollapseAll={collapseAll}
     />
     <tbody>
-      {#each rows as row (row.nib.id)}
+      {#each rows as row, i (row.nib.id)}
         <TreeTableRow
+          regionBand={regionBands[i] ?? null}
           nib={row.nib}
           depth={row.depth}
           hasChildren={row.hasChildren}

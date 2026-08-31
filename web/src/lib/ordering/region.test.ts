@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 // vite/client), following fouc-guard.test.ts — it keeps node built-ins out, so
 // svelte-check stays clean without @types/node.
 import regionSource from "./region.ts?raw";
-import { commonRegion, describeRegion, sameRegion, scopeOf } from "./region";
+import { BY_ID, commonRegion, describeRegion, sameRegion, scopeOf, spellId } from "./region";
 import type { Region } from "./region";
 
 const rootGroup: Region = { axis: "parent", parentId: null };
@@ -37,9 +37,10 @@ describe("sameRegion", () => {
   });
 
   it("fails across axes even when the two ids coincide", () => {
-    // A milestone can be a parent and a queue at once, and its two orderings are
-    // separate keys on the server. Comparing ids without the axis would call
-    // these one list.
+    // Valid data cannot produce this pair — a milestone takes no children
+    // (`VALID_CHILD_TYPES.milestone` is `[]`), so no `parentId` ever names one.
+    // A hand-authored store can, and `order` and `milestoneOrder` are separate
+    // keys either way, so comparing ids without the axis would call two lists one.
     expect(sameRegion({ axis: "parent", parentId: "M1" }, queueM1)).toBe(false);
   });
 
@@ -91,17 +92,58 @@ describe("commonRegion", () => {
 
 describe("describeRegion", () => {
   it("names each axis's list as a phrase that follows a verb", () => {
-    expect(`Reorder in ${describeRegion(rootGroup)}`).toBe("Reorder in the top level");
-    expect(`Reorder in ${describeRegion(underE1)}`).toBe("Reorder in the children of E1");
-    expect(`Reorder in ${describeRegion(queueM1)}`).toBe("Reorder in the M1 queue");
+    expect(`Reorder in ${describeRegion(rootGroup, BY_ID)}`).toBe("Reorder in the top level");
+    expect(`Reorder in ${describeRegion(underE1, BY_ID)}`).toBe("Reorder in the children of E1");
+    expect(`Reorder in ${describeRegion(queueM1, BY_ID)}`).toBe("Reorder in the M1 queue");
+  });
+
+  const titles: Record<string, string> = { E1: "Epic one", M1: "Q3 Launch" };
+  const nameOf = (id: string) => titles[id];
+
+  it("spells an id with the namer's title where it has one", () => {
+    expect(`Reorder in ${describeRegion(underE1, nameOf)}`).toBe("Reorder in the children of Epic one");
+    expect(`Reorder in ${describeRegion(queueM1, nameOf)}`).toBe("Reorder in the Q3 Launch queue");
+  });
+
+  it("keeps the id for an id the namer cannot place, on either axis", () => {
+    expect(describeRegion(underE2, nameOf)).toBe("the children of E2");
+    expect(describeRegion(queueM2, nameOf)).toBe("the M2 queue");
+  });
+
+  it("keeps the id for an EMPTY title rather than leaving a hole in the phrase", () => {
+    // A nib with no title is reachable — the field is a plain string on the wire
+    // — and "the  queue" reads as a missing word rather than as an unnamed nib.
+    expect(describeRegion(queueM1, () => "")).toBe("the M1 queue");
+  });
+
+  it("never asks the namer about the root group, which names no nib", () => {
+    // `parentId: null` IS the group; there is no id to spell, so a namer that
+    // throws on being called at all must still get a phrase back.
+    expect(
+      describeRegion(rootGroup, () => {
+        throw new Error("the root group has no id to name");
+      }),
+    ).toBe("the top level");
   });
 });
 
-// describeRegion's by-ID design rests on the module having no nib to read a
-// title off, which is a claim about its import list and nothing else. `web/` has
-// no eslint, no dependency-cruiser and no import-boundary config, so the source
-// is read here — the obvious way to add a title is to import the row type, and
-// that would turn the doc into a false premise silently.
+describe("spellId", () => {
+  // The same fallback ladder describeRegion applies inside its phrases, exported
+  // so a caller naming a nib BESIDE a region reads the namer identically.
+  it("takes the title, and falls back to the id for missing, empty and BY_ID", () => {
+    expect(spellId("E1", (id) => (id === "E1" ? "Epic one" : undefined))).toBe("Epic one");
+    expect(spellId("E1", () => undefined)).toBe("E1");
+    expect(spellId("E1", () => "")).toBe("E1");
+    expect(spellId("E1", BY_ID)).toBe("E1");
+  });
+});
+
+// describeRegion's title story is an injected `RegionNamer`, not an import, and
+// that rests on the module having no nib to read a title off — a claim about its
+// import list and nothing else. `web/` has no eslint, no dependency-cruiser and
+// no import-boundary config, so the source is read here — the obvious way to add
+// a title is to import the row type, and that would turn the doc into a false
+// premise silently.
 describe("region.ts import isolation", () => {
   it("imports exactly one module, the generated OrderScope", () => {
     const importLines = regionSource.split("\n").filter((line) => line.startsWith("import"));

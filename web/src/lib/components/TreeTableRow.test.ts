@@ -1142,6 +1142,75 @@ describe("TreeTableRow context-based state", () => {
     expect(row.classList.contains("drop-invalid")).toBe(true);
   });
 
+  // The queue axis is not reachable from any lens shipped today — `typeLens` is
+  // the only GroupingLens and declares `childRegion: () => null`, so nothing
+  // mints a milestone region (nibs-iaqd's membership lens is what will). The
+  // component level is therefore the only place these can be driven: a DragState
+  // carrying the milestone region an accepted queue plan would put there.
+  it.each(["before", "after", "reparent"] as const)(
+    "colors the %s indicator for the queue axis, and only for it",
+    (zone) => {
+      const queue = new DragState();
+      queue.startDrag(["nibs-other"]);
+      queue.setDropTarget("nibs-abc1", zone, true, {
+        label: "Reorder in the Q3 Launch queue",
+        region: { axis: "milestone", milestoneId: "tnib-m001" },
+      });
+      const queued = renderRowWithContext({ nib: makeTreeTableNib({ id: "nibs-abc1" }) }, { drag: queue });
+      const queuedRow = queued.container.querySelector("tr") as HTMLElement;
+      expect(queuedRow.classList.contains(`drop-${zone}`)).toBe(true);
+      expect(queuedRow.classList.contains("drop-queue")).toBe(true);
+
+      const parent = new DragState();
+      parent.startDrag(["nibs-other"]);
+      parent.setDropTarget("nibs-abc1", zone, true, {
+        label: "Reorder in the top level",
+        region: { axis: "parent", parentId: null },
+      });
+      const parented = renderRowWithContext({ nib: makeTreeTableNib({ id: "nibs-abc1" }) }, { drag: parent });
+      const parentedRow = parented.container.querySelector("tr") as HTMLElement;
+      expect(parentedRow.classList.contains(`drop-${zone}`)).toBe(true);
+      expect(parentedRow.classList.contains("drop-queue")).toBe(false);
+    },
+  );
+
+  it("does not color a REFUSED drop by axis — a refusal carries no region", () => {
+    const drag = new DragState();
+    drag.startDrag(["nibs-other"]);
+    drag.setDropTarget("nibs-abc1", "before", false);
+
+    const { container } = renderRowWithContext({ nib: makeTreeTableNib({ id: "nibs-abc1" }) }, { drag });
+    const row = container.querySelector("tr") as HTMLElement;
+    expect(row.classList.contains("drop-invalid")).toBe(true);
+    expect(row.classList.contains("drop-queue")).toBe(false);
+  });
+
+  it("does not color a row that is not the drop target", () => {
+    // `dropRegion` is one ambient value read by every row, so the axis class has
+    // to be gated on being the target the way the zone classes are.
+    const drag = new DragState();
+    drag.startDrag(["nibs-other"]);
+    drag.setDropTarget("nibs-elsewhere", "before", true, {
+      label: "Reorder in the Q3 Launch queue",
+      region: { axis: "milestone", milestoneId: "tnib-m001" },
+    });
+
+    const { container } = renderRowWithContext({ nib: makeTreeTableNib({ id: "nibs-abc1" }) }, { drag });
+    const row = container.querySelector("tr") as HTMLElement;
+    expect(row.classList.contains("drop-queue")).toBe(false);
+  });
+
+  it.each([
+    { band: null, region: false, queue: false },
+    { band: "parent" as const, region: true, queue: false },
+    { band: "milestone" as const, region: true, queue: true },
+  ])("marks the region band from the regionBand prop: $band", ({ band, region, queue }) => {
+    const { container } = renderRowWithContext({ nib: makeTreeTableNib(), regionBand: band });
+    const row = container.querySelector("tr") as HTMLElement;
+    expect(row.classList.contains("region-band")).toBe(region);
+    expect(row.classList.contains("region-band-queue")).toBe(queue);
+  });
+
   it("applies .nib-highlighted class when highlighted prop is true", () => {
     const { container } = renderRowWithContext({
       nib: makeTreeTableNib(),

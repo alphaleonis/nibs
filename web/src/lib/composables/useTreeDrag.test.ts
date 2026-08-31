@@ -916,6 +916,40 @@ describe("useTreeDrag", () => {
 
       cleanup?.();
     });
+
+    it("drops the region band from the ghost, which has no row above it", () => {
+      const nib1 = makeNib({ id: "nibs-001" });
+      const rows = [makeRow(nib1)];
+      const container = buildTableDOM("nibs-001");
+      // The band marks a seam between this row and the one above it in the
+      // table. Cloned onto a free-floating ghost it becomes a rule at the top of
+      // a single row, in the queue's own color — the badge's color, on a ghost
+      // that carries no axis claim at all.
+      const source = container.querySelector("tr[data-nib-id]") as HTMLElement;
+      source.classList.add("region-band", "region-band-queue");
+
+      const { onRowPointerDown, drag } = setup({ rows, scrollContainer: container });
+      onRowPointerDown("nibs-001", new PointerEvent("pointerdown", {
+        clientX: 100, clientY: 60, bubbles: true,
+      }));
+      window.dispatchEvent(new PointerEvent("pointermove", {
+        clientX: 106, clientY: 60, bubbles: true,
+      }));
+      expect(drag.isDragging).toBe(true);
+
+      const clone = document
+        .querySelector("[data-testid='drag-preview']")!
+        .querySelector("tr[data-nib-id]") as HTMLElement;
+      // The clone really is of the banded row, so the absences below are not an
+      // assertion about some other element.
+      expect(clone.dataset.nibId).toBe("nibs-001");
+      expect(clone.classList.contains("region-band")).toBe(false);
+      expect(clone.classList.contains("region-band-queue")).toBe(false);
+      // Still the banded row in the table itself — the ghost is a copy.
+      expect(source.classList.contains("region-band")).toBe(true);
+
+      cleanup?.();
+    });
   });
 
   // A gate (Flat view / search / active sort) suppresses drag deliberately, but
@@ -1005,6 +1039,92 @@ describe("useTreeDrag", () => {
 
       expect(onblockeddrag).not.toHaveBeenCalled();
       expect(drag.isDragging).toBe(true);
+      cleanup?.();
+    });
+  });
+
+  // What the affordance reads while the drag is in flight. The plan already
+  // decides the drop; these are the two facts it hands the drag state so the
+  // badge and the row indicator describe THAT plan rather than re-reading the
+  // gesture.
+  describe("the accepted plan reaches the drag state", () => {
+    const EPIC = makeNib({ id: "E1", type: "epic", title: "User Authentication" });
+
+    /** E1 with two children — a sibling reorder inside a titled container. */
+    function siblingRows(): RowData[] {
+      return [
+        makeRow(EPIC, { hasChildren: true }),
+        makeRow(makeNib({ id: "T1", parentId: "E1", title: "One" }), { depth: 1, parentNib: EPIC }),
+        makeRow(makeNib({ id: "T2", parentId: "E1", title: "Two" }), { depth: 1, parentNib: EPIC }),
+      ];
+    }
+
+    it("carries the plan's sentence and region, with the container spelled as its title", () => {
+      const composable = setup({ rows: siblingRows() });
+
+      startDragOn("T2", composable);
+      const unhover = hoverRow("T1", 0.125);
+
+      expect(composable.drag.dropValid).toBe(true);
+      // The id would read "the children of E1"; the namer is what makes the
+      // badge worth showing.
+      expect(composable.drag.dropLabel).toBe("Reorder in the children of User Authentication");
+      expect(composable.drag.dropRegion).toEqual({ axis: "parent", parentId: "E1" });
+
+      unhover();
+      cleanup?.();
+    });
+
+    it("names a container the lens gave no row to, off a row's parentNib", () => {
+      // The promoted-header population: P's real parent H is not rendered, so
+      // the only place its title exists is P's own `parentNib` — the same route
+      // `destContainerType` takes to answer H's type.
+      const hidden = makeNib({ id: "H", type: "epic", title: "Hidden epic" });
+      const rows = [
+        makeRow(makeNib({ id: "P", type: "feature", parentId: "H", title: "Promoted" }), { parentNib: hidden }),
+        makeRow(makeNib({ id: "L", type: "task", title: "Loose" })),
+      ];
+      const composable = setup({ rows });
+
+      startDragOn("L", composable);
+      const unhover = hoverRow("P", 0.125);
+
+      expect(composable.drag.dropValid).toBe(true);
+      expect(composable.drag.dropLabel).toBe("Move into the children of Hidden epic");
+
+      unhover();
+      cleanup?.();
+    });
+
+    it("carries neither for a refused drop, though the target is still marked", () => {
+      const composable = setup({ rows: siblingRows() });
+
+      startDragOn("T2", composable);
+      // Released back on the row it grabbed: a plan, refused (`drop-on-self`).
+      const unhover = hoverRow("T2", 0.125);
+
+      expect(composable.drag.dropTargetId).toBe("T2");
+      expect(composable.drag.dropValid).toBe(false);
+      expect(composable.drag.dropLabel).toBeNull();
+      expect(composable.drag.dropRegion).toBeNull();
+
+      unhover();
+      cleanup?.();
+    });
+
+    it("clears both when the cursor leaves every row", () => {
+      const composable = setup({ rows: siblingRows() });
+
+      startDragOn("T2", composable);
+      const unhover = hoverRow("T1", 0.125);
+      expect(composable.drag.dropLabel).not.toBeNull();
+      unhover();
+
+      document.elementFromPoint = () => null;
+      window.dispatchEvent(new PointerEvent("pointermove", { clientX: 200, clientY: 500, bubbles: true }));
+
+      expect(composable.drag.dropLabel).toBeNull();
+      expect(composable.drag.dropRegion).toBeNull();
       cleanup?.();
     });
   });

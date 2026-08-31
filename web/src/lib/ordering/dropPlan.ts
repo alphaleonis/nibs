@@ -4,7 +4,7 @@ import { batch, reorderChain, reorderNib, reparentAndReorder, sequence, setParen
 import type { AnyCommand, CommandResult, SequenceStep } from "../mutations/types";
 import type { RowData } from "../tableData";
 import { canHaveChildren } from "../typeHierarchy";
-import { commonRegion, describeRegion, sameRegion, scopeOf, type Region } from "./region";
+import { BY_ID, commonRegion, describeRegion, sameRegion, scopeOf, spellId, type Region, type RegionNamer } from "./region";
 
 /**
  * What the drop indicator draws, and what the drop means. "into" is the
@@ -93,6 +93,20 @@ export interface DropRequest {
   /** `collectDescendantIds(draggedIds, rows)` — a drag-lifetime cache, so this
    *  function is not O(rows) per pointermove. */
   readonly descendantIds: Set<string>;
+  /**
+   * Spells the ids inside this plan's own prose — the queue a move stays in, the
+   * container it enters — as titles.
+   *
+   * Supplied rather than read off `rowsById`, which holds only rows the table
+   * drew: a lens-DECLARED region can name a container with no row at all, and
+   * the drag path already keeps a title map folding those in from the rows'
+   * `parentNib` (the same route `destContainerType` takes for their type).
+   * Building one here would be that work on every pointermove.
+   *
+   * Omitting it leaves every phrase on ids (`BY_ID`), which is what a caller
+   * with nothing loaded should say.
+   */
+  readonly nameOf?: RegionNamer;
 }
 
 /**
@@ -121,9 +135,14 @@ export function entryRegionOf(row: RowData): Region | null {
  * Total — every input gets a plan or a refusal carrying a reason — and pure: it
  * reads only the request, so a caller can compute it on pointermove for the
  * indicator and again on pointerup for the mutation, or keep the one it has.
+ * `nameOf` is the one input that can answer differently between two such calls
+ * (the drag path rebuilds its title map when the rows are replaced), so two
+ * plans can carry the same decision under different spellings.
  */
 export function planDrop(req: DropRequest): DropPlan {
-  const { draggedIds, rowsById, draggedRowsById, target, zone, descendantIds } = req;
+  // Defaulted once, here, so every phrase below takes a REQUIRED namer. The
+  // optional parameter is the request's, not the spelling functions'.
+  const { draggedIds, rowsById, draggedRowsById, target, zone, descendantIds, nameOf = BY_ID } = req;
 
   if (draggedIds.length === 0) {
     return refuse("no-source", "Nothing is being dragged.");
@@ -136,9 +155,16 @@ export function planDrop(req: DropRequest): DropPlan {
       // Distinct from a mixed selection below: the selection survives a filter
       // change, so a selected row can be absent from the view rather than
       // disagreeing with its fellows.
+      //
+      // Spelled like every other id in this module's prose, though this is the
+      // one phrase that usually falls back to the id: the row is missing, and
+      // the drag path builds its namer from the rendered rows. It resolves in
+      // the case that is not usual — the namer also carries every rendered row's
+      // `parentNib` (useTreeDrag.svelte.ts), so a hidden CONTAINER a visible
+      // child still points at gets its title.
       return refuse(
         "hidden-member",
-        `${id} is selected but not shown here — clear the filter (or expand the parent) hiding it, or drop it from the selection.`,
+        `${spellId(id, nameOf)} is selected but not shown here — clear the filter (or expand the parent) hiding it, or drop it from the selection.`,
       );
     }
     dragged.push(row);
@@ -155,7 +181,7 @@ export function planDrop(req: DropRequest): DropPlan {
     }
     return refuse(
       "mixed-source",
-      `These rows are in different ordering groups (${listRegions(dragged)}), and one move positions rows within a single group.`,
+      `These rows are in different ordering groups (${listRegions(dragged, nameOf)}), and one move positions rows within a single group.`,
     );
   }
 
@@ -229,12 +255,12 @@ export function planDrop(req: DropRequest): DropPlan {
     if (!container.known) {
       return refuse(
         "unknown-destination",
-        `This view does not carry ${describeRegion(dest)}, so whether it can hold ${listTypes(draggedTypes)} cannot be decided here.`,
+        `This view does not carry ${describeRegion(dest, nameOf)}, so whether it can hold ${listTypes(draggedTypes)} cannot be decided here.`,
         { region: dest },
       );
     }
     if (!isValidCrossParentDrop(draggedTypes, container.type)) {
-      return refuse("invalid-parent-type", `Cannot put ${listTypes(draggedTypes)} in ${describeRegion(dest)}.`, {
+      return refuse("invalid-parent-type", `Cannot put ${listTypes(draggedTypes)} in ${describeRegion(dest, nameOf)}.`, {
         region: dest,
       });
     }
@@ -244,8 +270,8 @@ export function planDrop(req: DropRequest): DropPlan {
     if (dest.axis === "milestone") {
       return refuse(
         "needs-assignment",
-        `${subjectIs(draggedIds)} not in ${describeRegion(dest)}, and joining one is an assignment rather than a move.`,
-        { region: dest, actionLabel: `Assign to ${dest.milestoneId}` },
+        `${subjectIs(draggedIds, nameOf)} not in ${describeRegion(dest, nameOf)}, and joining one is an assignment rather than a move.`,
+        { region: dest, actionLabel: `Assign to ${spellId(dest.milestoneId, nameOf)}` },
       );
     }
     if (source.axis === "milestone") {
@@ -255,7 +281,7 @@ export function planDrop(req: DropRequest): DropPlan {
       // point.
       return refuse(
         "needs-unassignment",
-        `${subjectIs(draggedIds)} ordered in ${describeRegion(source)}, so clear the milestone assignment before ordering in ${describeRegion(dest)}.`,
+        `${subjectIs(draggedIds, nameOf)} ordered in ${describeRegion(source, nameOf)}, so clear the milestone assignment before ordering in ${describeRegion(dest, nameOf)}.`,
         { region: dest },
       );
     }
@@ -272,8 +298,8 @@ export function planDrop(req: DropRequest): DropPlan {
         indicator,
         label:
           indicator === "into"
-            ? `Move to the front of ${describeRegion(dest)}`
-            : `Reorder in ${describeRegion(dest)}`,
+            ? `Move to the front of ${describeRegion(dest, nameOf)}`
+            : `Reorder in ${describeRegion(dest, nameOf)}`,
         command: queueMove(draggedIds, dest, indicator === "into" ? { first: true } : anchor(indicator, anchorId)),
       };
     case "parent": {
@@ -286,7 +312,7 @@ export function planDrop(req: DropRequest): DropPlan {
           // DECLARED names some other container than the row under the cursor,
           // and naming the row there would describe a container the command does
           // not touch.
-          label: dest.parentId === target.nib.id ? `Move under ${anchorId}` : `Move into ${describeRegion(dest)}`,
+          label: dest.parentId === target.nib.id ? `Move under ${spellId(anchorId, nameOf)}` : `Move into ${describeRegion(dest, nameOf)}`,
           // Entry position differs by axis, and the two mutations force it:
           // `setParent` carries no position, so the server places the row at its
           // own default — last among siblings of the same or higher priority
@@ -311,7 +337,7 @@ export function planDrop(req: DropRequest): DropPlan {
       if (dest.parentId !== target.nib.parentId) {
         return refuse(
           "anchor-not-in-destination",
-          `${target.nib.title} is shown in ${describeRegion(dest)} but is not a member of it, so nothing can be positioned against it.`,
+          `${target.nib.title} is shown in ${describeRegion(dest, nameOf)} but is not a member of it, so nothing can be positioned against it.`,
           { region: dest },
         );
       }
@@ -321,7 +347,7 @@ export function planDrop(req: DropRequest): DropPlan {
           ok: true,
           region: dest,
           indicator,
-          label: `Reorder in ${describeRegion(dest)}`,
+          label: `Reorder in ${describeRegion(dest, nameOf)}`,
           // No `scope`: PARENT is the server's default (`scope: OrderScope! =
           // PARENT`), so a sibling drag sends what it has always sent. And no
           // `parentId`: a PARENT-scope reorder groups by the subject's OWN
@@ -347,7 +373,7 @@ export function planDrop(req: DropRequest): DropPlan {
       if (dest.parentId !== null && isRenderedUnder(dest.parentId, target.nib.id, rowsById)) {
         return refuse(
           "destination-inside-target",
-          `${describeRegion(dest)} is drawn inside ${target.nib.title}, so the drop would land below the row it points at.`,
+          `${describeRegion(dest, nameOf)} is drawn inside ${target.nib.title}, so the drop would land below the row it points at.`,
           { region: dest },
         );
       }
@@ -355,7 +381,7 @@ export function planDrop(req: DropRequest): DropPlan {
         ok: true,
         region: dest,
         indicator,
-        label: `Move into ${describeRegion(dest)}`,
+        label: `Move into ${describeRegion(dest, nameOf)}`,
         command: reparentAndReorder(draggedIds, dest.parentId, anchorId, indicator),
       };
     }
@@ -467,8 +493,8 @@ function isRenderedUnder(containerId: string, ancestorId: string, rowsById: Read
   return false;
 }
 
-function listRegions(rows: RowData[]): string {
-  const names = [...new Set(rows.map((r) => (r.region === null ? "no ordering group" : describeRegion(r.region))))];
+function listRegions(rows: RowData[], nameOf: RegionNamer): string {
+  const names = [...new Set(rows.map((r) => (r.region === null ? "no ordering group" : describeRegion(r.region, nameOf))))];
   // Capped: a selection survives select-all, and this is one line in a message.
   if (names.length <= 3) return names.join(" and ");
   return `${names.slice(0, 3).join(", ")} and ${names.length - 3} more`;
@@ -478,9 +504,15 @@ function listTypes(types: string[]): string {
   return [...new Set(types)].join(" and ");
 }
 
-/** The dragged set as a sentence subject, with its verb already agreed. */
-function subjectIs(ids: string[]): string {
-  return ids.length === 1 ? `${ids[0]} is` : `The ${ids.length} dragged nibs are`;
+/**
+ * The dragged set as a sentence subject, with its verb already agreed.
+ *
+ * Spells its id the way the rest of the sentence spells one: both messages built
+ * on this also carry a `describeRegion` phrase, so an unspelled subject would
+ * put a raw id and a title in one sentence.
+ */
+function subjectIs(ids: string[], nameOf: RegionNamer): string {
+  return ids.length === 1 ? `${spellId(ids[0], nameOf)} is` : `The ${ids.length} dragged nibs are`;
 }
 
 function withArticle(word: string): string {

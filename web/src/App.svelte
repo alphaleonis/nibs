@@ -12,6 +12,7 @@
   import ActiveNibView from "./lib/components/ActiveNibView.svelte";
   import TypePickerPopover from "./lib/components/TypePickerPopover.svelte";
   import RowContextMenu from "./lib/components/RowContextMenu.svelte";
+  import DragBadge from "./lib/components/DragBadge.svelte";
   import ConfirmDialog from "./lib/components/ConfirmDialog.svelte";
   import { SelectionState } from "./lib/selection.svelte";
   import { DragState } from "./lib/drag.svelte";
@@ -696,21 +697,7 @@
   />
 {/if}
 
-{#if drag.isDragging && drag.draggedIds.length > 1}
-  <div
-    class="fixed pointer-events-none rounded-full px-2 py-0.5 text-label"
-    style="
-      left: {drag.cursorX + 12}px;
-      top: {drag.cursorY - 12}px;
-      z-index: var(--z-modal);
-      background-color: var(--accent);
-      color: var(--foreground);
-      border: 1px solid var(--border);
-    "
-  >
-    {drag.draggedIds.length} items
-  </div>
-{/if}
+<DragBadge />
 
 <RowContextMenu
   bind:open={contextMenuOpen}

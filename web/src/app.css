@@ -122,6 +122,7 @@
   --color-tag-text: var(--tag-text);
   --color-tag-border: var(--tag-border);
   --color-row-open: var(--row-open);
+  --color-region-queue: var(--region-queue);
   --color-query-value: var(--query-value);
   --color-query-well: var(--query-well);
   --color-archive: var(--archive);
@@ -248,6 +249,22 @@
      location, not a problem, and the two must be free to diverge. */
   --row-open: oklch(0.78 0.16 65);             /* amber-400 */
 
+  /* The milestone-queue ordering axis, wherever it is drawn: the drop indicator
+     on a queue move, the band closing a queue's run of rows, and the drag
+     badge's border while a queue drop is accepted — the last being a border on a
+     filled bg-accent pill rather than a rule on the table, so a retune has two
+     contrast problems to answer, not one. Cyan because
+     the queue belongs to a milestone and milestone is cyan wherever the app
+     names a type (internal/config gives it that hue; --type-milestone follows).
+     Its own value rather than an alias of --type-milestone: that token colors a
+     type ICON among the other type hues and is tuned against them, while this
+     one has to read as a 2px rule beside --ring — the two must be free to move
+     apart.
+     Kept clear of --ring, which is blue or purple in every theme (264 / 250 /
+     300 / 255) — the queue indicator's whole job is to look unlike the
+     parent-axis one. */
+  --region-queue: oklch(0.75 0.13 205);
+
   /* Filter-box value tokens (the accent half of the query highlight).
      Deliberately an ALIAS of --tag-text, and declared only here: every theme
      already overrides --tag-text, so this tracks each palette's accent for free
@@ -283,8 +300,10 @@
      must sit ABOVE the table's own sticky header (--z-sticky) — a tie there lets
      the later-in-DOM header paint over the dropdown. Kept below the drag ghost. */
   --z-toolbar: 25;
-  /* The cursor-following column-drag ghost floats above the sticky header while a
-     header is dragged, below modal surfaces. */
+  /* The cursor-following drag ghosts — a dragged column header, a dragged row —
+     float above the sticky header, below modal surfaces. The row-drag BADGE is
+     at --z-modal deliberately: it names where the release lands and must stay
+     legible over the full-width row ghost it follows. */
   --z-drag-ghost: 30;
   --z-modal: 100;
   /* Sits above --z-modal so a confirm/alert dialog raised from within an
@@ -394,6 +413,7 @@
   --tag-text: oklch(0.82 0.13 300);
   --tag-border: oklch(0.70 0.17 300 / 0.35);
   --row-open: oklch(0.82 0.115 68);         /* #ffb86c, Dracula orange */
+  --region-queue: oklch(0.883 0.093 213);   /* #8be9fd, Dracula cyan */
 }
 
 /* Daylight — the first LIGHT palette. `.dark` is absent for this
@@ -488,6 +508,9 @@
   /* Darker than the dark-theme amber: a 0.78-lightness bar washes out against
      this near-white background. */
   --row-open: oklch(0.60 0.17 55);
+  /* Same reason as the bar above: a 0.75-lightness cyan rule disappears into a
+     near-white row. */
+  --region-queue: oklch(0.55 0.115 205);
 
   /* Archive/delete action colors */
   --archive: oklch(0.58 0.13 66);
