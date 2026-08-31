@@ -264,12 +264,12 @@
      both classes — which is how the row always carries it — so it outranks the
      rule above rather than depending on following it.
 
-     One row can carry this AND `.drop-before.drop-queue` below, which paints 2px
-     of the same hue on the inside of the same edge — 4px of cyan across two
-     boxes, where the parent axis pairs two different tokens (--border band,
-     --ring indicator). Left alone until it can be seen rather than reasoned
-     about: the CSS says the two rules stack, not whether the stacked edge reads
-     wrong. */
+     One row can carry this AND `.drop-before.drop-queue` below, which paints the
+     same hue on the inside of the same edge. Measured in Chromium against the
+     fixture, the seam goes from 2px of cyan to 3px when a queue drop is aimed at
+     it — so on a banded row the indicator is a 1px thickening rather than a new
+     mark, where the parent axis pairs two different tokens (--border band,
+     --ring indicator) and stays legible. nibs-v39j owns that. */
   .tree-row.region-band.region-band-queue {
     border-block-start: 2px solid var(--region-queue);
   }
