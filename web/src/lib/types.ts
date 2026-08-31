@@ -49,16 +49,17 @@ export interface NibFilter {
   // assignment resolves to that milestone (direct assignment only).
   // `noMilestone` is tri-state over DERIVED membership: true keeps the backlog
   // (a child of an assigned epic is planned, not backlog), false the
-  // complement. Guard-only for now — the query box does not speak these facets
-  // (QueryFilter deliberately omits them).
+  // complement. The query box spells them `milestone:<id>` and `is:backlog`;
+  // `is:backlog` is the only spelling `noMilestone` has, so its false half is
+  // not typeable there.
   milestone?: string;
   noMilestone?: boolean;
   // Ownership axis. `area` selects the area's work DOWNWARD-CLOSED over the
   // declared tree: the nibs assigned to that path plus those in every area
   // declared beneath it. Closure is over the tree, not the string — `webhooks`
   // is not within `web` — and an undeclared value is refused rather than
-  // matching nothing. Guard-only for now, like the two above: QueryFilter does
-  // not speak this facet either.
+  // matching nothing. Guard-only: QueryFilter omits it, so nothing the user can
+  // type reaches it.
   area?: string;
 }
 

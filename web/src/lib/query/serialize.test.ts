@@ -301,9 +301,14 @@ describe("round-trip identity — serializeQuery(parseQuery(s)) === s", () => {
     "parent:tnib-1 has:parent blocking:tnib-2 no:blocking blocked-by:tnib-3 has:blocked-by is:blocked mentions:tnib-4 mentioned-by:tnib-5",
     // the same monster with the three hierarchy tokens in their canonical slot,
     // which only round-trips if REL_TOKEN_ORDER groups them right after parent
-    "parent:tnib-1 has:parent ancestor:tnib-6 descendant:tnib-7 sibling:tnib-8 blocking:tnib-2 no:blocking blocked-by:tnib-3 has:blocked-by is:blocked mentions:tnib-4 mentioned-by:tnib-5",
+    "parent:tnib-1 has:parent ancestor:tnib-6 descendant:tnib-7 sibling:tnib-8 blocking:tnib-2 no:blocking blocked-by:tnib-3 has:blocked-by is:blocked mentions:tnib-4 mentioned-by:tnib-5 milestone:tnib-9 is:backlog",
     // hierarchy tokens interleaved with metadata + search, in canonical order
     "type:epic ancestor:tnib-1 descendant:tnib-2 sibling:tnib-3 login",
+    // the assignment axis, which sits last in REL_TOKEN_ORDER: its id token before
+    // its existence token, and the whole pair after every relationship dimension
+    "milestone:tnib-1 is:backlog",
+    "type:epic milestone:tnib-1 is:backlog login",
+    "parent:tnib-1 mentioned-by:tnib-5 milestone:tnib-9 is:backlog",
     // full monster: every field positive + negative, search, then two invalids
     "type:bug -type:task priority:high -priority:low status:todo -status:completed estimate:m -estimate:xl tags:auth -tags:wip login words status:banana -priority:pink",
   ];
