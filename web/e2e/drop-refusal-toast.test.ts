@@ -6,10 +6,18 @@ import { test, expect } from "@playwright/test";
 // that finds a drop target cannot run over a real table there — the composable's
 // own suite substitutes one row at a time.
 //
-// The gesture chosen is the middle of a milestone row, which asks to put the
-// dragged row INSIDE it. A milestone accepts no child type at all
-// (VALID_CHILD_TYPES.milestone is []), so there is no group to enter and the
+// The gesture chosen is the middle of a LEAF-typed row, which asks to put the
+// dragged row INSIDE it. `canHaveChildren("task")` is false and no lens declares
+// an entry region for an ordinary row, so there is no group to enter and the
 // plan refuses whatever is being dragged.
+//
+// A milestone header no longer serves as that target, though it reads like the
+// obvious one: the membership lens declares the milestone's QUEUE as that row's
+// childRegion, and `entryRegionOf` returns a declaration before it ever asks the
+// type hierarchy — so dropping a work item into one is an in-queue move or an
+// assignment refusal, not "holds no children". Only a dragged MILESTONE still
+// reaches that refusal there, since no milestone can join a queue, and this test
+// wants a target that refuses whatever is dragged onto it.
 //
 // Guard proof (nibs-2tkt): re-gating delivery on validity in useTreeDrag's
 // onDragPointerUp (`dropPlan !== null && dropPlan.ok`) fails the first test with
@@ -23,16 +31,20 @@ test("a drop into a container that holds no children explains itself", async ({ 
   });
   await page.goto("/");
 
-  const milestone = page.locator('tr[data-nib-id="tnib-m001"]');
-  await expect(milestone).toBeVisible({ timeout: 10_000 });
+  const leaf = page.locator('tr[data-nib-id="tnib-t041"]');
+  await expect(leaf).toBeVisible({ timeout: 10_000 });
+  // Centered, so the one-row-tall gesture below stays away from the scroll
+  // container's auto-scroll edges. Boxes are read AFTER this.
+  await page.evaluate(() => {
+    document.querySelector('tr[data-nib-id="tnib-t041"]')?.scrollIntoView({ block: "center" });
+  });
 
-  // The row immediately below, so the gesture is one row tall and stays away
-  // from the scroll container's auto-scroll edges.
-  const source = page.locator('tr[data-nib-id="tnib-m001"] + tr');
+  // Its sibling, immediately below it.
+  const source = page.locator('tr[data-nib-id="tnib-t042"]');
   await expect(source).toBeVisible();
 
   const from = (await source.boundingBox())!;
-  const to = (await milestone.boundingBox())!;
+  const to = (await leaf.boundingBox())!;
 
   await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
   await page.mouse.down();

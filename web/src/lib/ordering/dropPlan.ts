@@ -2,6 +2,7 @@ import type { DropZone } from "../drag.svelte";
 import { isValidCrossParentDrop, isValidDropTarget } from "../dropZone";
 import { batch, reorderChain, reorderNib, reparentAndReorder, sequence, setParent } from "../mutations/commands";
 import type { AnyCommand, CommandResult, SequenceStep } from "../mutations/types";
+import { canBeInMilestoneQueue } from "../membership";
 import type { RowData } from "../tableData";
 import { canHaveChildren } from "../typeHierarchy";
 import { BY_ID, commonRegion, describeRegion, sameRegion, scopeOf, spellId, type Region, type RegionNamer } from "./region";
@@ -116,12 +117,17 @@ export interface DropRequest {
  * Two questions live here, and they have to be asked separately: "what group are
  * my children in" (`childRegion`, which only a lens declares) and "what does a
  * drop into me mean". Neither predicate answers alone. `childRegion !== null` is
- * false for every row of every lens shipped today (`tableData.test.ts` asserts
- * it), so it would delete the "drop below an epic to make it a child"
- * affordance the tree views have; `canHaveChildren` is false for a milestone
- * (`VALID_CHILD_TYPES.milestone` is `[]`), so it cannot promote a queue header's
- * edge at all. The declaration wins where there is one, because a container that
- * says where its rows order says what entering it means.
+ * true only for a milestone section row — `tableData.test.ts` asserts "only a
+ * milestone section declares a childRegion; every other row carries null" across
+ * every view level — so it would delete the "drop below an epic to make it a
+ * child" affordance the tree views have; `canHaveChildren` is false for a
+ * milestone (`VALID_CHILD_TYPES.milestone` is `[]`), so it cannot promote a
+ * queue header's edge at all. The declaration wins where there is one, because a
+ * container that says where its rows order says what entering it means.
+ *
+ * A property of the ROW, and only that. Whether the rows being dragged could
+ * join the group it names is a different question, and `planDrop` asks it there
+ * — it is the one that holds the subject.
  */
 export function entryRegionOf(row: RowData): Region | null {
   if (row.childRegion !== null) return row.childRegion;
@@ -216,14 +222,31 @@ export function planDrop(req: DropRequest): DropPlan {
       : refuse("drop-on-descendant", "A nib cannot be moved into its own subtree.");
   }
 
-  const entry = entryRegionOf(target);
+  // A group the dragged rows could never be MEMBERS of is no entry at all, so
+  // the row keeps whatever its edges meant without one. Only the milestone axis
+  // can answer no — `canBeInMilestoneQueue` is the client's read of
+  // `nibtypes.ValidateAxes` — and dropping to null there is what leaves a
+  // milestone header's own sibling reorder expressible: its bottom edge stays a
+  // positioned drop, and its middle refuses as the type question it is rather
+  // than offering a reassignment the server refuses. One dragged row is enough
+  // to decide it, because one move positions one group.
+  //
+  // Parent-axis entry asks nothing here: the type hierarchy owns that question
+  // and `isValidCrossParentDrop` puts it below, against the destination this
+  // plan names.
+  const declaredEntry = entryRegionOf(target);
+  const entry =
+    declaredEntry !== null && declaredEntry.axis === "milestone" && !draggedTypes.every(canBeInMilestoneQueue)
+      ? null
+      : declaredEntry;
   // The bottom edge of a container reads as "enter it" for the same reason its
   // middle does: below an expanded container is where its first row sits. One
-  // exception, and only on the milestone axis: inside a queue the dragged rows
-  // are already in, the bottom edge of a co-member is an in-queue reorder, and
-  // promoting it makes the destination parent-axis — which is then refused
-  // either way, by the type hierarchy or, failing that, by the cross-axis
-  // policy below. That would take away half of a queue's reorder gestures, and
+  // exception beyond the entry the block above already nulled, and only on the
+  // milestone axis: inside a queue the dragged rows are ALREADY in, the bottom
+  // edge of a co-member is an in-queue reorder, and promoting it makes the
+  // destination parent-axis — which is then refused either way, by the type
+  // hierarchy or, failing that, by the cross-axis policy below. That would take
+  // away half of a queue's reorder gestures, and
   // the position after a queue's last row whenever that row is a container. A
   // parent-axis entry needs no exception: it stays expressible from a
   // parent-axis source, which is the affordance the tree views ship today.

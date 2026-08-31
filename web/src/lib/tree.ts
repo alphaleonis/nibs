@@ -1,6 +1,7 @@
 import { VIEW_LEVELS } from "./types";
 import type { TreeNib, TreeNode, TreeTableNib, ViewLevel } from "./types";
 import type { Region } from "./ordering/region";
+import { MILESTONE_TYPE, milestoneOf } from "./membership";
 import { typeRank } from "./typeHierarchy";
 
 export function buildTree<T extends TreeNib>(nibs: T[]): TreeNode<T>[] {
@@ -281,9 +282,116 @@ function typeLens(grouping: string[], leftoverKey: SectionKey, leftoverLabel: st
   };
 }
 
-const MILESTONE_TYPE_LENS = typeLens(["milestone"], "/__no_milestone__", "No milestone");
 const EPIC_TYPE_LENS = typeLens(["epic"], "/__no_epic__", "No epic");
 const FEATURE_TYPE_LENS = typeLens(["feature", "bug"], "/__no_feature_or_bug__", "No feature or bug");
+
+/**
+ * The Milestones view's leftover section.
+ *
+ * "Backlog" rather than "Unplanned" or "No milestone": this is the set the
+ * server's `noMilestone: true` filter selects and `nibs list --backlog` prints,
+ * and internal/membership says outright that "Backlog" is the name every
+ * surface uses for it. That package says so because the set once carried four
+ * names at once, which `TestRoadmapNamesTheBacklogTheSameWayEverywhere`
+ * (cmd/roadmap_test.go) now guards against on the Go side.
+ *
+ * The key satisfies both halves of `isSyntheticRowId` — asserted over the
+ * derived `BUCKET_IDS` in tree.test.ts, not left to this sentence.
+ */
+const BACKLOG_KEY: SectionKey = "/__backlog__";
+
+/**
+ * A milestone queue's order: the `milestoneOrder` key ascending, rows with no
+ * key appended, title then id breaking a tie.
+ *
+ * The tail rule is not decoration. An assignee can legitimately carry no key —
+ * `TreeNib.milestoneOrder` is empty for a nib never placed in a queue — and
+ * plain key order would then float exactly those rows to the TOP of the queue,
+ * where the server's own listing appends them. The shape mirrors
+ * `nib.CompareByKey` (internal/nib/sort.go), which is what every server-side
+ * queue listing sorts through.
+ *
+ * Compares with `<` rather than `localeCompare`, because these are fractional
+ * ordering keys the server compares as bytes; a locale collation reorders
+ * mixed-case keys against it. Titles keep `localeCompare`, matching the Go
+ * tiebreak's case-insensitive comparison closely enough for a display order.
+ */
+function byMilestoneOrder(a: TreeNib, b: TreeNib): number {
+  const aKeyed = a.milestoneOrder !== "";
+  const bKeyed = b.milestoneOrder !== "";
+  if (aKeyed && bKeyed && a.milestoneOrder !== b.milestoneOrder) {
+    return a.milestoneOrder < b.milestoneOrder ? -1 : 1;
+  }
+  if (aKeyed !== bKeyed) return aKeyed ? -1 : 1;
+  const byTitle = a.title.localeCompare(b.title);
+  return byTitle !== 0 ? byTitle : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+/**
+ * The lens the Milestones view renders: sections are MILESTONES, and what puts
+ * a nib in one is its ASSIGNMENT, not its position in the parent tree. Every
+ * milestone in the response heads a section of its own; everything else lands
+ * in the section `milestoneOf` names, or in the Backlog when that is "".
+ *
+ * `milestoneOf` is CALLED, not restated. It is the mirror of Go's
+ * `(*membership.View).MilestoneOf`, held to it by a generated parity contract
+ * that pins the mirror and not its callers — so a second copy of the rule here
+ * would drift with nothing to catch it.
+ *
+ * Two properties follow from keying on `milestoneOf`'s answer rather than on
+ * the raw `milestone:` field, and both are what `childRegion`'s invariant asks
+ * for:
+ *
+ *   - A section key is always the id of a milestone-typed nib present in
+ *     `byId`, since that is the only thing `milestoneOf` ever returns non-empty.
+ *     That nib heads its own section here, so this lens mints no HEADLESS
+ *     section — a dangling assignment or one naming a non-milestone resolves to
+ *     "" and its nib walks on rather than minting a section labeled with the raw
+ *     id.
+ *   - The rows a milestone section declares its region over are its node's
+ *     DIRECT children, and those are the DIRECTLY assigned rows: a derived
+ *     member's parent lands in the same section (the walk that gave the child
+ *     its answer runs through the parent), so `buildTree` nests it. Both halves
+ *     are executable checks in tree.test.ts. The one shape that escapes them is
+ *     a parent cycle wholly inside a section, where `buildTree` severs one
+ *     member's edge and promotes it — the divergence `RowData.region` already
+ *     names ("a cycle member `promotedCycleRoots` severed") — pinned there too.
+ *
+ * STATUS is not consulted. A closed milestone in the response heads a section
+ * like any other, and its members stay in it. Dropping it instead would take
+ * the "losing a milestone" path `milestoneOf` documents: the walk continues
+ * past the emptied step rather than stopping, so its members land in the
+ * Backlog or, on hand-authored data carrying a second assignment up the chain,
+ * in a DIFFERENT milestone's section. `(*membership.View).Backlog` settles the
+ * same question the same way on the Go side — "work under a status-hidden
+ * milestone is scheduled work, not backlog" — so which milestones exist is the
+ * response's decision, made by the filter, not this lens's.
+ */
+const MILESTONE_MEMBERSHIP_LENS: GroupingLens = {
+  leftover: { key: BACKLOG_KEY, label: "Backlog" },
+  // Membership does not run along parent links, so a section's nesting is
+  // rebuilt from whichever nibs landed in it rather than inherited from a
+  // header's subtree.
+  nestHeadersStructurally: false,
+  // The declaration a membership lens exists for: a milestone section's rows
+  // are in that milestone's queue, so a drag inside one reorders on the
+  // MILESTONE scope. The Backlog declares NOTHING — "" is memberless in that
+  // scope, and its rows are not all at the display root either, so each falls
+  // back to its own resolved parent group.
+  childRegion: (section) =>
+    section === BACKLOG_KEY ? null : { axis: "milestone", milestoneId: section },
+  // The Backlog has no queue, so it takes the walk's order (or the active
+  // column sort's) rather than a key none of its rows share.
+  orderWithinSection: (section) => (section === BACKLOG_KEY ? null : byMilestoneOrder),
+
+  place(nib, byId) {
+    if (nib.type === MILESTONE_TYPE) return { kind: "header", section: nib.id };
+    // A closure, never `byId.get` itself: the method needs its receiver, and
+    // the bare reference type-checks clean (see `MembershipLookup`).
+    const section = milestoneOf(nib, (id) => byId.get(id));
+    return { kind: "member", section: section === "" ? BACKLOG_KEY : section };
+  },
+};
 
 /**
  * The shape each view level renders in.
@@ -301,7 +409,7 @@ export function viewShapeFor(viewLevel: ViewLevel): ViewShape {
     case "flat":
       return { kind: "flat" };
     case "milestones":
-      return { kind: "grouped", lens: MILESTONE_TYPE_LENS };
+      return { kind: "grouped", lens: MILESTONE_MEMBERSHIP_LENS };
     case "epics":
       return { kind: "grouped", lens: EPIC_TYPE_LENS };
     case "features":
@@ -605,9 +713,10 @@ function buildGroupedTree<T extends TreeNib>(
   const placements = new Map<string, Placement>();
   for (const nib of nibs) placements.set(nib.id, lens.place(nib, byId));
 
-  // Sections are the UNION of every key any placement produced, in discovery
-  // order. A key that nothing heads still CREATES a section, so a dangling
-  // assignment renders as a visibly odd section rather than deleting its rows.
+  // Sections are the UNION of every key any placement produced, in the order the
+  // branch below reaches them. A key that nothing heads still CREATES a section,
+  // so a dangling assignment renders as a visibly odd section rather than
+  // deleting its rows.
   const sections = new Map<SectionKey, Section<T>>();
   const sectionFor = (key: SectionKey): Section<T> => {
     let section = sections.get(key);
@@ -646,26 +755,40 @@ function buildGroupedTree<T extends TreeNib>(
     // every nib is positioned by its own answer; `buildTree` then rebuilds the
     // nesting from whichever nibs landed in the same section (one whose parent
     // is elsewhere simply becomes a top-level member).
+    //
+    // TWO passes, headers first, and the split is what makes section order the
+    // HEADERS' order. A section is minted by whichever nib reaches it first and
+    // `headed` below reads `sections` in insertion order, so a single pass would
+    // let a member mint its section ahead of an earlier section's header — and
+    // members routinely precede headers here, because the array is sorted by
+    // `order` FLAT across the whole result irrespective of parent
+    // (`nib.SortByOrder`).
     const memberNibs = new Map<SectionKey, T[]>();
     for (const nib of nibs) {
       const placement = placements.get(nib.id)!;
-      if (placement.kind === "hidden") continue;
+      if (placement.kind !== "header") continue;
       const section = sectionFor(placement.section);
-      if (placement.kind === "header" && section.header === null) {
-        section.header = { nib, children: [], depth: 0 };
-      } else {
-        const list = memberNibs.get(placement.section);
-        if (list === undefined) memberNibs.set(placement.section, [nib]);
-        else list.push(nib);
-      }
+      if (section.header === null) section.header = { nib, children: [], depth: 0 };
+    }
+    for (const nib of nibs) {
+      const placement = placements.get(nib.id)!;
+      if (placement.kind === "hidden") continue;
+      // The header row itself is the one nib this pass skips. A SECOND nib
+      // claiming a section already headed falls through and becomes a member of
+      // it, so a lens handing two nibs one key loses neither.
+      if (sectionFor(placement.section).header?.nib.id === nib.id) continue;
+      const list = memberNibs.get(placement.section);
+      if (list === undefined) memberNibs.set(placement.section, [nib]);
+      else list.push(nib);
     }
     for (const [key, list] of memberNibs) sectionFor(key).members = buildTree(list);
   }
 
   // Sections a real nib heads come first — ordered by the active column sort
-  // when there is one, else by discovery. A section nothing heads has no nib to
-  // sort by, so it follows them; the leftover is last either way, since
-  // "everything else" reads wrong anywhere but the end.
+  // when there is one, else by the order their HEADERS were reached above. A
+  // section nothing heads has no nib to sort by, so it follows them; the
+  // leftover is last either way, since "everything else" reads wrong anywhere
+  // but the end.
   const headed: Section<T>[] = [];
   const headless: Section<T>[] = [];
   let leftover: Section<T> | null = null;
@@ -675,7 +798,7 @@ function buildGroupedTree<T extends TreeNib>(
     else headless.push(section);
   }
   if (sortComparator) {
-    // `Array.sort` is stable, so equal-key sections keep their discovery order.
+    // `Array.sort` is stable, so equal-key sections keep the order above.
     headed.sort((x, y) => sortComparator(x.header!.nib, y.header!.nib));
   }
 

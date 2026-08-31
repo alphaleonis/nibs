@@ -80,7 +80,29 @@ export interface MembershipNib {
  */
 export type MembershipLookup = (id: string) => MembershipNib | null | undefined;
 
-const MILESTONE_TYPE = "milestone";
+/**
+ * The one type the rules below treat as a container of its own. Exported so a
+ * caller that has to ask the same question — a grouping lens deciding which
+ * nibs HEAD its sections — spells it the way the rules do, rather than growing
+ * a second literal that a vocabulary change would leave behind.
+ */
+export const MILESTONE_TYPE = "milestone";
+
+/**
+ * Whether a nib of this type can be in a milestone's queue at all — the mirror
+ * of `nibtypes.ValidateAxes`, which refuses the milestone axis for a
+ * milestone-typed subject ("a milestone is a waypoint, not work"), and so the
+ * first of `resolvedMilestoneId`'s three clauses.
+ *
+ * Exported because a caller can hold a TYPE and no nib: a drag deciding whether
+ * the rows it carries could ever join the queue under the cursor is asking this
+ * and nothing else. `resolvedMilestoneId` calls it rather than restating it, so
+ * the generated contract — which has a milestone-typed subject carrying a
+ * resolvable assignment — pins this predicate through that caller.
+ */
+export function canBeInMilestoneQueue(type: string): boolean {
+  return type !== MILESTONE_TYPE;
+}
 
 /**
  * The id of the milestone whose queue this nib is directly in, or "" for a nib
@@ -101,7 +123,7 @@ const MILESTONE_TYPE = "milestone";
  * lookup that resolves an id to its canonical form is honored.
  */
 export function resolvedMilestoneId(subject: MembershipNib, lookup: MembershipLookup): string {
-  if (subject.milestone === "" || subject.type === MILESTONE_TYPE) return "";
+  if (subject.milestone === "" || !canBeInMilestoneQueue(subject.type)) return "";
   const target = lookup(subject.milestone);
   if (!target || target.type !== MILESTONE_TYPE) return "";
   return target.id;

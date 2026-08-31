@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { buildTree, buildViewTree, buildShapedViewTree, viewShapeFor, isSyntheticRowId, holdsChildrenByDisplay, containingSectionRowId, collectDescendantIds, BUCKET_IDS } from "./tree";
 import type { GroupingLens, Placement, ViewShape } from "./tree";
 import { makeNibComparator } from "./tableSort";
+import { milestoneOf, resolvedMilestoneId } from "./membership";
 import { typeRank } from "./typeHierarchy";
 import type { TreeNib, TreeTableNib, TreeNode, ViewLevel, TableSort } from "./types";
 import { VIEW_LEVELS } from "./types";
@@ -401,37 +402,36 @@ describe("buildViewTree", () => {
   });
 
   describe("milestones lens", () => {
-    it("promotes milestones to headers with full subtrees; loose feature/bug go under 'No milestone'", () => {
+    it("fills a milestone's section from its ASSIGNEES, and a structural nest schedules nothing", () => {
       const nibs: TreeNib[] = [
         makeTreeNib({ id: "nibs-001", title: "Milestone A", type: "milestone" }),
-        makeTreeNib({ id: "nibs-002", title: "Epic under A", type: "epic", parentId: "nibs-001" }),
+        makeTreeNib({ id: "nibs-002", title: "Assigned epic", type: "epic", milestone: "nibs-001", milestoneOrder: "a" }),
         makeTreeNib({ id: "nibs-003", title: "Task under epic", type: "task", parentId: "nibs-002" }),
-        makeTreeNib({ id: "nibs-004", title: "Root feature", type: "feature" }),
+        // Nested UNDER the milestone with no assignment: decomposition data, not
+        // scheduling, so it belongs to no queue at all.
+        makeTreeNib({ id: "nibs-004", title: "Nested epic", type: "epic", parentId: "nibs-001" }),
         makeTreeNib({ id: "nibs-005", title: "Root bug", type: "bug" }),
       ];
 
       const result = buildViewTree(nibs, "milestones");
 
-      // Milestone header keeps its full subtree
+      // The milestone heads its own section; the assignee brings its subtree.
       expect(result[0].nib.id).toBe("nibs-001");
       expect(result[0].depth).toBe(0);
-      expect(result[0].children[0].nib.id).toBe("nibs-002");
+      expect(result[0].children.map(c => c.nib.id)).toEqual(["nibs-002"]);
       expect(result[0].children[0].depth).toBe(1);
       expect(result[0].children[0].children[0].nib.id).toBe("nibs-003");
       expect(result[0].children[0].children[0].depth).toBe(2);
 
-      // Single "No milestone" bucket holds the loose feature and bug
-      const bucket = result.find(r => isSyntheticRowId(r.nib.id))!;
-      expect(bucket).toBeDefined();
-      expect(bucket.nib.id).toBe("/__no_milestone__");
-      const bucketChildIds = bucket.children.map(c => c.nib.id);
-      expect(bucketChildIds).toEqual(["nibs-004", "nibs-005"]);
+      const backlog = result.find(r => isSyntheticRowId(r.nib.id))!;
+      expect(backlog).toBeDefined();
+      expect(backlog.nib.id).toBe("/__backlog__");
+      expect(backlog.children.map(c => c.nib.id)).toEqual(["nibs-004", "nibs-005"]);
 
-      // No milestone-rank item was hidden (Milestone A is present as a header)
       expect(result.filter(r => r.nib.id === "nibs-001")).toHaveLength(1);
     });
 
-    it("keeps a nested milestone inside its parent milestone (no duplication)", () => {
+    it("gives a nested milestone a section of its own, and its subtree the backlog", () => {
       const nibs: TreeNib[] = [
         makeTreeNib({ id: "nibs-001", title: "Parent milestone", type: "milestone" }),
         makeTreeNib({ id: "nibs-002", title: "Child milestone", type: "milestone", parentId: "nibs-001" }),
@@ -440,12 +440,13 @@ describe("buildViewTree", () => {
 
       const result = buildViewTree(nibs, "milestones");
 
-      // Only the outer milestone is a top-level header; child stays nested (not re-promoted)
-      expect(result).toHaveLength(1);
-      expect(result[0].nib.id).toBe("nibs-001");
-      expect(result[0].children).toHaveLength(1);
-      expect(result[0].children[0].nib.id).toBe("nibs-002");
-      expect(result[0].children[0].children[0].nib.id).toBe("nibs-003");
+      // Every milestone heads a section — a milestone is a container of its own,
+      // never a member of another, however hand-edited data nests it. The task
+      // under the child milestone carries no assignment, so it is backlog.
+      expect(result.map(r => r.nib.id)).toEqual(["nibs-001", "nibs-002", "/__backlog__"]);
+      expect(result[0].children).toEqual([]);
+      expect(result[1].children).toEqual([]);
+      expect(result[2].children.map(c => c.nib.id)).toEqual(["nibs-003"]);
     });
   });
 
@@ -785,6 +786,360 @@ describe("buildViewTree", () => {
       // ...but each header's subtree stays in incoming order — not re-sorted by title.
       expect(epic.children.map((c) => c.nib.id)).toEqual(["tB", "tA"]);
     });
+  });
+});
+
+/**
+ * The lens the Milestones view SHIPS: sections are milestones, membership is the
+ * assignment axis, and the leftover is the Backlog.
+ *
+ * Separate from the `GroupingLens seam` block below, which exercises the
+ * interface through a hand-written lens. These reach the shipped one through
+ * `viewShapeFor("milestones")`, so they answer for what a user sees.
+ */
+describe("milestone membership lens", () => {
+  const BACKLOG = "/__backlog__";
+
+  const lookupOver = (nibs: TreeNib[]) => {
+    const byId = new Map(nibs.map((n) => [n.id, n]));
+    return (id: string) => byId.get(id);
+  };
+
+  /**
+   * Every shape that could plausibly lose, duplicate or mis-file a row under a
+   * membership model, in one fixture: an assigned epic with a structural
+   * subtree, a directly queued task, a CLOSED milestone with assignees, a
+   * hand-authored parent+assignment pair (`p1` is under an epic queued to `m1`
+   * and names `m2` itself — the server refuses to write that pair), a dangling
+   * assignment, an assignment naming a nib that is not a milestone, a child
+   * whose parent the response does not carry, and a parent cycle.
+   *
+   * `q1` is listed AFTER `e1` but ordered before it in the queue, so the
+   * section's own order is visible rather than incidental.
+   */
+  const MESSY_MEMBERSHIP: TreeNib[] = [
+    makeTreeNib({ id: "m1", type: "milestone", title: "v1.0", status: "in-progress" }),
+    makeTreeNib({ id: "e1", type: "epic", title: "Assigned epic", milestone: "m1", milestoneOrder: "b" }),
+    makeTreeNib({ id: "f1", type: "feature", title: "Feature", parentId: "e1" }),
+    makeTreeNib({ id: "t1", type: "task", title: "Task", parentId: "f1" }),
+    makeTreeNib({ id: "q1", type: "task", title: "Queued task", milestone: "m1", milestoneOrder: "a" }),
+    makeTreeNib({ id: "m2", type: "milestone", title: "v0.9", status: "completed" }),
+    makeTreeNib({ id: "e2", type: "epic", title: "Shipped epic", milestone: "m2", milestoneOrder: "a" }),
+    makeTreeNib({ id: "p1", type: "task", title: "Parent and assignment", parentId: "e1", milestone: "m2", milestoneOrder: "b" }),
+    makeTreeNib({ id: "d1", type: "task", title: "Dangling assignment", milestone: "m9" }),
+    makeTreeNib({ id: "n1", type: "task", title: "Assigned to an epic", milestone: "e1" }),
+    makeTreeNib({ id: "o1", type: "task", title: "Parent not in response", parentId: "e-gone" }),
+    makeTreeNib({ id: "c1", type: "task", title: "Cycle A", parentId: "c2" }),
+    makeTreeNib({ id: "c2", type: "task", title: "Cycle B", parentId: "c1" }),
+    makeTreeNib({ id: "l1", type: "task", title: "Loose" }),
+  ];
+
+  it("renders every nib of the messy fixture exactly once", () => {
+    const ids = collectIds(buildViewTree(MESSY_MEMBERSHIP, "milestones"))
+      .filter((id) => !isSyntheticRowId(id));
+    const counts = new Map<string, number>();
+    for (const id of ids) counts.set(id, (counts.get(id) ?? 0) + 1);
+    for (const nib of MESSY_MEMBERSHIP) {
+      expect(counts.get(nib.id), `${nib.id} should render exactly once`).toBe(1);
+    }
+    expect(ids).toHaveLength(MESSY_MEMBERSHIP.length);
+  });
+
+  /**
+   * The invariant `childRegion` says the lens owns: every row a section declares
+   * its queue over is in that queue by the server's own rule — which is the
+   * DIRECT one (`scopeTable[ScopeMilestone].group` is `resolvedMilestoneID`),
+   * not the derived membership that decided the section.
+   *
+   * The two agree for the rows that matter because a declaration reaches a
+   * section node's DIRECT children and no further, and a DERIVED member's parent
+   * lands in the same section — so `buildTree` nests it and it is never a direct
+   * child. Read off the emitted node rather than restated, so it cannot drift
+   * from what `flatten` hands the row.
+   */
+  function expectDeclaredRowsAreDirectlyAssigned(nibs: TreeNib[]): void {
+    const lookup = lookupOver(nibs);
+    let checked = 0;
+    for (const section of buildViewTree(nibs, "milestones")) {
+      const region = section.childRegion ?? null;
+      if (region === null || region.axis !== "milestone") continue;
+      for (const child of section.children) {
+        checked++;
+        expect(
+          resolvedMilestoneId(child.nib, lookup),
+          `${child.nib.id} takes ${region.milestoneId}'s queue declaration but is not in that queue`,
+        ).toBe(region.milestoneId);
+      }
+    }
+    expect(checked, "no declared row was checked — this guard would pass vacuously").toBeGreaterThan(0);
+  }
+
+  it("declares a milestone's queue only over rows the server agrees are in it", () => {
+    expectDeclaredRowsAreDirectlyAssigned(MESSY_MEMBERSHIP);
+  });
+
+  it("keeps an assigned epic's structural children beneath it, inside the section", () => {
+    const tree = buildViewTree(MESSY_MEMBERSHIP, "milestones");
+    const m1 = tree.find((r) => r.nib.id === "m1")!;
+    // Queue order, not input order: q1 carries "a" and is listed second.
+    expect(m1.children.map((c) => c.nib.id)).toEqual(["q1", "e1"]);
+    const e1 = m1.children[1];
+    // Inherited membership: neither f1 nor t1 carries an assignment of its own,
+    // and they are drawn under the epic rather than beside it. Filing them by
+    // the DIRECT rule instead would drop both into the Backlog.
+    expect(e1.children.map((c) => c.nib.id)).toEqual(["f1"]);
+    expect(e1.children[0].children.map((c) => c.nib.id)).toEqual(["t1"]);
+    expect([m1.depth, e1.depth, e1.children[0].depth]).toEqual([0, 1, 2]);
+    expect(holdsChildrenByDisplay(m1)).toBe(true);
+    expect(isSyntheticRowId(m1.nib.id)).toBe(false);
+  });
+
+  it("sends an unresolvable or non-milestone assignment to the Backlog rather than minting a section for it", () => {
+    const tree = buildViewTree(MESSY_MEMBERSHIP, "milestones");
+    // Only the two real milestones head sections, and nothing else is a section
+    // row at all — keying on the RESOLVED id is what rules out a headless
+    // section labeled with a raw `milestone:` string.
+    expect(tree.map((r) => r.nib.id)).toEqual(["m1", "m2", BACKLOG]);
+    const backlog = tree[2];
+    expect(backlog.children.map((c) => c.nib.id)).toEqual(["d1", "n1", "o1", "c1", "l1"]);
+    // The cycle keeps both members: buildTree promotes one and nests the other.
+    expect(backlog.children.find((c) => c.nib.id === "c1")!.children.map((c) => c.nib.id)).toEqual(["c2"]);
+  });
+
+  it("puts a hand-authored parent+assignment pair in the queue its own assignment names", () => {
+    // p1 is a structural child of e1, which is queued to m1, but names m2. The
+    // nib's own assignment wins: `milestoneOf` answers before it ever walks up.
+    const tree = buildViewTree(MESSY_MEMBERSHIP, "milestones");
+    const m2 = tree.find((r) => r.nib.id === "m2")!;
+    expect(m2.children.map((c) => c.nib.id)).toEqual(["e2", "p1"]);
+  });
+
+  describe("a closed milestone is a section like any other", () => {
+    // The decision this feature owed. Status is not consulted: which milestones
+    // exist is the response's call, and `(*membership.View).Backlog` settles it
+    // the same way on the Go side ("work under a status-hidden milestone is
+    // scheduled work, not backlog").
+    it("heads its own section, holding its assignees", () => {
+      const tree = buildViewTree(MESSY_MEMBERSHIP, "milestones");
+      const m2 = tree.find((r) => r.nib.id === "m2")!;
+      expect(m2.nib.status).toBe("completed");
+      expect(isSyntheticRowId(m2.nib.id)).toBe(false);
+      expect(m2.childRegion).toEqual({ axis: "milestone", milestoneId: "m2" });
+      expect(collectIds([tree.find((r) => r.nib.id === BACKLOG)!])).not.toContain("e2");
+    });
+
+    it("keeps its position in the array's sequence rather than being pushed after the open ones", () => {
+      // m2 is listed first here. Nothing reorders it behind the open milestone:
+      // section order is the array's, which is the server's `order` sequence.
+      const nibs: TreeNib[] = [
+        makeTreeNib({ id: "done", type: "milestone", title: "v0.9", status: "completed" }),
+        makeTreeNib({ id: "open", type: "milestone", title: "v1.0", status: "in-progress" }),
+      ];
+      expect(buildViewTree(nibs, "milestones").map((r) => r.nib.id)).toEqual(["done", "open"]);
+    });
+  });
+
+  describe("section order", () => {
+    it("follows the HEADERS' sequence, which is neither id, title, nor discovery order", () => {
+      // The client holds no `order` key — `TreeNib` does not carry one — so the
+      // sequence it renders is the array's, and the array arrives from
+      // `TREE_TABLE_QUERY`'s `sort: { field: ORDER, direction: ASC }`.
+      //
+      // The fixture discriminates on three counts at once. Ids and titles both
+      // run the other way, so neither could produce this order. And `e1` is
+      // listed FIRST while belonging to the LAST section: `SortByOrder` is a
+      // flat sort over `order` across the whole result irrespective of parent
+      // (internal/nib/sort.go), so an assignee routinely precedes the milestone
+      // it is in — and a section order taken from whichever nib DISCOVERED each
+      // section would draw a1 above z1.
+      const nibs: TreeNib[] = [
+        makeTreeNib({ id: "e1", type: "epic", title: "Assigned ahead of both headers", milestone: "a1" }),
+        makeTreeNib({ id: "z1", type: "milestone", title: "Zulu" }),
+        makeTreeNib({ id: "a1", type: "milestone", title: "Alpha" }),
+      ];
+      const tree = buildViewTree(nibs, "milestones");
+      expect(tree.map((r) => r.nib.id)).toEqual(["z1", "a1"]);
+      expect(tree[1].children.map((c) => c.nib.id)).toEqual(["e1"]);
+    });
+
+    it("puts the Backlog last, whatever it was discovered before", () => {
+      const nibs: TreeNib[] = [
+        makeTreeNib({ id: "loose", type: "task" }),
+        makeTreeNib({ id: "m1", type: "milestone" }),
+      ];
+      expect(buildViewTree(nibs, "milestones").map((r) => r.nib.id)).toEqual(["m1", "/__backlog__"]);
+    });
+
+    it("hands an active column sort the section order instead", () => {
+      const nibs: TreeTableNib[] = [
+        makeTreeTableNib({ id: "z1", type: "milestone", title: "Zulu" }),
+        makeTreeTableNib({ id: "a1", type: "milestone", title: "Alpha" }),
+      ];
+      const cmp = makeNibComparator(
+        { field: "title", direction: "asc" },
+        new Map(nibs.map((n) => [n.id, n])),
+      );
+      expect(buildViewTree(nibs, "milestones", cmp).map((r) => r.nib.id)).toEqual(["a1", "z1"]);
+    });
+  });
+
+  describe("queue order within a section", () => {
+    const nibs: TreeNib[] = [
+      makeTreeNib({ id: "m1", type: "milestone" }),
+      makeTreeNib({ id: "x3", type: "task", title: "Aaa", milestone: "m1", milestoneOrder: "c" }),
+      makeTreeNib({ id: "x1", type: "task", title: "Zzz", milestone: "m1", milestoneOrder: "a" }),
+      makeTreeNib({ id: "x2", type: "task", title: "Mmm", milestone: "m1", milestoneOrder: "b" }),
+    ];
+
+    it("orders by milestoneOrder", () => {
+      expect(buildViewTree(nibs, "milestones")[0].children.map((c) => c.nib.id)).toEqual(["x1", "x2", "x3"]);
+    });
+
+    it("appends an assignee with no key, rather than floating it to the top", () => {
+      // An assignment can predate the queue it is in — `milestoneOrder` is empty
+      // for a nib never placed in one — and the server's own listing appends
+      // those (nib.CompareByKey: keyed before unkeyed, then title, then id).
+      const unkeyed: TreeNib[] = [
+        ...nibs,
+        makeTreeNib({ id: "u2", type: "task", title: "Bbb", milestone: "m1" }),
+        makeTreeNib({ id: "u1", type: "task", title: "Aaa", milestone: "m1" }),
+      ];
+      expect(buildViewTree(unkeyed, "milestones")[0].children.map((c) => c.nib.id))
+        .toEqual(["x1", "x2", "x3", "u1", "u2"]);
+    });
+
+    it("lets an active column sort outrank it", () => {
+      const rows = nibs.map((n) => ({ ...n, blockingIds: [], blockedByIds: [], etag: "" }));
+      const cmp = makeNibComparator(
+        { field: "title", direction: "asc" },
+        new Map(rows.map((n) => [n.id, n])),
+      );
+      expect(buildViewTree(rows, "milestones", cmp)[0].children.map((c) => c.nib.id)).toEqual(["x3", "x2", "x1"]);
+    });
+
+    it("leaves the Backlog in the walk's order, having no queue to sort by", () => {
+      const loose: TreeNib[] = [
+        makeTreeNib({ id: "b2", type: "task", title: "Zzz" }),
+        makeTreeNib({ id: "b1", type: "task", title: "Aaa", milestoneOrder: "a" }),
+      ];
+      expect(buildViewTree(loose, "milestones")[0].children.map((c) => c.nib.id)).toEqual(["b2", "b1"]);
+    });
+  });
+
+  /**
+   * What a NARROWED lookup does to the answer — the client's lookup spans only
+   * the rows the page holds, and the server's `noMilestone` is answered over the
+   * whole store, so the two can disagree. `milestoneOf` documents both
+   * directions; these are what they look like on screen.
+   *
+   * The decision recorded here: a filtered view may legitimately draw scheduled
+   * work in the Backlog. The lens is a pure function of the rows it is handed
+   * and cannot load an absent ancestor; the alternative is for the QUERY to
+   * re-add ancestor chains, which changes what a filter means — it would put
+   * rows the user excluded back on the page — and belongs to the query layer.
+   */
+  describe("under a lookup narrowed by the response filter", () => {
+    it("draws a row whose intermediate ancestor is missing in the Backlog", () => {
+      // The dominant case: a type or status filter drops the epics carrying the
+      // assignments while their tasks remain.
+      const nibs: TreeNib[] = [
+        makeTreeNib({ id: "m1", type: "milestone" }),
+        makeTreeNib({ id: "t1", type: "task", parentId: "e-filtered-out" }),
+      ];
+      const tree = buildViewTree(nibs, "milestones");
+      expect(tree.find((r) => r.nib.id === BACKLOG)!.children.map((c) => c.nib.id)).toEqual(["t1"]);
+      // The safe direction: a row in the Backlog claims no queue, and its own
+      // ordering group is still the one the server resolved for it.
+      expect(milestoneOf(nibs[1], lookupOver(nibs))).toBe("");
+    });
+
+    it("draws a missing milestone's assignees in the Backlog when no ancestor carries an assignment", () => {
+      // The shape the write path produces: the server refuses to assign a nib
+      // whose ancestor is already assigned, so a chain carries at most one
+      // assignment and losing it leaves nothing for the walk to find.
+      const nibs: TreeNib[] = [
+        makeTreeNib({ id: "e1", type: "epic", milestone: "m-filtered-out", milestoneOrder: "a" }),
+        makeTreeNib({ id: "t1", type: "task", parentId: "e1" }),
+      ];
+      const tree = buildViewTree(nibs, "milestones");
+      expect(tree.map((r) => r.nib.id)).toEqual([BACKLOG]);
+      expect(tree[0].children.map((c) => c.nib.id)).toEqual(["e1"]);
+    });
+
+    it("draws a missing milestone's assignees in an ANCESTOR's queue when hand-authored data puts one there", () => {
+      // The unsafe direction, and the reason the closed-milestone question was
+      // NOT answered by dropping closed milestones from the response: the walk
+      // continues past the step the narrowing emptied rather than stopping. Only
+      // hand-authored data reaches it, but it reaches it silently.
+      const nibs: TreeNib[] = [
+        makeTreeNib({ id: "m0", type: "milestone", title: "v0.9" }),
+        makeTreeNib({ id: "e0", type: "epic", milestone: "m0", milestoneOrder: "a" }),
+        makeTreeNib({ id: "e1", type: "epic", parentId: "e0", milestone: "m-filtered-out", milestoneOrder: "a" }),
+        makeTreeNib({ id: "t1", type: "task", parentId: "e1" }),
+      ];
+      const tree = buildViewTree(nibs, "milestones");
+      expect(tree.map((r) => r.nib.id)).toEqual(["m0"]);
+      // e1 is drawn inside m0's section — a milestone its own assignment does
+      // not name — nested under e0, which is the row m0's queue is declared over.
+      expect(tree[0].children.map((c) => c.nib.id)).toEqual(["e0"]);
+      expect(tree[0].children[0].children.map((c) => c.nib.id)).toEqual(["e1"]);
+      expectDeclaredRowsAreDirectlyAssigned(nibs);
+    });
+  });
+
+  /**
+   * The one shape the invariant above cannot cover, named outright so the limit
+   * is visible rather than merely absent.
+   *
+   * A parent cycle lying wholly inside one section has no root of its own, so
+   * `buildTree` promotes one member — the lowest id — and severs its parent
+   * edge. When that member is not the directly assigned one it becomes a DIRECT
+   * child of the section node and takes its queue declaration, though the
+   * server's MILESTONE scope resolves it to "" (memberless) and would refuse a
+   * move. `RowData.region` already names this divergence class ("a cycle member
+   * `promotedCycleRoots` severed").
+   *
+   * Closing it needs a TRANSITIVE rule, which is why it is open rather than
+   * closed cheaply. Demoting the promoted member to the Backlog does not do it:
+   * on a three-member cycle the severance orphans the next row, which takes the
+   * declaration in its place. What does work is demoting every derived member
+   * whose walk to its assignment steps off a node `promotedCycleRoots` severs —
+   * `place` gets `byId`, and `typeLens.place` re-derives that same promotion
+   * decision inline for its own chain, so the ingredients are there. It is not
+   * taken because the declaration it would remove names a queue no server write
+   * would have accepted anyway, on data only a hand edit produces, and `place`'s
+   * per-nib signature gives the promotion set nowhere to live but a
+   * re-derivation or a cache keyed on `byId`.
+   */
+  it("hands a promoted cycle member the section's queue although it is not in it", () => {
+    const nibs: TreeNib[] = [
+      makeTreeNib({ id: "m1", type: "milestone" }),
+      makeTreeNib({ id: "k1", type: "task", parentId: "k2" }),
+      makeTreeNib({ id: "k2", type: "task", parentId: "k1", milestone: "m1", milestoneOrder: "a" }),
+    ];
+    const lookup = lookupOver(nibs);
+    const m1 = buildViewTree(nibs, "milestones")[0];
+
+    expect(m1.children.map((c) => c.nib.id)).toEqual(["k1"]);
+    expect(m1.children[0].children.map((c) => c.nib.id)).toEqual(["k2"]);
+    // Both are members of m1 by the derived rule, which is why they are drawn
+    // here at all...
+    expect(milestoneOf(nibs[1], lookup)).toBe("m1");
+    // ...but only k2 is in the queue, and k1 is the row that takes the
+    // declaration. Flip the ids and the promotion lands on k2 instead.
+    expect(resolvedMilestoneId(nibs[1], lookup)).toBe("");
+    expect(resolvedMilestoneId(nibs[2], lookup)).toBe("m1");
+  });
+
+  it("names the section a row is in for containingSectionRowId", () => {
+    const map = new Map(MESSY_MEMBERSHIP.map((n) => [n.id, n]));
+    // A member names the milestone's own row, which is no ancestor of it — the
+    // answer an ancestor-chain walk could not reach.
+    expect(containingSectionRowId(map, "t1", "milestones")).toBe("m1");
+    expect(containingSectionRowId(map, "p1", "milestones")).toBe("m2");
+    expect(containingSectionRowId(map, "l1", "milestones")).toBe(BACKLOG);
+    // A milestone heads its own section and is contained by nothing.
+    expect(containingSectionRowId(map, "m1", "milestones")).toBeNull();
   });
 });
 
@@ -1394,7 +1749,7 @@ describe("collectDescendantIds", () => {
   it("collects all descendants of a root, excluding the root itself", () => {
     const nibs: TreeNib[] = [
       makeTreeNib({ id: "nibs-001", type: "milestone" }),
-      makeTreeNib({ id: "nibs-002", type: "epic", parentId: "nibs-001" }),
+      makeTreeNib({ id: "nibs-002", type: "epic", milestone: "nibs-001", milestoneOrder: "a" }),
       makeTreeNib({ id: "nibs-003", type: "feature", parentId: "nibs-002" }),
       makeTreeNib({ id: "nibs-004", type: "task", parentId: "nibs-003" }),
       makeTreeNib({ id: "nibs-005", type: "task", parentId: "nibs-002" }),

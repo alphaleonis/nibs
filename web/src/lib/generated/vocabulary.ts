@@ -37,7 +37,7 @@ export const VALID_CHILD_TYPES: Record<string, readonly string[]> = {
   research: [],
 };
 
-/** Container→leaf rank derived from the hierarchy: a leaf ranks 0, a container one above its highest child. Milestone is pinned above every container — the milestone-grouped view keys on rank until the Phase-8 membership-based view. */
+/** Container→leaf rank derived from the hierarchy: a leaf ranks 0, a container one above its highest child. Milestone is pinned above every container so the Epics and Features lenses HIDE a milestone row rather than sweeping it into their leftover. */
 export const TYPE_RANK: Record<string, number> = {
   milestone: 3,
   epic: 2,

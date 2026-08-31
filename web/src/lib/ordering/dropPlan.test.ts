@@ -489,6 +489,46 @@ const CASES: Case[] = [
       command: reorderNib("E1", { first: true, scope: "MILESTONE" }),
     },
   },
+  // --- A milestone dragged onto a milestone header, all three zones. The
+  // queue under the cursor is one the dragged row can never be a member of
+  // (`nibtypes.ValidateAxes`: "a milestone is a waypoint, not work"), so the
+  // entry promotion must not swallow the header's own sibling reorder — and no
+  // zone may answer with a reassignment the server would refuse. ---
+  {
+    name: "the top edge of a milestone header reorders the sections",
+    drag: ["M2"],
+    target: "M1",
+    zone: "before",
+    expected: { ok: true, region: TOP_LEVEL, indicator: "before", command: reorderNib("M2", { beforeId: "M1" }) },
+  },
+  {
+    name: "the bottom edge of a milestone header reorders the sections too, rather than entering the queue",
+    drag: ["M2"],
+    target: "M1",
+    zone: "after",
+    expected: { ok: true, region: TOP_LEVEL, indicator: "after", command: reorderNib("M2", { afterId: "M1" }) },
+  },
+  {
+    name: "the middle of a milestone header refuses as the type question it is, not as an assignment",
+    drag: ["M2"],
+    target: "M1",
+    zone: "reparent",
+    expected: { ok: false, reason: "invalid-parent-type" },
+  },
+  {
+    // One move positions one group, so a queue that refuses ONE dragged row
+    // refuses the drag — the whole selection falls back to the positioned drop.
+    name: "a selection carrying a milestone stays out of the queue too",
+    drag: ["M2", "B1"],
+    target: "M1",
+    zone: "after",
+    expected: {
+      ok: true,
+      region: TOP_LEVEL,
+      indicator: "after",
+      command: reorderChain(["M2", "B1"], "M1", "after"),
+    },
+  },
   {
     name: "several rows entering a queue chain behind the first",
     drag: ["E1", "E2"],
@@ -915,6 +955,7 @@ describe("dropPlan.ts import isolation", () => {
       'import { isValidCrossParentDrop, isValidDropTarget } from "../dropZone";',
       'import { batch, reorderChain, reorderNib, reparentAndReorder, sequence, setParent } from "../mutations/commands";',
       'import type { AnyCommand, CommandResult, SequenceStep } from "../mutations/types";',
+      'import { canBeInMilestoneQueue } from "../membership";',
       'import type { RowData } from "../tableData";',
       'import { canHaveChildren } from "../typeHierarchy";',
       'import { BY_ID, commonRegion, describeRegion, sameRegion, scopeOf, spellId, type Region, type RegionNamer } from "./region";',

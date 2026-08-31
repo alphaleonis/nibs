@@ -827,10 +827,10 @@ describe("TreeTable", () => {
     }
   });
 
-  it("milestones view: milestone headers keep subtrees; loose work lands in a 'No milestone' bucket (lossless)", () => {
+  it("milestones view: a milestone holds its assignees; unassigned work lands in the Backlog (lossless)", () => {
     const nibs: TreeTableNib[] = [
       makeTreeTableNib({ id: "nibs-001", title: "Milestone A", type: "milestone" }),
-      makeTreeTableNib({ id: "nibs-002", title: "Epic under A", type: "epic", parentId: "nibs-001" }),
+      makeTreeTableNib({ id: "nibs-002", title: "Epic in A", type: "epic", milestone: "nibs-001", milestoneOrder: "a" }),
       makeTreeTableNib({ id: "nibs-003", title: "Standalone task", type: "task" }),
     ];
 
@@ -841,15 +841,14 @@ describe("TreeTable", () => {
     const { container } = renderTreeTable({ filter: {}, viewLevel: "milestones" as ViewLevel });
 
     const rows = container.querySelectorAll("[data-testid='tree-row']");
-    // Milestone A + Epic + "No milestone" bucket + Standalone task
+    // Milestone A + its epic + the Backlog section + the standalone task
     expect(rows).toHaveLength(4);
 
-    // Scope to row title cells ("Milestone A" also appears in the Epic's parent cell now)
     const titles = Array.from(container.querySelectorAll("[data-testid='title-text']")).map(e => e.textContent);
     expect(titles).toContain("Milestone A");
-    expect(titles).toContain("Epic under A");
-    // Nothing is dropped: the standalone task now shows under a "No milestone" bucket
-    expect(titles).toContain("No milestone (1)");
+    expect(titles).toContain("Epic in A");
+    // Nothing is dropped: the unassigned task shows under the Backlog section
+    expect(titles).toContain("Backlog (1)");
     expect(titles).toContain("Standalone task");
   });
 
@@ -865,9 +864,9 @@ describe("TreeTable", () => {
   it("bands the row where one ordering region's run ends and another begins", () => {
     const nibs: TreeTableNib[] = [
       makeTreeTableNib({ id: "nibs-001", title: "Milestone A", type: "milestone" }),
-      makeTreeTableNib({ id: "nibs-002", title: "Epic under A", type: "epic", parentId: "nibs-001" }),
+      makeTreeTableNib({ id: "nibs-002", title: "Epic in A", type: "epic", milestone: "nibs-001", milestoneOrder: "a" }),
       makeTreeTableNib({ id: "nibs-004", title: "Milestone B", type: "milestone" }),
-      makeTreeTableNib({ id: "nibs-005", title: "Epic under B", type: "epic", parentId: "nibs-004" }),
+      makeTreeTableNib({ id: "nibs-005", title: "Epic in B", type: "epic", milestone: "nibs-004", milestoneOrder: "a" }),
       makeTreeTableNib({ id: "nibs-003", title: "Standalone task", type: "task" }),
     ];
     mockQueryStore.mockReturnValue(
@@ -883,8 +882,8 @@ describe("TreeTable", () => {
       (tr) => (tr as HTMLElement).dataset.nibId ?? "",
     );
     const bucketId = rowIds.find(isSyntheticRowId)!;
-    // WHICH rows, in order, not how many. Milestone B closes A's subtree and
-    // resumes the top level; the bucket follows B's epic in no list at all.
+    // WHICH rows, in order, not how many. Milestone B closes A's queue and
+    // resumes the top level; the Backlog follows B's assignee in no list at all.
     // Neither epic gets one — each opens its run by descending, which the indent
     // already shows.
     expect(banded).toEqual(["nibs-004", bucketId]);
@@ -1878,7 +1877,10 @@ describe("TreeTable", () => {
       return screen.getByRole("grid");
     }
 
-    // Helper to make a milestone with task children for keyboard navigation tests
+    // Helper to make a milestone with an assigned queue for keyboard navigation
+    // tests. The tasks are ASSIGNED rather than parented: a milestone accepts no
+    // children of any type (VALID_CHILD_TYPES.milestone is []), so a queue is
+    // the only way work sits under one.
     function makeKeyboardTestNibs(count: number): TreeTableNib[] {
       const milestone = makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" });
       const children = Array.from({ length: count }, (_, i) =>
@@ -1886,7 +1888,8 @@ describe("TreeTable", () => {
           id: `nibs-${String(i + 1).padStart(3, "0")}`,
           title: `Task ${i + 1}`,
           type: "task",
-          parentId: "nibs-m1",
+          milestone: "nibs-m1",
+          milestoneOrder: String.fromCharCode(97 + i),
         })
       );
       return [milestone, ...children];
@@ -2082,7 +2085,7 @@ describe("TreeTable", () => {
       sel.focus("nibs-001");
       const nibs = [
         makeTreeTableNib({ id: "nibs-001", title: "Parent", type: "milestone" }),
-        makeTreeTableNib({ id: "nibs-002", title: "Child", type: "task", parentId: "nibs-001" }),
+        makeTreeTableNib({ id: "nibs-002", title: "Child", type: "task", milestone: "nibs-001", milestoneOrder: "a" }),
       ];
 
       setupWithNibs(nibs, {}, { selection: sel });
@@ -2106,7 +2109,7 @@ describe("TreeTable", () => {
       sel.focus("nibs-001");
       const nibs = [
         makeTreeTableNib({ id: "nibs-001", title: "Parent", type: "milestone" }),
-        makeTreeTableNib({ id: "nibs-002", title: "Child", type: "task", parentId: "nibs-001" }),
+        makeTreeTableNib({ id: "nibs-002", title: "Child", type: "task", milestone: "nibs-001", milestoneOrder: "a" }),
       ];
 
       setupWithNibs(nibs, {}, { selection: sel });
@@ -2129,8 +2132,12 @@ describe("TreeTable", () => {
       const user = userEvent.setup();
       const sel = new SelectionState();
       sel.focus("nibs-002");
+      // A real parent edge INSIDE a section: an assignee itself has no display
+      // parent, because a milestone holds its queue by arrangement rather than
+      // parentage, so it is the epic's own child that has one to walk to.
       const nibs = [
-        makeTreeTableNib({ id: "nibs-001", title: "Parent", type: "milestone" }),
+        makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+        makeTreeTableNib({ id: "nibs-001", title: "Parent", type: "epic", milestone: "nibs-m1", milestoneOrder: "a" }),
         makeTreeTableNib({ id: "nibs-002", title: "Child", type: "task", parentId: "nibs-001" }),
       ];
 
@@ -2173,7 +2180,7 @@ describe("TreeTable", () => {
     function makeTestNibs(): TreeTableNib[] {
       return [
         makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
-        makeTreeTableNib({ id: "nibs-001", title: "Child Task", type: "task", parentId: "nibs-m1" }),
+        makeTreeTableNib({ id: "nibs-001", title: "Child Task", type: "task", milestone: "nibs-m1", milestoneOrder: "a" }),
       ];
     }
 
@@ -2400,7 +2407,7 @@ describe("TreeTable", () => {
       const onrowcontextmenu = vi.fn((_id, _e, _nib, subtree) => { captured = subtree; });
       const nibs: TreeTableNib[] = [
         makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
-        makeTreeTableNib({ id: "nibs-e1", title: "Epic", type: "epic", parentId: "nibs-m1" }),
+        makeTreeTableNib({ id: "nibs-e1", title: "Epic", type: "epic", milestone: "nibs-m1", milestoneOrder: "a" }),
         makeTreeTableNib({ id: "nibs-t1", title: "Deep task", type: "task", parentId: "nibs-e1" }),
       ];
 
@@ -2883,8 +2890,8 @@ describe("TreeTable", () => {
     function makeTestNibs(): TreeTableNib[] {
       return [
         makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
-        makeTreeTableNib({ id: "nibs-001", title: "Child Task", type: "task", parentId: "nibs-m1" }),
-        makeTreeTableNib({ id: "nibs-002", title: "Other Task", type: "task", parentId: "nibs-m1" }),
+        makeTreeTableNib({ id: "nibs-001", title: "Child Task", type: "task", milestone: "nibs-m1", milestoneOrder: "a" }),
+        makeTreeTableNib({ id: "nibs-002", title: "Other Task", type: "task", milestone: "nibs-m1", milestoneOrder: "b" }),
       ];
     }
 
@@ -3573,9 +3580,9 @@ describe("TreeTable", () => {
     function makeNibs(): TreeTableNib[] {
       return [
         makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
-        makeTreeTableNib({ id: "nibs-t1", title: "Task one", type: "task", parentId: "nibs-m1" }),
-        makeTreeTableNib({ id: "nibs-t2", title: "Task two", type: "task", parentId: "nibs-m1" }),
-        makeTreeTableNib({ id: "nibs-b1", title: "A bug", type: "bug", parentId: "nibs-m1" }),
+        makeTreeTableNib({ id: "nibs-t1", title: "Task one", type: "task", milestone: "nibs-m1", milestoneOrder: "a" }),
+        makeTreeTableNib({ id: "nibs-t2", title: "Task two", type: "task", milestone: "nibs-m1", milestoneOrder: "b" }),
+        makeTreeTableNib({ id: "nibs-b1", title: "A bug", type: "bug", milestone: "nibs-m1", milestoneOrder: "c" }),
       ];
     }
 
@@ -3801,7 +3808,7 @@ describe("TreeTable — per-view column order + reorder drag", () => {
 describe("view transition reconcile", () => {
   const nibs: TreeTableNib[] = [
     makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
-    makeTreeTableNib({ id: "nibs-e1", title: "Epic", type: "epic", parentId: "nibs-m1" }),
+    makeTreeTableNib({ id: "nibs-e1", title: "Epic", type: "epic", milestone: "nibs-m1", milestoneOrder: "a" }),
     makeTreeTableNib({ id: "nibs-t1", title: "Task", type: "task", parentId: "nibs-e1" }),
   ];
 

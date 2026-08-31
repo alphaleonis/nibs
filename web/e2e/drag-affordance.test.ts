@@ -7,16 +7,13 @@ import { test, expect, type Page } from "@playwright/test";
 // band and the badge's legibility over the ghost are pixels, so they are checked
 // here.
 //
-// A QUEUE drop is deliberately absent: nothing in the running app can produce
-// one. `typeLens` is the only shipped GroupingLens and declares
-// `childRegion: () => null`, so no row in any shipped view carries a MILESTONE
-// region — real rows take the parent axis, and the lens's fabricated containers
-// take none (`rowRegion` returns null for a synthetic id). The membership lens
-// that mints a milestone one is nibs-iaqd's, and it lands after this. The queue
-// band, the queue drop indicator and the queue badge text are covered at the
-// component level instead (TreeTableRow.test.ts, DragBadge.test.ts,
-// regionBand.test.ts), against regions built by hand. When the lens ships, those
-// visuals become reachable here.
+// A QUEUE drop is deliberately absent here. The Milestones view's membership
+// lens now declares a MILESTONE region on each milestone section, so a queue
+// gesture IS producible in the running app — but the Chromium coverage for the
+// queue band, the queue drop indicator and the queue badge text is nibs-5sp0's,
+// and until it lands those visuals stay covered at the component level
+// (TreeTableRow.test.ts, DragBadge.test.ts, regionBand.test.ts) against regions
+// built by hand. The gestures below stay on the parent axis on purpose.
 
 /**
  * Scrolls `nibId`'s row to the middle of the scroll container.

@@ -267,9 +267,9 @@
      One row can carry this AND `.drop-before.drop-queue` below, which paints 2px
      of the same hue on the inside of the same edge — 4px of cyan across two
      boxes, where the parent axis pairs two different tokens (--border band,
-     --ring indicator). Unreached until a lens mints a milestone region
-     (nibs-iaqd), and left alone until it can be seen rather than reasoned about:
-     the two are not distinguishable from the CSS alone. */
+     --ring indicator). Left alone until it can be seen rather than reasoned
+     about: the CSS says the two rules stack, not whether the stacked edge reads
+     wrong. */
   .tree-row.region-band.region-band-queue {
     border-block-start: 2px solid var(--region-queue);
   }

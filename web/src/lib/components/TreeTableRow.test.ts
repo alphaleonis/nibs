@@ -1142,11 +1142,11 @@ describe("TreeTableRow context-based state", () => {
     expect(row.classList.contains("drop-invalid")).toBe(true);
   });
 
-  // The queue axis is not reachable from any lens shipped today — `typeLens` is
-  // the only GroupingLens and declares `childRegion: () => null`, so nothing
-  // mints a milestone region (nibs-iaqd's membership lens is what will). The
-  // component level is therefore the only place these can be driven: a DragState
-  // carrying the milestone region an accepted queue plan would put there.
+  // The milestone axis is reachable from the Milestones view, whose membership
+  // lens declares a queue on every milestone section. Reaching it from there
+  // would mean driving a whole drag to reach the DragState these read, so the
+  // region is built here directly — it is the same value an accepted queue plan
+  // puts there, and this asserts the row, not the plan.
   it.each(["before", "after", "reparent"] as const)(
     "colors the %s indicator for the queue axis, and only for it",
     (zone) => {
