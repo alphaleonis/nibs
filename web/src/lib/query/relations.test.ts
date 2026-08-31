@@ -88,6 +88,82 @@ describe("relations — the ordered vocabulary drives recognition", () => {
       expect(token.split(":").every((part) => part !== "")).toBe(true);
     }
   });
+
+  // Two derived structures read a bool entry's VALUE and report it as a spelling:
+  // `NEGATIVE_EXISTENCE_TOKENS` maps each `!value` entry to "the `no:` spelling",
+  // and the `_PairsKeep*` compile-time guards read a paired field as present in a
+  // true-writing and a false-writing entry. Both are wrong the moment a word and
+  // its polarity disagree — which is exactly what a `has:`/`no:milestone` pair
+  // over the `noMilestone` field would do, and why the backlog is `is:backlog`.
+  it("writes the polarity its existence word claims", () => {
+    const polarity = new Map([
+      ["has", true],
+      ["is", true],
+      ["no", false],
+    ]);
+    for (const spec of REL_TOKEN_ORDER) {
+      if (spec.kind !== "bool") continue;
+      const word = spec.token.slice(0, spec.token.indexOf(":"));
+      expect(polarity.has(word), `${spec.token} uses a known existence word`).toBe(true);
+      expect(spec.value, spec.token).toBe(polarity.get(word));
+    }
+  });
+});
+
+// The assignment axis. `milestone:<id>` is direct assignment (the queue);
+// `is:backlog` is the complement of derived membership.
+describe("relations — the assignment axis", () => {
+  it("recognizes milestone:<id> as the scalar assignment field", () => {
+    expect(recognizeRelationship("milestone:tnib-1")).toEqual({
+      kind: "id",
+      field: "milestone",
+      value: "tnib-1",
+    });
+  });
+
+  // The value condition is `!== ""`, shared with every other id token, so a bare
+  // `milestone:` is not a rel token at all and the caller routes it to free text.
+  // The second assertion is what makes the first mean that: the name IS in the
+  // vocabulary, so the rejection can only be the empty value.
+  it("does not recognize milestone: with an empty value", () => {
+    expect(recognizeRelationship("milestone:")).toBeUndefined();
+    expect(REL_ID_FIELDS.get("milestone")).toBe("milestone");
+  });
+
+  it("writes noMilestone TRUE for is:backlog — the backlog is the nibs no plan covers", () => {
+    expect(recognizeRelationship("is:backlog")).toEqual({
+      kind: "bool",
+      field: "noMilestone",
+      value: true,
+    });
+    expect(EXISTENCE_TOKENS.get("is:backlog")).toEqual({ field: "noMilestone", value: true });
+  });
+
+  // `noMilestone` has one spelling, so the pair spellings must stay unrecognized —
+  // offering `has:milestone` would put the inverted polarity back in the grammar.
+  it("does not recognize a has:/no: spelling for the milestone dimension", () => {
+    expect(recognizeRelationship("has:milestone")).toBeUndefined();
+    expect(recognizeRelationship("no:milestone")).toBeUndefined();
+  });
+
+  // The axis is not tree position: the empty-state explanation and its escape
+  // hatch must leave an assignment filter alone.
+  it("is outside the hierarchy subset", () => {
+    expect(hierarchyTokens({ milestone: "tnib-1", noMilestone: true })).toEqual([]);
+    expect(clearHierarchyFilters({ milestone: "tnib-1", noMilestone: true })).toEqual({
+      milestone: "tnib-1",
+      noMilestone: true,
+    });
+  });
+
+  // `CONTRADICTORY_PAIRS` mirrors the server's `refuseContradiction`, which names
+  // two pairs and not this one (internal/graph/filters.go). Nor is this pair empty
+  // by construction: a milestone-typed nib carrying an assignment resolves into
+  // that queue while derived membership still reads it as backlog
+  // (internal/graph/schema.graphqls, the noMilestone field doc).
+  it("is not a contradictory pair", () => {
+    expect(contradictionTokens({ milestone: "tnib-1", noMilestone: true })).toEqual([]);
+  });
 });
 
 // The hierarchy subset: what the empty-result explanation names, and what its

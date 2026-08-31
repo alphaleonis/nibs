@@ -8,14 +8,16 @@ import type { QueryFilter } from "./fields";
 // `[A-Za-z]+` field group in `FIELD_TOKEN` cannot match, so recognition here does
 // its own first-colon split instead of relying on that regex.
 //
-// - Relationship-id tokens (`blocking:<id>`, …) set a SCALAR string field to any
-//   non-empty (lowercased) value — pattern-only, no existence validation.
-// - Existence tokens (`has:parent`, `is:blocked`, …) set a BOOLEAN field to `true`.
-//   The valid set is fixed and enumerated (parent/blocking/blocked-by + is:blocked);
-//   anything else (`has:mentions`, `has:ancestor`, `is:foo`) is NOT recognized and
-//   falls through to free-text `search` in the caller. Existence spellings exist
-//   only where the server has a matching predicate, which is why the hierarchy
-//   tokens beyond `parent` have none.
+// - Id-valued tokens (`blocking:<id>`, `milestone:<id>`, …) set a SCALAR string
+//   field to any non-empty (lowercased) value — pattern-only, no existence
+//   validation.
+// - Existence tokens (`has:parent`, `no:parent`, `is:blocked`, …) set a BOOLEAN
+//   field to the value their own entry names. The valid set is fixed and
+//   enumerated (parent/blocking/blocked-by + is:blocked + is:backlog); anything
+//   else (`has:mentions`, `has:ancestor`, `is:foo`) is NOT recognized and falls
+//   through to free-text `search` in the caller. Existence spellings exist only
+//   where the server has a matching predicate, which is why the hierarchy tokens
+//   beyond `parent` have none.
 // - Negation is a metadata-only feature: a leading `-` disqualifies the token from
 //   rel/existence recognition. Such a token is PARKED as invalid rather than routed
 //   to free text — see `recognizeRelationship` for why free text is unsafe here.
@@ -28,7 +30,9 @@ import type { QueryFilter } from "./fields";
 // box blur, `localStorage`, and the `?q=` URL param all round-trip through
 // `serializeQuery`, which walks that array to decide what to emit.
 
-/** Scalar relationship-id fields, keyed by their token field-name. */
+/** Scalar id-valued fields, keyed by their token field-name. `milestone` is the
+ *  assignment axis rather than a link between two nibs, but it takes a nib id the
+ *  same way and wants the same typeahead, so it rides the same shape. */
 export type RelIdKey =
   | "parentId"
   | "ancestorId"
@@ -37,18 +41,22 @@ export type RelIdKey =
   | "blockingId"
   | "blockedById"
   | "mentionsId"
-  | "mentionedById";
+  | "mentionedById"
+  | "milestone";
 
 /** The existence dimensions that carry BOTH a `has:` and a `no:` spelling. Split
  *  out of `ExistenceKey` (not duplicated from it) so a guard below can require
- *  both halves — `is:blocked` has no `no:` twin and must not be held to that. */
+ *  both halves — the `is:` dimensions have no `no:` twin and must not be held to
+ *  that. */
 type PairedExistenceKey = "hasParent" | "hasBlocking" | "hasBlockedBy";
 
-/** Tri-state existence/state fields. Each is one field with two token
- *  spellings: `has:parent` writes true, `no:parent` writes false. The backend
- *  filter collapsed the `no*` twins into these same fields, so the grammar keeps
- *  both words while the model holds one value. */
-export type ExistenceKey = PairedExistenceKey | "isBlocked";
+/** Tri-state existence/state fields. A paired one carries two token spellings for
+ *  the one field — `has:parent` writes true, `no:parent` writes false — because
+ *  the backend filter collapsed the `no*` twins into these same fields, so the
+ *  grammar keeps both words while the model holds one value. The unpaired ones
+ *  (`isBlocked`, `noMilestone`) have a single spelling, so only one of their two
+ *  values is typeable. */
+export type ExistenceKey = PairedExistenceKey | "isBlocked" | "noMilestone";
 
 /** One entry of the rel/existence vocabulary: a relationship-id token
  *  (`parent:<id>`), or one spelling of an existence token (`has:parent`). */
@@ -85,10 +93,10 @@ export type RelTokenSpec =
     };
 
 // Canonical serialization order for the rel/existence block, and the source the
-// recognition lookups below are built from. Grouped by relationship dimension —
-// hierarchy (parent + ancestor, descendant, sibling), blocking, blocked-by
-// (+ is:blocked), mentions, mentioned-by — with each dimension's id token first,
-// then its has/no existence tokens. This order is fixed so
+// recognition lookups below are built from. Grouped by dimension — hierarchy
+// (parent + ancestor, descendant, sibling), blocking, blocked-by (+ is:blocked),
+// mentions, mentioned-by, then the assignment axis — with each dimension's id
+// token first, then its existence tokens. This order is fixed so
 // `serializeQuery(parseQuery(s)) === s` holds for any canonical string containing
 // these tokens; moving an entry silently changes what counts as canonical.
 //
@@ -115,6 +123,20 @@ export const REL_TOKEN_ORDER = [
   { kind: "bool", field: "isBlocked", token: "is:blocked", value: true, description: "Nibs held up by an unmet blocker" },
   { kind: "id", field: "mentionsId", name: "mentions", description: "Nibs whose body mentions this nib" },
   { kind: "id", field: "mentionedById", name: "mentioned-by", description: "Nibs mentioned in this nib's body" },
+  // The assignment axis, last because it is not a link between two nibs at all.
+  // `milestone:<id>` reads DIRECT assignment — that milestone's queue; `is:backlog`
+  // is the complement of DERIVED membership, which inherits down the parent chain,
+  // so a child of an assigned epic is planned work and not backlog.
+  //
+  // Backlog gets one `is:` token rather than a `has:`/`no:milestone` pair because
+  // the field is spelled `noMilestone`: a pair on it would write true for `no:` and
+  // false for `has:`, and both `NEGATIVE_EXISTENCE_TOKENS` and the `_PairsKeep*`
+  // guards below read an entry's VALUE rather than its spelling — an inverted pair
+  // satisfies them while meaning the opposite of what they report. `is:blocked` has
+  // no twin either, and the CLI spells this field `nibs list --backlog`, likewise
+  // with no positive twin.
+  { kind: "id", field: "milestone", name: "milestone", description: "Nibs assigned to this milestone" },
+  { kind: "bool", field: "noMilestone", token: "is:backlog", value: true, description: "Nibs in no milestone's plan, their own or an inherited one" },
 ] as const satisfies readonly RelTokenSpec[];
 
 /** The literal-preserving entry type of `REL_TOKEN_ORDER`, narrowed to one kind.

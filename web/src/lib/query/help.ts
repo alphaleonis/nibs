@@ -82,6 +82,7 @@ export function queryHelpSections(): HelpSection[] {
         { token: "ancestor:nibs-a1b2 type:task", description: "Tasks anywhere under one epic" },
         { token: "is:blocked priority:high", description: "High-priority work that is stuck" },
         { token: "no:parent type:milestone", description: "Top-level milestones" },
+        { token: "is:backlog type:epic", description: "Epics no milestone plan covers" },
       ],
     },
   ];

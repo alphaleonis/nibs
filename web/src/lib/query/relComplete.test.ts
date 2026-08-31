@@ -43,6 +43,13 @@ describe("relTokenValueContext — recognizes a rel-id token value", () => {
     expect(ctx).toEqual({ field: "siblingId", name: "sibling", fragment: "tni", start: 8, end: 11 });
   });
 
+  // The assignment axis takes a nib id like the relationship tokens, so listing it
+  // in REL_TOKEN_ORDER as an `id` entry is what gives it the same typeahead.
+  it("milestone:tni → milestone + fragment 'tni' + replace range", () => {
+    const ctx = relTokenValueContext("milestone:tni", 13);
+    expect(ctx).toEqual({ field: "milestone", name: "milestone", fragment: "tni", start: 10, end: 13 });
+  });
+
   it("takes the WHOLE post-colon run as the fragment even when the caret is mid-value", () => {
     // Caret between 'b' and 'c' of "abcd"; the scalar value has no comma split.
     const ctx = relTokenValueContext("parent:abcd", 9);

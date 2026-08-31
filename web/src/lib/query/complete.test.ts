@@ -154,8 +154,15 @@ describe("getCompletion — existence token values", () => {
     expect(at("no:")?.items).toEqual(["parent", "blocking", "blocked-by"]);
   });
 
-  it("offers only `blocked` for is:", () => {
-    expect(at("is:")?.items).toEqual(["blocked"]);
+  // `is:` carries the two dimensions that have no `no:` twin — a state and the
+  // assignment axis — so the word completes to both.
+  it("offers the twinless dimensions for is:", () => {
+    expect(at("is:")?.items).toEqual(["blocked", "backlog"]);
+  });
+
+  it("substring-filters the is: dimensions apart", () => {
+    expect(at("is:back")?.items).toEqual(["backlog"]);
+    expect(at("is:blo")?.items).toEqual(["blocked"]);
   });
 
   it("substring-filters existence values", () => {
@@ -210,6 +217,7 @@ describe("getCompletion — explicit trigger", () => {
     "blocked-by",
     "mentions",
     "mentioned-by",
+    "milestone",
     "has",
     "no",
     "is",
