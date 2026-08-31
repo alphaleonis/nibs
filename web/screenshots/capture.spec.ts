@@ -317,6 +317,48 @@ for (const { value } of THEMES) {
   });
 }
 
+// The two drag seams, mid-gesture, in a light and a dark palette: the region
+// band closing one ordering region's run of rows, the drop indicator on the row
+// under the cursor, and the badge naming the list the release would reorder
+// within. All three are pixels — jsdom has no layout, no computed colors and no
+// `document.elementFromPoint`, so nothing under vitest can see whether the badge
+// is legible over the row ghost it follows, or whether a 1px band reads at all
+// against each palette's row background.
+//
+// Centered first: auto-scroll fires within 50px of the container's edges, and a
+// gesture aimed near the bottom scrolls the table out from under itself.
+for (const theme of ["daylight", "graphite"] as const) {
+  test(`drag affordance — band, indicator and badge — ${theme}`, async ({ page }) => {
+    await openApp(page, "milestones", theme);
+    await page.evaluate(() => {
+      document.querySelector('tr[data-nib-id="tnib-t041"]')?.scrollIntoView({ block: "center" });
+    });
+    const source = await page.locator('tr[data-nib-id="tnib-t042"]').boundingBox();
+    const target = await page.locator('tr[data-nib-id="tnib-t041"]').boundingBox();
+    if (!source || !target) throw new Error("the drag rows are not laid out");
+
+    await page.mouse.move(source.x + 300, source.y + source.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(source.x + 314, source.y + source.height / 2, { steps: 5 });
+    await page.mouse.move(target.x + 300, target.y + 4, { steps: 8 });
+    await expect(page.getByTestId("drag-badge-label")).toBeVisible();
+
+    await shot(page, `drag-affordance-${theme}`);
+    // Close-up around the cursor: at full-viewport scale the 2px drop line and
+    // the band are a few pixels each and effectively unreadable.
+    await page.screenshot({
+      path: join(OUT, `drag-affordance-${theme}-cropped.png`),
+      clip: { x: target.x, y: target.y - 90, width: 760, height: 200 },
+      animations: "disabled",
+    });
+
+    // Escape rather than a release: the capture must not reorder the fixture
+    // under the captures that run after it.
+    await page.keyboard.press("Escape");
+    await page.mouse.up();
+  });
+}
+
 test("context menu", async ({ page }) => {
   await openApp(page);
   await page.locator("tr[data-nib-id]").first().click({ button: "right" });

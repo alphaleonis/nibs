@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { print } from "graphql";
-import { NIB_DETAIL_QUERY, NIB_CONFLICT_SNAPSHOT_QUERY, TREE_TABLE_QUERY } from "./queries";
+import {
+  NIB_DETAIL_QUERY,
+  NIB_CONFLICT_SNAPSHOT_QUERY,
+  TREE_TABLE_QUERY,
+  REORDER_NIB_MUTATION,
+} from "./queries";
 
 // The queries are now generated TypedDocumentNodes (graphql-codegen client
 // preset), which serialize the AST WITHOUT location info — so `.loc` is
@@ -41,6 +46,34 @@ describe("TREE_TABLE_QUERY", () => {
     for (const field of ["milestone", "milestoneOrder"]) {
       expect(selection).toMatch(new RegExp(`^\\s*${field}\\s*$`, "m"));
     }
+  });
+});
+
+describe("REORDER_NIB_MUTATION", () => {
+  // The ordering axis is a wire argument, not a client-side notion: a document
+  // that declares no `$scope` can only ever reach the server's PARENT default,
+  // so a milestone-queue move would silently land on the sibling order key.
+  it("declares $scope and passes it to the reorderNib field", () => {
+    const source = print(REORDER_NIB_MUTATION);
+
+    // The operation signature must declare the variable...
+    const signature = source.match(/mutation\s+ReorderNib\s*\(([^)]*)\)/)?.[1] ?? "";
+    expect(signature).not.toBe("");
+    expect(signature).toMatch(/\$scope:\s*OrderScope\b/);
+
+    // ...and the field must actually forward it. The two assertions guard two
+    // different failures, so neither is redundant. Declaring no `$scope` at all
+    // reaches only the server's PARENT default: a milestone move then rewrites
+    // the sibling `order` key and says nothing. Declaring it but not forwarding
+    // it is refused outright — `Variable "$scope" is never used` — and since
+    // this is the only reorder document in the app, that breaks every reorder.
+    // Nothing upstream catches either: graphql-codegen strips
+    // NoUnusedVariables from its rule set (the server does not), and the
+    // generated Variables type is derived from the declarations, so a caller
+    // passing `scope` type-checks in both half-states.
+    const args = source.match(/reorderNib\s*\(([\s\S]*?)\)\s*\{/)?.[1] ?? "";
+    expect(args).not.toBe("");
+    expect(args).toMatch(/\bscope:\s*\$scope\b/);
   });
 });
 

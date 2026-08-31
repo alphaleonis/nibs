@@ -9,6 +9,7 @@
   import { useColumnAdapters } from "../ColumnAdapters.svelte";
 
   import type { DropZone } from "../drag.svelte";
+  import { isQueueAxis, type BandAxis } from "../ordering/regionBand";
 
   interface Props {
     nib: TreeTableNib;
@@ -24,6 +25,8 @@
     fading?: boolean;
     blockedEmphasis?: BlockedEmphasis;
     openDetailOn?: OpenDetailGesture;
+    /** The axis of the region boundary running above this row, or null for none. */
+    regionBand?: BandAxis | null;
   }
 
   let {
@@ -40,6 +43,7 @@
     fading = false,
     blockedEmphasis = DEFAULT_BLOCKED_EMPHASIS,
     openDetailOn = DEFAULT_OPEN_DETAIL_ON,
+    regionBand = null,
   }: Props = $props();
 
   const selection = useSelection();
@@ -90,6 +94,10 @@
   let isDropTarget = $derived(drag.dropTargetId === nib.id);
   let dropZone: DropZone | null = $derived(isDropTarget ? drag.dropZone : null);
   let dropValid = $derived(isDropTarget ? drag.dropValid : false);
+  // Which list the accepted drop writes in. Only the axis reaches the styling —
+  // a queue move is the one that does not touch a parent link, and drawing it in
+  // the parent-axis color is the confusion this seam exists to remove.
+  let dropQueue = $derived(dropValid && isQueueAxis(drag.dropRegion?.axis));
 
   const isBlocked = $derived(nib.blockedByIds.length > 0);
   // `pill-dim` additionally dims the whole row. Gated off during drag, while a
@@ -137,6 +145,9 @@
   class:drop-after={isDropTarget && dropZone === "after" && dropValid}
   class:drop-reparent={isDropTarget && dropZone === "reparent" && dropValid}
   class:drop-invalid={isDropTarget && !dropValid}
+  class:drop-queue={dropQueue}
+  class:region-band={regionBand !== null}
+  class:region-band-queue={isQueueAxis(regionBand)}
   class:nib-highlighted={highlighted}
   class:nib-fading={fading}
   class:blocked-dim={blockedDim}
@@ -231,6 +242,38 @@
      JS consumer; it stays only as a state marker that tests assert to pin the
      blockedDim gating logic (drag/drop/pulse suppression). */
 
+  /* The boundary between one ordering region and the next, drawn above the row
+     that opens the new one (`regionBandAt` decides which rows those are). Not
+     reserved-transparent like the accent gutter above: a band is settled by the
+     row list rather than by hover or selection, so it can afford the 1px of
+     height it adds.
+
+     A border rather than the box-shadow the drop states use, because a row can
+     be both at once and box-shadow does not compose — two rules setting it
+     cannot both apply, so whichever won would erase the other while the pointer
+     is over the row. */
+  .tree-row.region-band {
+    border-block-start: 1px solid var(--border);
+  }
+
+  /* A seam a milestone queue is on either side of, in the queue's own color and
+     a touch heavier: where a queue's run ENDS is the one place nothing else
+     marks it — a run that opens by descending is left to the indent, which is
+     why `regionBandAt` draws only the closing side — so it is worth spotting
+     from across the table. Written as the compound of
+     both classes — which is how the row always carries it — so it outranks the
+     rule above rather than depending on following it.
+
+     One row can carry this AND `.drop-before.drop-queue` below, which paints 2px
+     of the same hue on the inside of the same edge — 4px of cyan across two
+     boxes, where the parent axis pairs two different tokens (--border band,
+     --ring indicator). Unreached until a lens mints a milestone region
+     (nibs-iaqd), and left alone until it can be seen rather than reasoned about:
+     the two are not distinguishable from the CSS alone. */
+  .tree-row.region-band.region-band-queue {
+    border-block-start: 2px solid var(--region-queue);
+  }
+
   /* Drop zone indicators */
   .tree-row.drop-before {
     box-shadow: inset 0 2px 0 0 var(--ring);
@@ -245,8 +288,36 @@
     box-shadow: inset 0 0 0 1px var(--ring);
   }
 
+  /* The same three indicators for a drop that writes on the MILESTONE axis,
+     which moves a row inside a queue and changes no parent link. Each selector
+     carries one class more than its parent-axis form above, so it outranks it
+     whatever the declaration order. */
+  .tree-row.drop-before.drop-queue {
+    box-shadow: inset 0 2px 0 0 var(--region-queue);
+  }
+
+  .tree-row.drop-after.drop-queue {
+    box-shadow: inset 0 -2px 0 0 var(--region-queue);
+  }
+
+  /* `color-mix` where the parent-axis rule four lines above writes a literal
+     alpha channel: that shortcut needs the color spelled out, and this one is
+     reached through a `var()`, which relative-color syntax would be needed to
+     add an alpha to. `color-mix` is what the codebase already reaches for in
+     that position (ActiveNibView.svelte, App.svelte). */
+  .tree-row.drop-reparent.drop-queue {
+    background-color: color-mix(in oklab, var(--region-queue), transparent 88%);
+    box-shadow: inset 0 0 0 1px var(--region-queue);
+  }
+
   /* .tree-row.drop-invalid intentionally has no styling — invalid drop targets
-     get no highlight. The class exists for drop-zone logic, not for CSS. */
+     get no highlight. The class exists for drop-zone logic, not for CSS.
+
+     What a user reads instead is an absence: the drag badge names a destination
+     only for an accepted plan (DragBadge.svelte), so it names none over a target
+     nothing can happen on. Release hands the refusal to App.svelte's handleDrop,
+     which raises its message for every reason but `drop-on-self` — releasing on
+     the row you grabbed is a cancel, and a cancel says nothing. */
 
   /* Real-time change highlight — brief accent background pulse */
   .tree-row.nib-highlighted {

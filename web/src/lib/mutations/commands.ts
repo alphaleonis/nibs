@@ -13,6 +13,7 @@ import type {
   SequenceCommand,
   SequenceStep,
 } from "./types";
+import type { OrderScope } from "../gql/graphql";
 
 // --- Leaf factories ---
 
@@ -40,14 +41,25 @@ export function setParent(id: string, parentId: string | null): SetParentCommand
   return { kind: "set-parent", id, parentId };
 }
 
+/**
+ * Positions a nib on one ordering axis. `scope` selects the axis — omitted, the
+ * server's PARENT default applies, which is what every sibling-order caller
+ * wants.
+ *
+ * `parentId` belongs to the PARENT scope alone: a queue move changes a nib's
+ * position within a milestone, never which container holds it, so the server
+ * refuses `parentId` together with `scope: MILESTONE`. `reparentAndReorder`
+ * always sends `parentId`, so a queue move must not route through it.
+ */
 export function reorderNib(
   id: string,
-  opts: { afterId?: string; beforeId?: string; first?: boolean; parentId?: string | null },
+  opts: { afterId?: string; beforeId?: string; first?: boolean; parentId?: string | null; scope?: OrderScope },
 ): ReorderNibCommand {
   const cmd: ReorderNibCommand = { kind: "reorder-nib", id };
   if (opts.afterId !== undefined) cmd.afterId = opts.afterId;
   if (opts.beforeId !== undefined) cmd.beforeId = opts.beforeId;
   if (opts.first !== undefined) cmd.first = opts.first;
+  if (opts.scope !== undefined) cmd.scope = opts.scope;
   // Use "" for root-level (null → ""), since GraphQL null is indistinguishable
   // from "not provided" in the Go resolver (*string nil for both cases).
   if (opts.parentId !== undefined) cmd.parentId = opts.parentId ?? "";
@@ -66,6 +78,14 @@ export function sequence(steps: SequenceStep[]): SequenceCommand {
 
 // --- Domain-level compositions ---
 
+/**
+ * Chains a run of nibs after a target on the PARENT axis. Takes no `scope`, so
+ * a queue move must not route through it. When subject and anchor share a
+ * parent the server accepts the move and rewrites the sibling `order` key while
+ * `milestoneOrder` stays untouched — a reorder on the wrong axis with nothing
+ * to signal it. When they sit under different parents it is refused instead
+ * (`not a sibling (different parent)`).
+ */
 export function reorderChain(
   ids: string[],
   targetId: string,

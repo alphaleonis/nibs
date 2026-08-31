@@ -12,10 +12,11 @@
   import ActiveNibView from "./lib/components/ActiveNibView.svelte";
   import TypePickerPopover from "./lib/components/TypePickerPopover.svelte";
   import RowContextMenu from "./lib/components/RowContextMenu.svelte";
+  import DragBadge from "./lib/components/DragBadge.svelte";
   import ConfirmDialog from "./lib/components/ConfirmDialog.svelte";
   import { SelectionState } from "./lib/selection.svelte";
   import { DragState } from "./lib/drag.svelte";
-  import type { DropZone } from "./lib/drag.svelte";
+  import { DROP_REFUSAL_TOAST_ID, type DropPlan } from "./lib/ordering/dropPlan";
   import { TreeViewState } from "./lib/treeView.svelte";
   import { provideSelection, provideDrag, provideTreeView, provideConfirmDialog, provideActiveView, provideHistoryNav, provideConnection } from "./lib/contexts";
   import { useConnectionRecovery } from "./lib/composables/useConnectionRecovery.svelte";
@@ -43,12 +44,6 @@
   import { initMutationStore } from "./lib/mutations";
   import { applyTheme } from "./lib/theme";
   import { applyFontScale } from "./lib/fontScale";
-  import {
-    reparentBatch,
-    reorderChain,
-    reorderNib as reorderNibCmd,
-    reparentAndReorder,
-  } from "./lib/mutations/commands";
 
   // The socket's up/down events feed the recovery policy, which in turn drives
   // the reconnect — mutually referential, since the client needs the hooks at
@@ -435,32 +430,28 @@
 
   // --- Drag-and-drop handlers ---
 
-  /** Handle drop: determine whether to reorder, reparent, or both */
-  async function handleDrop(targetNibId: string, zone: DropZone, targetParentId: string | null) {
-    // ondrop is called before endDrag(), so draggedIds/draggedParentId are still populated.
-    // We copy them immediately since endDrag() runs synchronously after
-    // this async function returns to its caller.
-    const ids = [...drag.draggedIds];
-    const sourceParentId = drag.draggedParentId;
-    if (ids.length === 0) return;
-
-    if (zone === "reparent") {
-      await mutations.execute(reparentBatch(ids, targetNibId));
-    } else {
-      // Check if this is a cross-parent move (needs reparent + reorder)
-      const crossParent = sourceParentId !== undefined && sourceParentId !== targetParentId;
-
-      if (crossParent) {
-        await mutations.execute(reparentAndReorder(ids, targetParentId, targetNibId, zone));
-      } else if (ids.length === 1) {
-        const opts = zone === "before"
-          ? { beforeId: targetNibId }
-          : { afterId: targetNibId };
-        await mutations.execute(reorderNibCmd(ids[0], opts));
-      } else {
-        await mutations.execute(reorderChain(ids, targetNibId, zone));
+  /** Execute the drop the drag decided on, or say why it cannot happen. */
+  async function handleDrop(plan: DropPlan) {
+    if (!plan.ok) {
+      // One refusal is how a drag is CANCELED rather than rejected: releasing
+      // back on the row you grabbed. A wiggle that clears the drag threshold and
+      // returns to the source row is the ordinary "changed my mind" gesture,
+      // which said nothing before refusals reached this handler and should stay
+      // silent now. Every other reason answers a question about a destination,
+      // so it is shown. The judgment is made once, here — `plan.refusal.reason`
+      // has no other reader.
+      if (plan.refusal.reason !== "drop-on-self") {
+        toast.error(plan.refusal.message, { id: DROP_REFUSAL_TOAST_ID });
       }
+      return;
     }
+
+    // Copied before the first await: `ondrop` runs just ahead of `endDrag()`,
+    // which clears draggedIds as soon as this function suspends. Never empty —
+    // `ondrop` fires only while `drag.isDragging`, which IS a non-empty drag.
+    const ids = [...drag.draggedIds];
+
+    await mutations.execute(plan.command);
 
     // After mutation, ensure the primary dragged nib is visible in the tree
     // (TreeTable will expand collapsed ancestors and scroll it into view)
@@ -706,21 +697,7 @@
   />
 {/if}
 
-{#if drag.isDragging && drag.draggedIds.length > 1}
-  <div
-    class="fixed pointer-events-none rounded-full px-2 py-0.5 text-label"
-    style="
-      left: {drag.cursorX + 12}px;
-      top: {drag.cursorY - 12}px;
-      z-index: var(--z-modal);
-      background-color: var(--accent);
-      color: var(--foreground);
-      border: 1px solid var(--border);
-    "
-  >
-    {drag.draggedIds.length} items
-  </div>
-{/if}
+<DragBadge />
 
 <RowContextMenu
   bind:open={contextMenuOpen}

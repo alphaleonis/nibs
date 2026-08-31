@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import type { TreeTableNib, TreeNode, NibFilter } from "./types";
+import type { Region } from "./ordering/region";
 
 /**
  * A section header that is BOTH a header and a real nib — a milestone heading
@@ -121,5 +122,84 @@ describe("a membership section header (a real nib holding rows that are not its 
     // match dims it like any other row rather than passing it through.
     expect(rows.find((r) => r.nib.id === "M1")!.dimmed).toBe(true);
     expect(rows.find((r) => r.nib.id === "T1")!.dimmed).toBe(false);
+  });
+});
+
+/**
+ * The same injection, for the other half of the section header: what it declares
+ * its rows are ORDERED in. No shipped lens declares anything yet, so the
+ * declaration is put on the injected node directly.
+ */
+describe("a container that declares a childRegion", () => {
+  const header = makeTreeTableNib({ id: "M1", title: "v2.0", type: "milestone" });
+  const queued = makeTreeTableNib({ id: "E1", title: "Queued epic", type: "epic" });
+  const sub = makeTreeTableNib({ id: "T1", title: "Subtask", type: "task", parentId: "E1" });
+  const allNibs = [header, queued, sub];
+  const queue: Region = { axis: "milestone", milestoneId: "M1" };
+
+  function queueTree(): TreeNode<TreeTableNib>[] {
+    return [
+      {
+        nib: header,
+        depth: 0,
+        childRegion: queue,
+        children: [{ nib: queued, depth: 1, children: [{ nib: sub, depth: 2, children: [] }] }],
+      },
+    ];
+  }
+
+  it("puts its own rows in the declared region, and only its own", () => {
+    hooks.viewTree = queueTree();
+
+    const { rows } = buildTableData(allNibs, emptyFilter, "milestones", noCollapsed);
+    const row = (id: string) => rows.find((r) => r.nib.id === id)!;
+
+    expect(row("E1").region).toEqual(queue);
+    // The declaration covers the container's rows, not everything beneath them:
+    // a queued epic's subtask orders under the epic, not in the queue the epic
+    // sits in.
+    expect(row("E1").childRegion).toBeNull();
+    expect(row("T1").region).toEqual({ axis: "parent", parentId: "E1" });
+    // The container is a real nib, so it is a member of its own parent group
+    // like any other row; only what it declares for its children differs.
+    expect(row("M1").region).toEqual({ axis: "parent", parentId: null });
+    expect(row("M1").childRegion).toEqual(queue);
+  });
+
+  it("keeps a descendant with its own assignment out of the queue too", () => {
+    // The one case the one-level rule could plausibly have overlooked. It is not
+    // reachable through the API — `updateNib` refuses to assign a nib whose
+    // ancestor is already assigned, and `setParent` refuses the move that would
+    // create the same pair — but a hand-authored file can hold it, and then the
+    // answer must still be the position the row is DRAWN in: T1 sits under E1,
+    // so its row orders among E1's children. Its queue position exists on the
+    // server and is simply not what this view is showing.
+    const assigned = { ...sub, milestone: "M1" };
+    hooks.viewTree = [
+      {
+        nib: header,
+        depth: 0,
+        childRegion: queue,
+        children: [{ nib: queued, depth: 1, children: [{ nib: assigned, depth: 2, children: [] }] }],
+      },
+    ] satisfies TreeNode<TreeTableNib>[];
+
+    const { rows } = buildTableData([header, queued, assigned], emptyFilter, "milestones", noCollapsed);
+
+    expect(rows.find((r) => r.nib.id === "T1")!.region).toEqual({ axis: "parent", parentId: "E1" });
+  });
+
+  it("changes no row's displayParentId", () => {
+    hooks.viewTree = queueTree();
+
+    const { rows } = buildTableData(allNibs, emptyFilter, "milestones", noCollapsed);
+    const row = (id: string) => rows.find((r) => r.nib.id === id)!;
+
+    // The two fields answer different questions and are threaded separately: E1
+    // is drawn at the header's own display root while ordering in the queue, and
+    // T1 is drawn under E1 while ordering among E1's children.
+    expect(row("M1").displayParentId).toBeNull();
+    expect(row("E1").displayParentId).toBeNull();
+    expect(row("T1").displayParentId).toBe("E1");
   });
 });

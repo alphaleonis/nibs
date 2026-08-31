@@ -107,6 +107,37 @@ describe("MutationDispatcher", () => {
       const [, vars] = client.mutation.mock.calls[0];
       expect(vars).toEqual({ id: "nibs-abc1", afterId: "nibs-xyz9" });
     });
+
+    it("executes reorderNib with the ordering scope when one is given", async () => {
+      const client = createMockClient({ data: { reorderNib: { id: "nibs-abc1" } } });
+      const dispatcher = new MutationDispatcher(client);
+
+      await dispatcher.execute(
+        reorderNib("nibs-abc1", { afterId: "nibs-xyz9", scope: "MILESTONE" }),
+      );
+
+      const [, vars] = client.mutation.mock.calls[0];
+      expect(vars).toEqual({ id: "nibs-abc1", afterId: "nibs-xyz9", scope: "MILESTONE" });
+    });
+
+    it("omits the scope KEY entirely when the command carries none", async () => {
+      // What keeps every pre-existing sibling-order caller sending exactly what
+      // it sent before. Key absence is the assertion because `toHaveProperty`
+      // counts an explicitly-undefined own key as present; on the wire itself
+      // undefined and absent are the same thing, since urql's serializer drops
+      // the key. The value that is NOT the same is an explicit `null`: `scope`
+      // is non-null on the schema, and gqlgen refuses a null at the boundary
+      // (`OrderScope.UnmarshalGQL`, during argument coercion) rather than
+      // falling back to PARENT. That refusal lands before the resolver body
+      // runs, so a null never reaches nib lookup and writes nothing.
+      const client = createMockClient({ data: { reorderNib: { id: "nibs-abc1" } } });
+      const dispatcher = new MutationDispatcher(client);
+
+      await dispatcher.execute(reorderNib("nibs-abc1", { afterId: "nibs-xyz9" }));
+
+      const [, vars] = client.mutation.mock.calls[0];
+      expect(vars).not.toHaveProperty("scope");
+    });
   });
 
   describe("error handling", () => {

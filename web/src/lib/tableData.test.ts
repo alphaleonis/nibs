@@ -667,6 +667,84 @@ describe("buildTableData", () => {
       });
     });
   });
+
+  describe("region (the ordering group)", () => {
+    it("none lens: every row falls back to the group of its own resolved parent", () => {
+      const nibs = [
+        makeTreeTableNib({ id: "nibs-001", type: "milestone", title: "Root" }),
+        makeTreeTableNib({ id: "nibs-002", type: "task", title: "Child", parentId: "nibs-001" }),
+      ];
+      const result = buildTableData(nibs, emptyFilter, "none", noCollapsed);
+
+      expect(result.rows.find(r => r.nib.id === "nibs-001")!.region)
+        .toEqual({ axis: "parent", parentId: null });
+      expect(result.rows.find(r => r.nib.id === "nibs-002")!.region)
+        .toEqual({ axis: "parent", parentId: "nibs-001" });
+    });
+
+    it("none lens: a parent left out of the response splits region from displayParentId", () => {
+      // The two fields diverge without any lens at all. `region` follows the
+      // parentId the SERVER resolved against the whole store; `displayParentId`
+      // comes from the tree the client built out of THIS response, and buildTree
+      // attaches a child only when the response also carries its parent. So a
+      // filter that excluded E1 makes T1 a display root whose ordering group is
+      // still E1's children — which is the correct group, not a fallback.
+      const nibs = [makeTreeTableNib({ id: "T1", type: "task", parentId: "E1" })];
+      const { rows } = buildTableData(nibs, emptyFilter, "none", noCollapsed);
+
+      const t1 = rows.find(r => r.nib.id === "T1")!;
+      expect(t1.displayParentId).toBeNull();
+      expect(t1.region).toEqual({ axis: "parent", parentId: "E1" });
+    });
+
+    it("no lens shipped today declares a childRegion, so every row carries null", () => {
+      const nibs: TreeTableNib[] = [
+        makeTreeTableNib({ id: "M1", type: "milestone" }),
+        makeTreeTableNib({ id: "E1", type: "epic", parentId: "M1" }),
+        makeTreeTableNib({ id: "T1", type: "task" }),
+      ];
+
+      for (const level of VIEW_LEVELS) {
+        const { rows } = buildTableData(nibs, emptyFilter, level, noCollapsed);
+        expect(rows.length, level).toBeGreaterThan(0);
+        for (const row of rows) expect(row.childRegion, `${level}/${row.nib.id}`).toBeNull();
+      }
+    });
+
+    describe("grouping lens (epics), where the display position and the group diverge", () => {
+      // Same fixture as the displayParentId block above: M1 is above the epics
+      // tier and hidden, so E1 is promoted to a top-level header.
+      const nibs: TreeTableNib[] = [
+        makeTreeTableNib({ id: "M1", type: "milestone", title: "Milestone" }),
+        makeTreeTableNib({ id: "E1", type: "epic", title: "Epic", parentId: "M1" }),
+        makeTreeTableNib({ id: "F1", type: "feature", title: "Feature", parentId: "E1" }),
+        makeTreeTableNib({ id: "T1", type: "task", title: "Loose task" }),
+      ];
+
+      it("a promoted header's region names the hidden parent its displayParentId cannot", () => {
+        const { rows } = buildTableData(nibs, emptyFilter, "epics", noCollapsed);
+
+        // This is why both fields exist. E1 still orders among M1's children —
+        // that is the list a reorderNib would move it within — while
+        // displayParentId says null, because M1 has no row for keyboard nav to
+        // walk to.
+        const header = rows.find(r => r.nib.id === "E1")!;
+        expect(header.region).toEqual({ axis: "parent", parentId: "M1" });
+        expect(header.displayParentId).toBeNull();
+      });
+
+      it("a fabricated bucket is a member of nothing, though the rows under it are not", () => {
+        const { rows } = buildTableData(nibs, emptyFilter, "epics", noCollapsed);
+
+        // The bucket names no nib, so no reorderNib can address it. Its rows are
+        // ordinary nibs and keep their own parent group.
+        const bucket = rows.find(r => isSyntheticRowId(r.nib.id))!;
+        expect(bucket.region).toBeNull();
+        expect(rows.find(r => r.nib.id === "T1")!.region)
+          .toEqual({ axis: "parent", parentId: null });
+      });
+    });
+  });
 });
 
 // The load-bearing premise of nibs-6grg: sorting `allNibs` BEFORE buildTableData

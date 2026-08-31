@@ -1,3 +1,5 @@
+import type { Region } from "./ordering/region";
+
 export interface NibSummary {
   id: string;
   title: string;
@@ -115,6 +117,16 @@ export interface TreeNode<T extends TreeNib = TreeNib> {
   nib: T;
   children: TreeNode<T>[];
   depth: number;
+  /**
+   * The ordering group this node's children are members of, when the node
+   * DECLARES one; absent or null means it declares nothing and each child falls
+   * back to its own resolved parent group.
+   *
+   * Optional because only a grouped view's section containers can declare one —
+   * `buildTree` and the flat shape emit nodes that never do — so the many nodes
+   * with nothing to say are not made to say it.
+   */
+  childRegion?: Region | null;
 }
 
 /**

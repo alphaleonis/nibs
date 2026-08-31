@@ -6,7 +6,7 @@ import {
   isValidCrossParentDrop,
   collectDescendantIds,
 } from "./dropZone";
-import type { RowData } from "./tableData";
+import { rowRegion, type RowData } from "./tableData";
 import type { TreeTableNib } from "./types";
 
 function makeNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
@@ -35,13 +35,19 @@ function makeNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
 // would AND the two nib types, forcing callers to pass a full TreeTableNib.
 function makeRow(overrides: Partial<Omit<RowData, "nib">> & { nib?: Partial<TreeTableNib> } = {}): RowData {
   const { nib: nibOverrides, ...rowOverrides } = overrides;
+  const nib = makeNib(nibOverrides);
   return {
-    nib: makeNib(nibOverrides),
+    nib,
     depth: 0,
     hasChildren: false,
     dimmed: false,
     parentNib: null,
     displayParentId: null,
+    // Production's own rule, called rather than restated — a fabricated bucket
+    // built through this helper must come out a member of nothing, as it does
+    // in a real table.
+    region: rowRegion(nib.id, nib.parentId),
+    childRegion: null,
     ...rowOverrides,
   };
 }

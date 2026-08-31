@@ -853,6 +853,62 @@ describe("TreeTable", () => {
     expect(titles).toContain("Standalone task");
   });
 
+  // The region band, end to end through the real producer: `buildTableData`
+  // assigns the regions, `regionBandAt` reads the pairs, and the row draws the
+  // rule. The unit tests cover the rule's cases; this covers the wiring, which
+  // is where an off-by-one in the previous-row lookup would live.
+  //
+  // Two milestones, so a REAL row is banded. A fixture whose only banded row is
+  // the synthetic bucket cannot see that off-by-one: the bucket's region is
+  // null, and `sameRegion(null, null)` is false, so it bands even compared
+  // against itself. Milestone B bands only against the row actually above it.
+  it("bands the row where one ordering region's run ends and another begins", () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-001", title: "Milestone A", type: "milestone" }),
+      makeTreeTableNib({ id: "nibs-002", title: "Epic under A", type: "epic", parentId: "nibs-001" }),
+      makeTreeTableNib({ id: "nibs-004", title: "Milestone B", type: "milestone" }),
+      makeTreeTableNib({ id: "nibs-005", title: "Epic under B", type: "epic", parentId: "nibs-004" }),
+      makeTreeTableNib({ id: "nibs-003", title: "Standalone task", type: "task" }),
+    ];
+    mockQueryStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+    );
+
+    const { container } = renderTreeTable({ filter: {}, viewLevel: "milestones" as ViewLevel });
+
+    const rowIds = Array.from(container.querySelectorAll("tr[data-testid='tree-row']")).map(
+      (tr) => (tr as HTMLElement).dataset.nibId ?? "",
+    );
+    const banded = Array.from(container.querySelectorAll("tr.region-band")).map(
+      (tr) => (tr as HTMLElement).dataset.nibId ?? "",
+    );
+    const bucketId = rowIds.find(isSyntheticRowId)!;
+    // WHICH rows, in order, not how many. Milestone B closes A's subtree and
+    // resumes the top level; the bucket follows B's epic in no list at all.
+    // Neither epic gets one — each opens its run by descending, which the indent
+    // already shows.
+    expect(banded).toEqual(["nibs-004", bucketId]);
+  });
+
+  it("draws no bands in a view whose row order is not the regions' order", () => {
+    // Flat intermixes real parents, so two neighbors say nothing about where a
+    // region's run starts or stops — the same reason drag-reorder is off there.
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-001", title: "Milestone A", type: "milestone" }),
+      makeTreeTableNib({ id: "nibs-002", title: "Epic under A", type: "epic", parentId: "nibs-001" }),
+      makeTreeTableNib({ id: "nibs-003", title: "Standalone task", type: "task" }),
+    ];
+    mockQueryStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+    );
+
+    const { container } = renderTreeTable({ filter: {}, viewLevel: "flat" as ViewLevel });
+
+    // Rows really are on screen, so the empty band list is not an empty table.
+    expect(container.querySelectorAll("[data-testid='tree-row']").length).toBeGreaterThan(0);
+    expect(container.querySelectorAll("tr.region-band")).toHaveLength(0);
+  });
+
   it("milestones view shows the Parent column (parent is a normal column in every lens)", () => {
     const nibs: TreeTableNib[] = [
       makeTreeTableNib({ id: "nibs-001", title: "Milestone A", type: "milestone" }),

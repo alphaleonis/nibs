@@ -159,8 +159,8 @@ export const SET_PARENT_MUTATION = graphql(`
 `);
 
 export const REORDER_NIB_MUTATION = graphql(`
-  mutation ReorderNib($id: ID!, $afterId: ID, $beforeId: ID, $first: Boolean, $parentId: String) {
-    reorderNib(id: $id, afterId: $afterId, beforeId: $beforeId, first: $first, parentId: $parentId) {
+  mutation ReorderNib($id: ID!, $afterId: ID, $beforeId: ID, $first: Boolean, $parentId: String, $scope: OrderScope) {
+    reorderNib(id: $id, afterId: $afterId, beforeId: $beforeId, first: $first, parentId: $parentId, scope: $scope) {
       id
       title
       status

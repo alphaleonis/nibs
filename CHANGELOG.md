@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`nibs context` names the active milestone and carries what `nibs next` answers** — "where are we" and "what do I do" become one call, with next's own fallback and no-answer labels traveling verbatim so the two surfaces cannot answer one question two ways.
 - **A store is fenced against migration while a `nibs serve` or `nibs tui` holds it** — `nibs migrate` refuses while either is running and either refuses to start while a migration runs, because a session that loaded the store beforehand writes its pre-migration copy back afterwards with nothing to detect it.
 - **The web table remembers a scroll position per view**, so switching away and back returns you to where you were rather than to wherever the other view's list left the offset.
+- **A drag says which list it will reorder within** — a badge follows the cursor naming the destination by title, a rule marks where an ordering group's run of rows ends, and a drop that cannot happen explains why instead of doing nothing.
 
 ### Changed
 - **BREAKING: moving more than one nib at once now requires `--block`** — `nibs mv <a> <b> --first` is refused instead of quietly reordering a nib you did not name, which is what a mistyped single move produced, since `--first` takes no anchor and a trailing id became a second one; the help and cheat grammars that invited it are corrected too.
@@ -31,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Store-format migrations are now explicit** — `nibs migrate` previews and applies them, and every other command refuses an unmigrated (or newer-format) store instead of silently rewriting files at load.
 - **A `.nibs` symlink must lead to a directory that is already a store** — a link at anything else is refused rather than adopted as the project's store, and `nibs init` will not create one through a link. A store reached that way needs the manual steps the refusal prints before `nibs migrate` will run; to keep nibs out of the code repository, initialize the directory with `--nibs-path` (and `--prefix`, since a store outside the project derives its prefix from its own parent) and link `.nibs` at it afterwards.
 - **The web table's view control is labelled "View"**, since two of the five it offers — Tree and Flat — group nothing.
+- **A drop beside a row whose real parent the view has hidden now moves the row there**, where it was refused before because the drag read the row's position on screen rather than the group it orders in.
 
 ### Fixed
 - **Switching the web table's view no longer leaves a nib selected that the new view has no row for**, where it stayed focused and a legal target for a bulk action the user could not see.

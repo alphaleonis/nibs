@@ -47,6 +47,9 @@ export class MutationStore {
   async execute(cmd: LeafCommand, opts?: ExecuteOptions): Promise<CommandResult>;
   async execute(cmd: BatchCommand, opts?: ExecuteOptions): Promise<BatchResult>;
   async execute(cmd: SequenceCommand, opts?: ExecuteOptions): Promise<SequenceResult>;
+  // Union overload, mirroring the dispatcher's: a caller holding a command it
+  // did not build itself — a `DropPlan`'s — has no concrete kind to pick.
+  async execute(cmd: AnyCommand, opts?: ExecuteOptions): Promise<AnyResult>;
   async execute(cmd: AnyCommand, opts?: ExecuteOptions): Promise<AnyResult> {
     const ids = extractIds(cmd);
 

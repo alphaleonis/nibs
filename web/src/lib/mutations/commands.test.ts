@@ -100,6 +100,28 @@ describe("leaf command factories", () => {
       first: true,
     });
   });
+
+  it("reorderNib omits scope when no ordering axis is named", () => {
+    // An absent scope defers to the server's PARENT default. Asserted as key
+    // ABSENCE rather than an undefined value, because `toHaveProperty` treats
+    // an explicitly-undefined own key as present — so this is the assertion
+    // that pins the object's shape. The wire is safe either way (urql's
+    // serializer drops undefined-valued keys), but an explicit `null` — a
+    // future `opts.scope ?? null` written "for safety" — is NOT dropped, and
+    // the server refuses it in `OrderScope.UnmarshalGQL`.
+    const cmd = reorderNib("nibs-abc1", { afterId: "nibs-xyz9" });
+    expect(cmd).not.toHaveProperty("scope");
+  });
+
+  it("reorderNib carries the ordering scope when one is named", () => {
+    const cmd = reorderNib("nibs-abc1", { afterId: "nibs-xyz9", scope: "MILESTONE" });
+    expect(cmd).toEqual({
+      kind: "reorder-nib",
+      id: "nibs-abc1",
+      afterId: "nibs-xyz9",
+      scope: "MILESTONE",
+    });
+  });
 });
 
 describe("composition factories", () => {
