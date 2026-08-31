@@ -32,6 +32,10 @@ export type UpdateNibInput = {
   body?: string;
   bodyMod?: { replace?: { old: string; new: string }[]; append?: string };
   parent?: string | null;
+  /** The scheduling axis: the milestone whose queue the nib joins. Null or ""
+   *  clears the assignment; omitted leaves it unchanged. Distinct from `parent`
+   *  — a milestone accepts no children, so joining its queue is this write. */
+  milestone?: string | null;
   addBlocking?: string[];
   removeBlocking?: string[];
   addBlockedBy?: string[];

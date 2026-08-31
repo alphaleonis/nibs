@@ -1,7 +1,7 @@
 import type { DropZone } from "../drag.svelte";
 import { isValidCrossParentDrop, isValidDropTarget } from "../dropZone";
-import { batch, reorderChain, reorderNib, reparentAndReorder, sequence, setParent } from "../mutations/commands";
-import type { AnyCommand, CommandResult, SequenceStep } from "../mutations/types";
+import { batch, reorderChain, reorderNib, reparentAndReorder, sequence, setParent, updateNib } from "../mutations/commands";
+import type { AnyCommand, CommandResult, LeafCommand, SequenceStep } from "../mutations/types";
 import { canBeInMilestoneQueue } from "../membership";
 import type { RowData } from "../tableData";
 import { canHaveChildren } from "../typeHierarchy";
@@ -64,8 +64,28 @@ export interface DropRefusal {
    */
   region?: Region;
   /** Names the separate write that would make the gesture expressible, when
-   *  there is one — so a refusal leads somewhere instead of just saying no. */
+   *  there is one — so a refusal leads somewhere instead of just saying no.
+   *  Never present without `actionCommand`: `refuse` takes the two as one
+   *  argument, so a label with nothing behind it cannot be produced. */
   actionLabel?: string;
+  /**
+   * The write `actionLabel` offers, built here for the reason an accepted plan's
+   * `command` is: the anchor and indicator the remedy has to honor are this
+   * function's own reading of the drag, and deriving them again anywhere else is
+   * a second reading. Read it through `refusalAction`, which takes the pair.
+   */
+  actionCommand?: AnyCommand;
+}
+
+/**
+ * The remedy a refusal offers, or null when it offers none — the one place the
+ * label and the write behind it are read as the pair they are, so no caller can
+ * draw a button with nothing behind it.
+ */
+export function refusalAction(refusal: DropRefusal): { label: string; command: AnyCommand } | null {
+  const { actionLabel, actionCommand } = refusal;
+  if (actionLabel === undefined || actionCommand === undefined) return null;
+  return { label: actionLabel, command: actionCommand };
 }
 
 export type DropPlan =
@@ -289,12 +309,28 @@ export function planDrop(req: DropRequest): DropPlan {
     }
   }
 
+  const anchorId = target.nib.id;
+
   if (!sameRegion(source, dest)) {
     if (dest.axis === "milestone") {
+      // The same membership question the entry gate above asks, asked again on
+      // the path that never reaches it: a before/after destination is the
+      // TARGET's region, not an entry this plan chose, so a milestone dragged
+      // beside a queue member arrives here with the gate untouched. Offering the
+      // assignment then draws a button whose write `nibtypes.ValidateAxes`
+      // refuses ("a milestone cannot be assigned to a milestone").
       return refuse(
         "needs-assignment",
         `${subjectIs(draggedIds, nameOf)} not in ${describeRegion(dest, nameOf)}, and joining one is an assignment rather than a move.`,
-        { region: dest, actionLabel: `Assign to ${spellId(dest.milestoneId, nameOf)}` },
+        {
+          region: dest,
+          action: draggedTypes.every(canBeInMilestoneQueue)
+            ? {
+                label: `Assign to ${spellId(dest.milestoneId, nameOf)}`,
+                command: assignAndPlace(draggedIds, dest, queueLead(indicator, anchorId)),
+              }
+            : undefined,
+        },
       );
     }
     if (source.axis === "milestone") {
@@ -310,7 +346,6 @@ export function planDrop(req: DropRequest): DropPlan {
     }
   }
 
-  const anchorId = target.nib.id;
   switch (dest.axis) {
     case "milestone":
       // Reached only when the source is already this queue — every other way in
@@ -323,7 +358,7 @@ export function planDrop(req: DropRequest): DropPlan {
           indicator === "into"
             ? `Move to the front of ${describeRegion(dest, nameOf)}`
             : `Reorder in ${describeRegion(dest, nameOf)}`,
-        command: queueMove(draggedIds, dest, indicator === "into" ? { first: true } : anchor(indicator, anchorId)),
+        command: queueMove(draggedIds, dest, queueLead(indicator, anchorId)),
       };
     case "parent": {
       if (indicator === "into") {
@@ -414,16 +449,27 @@ export function planDrop(req: DropRequest): DropPlan {
 function refuse(
   reason: DropRefusalReason,
   message: string,
-  extra: { region?: Region; actionLabel?: string } = {},
+  extra: { region?: Region; action?: { label: string; command: AnyCommand } } = {},
 ): DropPlan {
   const refusal: DropRefusal = { reason, message };
   if (extra.region !== undefined) refusal.region = extra.region;
-  if (extra.actionLabel !== undefined) refusal.actionLabel = extra.actionLabel;
+  if (extra.action !== undefined) {
+    refusal.actionLabel = extra.action.label;
+    refusal.actionCommand = extra.action.command;
+  }
   return { ok: false, refusal };
 }
 
 function anchor(indicator: "before" | "after", anchorId: string): { beforeId: string } | { afterId: string } {
   return indicator === "before" ? { beforeId: anchorId } : { afterId: anchorId };
+}
+
+/** Where a drop lands inside a queue: the position it pointed at, or the front
+ *  for an entry, which is the one indicator naming no neighbor. */
+type QueueLead = { first?: boolean; beforeId?: string; afterId?: string };
+
+function queueLead(indicator: DropIndicator, anchorId: string): QueueLead {
+  return indicator === "into" ? { first: true } : anchor(indicator, anchorId);
 }
 
 /**
@@ -434,20 +480,65 @@ function anchor(indicator: "before" | "after", anchorId: string): { beforeId: st
  * `scope`, so a queue move routed through it would rewrite the sibling `order`
  * key instead, or be refused outright when subject and anchor sit under
  * different parents.
+ *
+ * The return type is a non-empty tuple so the lead step stays a `LeafCommand` to
+ * the type system: a caller wanting one write and no sequence around it can then
+ * take it without a cast.
  */
-function queueMove(
+function queueMoveSteps(
   ids: string[],
   region: Region,
-  lead: { first?: boolean; beforeId?: string; afterId?: string },
-): AnyCommand {
+  lead: QueueLead,
+): [LeafCommand, ...SequenceStep[]] {
   const scope = scopeOf(region);
-  if (ids.length === 1) return reorderNib(ids[0], { ...lead, scope });
-  const steps: SequenceStep[] = ids.map((id, i) =>
-    i === 0
-      ? reorderNib(id, { ...lead, scope })
-      : (prev: CommandResult) => reorderNib(id, { afterId: prev.data?.reorderNib?.id, scope }),
+  const [first, ...rest] = ids;
+  return [
+    reorderNib(first, { ...lead, scope }),
+    ...rest.map(
+      (id) => (prev: CommandResult) => reorderNib(id, { afterId: prev.data?.reorderNib?.id, scope }),
+    ),
+  ];
+}
+
+function queueMove(ids: string[], region: Region, lead: QueueLead): AnyCommand {
+  const [head, ...rest] = queueMoveSteps(ids, region, lead);
+  return rest.length === 0 ? head : sequence([head, ...rest]);
+}
+
+/**
+ * The write a `needs-assignment` refusal offers: join the queue, then take the
+ * position the drop pointed at.
+ *
+ * Two writes per row because the axes are independent — an assignment enters the
+ * queue at the server's default placement, last, which need not be where the
+ * indicator pointed. A `sequence` rather than a `batch`: a MILESTONE reorder is
+ * refused while its subject is in no queue ("assigned to no milestone"), so a
+ * row's assignment has to have landed before its own positioning runs.
+ *
+ * INTERLEAVED per row, not every assignment followed by every position. The
+ * dispatcher stops a sequence at its first failing step, so a multi-row drag
+ * holding one row that cannot be assigned — an exclusivity conflict, say — would
+ * otherwise abort with the rows before it assigned but never positioned, parked
+ * at the end of the queue instead of where the drop pointed. Interleaved, that
+ * same failure leaves the rows before it exactly where the drop asked.
+ *
+ * Which is also why the run is anchored on the previous DRAGGED id rather than
+ * on the previous step's result, the way `queueMoveSteps` chains: a sequence
+ * step is handed only the step immediately before it, and interleaving makes
+ * that step the next row's `updateNib`, whose result carries no `reorderNib` id.
+ */
+function assignAndPlace(
+  ids: string[],
+  dest: Extract<Region, { axis: "milestone" }>,
+  lead: QueueLead,
+): AnyCommand {
+  const scope = scopeOf(dest);
+  return sequence(
+    ids.flatMap((id, i) => [
+      updateNib(id, { milestone: dest.milestoneId }),
+      reorderNib(id, i === 0 ? { ...lead, scope } : { afterId: ids[i - 1], scope }),
+    ]),
   );
-  return sequence(steps);
 }
 
 /**

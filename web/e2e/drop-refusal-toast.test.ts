@@ -91,3 +91,73 @@ test("releasing back on the dragged row cancels without an error", async ({ page
   await page.waitForTimeout(600);
   expect(await page.locator("[data-sonner-toast]").count()).toBe(0);
 });
+
+// The refusal that LEADS somewhere: a cross-queue drop cannot be a move, but the
+// assignment it names can be taken from the toast. Chromium is what proves the
+// whole path — the pointer gesture, sonner's action button, the two mutations it
+// runs, and the table settling with the row in its new section.
+//
+// Guard proof (nibs-rmq6): forcing handleDrop's `action:` to `undefined` in
+// App.svelte fails this at the button locator; dropping the `reorderNib` step
+// from `assignAndPlace` fails the final ordering assertion, because the server
+// enters a newly assigned nib LAST in its queue.
+test("the cross-queue refusal offers an assignment that lands where the drop pointed", async ({ page }) => {
+  // Milestones and epics only: the fixture's two queues then fit on one screen,
+  // so the source row and the row it is aimed at are both under the pointer's
+  // reach without scrolling mid-gesture. A type filter does not block drag — only
+  // free text, a column sort and the Flat view do.
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "nibs-filter-preferences",
+      JSON.stringify({ viewLevel: "milestones", filter: { type: ["milestone", "epic"] } }),
+    );
+  });
+  await page.goto("/");
+
+  // tnib-e006 is in v1.1's queue; tnib-e002 is in v1.0's, the queue being aimed
+  // at. Dropping on tnib-e002's TOP edge points at the position before it.
+  const source = page.locator('tr[data-nib-id="tnib-e006"]');
+  const anchor = page.locator('tr[data-nib-id="tnib-e002"]');
+  await expect(source).toBeVisible({ timeout: 10_000 });
+  await expect(anchor).toBeVisible();
+
+  const from = (await source.boundingBox())!;
+  const to = (await anchor.boundingBox())!;
+
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(from.x + from.width / 2 + 12, from.y + from.height / 2, { steps: 5 });
+  // The top 30% of the row, which is the zone that reads as "before this row".
+  await page.mouse.move(to.x + to.width / 2, to.y + to.height * 0.1, { steps: 10 });
+  await page.mouse.up();
+
+  const toast = page.locator("[data-sonner-toast]");
+  await expect(toast).toContainText("assignment rather than a move");
+  const assign = toast.getByRole("button", { name: /^Assign to / });
+  await expect(assign).toBeVisible();
+  await assign.click();
+
+  // Row order is the observable outcome: the moved epic now sits inside v1.0's
+  // section, between the epic it was dropped after and the one it was dropped
+  // before. Polled, because the click starts two mutations and a refetch.
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() => {
+          const ids = [...document.querySelectorAll("tr[data-nib-id]")].map(
+            (tr) => (tr as HTMLElement).dataset.nibId,
+          );
+          const at = (id: string) => ids.indexOf(id);
+          return {
+            present: at("tnib-e006") !== -1,
+            inV1Section: at("tnib-e006") > at("tnib-m001") && at("tnib-e006") < at("tnib-m002"),
+            // The position the drop pointed at, which the assignment alone would
+            // not give: the server enters a newly assigned nib last in its queue.
+            afterE001: at("tnib-e006") > at("tnib-e001"),
+            beforeAnchor: at("tnib-e006") < at("tnib-e002"),
+          };
+        }),
+      { timeout: 10_000 },
+    )
+    .toEqual({ present: true, inV1Section: true, afterE001: true, beforeAnchor: true });
+});
