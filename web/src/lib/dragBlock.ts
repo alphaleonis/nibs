@@ -2,7 +2,7 @@ import { COLUMNS } from "./columns";
 import { isDragAllowed } from "./filter";
 import { viewShapeFor } from "./tree";
 import type { ViewShape } from "./tree";
-import { DEFAULT_VIEW_LEVEL, VIEW_LEVEL_LABELS } from "./types";
+import { TREE_VIEW_LEVEL, VIEW_LEVEL_LABELS } from "./types";
 import type { NibFilter, ViewLevel, TableSort } from "./types";
 
 /**
@@ -15,6 +15,22 @@ import type { NibFilter, ViewLevel, TableSort } from "./types";
  * message in place rather than leave a stale one behind.
  */
 export const DRAG_BLOCK_TOAST_ID = "drag-block";
+
+/**
+ * The view the Flat gate's remedy leaves Flat FOR — named once, and read by both
+ * halves of that one gesture: the action label below, and the switch TreeTable
+ * performs when the label is clicked. Two independently written levels would let
+ * the toast promise one view and deliver another.
+ *
+ * Every non-flat view is reorderable (`reorderableShape`), so the mechanism does
+ * not force the choice. The Tree is chosen because it rearranges the sequence the
+ * user is already looking at: the list query asks for `sort: { field: ORDER }`
+ * and Flat's arm of `buildShapedViewTree` preserves that array, which is the same
+ * `order` key a drop in the Tree rewrites. A drop inside a milestone section
+ * rewrites `milestoneOrder` instead — a different sequence from the one the
+ * blocked drag was aimed at.
+ */
+export const FLAT_BLOCK_REMEDY_VIEW: ViewLevel = TREE_VIEW_LEVEL;
 
 /** Which gate is currently suppressing drag-reorder. */
 export type DragBlockReason = "flat" | "search" | "sort";
@@ -71,7 +87,7 @@ const GATES: readonly DragGate[] = [
         : {
             reason: "flat",
             message: `Reordering is off in the ${VIEW_LEVEL_LABELS.flat} view`,
-            actionLabel: `Switch to ${VIEW_LEVEL_LABELS[DEFAULT_VIEW_LEVEL]}`,
+            actionLabel: `Switch to ${VIEW_LEVEL_LABELS[FLAT_BLOCK_REMEDY_VIEW]}`,
           },
   },
   {

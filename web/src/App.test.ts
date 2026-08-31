@@ -973,8 +973,9 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Columns" })).toBeInTheDocument();
 
-    // View control should show "Tree" (default lens — the full hierarchy)
-    expect(screen.getByRole("button", { name: /^View/ })).toHaveTextContent("Tree");
+    // The control names the view on screen, which with nothing persisted is the
+    // app default.
+    expect(screen.getByRole("button", { name: /^View/ })).toHaveTextContent("Milestones");
   });
 
   // The reconcile a view switch owes the selection reaches the table only through
@@ -1005,7 +1006,7 @@ describe("App", () => {
       });
       expect(milestoneRow()).toBeNull();
 
-      // Back in Tree the row exists again — and must no longer be selected.
+      // In Tree the row exists again — and must no longer be selected.
       await user.click(screen.getByRole("button", { name: /^View/ }));
       await user.click(await screen.findByRole("menuitemradio", { name: "Tree" }));
       await waitFor(() => {

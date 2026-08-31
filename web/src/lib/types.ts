@@ -147,12 +147,16 @@ export interface RowSubtreeActions {
 export const VIEW_LEVELS = ["none", "flat", "milestones", "epics", "features"] as const;
 export type ViewLevel = (typeof VIEW_LEVELS)[number];
 
-/** The view a session starts in, and the one the drag-block remedy offers to
- *  return to. Those two readings coincide only while the default is the
- *  hierarchical view: the remedy means "leave Flat for the tree", so pointing
- *  this at "flat" would make it offer the view the user is already in. Split it
- *  into a separate TREE_VIEW_LEVEL before changing the default to anything else. */
-export const DEFAULT_VIEW_LEVEL: ViewLevel = "none";
+/** The view a session starts in when nothing is stored. A picked view is
+ *  persisted (`Preferences.viewLevel`, auto-saved), so this is what an ABSENT
+ *  preference resolves to and nothing more — it never overrides a stored one. */
+export const DEFAULT_VIEW_LEVEL: ViewLevel = "milestones";
+
+/** The hierarchical view, for callers that mean THAT view rather than wherever a
+ *  session happens to start. Named apart from DEFAULT_VIEW_LEVEL so the two can
+ *  move independently: a caller meaning "the tree" reads this one, and the
+ *  default can then be any level without silently re-aiming it. */
+export const TREE_VIEW_LEVEL: ViewLevel = "none";
 
 /** The user-facing name of each view. Lives here rather than in Toolbar.svelte so
  *  non-component modules can name a view the way the user sees it — a toast that

@@ -91,8 +91,6 @@ export function makeTestContext(
   m.set(COLUMN_ADAPTERS_KEY, columnAdapters);
   // Always provide a tree-view so components that read collapse state work in
   // tests without extra setup.
-  // A test that cares which view is on screen passes its own TreeViewState; this
-  // fallback seeds the app default to match the view level a bare render shows.
   m.set(TREE_VIEW_KEY, opts?.treeView ?? new TreeViewState(DEFAULT_VIEW_LEVEL));
   if (opts?.confirmDialog) m.set(CONFIRM_DIALOG_KEY, opts.confirmDialog);
   // Always provide an active-view so components that open/sync the unified nib

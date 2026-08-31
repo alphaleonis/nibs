@@ -98,7 +98,9 @@ describe("TreeTable", () => {
       readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
     );
 
-    const { container } = renderTreeTable({ filter: {} });
+    // Tree view, where every row is a nib: the count below is the nib count, and
+    // a grouped view fabricates a section row that is not one.
+    const { container } = renderTreeTable({ filter: {}, viewLevel: "none" as ViewLevel });
 
     // Should render a <table> element
     const table = container.querySelector("table");
@@ -153,7 +155,7 @@ describe("TreeTable", () => {
       readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
     );
 
-    const { container } = renderTreeTable({ filter: {} });
+    const { container } = renderTreeTable({ filter: {}, viewLevel: "none" as ViewLevel });
 
     const rows = container.querySelectorAll("[data-testid='tree-row']");
     expect(rows).toHaveLength(3);
@@ -178,7 +180,7 @@ describe("TreeTable", () => {
       readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
     );
 
-    const { container } = renderTreeTable({ filter: {} });
+    const { container } = renderTreeTable({ filter: {}, viewLevel: "none" as ViewLevel });
 
     const rows = container.querySelectorAll("[data-testid='tree-row']");
     expect(rows).toHaveLength(4);
@@ -211,7 +213,7 @@ describe("TreeTable", () => {
       readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
     );
 
-    const { container } = renderTreeTable({ filter: {} });
+    const { container } = renderTreeTable({ filter: {}, viewLevel: "none" as ViewLevel });
 
     // Initially both visible (check via data rows count)
     let rows = container.querySelectorAll("[data-testid='tree-row']");
@@ -263,7 +265,8 @@ describe("TreeTable", () => {
       readable({ fetching: true, error: undefined, data: { nibs }, stale: false }) as any
     );
 
-    const { container } = renderTreeTable({ filter: {} });
+    // Tree view, so the row count below is exactly the nib count.
+    const { container } = renderTreeTable({ filter: {}, viewLevel: "none" as ViewLevel });
 
     // The populated table stays rendered — rows are still present.
     const dataRows = container.querySelectorAll("tr[data-testid='tree-row']");
@@ -3484,7 +3487,8 @@ describe("TreeTable", () => {
         readable({ fetching: false, error: undefined, data: { nibs: allNibs }, stale: false }) as any
       );
 
-      const { container, rerender } = renderTreeTable({ filter: {} });
+      // Tree view, so the row counts below are exactly the nib counts.
+      const { container, rerender } = renderTreeTable({ filter: {}, viewLevel: "none" as ViewLevel });
 
       // Should have 3 rows initially
       let rows = container.querySelectorAll("[data-testid='tree-row']");

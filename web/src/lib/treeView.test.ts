@@ -185,7 +185,7 @@ describe("TreeViewState", () => {
     });
 
     it("switchScroll() adopts 0 for a destination that has never been scrolled", () => {
-      const state = new TreeViewState(DEFAULT_VIEW_LEVEL);
+      const state = new TreeViewState("none");
       state.scrollTop = 420;
       state.switchScroll("none", "epics");
       expect(state.scrollTop).toBe(0);
@@ -193,7 +193,7 @@ describe("TreeViewState", () => {
     });
 
     it("switchScroll() gives the outgoing view's offset back on the way home", () => {
-      const state = new TreeViewState(DEFAULT_VIEW_LEVEL);
+      const state = new TreeViewState("none");
       state.scrollTop = 500;
       state.switchScroll("none", "epics");
       expect(state.scrollTop).toBe(0);
@@ -206,7 +206,7 @@ describe("TreeViewState", () => {
       // The failure this pins: filing 500 under `to` would hand it straight back
       // on arrival, so the destination would inherit an offset from a view whose
       // geometry it does not share.
-      const state = new TreeViewState(DEFAULT_VIEW_LEVEL);
+      const state = new TreeViewState("none");
       state.scrollTop = 500;
       state.switchScroll("none", "epics");
       expect(state.scrollTop).toBe(0);
@@ -220,7 +220,7 @@ describe("TreeViewState", () => {
     });
 
     it("keeps a third view's slot independent of the other two", () => {
-      const state = new TreeViewState(DEFAULT_VIEW_LEVEL);
+      const state = new TreeViewState("none");
       state.scrollTop = 100;
       state.switchScroll("none", "epics");
       state.scrollTop = 200;
@@ -263,7 +263,7 @@ describe("TreeViewState", () => {
     });
 
     it("advances the epoch on every switch, so each one retires scroll ownership", () => {
-      const state = new TreeViewState(DEFAULT_VIEW_LEVEL);
+      const state = new TreeViewState("none");
       state.switchScroll("none", "epics");
       state.switchScroll("epics", "none");
       expect(state.scrollEpoch).toBe(2);

@@ -54,6 +54,15 @@ for (const level of VIEW_LEVELS) {
   });
 }
 
+// What a first visit actually shows. The captures above all seed a stored
+// preference, so none of them can show which view an unseeded session lands in —
+// this one stores nothing at all.
+test("table — first visit, nothing stored", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator("tr[data-nib-id]").first()).toBeVisible({ timeout: 10_000 });
+  await shot(page, "table-first-visit");
+});
+
 // Flat view with an ACTIVE date sort: the Modified header shows its direction
 // arrow and rows are ordered by recency (default is sort-off, so this state is
 // otherwise uncaptured).
