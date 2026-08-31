@@ -5,7 +5,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -39,9 +38,14 @@ func TestGeneratedMembershipContractIsFresh(t *testing.T) {
 //
 // Each mutant below undoes exactly one decision ResolvedMilestoneID makes: its
 // three clauses, plus its choice to answer with the target's id rather than the
-// stored string. The requirement is that its answers differ from the real
-// rule's on at least one fixture row, which is the same thing as "a TS mirror
-// missing this decision fails membership.test.ts".
+// stored string. The requirement is that its answer differs from the real
+// rule's on the NAMED witness row, which is the same thing as "a TS mirror
+// missing this decision fails membership.test.ts on that row".
+//
+// The witness is pinned rather than searched for. Accepting any differing row
+// would let a fixture edit that drops the row a decision actually turns on pass
+// on an unrelated row instead, silently; naming it makes such an edit fail by
+// name.
 //
 // The list is a hand-written copy of the rule, not a derivation of it: a new
 // decision does not appear here on its own. TestResolvedMilestoneIDShapeIsPinned
@@ -49,13 +53,19 @@ func TestGeneratedMembershipContractIsFresh(t *testing.T) {
 func TestContractFixtureDiscriminatesEachRuleDecision(t *testing.T) {
 	f := fixture()
 	lookup := fixtureLookup(f)
+	byID := make(map[string]*nib.Nib, len(f))
+	for _, r := range f {
+		byID[r.nib.ID] = r.nib
+	}
 
 	mutants := []struct {
 		decision string
+		witness  string
 		fn       func(*nib.Nib, membership.Lookup) string
 	}{
 		{
 			decision: "the subject is not itself a milestone",
+			witness:  "m2",
 			fn: func(b *nib.Nib, lookup membership.Lookup) string {
 				if b.Milestone == "" {
 					return ""
@@ -69,6 +79,7 @@ func TestContractFixtureDiscriminatesEachRuleDecision(t *testing.T) {
 		},
 		{
 			decision: "the target exists",
+			witness:  "t3",
 			fn: func(b *nib.Nib, lookup membership.Lookup) string {
 				if b.Milestone == "" || b.EffectiveType() == "milestone" {
 					return ""
@@ -86,6 +97,7 @@ func TestContractFixtureDiscriminatesEachRuleDecision(t *testing.T) {
 		},
 		{
 			decision: "the target is milestone-typed",
+			witness:  "t4",
 			fn: func(b *nib.Nib, lookup membership.Lookup) string {
 				if b.Milestone == "" || b.EffectiveType() == "milestone" {
 					return ""
@@ -99,6 +111,7 @@ func TestContractFixtureDiscriminatesEachRuleDecision(t *testing.T) {
 		},
 		{
 			decision: "the answer is the target's id, not the stored string",
+			witness:  "t6",
 			fn: func(b *nib.Nib, lookup membership.Lookup) string {
 				if b.Milestone == "" || b.EffectiveType() == "milestone" {
 					return ""
@@ -114,13 +127,182 @@ func TestContractFixtureDiscriminatesEachRuleDecision(t *testing.T) {
 
 	for _, m := range mutants {
 		t.Run(m.decision, func(t *testing.T) {
-			for _, r := range f {
-				want := membership.ResolvedMilestoneID(r.nib, lookup)
-				if got := m.fn(r.nib, lookup); got != want {
-					return // This row discriminates the decision. That is enough.
-				}
+			b := byID[m.witness]
+			if b == nil {
+				t.Fatalf("the fixture no longer carries %q, the row this decision turns on — restore it or re-witness the mutant on the row that replaces it", m.witness)
 			}
-			t.Errorf("no fixture row distinguishes the rule from one dropping %q — the contract would pass with that decision missing on either side", m.decision)
+			want := membership.ResolvedMilestoneID(b, lookup)
+			if got := m.fn(b, lookup); got == want {
+				t.Errorf("fixture row %s no longer distinguishes the rule from one dropping %q — both answer %q, so the contract would pass with that decision missing on either side", m.witness, m.decision, want)
+			}
+		})
+	}
+}
+
+// nonTerminating is the answer the cycle mutant below gives when its walk runs
+// past every nib in the fixture. The real rule can only return an id or "", so
+// no row can produce it by accident.
+const nonTerminating = "<did not terminate>"
+
+// TestContractFixtureDiscriminatesEachMilestoneOfDecision is the derived rule's
+// half of the discrimination proof: the fixture must be able to tell
+// (*membership.View).MilestoneOf from a broken copy of its walk.
+//
+// The mutants are written over a plain map rather than a View, because a View's
+// index is unexported and this package is outside membership. That map is the
+// View's own lookup shape — exact ids, no canonicalization — which is why the
+// fixture's aliases play no part here and why the generated milestoneOf column
+// is computed the same way.
+//
+// Four of the walk's five decisions are here. The fifth — that an id naming no
+// nib is in the backlog — has no mutant, because it has no alternative ANSWER:
+// removing the nil guard makes the walk panic rather than decide differently, so
+// no fixture row can distinguish it by comparing answers. It is asserted
+// directly below instead, and it has no TS counterpart at all: the mirror takes
+// a subject, so it never performs that lookup.
+//
+// Each mutant names the fixture row it is discriminated by, for the reason
+// TestContractFixtureDiscriminatesEachRuleDecision states: a searched-for
+// witness lets a fixture edit that drops the row a decision turns on pass on an
+// unrelated row instead.
+func TestContractFixtureDiscriminatesEachMilestoneOfDecision(t *testing.T) {
+	f := fixture()
+	all := fixtureNibs(f)
+	view := membership.Compute(all)
+
+	byID := make(map[string]*nib.Nib, len(all))
+	for _, b := range all {
+		byID[b.ID] = b
+	}
+	lookup := membership.Lookup(func(id string) *nib.Nib { return byID[id] })
+
+	if got := view.MilestoneOf("no-such-nib"); got != "" {
+		t.Errorf("MilestoneOf over an id naming no fixture nib = %q, want \"\"", got)
+	}
+
+	mutants := []struct {
+		decision string
+		witness  string
+		fn       func(string) string
+	}{
+		{
+			decision: "the walk climbs TRANSITIVELY, not one level",
+			witness:  "t10",
+			fn: func(id string) string {
+				b := byID[id]
+				if b == nil || b.EffectiveType() == "milestone" {
+					return ""
+				}
+				// Decision undone: the subject's own step, then one step up the
+				// parent chain, and no further. Every other parented fixture row
+				// answers within that budget, which is why t10 exists.
+				for hops := 0; b != nil && hops < 2; hops++ {
+					if b.EffectiveType() == "milestone" {
+						return ""
+					}
+					if ms := membership.ResolvedMilestoneID(b, lookup); ms != "" {
+						return ms
+					}
+					if b.Parent == "" {
+						return ""
+					}
+					b = byID[b.Parent]
+				}
+				return ""
+			},
+		},
+		{
+			decision: "the walk stops at a milestone-typed ancestor",
+			witness:  "t8",
+			fn: func(id string) string {
+				b := byID[id]
+				if b == nil || b.EffectiveType() == "milestone" {
+					return ""
+				}
+				visited := map[string]bool{}
+				for b != nil && !visited[b.ID] {
+					visited[b.ID] = true
+					// Decision undone: nothing stops the climb at a milestone.
+					if ms := membership.ResolvedMilestoneID(b, lookup); ms != "" {
+						return ms
+					}
+					if b.Parent == "" {
+						return ""
+					}
+					b = byID[b.Parent]
+				}
+				return ""
+			},
+		},
+		{
+			decision: "the walk stops at the FIRST resolved assignment",
+			witness:  "t7",
+			fn: func(id string) string {
+				b := byID[id]
+				if b == nil || b.EffectiveType() == "milestone" {
+					return ""
+				}
+				visited := map[string]bool{}
+				last := ""
+				for b != nil && !visited[b.ID] {
+					visited[b.ID] = true
+					if b.EffectiveType() == "milestone" {
+						return ""
+					}
+					if ms := membership.ResolvedMilestoneID(b, lookup); ms != "" {
+						// Decision undone: keep climbing, and let the outermost
+						// assignment win instead of the nearest.
+						last = ms
+					}
+					if b.Parent == "" {
+						return last
+					}
+					b = byID[b.Parent]
+				}
+				return last
+			},
+		},
+		{
+			decision: "the walk terminates on a parent cycle",
+			witness:  "c1",
+			fn: func(id string) string {
+				b := byID[id]
+				if b == nil || b.EffectiveType() == "milestone" {
+					return ""
+				}
+				// Decision undone: no visited set. A terminating walk visits at
+				// most every nib once, so exceeding that count IS the cycle —
+				// the budget only makes the non-termination observable instead
+				// of hanging this test.
+				for steps := 0; b != nil; steps++ {
+					if steps > len(all) {
+						return nonTerminating
+					}
+					if b.EffectiveType() == "milestone" {
+						return ""
+					}
+					if ms := membership.ResolvedMilestoneID(b, lookup); ms != "" {
+						return ms
+					}
+					if b.Parent == "" {
+						return ""
+					}
+					b = byID[b.Parent]
+				}
+				return ""
+			},
+		},
+	}
+
+	for _, m := range mutants {
+		t.Run(m.decision, func(t *testing.T) {
+			if byID[m.witness] == nil {
+				t.Fatalf("the fixture no longer carries %q, the row this decision turns on — restore it or re-witness the mutant on the row that replaces it", m.witness)
+			}
+			want := view.MilestoneOf(m.witness)
+			if got := m.fn(m.witness); got == want {
+				t.Errorf("fixture row %s no longer distinguishes MilestoneOf from a walk dropping %q — both answer %q, so the contract would pass with that decision missing on either side", m.witness, m.decision, want)
+			}
 		})
 	}
 }
@@ -139,21 +321,31 @@ const wireResolverFile = "internal/graph/schema.resolvers.go"
 //     rather than re-read out of rows(), so rendering the STORED `type` is
 //     caught. That mutation otherwise regenerates cleanly and replays cleanly
 //     (the mirror reads the same wrong column), leaving the typeless row
-//     carrying `type: ""`, a value the Nib.type resolver can never emit.
-//   - internal/graph's Nib.type resolver is read out of the AST and must still
-//     answer through EffectiveType(), and `milestone` must still have no
-//     resolver at all. Without this half both sides of the comparison above
-//     hardcode the same assumption about the wire and nothing checks it: the
-//     resolver could switch to obj.Type and every test in this package would
-//     stay green while the generated header's stated foundation became false.
+//     carrying `type: ""`, a value the Nib.type resolver can never emit. The
+//     same holds for the STORED `parent:`, which is why the fixture is required
+//     below to keep a row whose link names no nib: without one, the raw and
+//     resolved readings are the same string everywhere and this half of the
+//     comparison cannot tell them apart.
+//   - internal/graph's Nib.type and Nib.parentId resolvers are read out of the
+//     AST and must still answer through EffectiveType() and resolvedParentID(),
+//     and `milestone` must still have no resolver at all. Without this half both
+//     sides of the comparison above hardcode the same assumption about the wire
+//     and nothing checks it: the resolver could switch to obj.Type and every
+//     test in this package would stay green while the generated header's stated
+//     foundation became false.
 func TestRenderedTypeIsTheWireType(t *testing.T) {
 	assertWireProjection(t)
 
 	f := fixture()
+	byID := make(map[string]*nib.Nib, len(f))
+	for _, r := range f {
+		byID[r.nib.ID] = r.nib
+	}
 	got := rows()
 	if len(got) != len(f) {
 		t.Fatalf("rows() produced %d rows for %d fixture nibs", len(got), len(f))
 	}
+	differed := false
 	for i, r := range got {
 		src := f[i].nib
 		if want := src.EffectiveType(); r.Type != want {
@@ -162,15 +354,33 @@ func TestRenderedTypeIsTheWireType(t *testing.T) {
 		if r.Milestone != src.Milestone {
 			t.Errorf("row %s renders milestone %q; the wire reports the stored %q verbatim", r.ID, r.Milestone, src.Milestone)
 		}
+		// The resolved reading, recomputed here rather than read back out of
+		// rows(): the stored link when it names a fixture nib, nothing when it
+		// does not. Rendering the STORED link instead would leave t9 carrying a
+		// parent id no row has.
+		want := ""
+		if p := byID[src.Parent]; p != nil {
+			want = p.ID
+		}
+		if r.ParentID != want {
+			t.Errorf("row %s renders parentId %q; the wire reports the resolved %q", r.ID, r.ParentID, want)
+		}
+		if src.Parent != want {
+			differed = true
+		}
 		if r.ID != src.ID {
 			t.Errorf("row %d renders id %q, want %q", i, r.ID, src.ID)
 		}
 	}
+	if !differed {
+		t.Error("no fixture row's stored parent link differs from its resolved reading, so the parentId comparison above cannot tell the two apart — restore a row with a parent naming no nib")
+	}
 }
 
-// assertWireProjection reads the Nib field resolvers and holds the two facts the
-// generated header states: `type` is resolved through EffectiveType, and
-// `milestone` has no resolver, so the wire reports it verbatim.
+// assertWireProjection reads the Nib field resolvers and holds the three facts
+// the generated header states: `type` is resolved through EffectiveType,
+// `parentId` through resolvedParentID, and `milestone` has no resolver, so the
+// wire reports it verbatim.
 func assertWireProjection(t *testing.T) {
 	t.Helper()
 	path := filepath.Join(moduleRoot(t), filepath.FromSlash(wireResolverFile))
@@ -180,8 +390,7 @@ func assertWireProjection(t *testing.T) {
 		t.Fatalf("parsing %s: %v — if the resolvers moved, update this guard rather than deleting it", wireResolverFile, err)
 	}
 
-	var typeResolver *ast.FuncDecl
-	var hasMilestoneResolver bool
+	resolvers := map[string]*ast.FuncDecl{}
 	for _, decl := range f.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
 		if !ok || fn.Recv == nil || len(fn.Recv.List) == 0 || fn.Body == nil {
@@ -190,21 +399,28 @@ func assertWireProjection(t *testing.T) {
 		if receiverTypeName(fn.Recv.List[0].Type) != "nibResolver" {
 			continue
 		}
-		switch fn.Name.Name {
-		case "Type":
-			typeResolver = fn
-		case "Milestone":
-			hasMilestoneResolver = true
-		}
+		resolvers[fn.Name.Name] = fn
 	}
 
-	if typeResolver == nil {
-		t.Fatalf("no (*nibResolver).Type in %s — the wire's `type` is not resolved where this guard looks, so nothing here knows what the contract's `type` column should hold", wireResolverFile)
+	// Each projected column and the call its resolver must still make. `type`
+	// answers through a method on the nib, `parentId` through a package-level
+	// helper, so the two are counted by different node kinds.
+	for _, want := range []struct {
+		column, resolver, callee string
+		count                    func(ast.Node, string) int
+	}{
+		{"type", "Type", "EffectiveType", countSelector},
+		{"parentId", "ParentID", "resolvedParentID", countCall},
+	} {
+		fn := resolvers[want.resolver]
+		if fn == nil {
+			t.Fatalf("no (*nibResolver).%s in %s — the wire's `%s` is not resolved where this guard looks, so nothing here knows what the contract's `%s` column should hold", want.resolver, wireResolverFile, want.column, want.column)
+		}
+		if n := want.count(fn.Body, want.callee); n != 1 {
+			t.Errorf("(*nibResolver).%s in %s calls %s %d time(s), want 1 — the wire no longer reports that reading, so the contract's `%s` column and rows() are projecting a field the client never sees", want.resolver, wireResolverFile, want.callee, n, want.column)
+		}
 	}
-	if n := countSelector(typeResolver.Body, "EffectiveType"); n != 1 {
-		t.Errorf("(*nibResolver).Type in %s selects EffectiveType %d time(s), want 1 — the wire no longer reports the effective type, so the contract's `type` column and rows() are projecting a field the client never sees", wireResolverFile, n)
-	}
-	if hasMilestoneResolver {
+	if resolvers["Milestone"] != nil {
 		t.Errorf("%s now declares a (*nibResolver).Milestone resolver — `milestone` is no longer autobound and reported verbatim, so the contract's `milestone` column is no longer the wire's", wireResolverFile)
 	}
 }
@@ -214,6 +430,23 @@ func countSelector(n ast.Node, name string) int {
 	count := 0
 	ast.Inspect(n, func(node ast.Node) bool {
 		if sel, ok := node.(*ast.SelectorExpr); ok && sel.Sel != nil && sel.Sel.Name == name {
+			count++
+		}
+		return true
+	})
+	return count
+}
+
+// countCall reports how many calls to the package-level function name appear
+// inside n.
+func countCall(n ast.Node, name string) int {
+	count := 0
+	ast.Inspect(n, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if id, ok := call.Fun.(*ast.Ident); ok && id.Name == name {
 			count++
 		}
 		return true
@@ -234,31 +467,36 @@ func receiverTypeName(expr ast.Expr) string {
 	return ""
 }
 
-// TestRuleIsComputableFromTheWireProjection asserts the rule reads nothing the
+// TestRuleIsComputableFromTheWireProjection asserts the rules read nothing the
 // contract cannot ship. Every answer is recomputed over nibs rebuilt from the
-// three projected columns alone and must equal the answer over the full fixture
-// nib, so a clause reading a field outside the projection reddens here instead
-// of shipping a contract the web is structurally unable to satisfy.
+// projected columns alone and must equal the answer over the full fixture nib,
+// so a clause reading a field outside the projection reddens here instead of
+// shipping a contract the web is structurally unable to satisfy.
 //
-// The boundary is exactly "does a fixture row VARY that field", and the two
-// off-projection fields fall on opposite sides of it: a clause on `parent:`
-// reddens this test, because t1 and t2 carry one; a clause on `status:` does
-// not, because no fixture row sets it. The bound is the fixture's, as everywhere
-// else here — only the shape pin sees a field read the fixture is blind to.
+// The boundary is exactly "does a fixture row VARY that field". The derived rule
+// follows the parent link, so the contract carries that axis — as the RESOLVED
+// parent, which is why a rule telling a dangling link apart from no parent
+// reddens here anyway, on `t9`. `status:` is the field a clause could read for
+// free, because no fixture row sets it. The bound is the fixture's, as everywhere
+// else here: only the shape pins see a field read the fixture is blind to.
 func TestRuleIsComputableFromTheWireProjection(t *testing.T) {
 	got := rows()
 	projected := make([]fixtureNib, 0, len(got))
 	for _, r := range got {
 		projected = append(projected, fixtureNib{
-			nib:     &nib.Nib{ID: r.ID, Type: r.Type, Milestone: r.Milestone},
+			nib:     &nib.Nib{ID: r.ID, Type: r.Type, Milestone: r.Milestone, Parent: r.ParentID},
 			aliases: r.Aliases,
 		})
 	}
 	lookup := fixtureLookup(projected)
+	view := membership.Compute(fixtureNibs(projected))
 
 	for i, r := range got {
 		if want := membership.ResolvedMilestoneID(projected[i].nib, lookup); want != r.Resolved {
 			t.Errorf("row %s answers %q over the full nib but %q over the fields the wire carries — the rule reads something the contract cannot ship, so no TS mirror can agree with it", r.ID, r.Resolved, want)
+		}
+		if want := view.MilestoneOf(r.ID); want != r.MilestoneOf {
+			t.Errorf("row %s answers %q over the full nib but %q over the fields the wire carries — MilestoneOf reads something the contract cannot ship, so no TS mirror can agree with it", r.ID, r.MilestoneOf, want)
 		}
 	}
 }
@@ -279,6 +517,18 @@ var pinnedRuleShape = ruleShape{
 	ifs:        2,
 	returns:    3,
 	logicalOps: 2,
+}
+
+// pinnedMilestoneOfShape is the same fingerprint for the derived rule's walk.
+// It is LARGER than the direct rule's because shapeOf follows the call into
+// ResolvedMilestoneID, which lives in the same file — so this pin covers the
+// walk plus the rule it delegates to, and an inlined copy of those three
+// clauses moves it.
+var pinnedMilestoneOfShape = ruleShape{
+	selectors:  map[string]int{"byID": 2, "EffectiveType": 4, "ID": 3, "lookup": 1, "Parent": 2, "Milestone": 2},
+	ifs:        6,
+	returns:    8,
+	logicalOps: 4,
 }
 
 // ruleShape counts the structural features of a function body.
@@ -311,32 +561,64 @@ func (s ruleShape) String() string {
 // shapeOf counts both connectives into logicalOps — so that is caught only if it
 // moves a fixture row's answer.
 func TestResolvedMilestoneIDShapeIsPinned(t *testing.T) {
-	path := filepath.Join(moduleRoot(t), filepath.FromSlash("internal/membership/membership.go"))
+	assertShapeIsPinned(t, "", "ResolvedMilestoneID", pinnedRuleShape,
+		"TestContractFixtureDiscriminatesEachRuleDecision", "resolvedMilestoneId")
+}
+
+// TestMilestoneOfShapeIsPinned is the same backstop for the derived rule.
+// Without it, the residual the package documents — a clause the fixture's
+// answers do not move — would widen from three lines to a whole walk.
+//
+// MilestoneOf CALLS ResolvedMilestoneID, and shapeOf follows a plain call in
+// the same file, so this fingerprint includes the direct rule's. That is the
+// property worth having: it goes red if the walk stops delegating and inlines
+// the three clauses instead, which is the drift the TS mirror is told to avoid
+// for the same reason.
+func TestMilestoneOfShapeIsPinned(t *testing.T) {
+	assertShapeIsPinned(t, "View", "MilestoneOf", pinnedMilestoneOfShape,
+		"TestContractFixtureDiscriminatesEachMilestoneOfDecision", "milestoneOf")
+}
+
+// assertShapeIsPinned holds one rule's body to its fingerprint. recv is the
+// receiver type name, empty for a plain function.
+func assertShapeIsPinned(t *testing.T, recv, name string, pinned ruleShape, mutantTest, mirror string) {
+	t.Helper()
+	const ruleFile = "internal/membership/membership.go"
+	path := filepath.Join(moduleRoot(t), filepath.FromSlash(ruleFile))
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
 	if err != nil {
-		t.Fatalf("parsing internal/membership/membership.go: %v — if the rule moved, update this guard rather than deleting it", err)
+		t.Fatalf("parsing %s: %v — if the rule moved, update this guard rather than deleting it", ruleFile, err)
 	}
 
 	var body *ast.BlockStmt
 	for _, decl := range f.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
-		if ok && fn.Recv == nil && fn.Name.Name == "ResolvedMilestoneID" {
+		if !ok || fn.Name.Name != name {
+			continue
+		}
+		if recv == "" {
+			if fn.Recv == nil {
+				body = fn.Body
+			}
+		} else if fn.Recv != nil && len(fn.Recv.List) > 0 && receiverTypeName(fn.Recv.List[0].Type) == recv {
 			body = fn.Body
+		}
+		if body != nil {
 			break
 		}
 	}
 	if body == nil {
-		t.Fatal("ResolvedMilestoneID not found in internal/membership/membership.go — the guard cannot go quiet by losing its subject")
+		t.Fatalf("%s not found in %s — the guard cannot go quiet by losing its subject", name, ruleFile)
 	}
 
 	got := shapeOf(f, body)
-	if got.String() != pinnedRuleShape.String() {
-		t.Errorf("ResolvedMilestoneID's shape changed:\n  got  %s\n  want %s\n"+
-			"If the change is BEHAVIOR-PRESERVING — a split if, an extracted helper beside it, a rename — re-pin pinnedRuleShape and stop; nothing else here applies.\n"+
-			"If it adds or changes a DECISION, neither the fixture in contract.go nor the mutant list in TestContractFixtureDiscriminatesEachRuleDecision follows it automatically: add a fixture row whose answer the change moves, add a mutant that undoes the new decision, mirror the change in web/src/lib/membership.ts, run `task codegen`, and re-pin.\n"+
+	if got.String() != pinned.String() {
+		t.Errorf("%s's shape changed:\n  got  %s\n  want %s\n"+
+			"If the change is BEHAVIOR-PRESERVING — a split if, an extracted helper beside it, a rename — re-pin the fingerprint and stop; nothing else here applies.\n"+
+			"If it adds or changes a DECISION, neither the fixture in contract.go nor the mutant list in %s follows it automatically: add a fixture row whose answer the change moves, add a mutant that undoes the new decision, mirror the change in %s (web/src/lib/membership.ts), run `task codegen`, and re-pin.\n"+
 			"If the rule's body moved to another FILE, point this guard at that file: shapeOf follows a helper in the same file and nothing further, and TestPinnedRuleShapeIsNotDegenerate refuses the pin that a moved-out body would leave behind.",
-			got, pinnedRuleShape)
+			name, got, pinned, mutantTest, mirror)
 	}
 }
 
@@ -350,22 +632,35 @@ func TestResolvedMilestoneIDShapeIsPinned(t *testing.T) {
 // helper, so that variant re-pins to a shape that still watches the rule; this
 // floor is what makes the cross-file one loud instead of free.
 //
-// The numbers are the rule as it stands — three clauses over three distinct
-// fields, 2 ifs joined by 2 boolean operators, 3 returns. They are a FLOOR, not
-// a second copy of the pin: a rule that legitimately grows stays above them.
+// The direct rule's floor is that rule as it stands: three clauses over three
+// distinct fields, 2 ifs joined by 2 boolean operators, 3 returns. The walk's
+// floor is one MORE than that on every axis, which is what makes a walk whose
+// pin sank to "delegate and return" refusable — shapeOf follows the delegation,
+// so a body doing nothing else fingerprints as the direct rule and would
+// otherwise look like a healthy pin. They are FLOORS, not second copies of the
+// pins: a rule that legitimately grows stays above them.
 func TestPinnedRuleShapeIsNotDegenerate(t *testing.T) {
 	const advice = " — a pin this small watches nothing; if the rule moved, point the guard at where it moved to rather than pinning what it left behind"
-	if n := len(pinnedRuleShape.selectors); n < 3 {
-		t.Errorf("pinnedRuleShape names %d distinct field reads, want at least 3%s", n, advice)
-	}
-	if pinnedRuleShape.ifs < 2 {
-		t.Errorf("pinnedRuleShape has ifs=%d, want at least 2%s", pinnedRuleShape.ifs, advice)
-	}
-	if pinnedRuleShape.returns < 3 {
-		t.Errorf("pinnedRuleShape has returns=%d, want at least 3%s", pinnedRuleShape.returns, advice)
-	}
-	if pinnedRuleShape.logicalOps < 2 {
-		t.Errorf("pinnedRuleShape has logicalOps=%d, want at least 2%s", pinnedRuleShape.logicalOps, advice)
+	for _, c := range []struct {
+		name                                        string
+		got                                         ruleShape
+		minSelectors, minIfs, minReturns, minLogOps int
+	}{
+		{"pinnedRuleShape", pinnedRuleShape, 3, 2, 3, 2},
+		{"pinnedMilestoneOfShape", pinnedMilestoneOfShape, 4, 3, 4, 3},
+	} {
+		if n := len(c.got.selectors); n < c.minSelectors {
+			t.Errorf("%s names %d distinct field reads, want at least %d%s", c.name, n, c.minSelectors, advice)
+		}
+		if c.got.ifs < c.minIfs {
+			t.Errorf("%s has ifs=%d, want at least %d%s", c.name, c.got.ifs, c.minIfs, advice)
+		}
+		if c.got.returns < c.minReturns {
+			t.Errorf("%s has returns=%d, want at least %d%s", c.name, c.got.returns, c.minReturns, advice)
+		}
+		if c.got.logicalOps < c.minLogOps {
+			t.Errorf("%s has logicalOps=%d, want at least %d%s", c.name, c.got.logicalOps, c.minLogOps, advice)
+		}
 	}
 }
 
@@ -417,276 +712,6 @@ func shapeOf(file *ast.File, body *ast.BlockStmt) ruleShape {
 	}
 	walk(body)
 	return s
-}
-
-// The TS half of the contract: the mirror, the generated fixture, and the call
-// site that joins them.
-const (
-	mirrorModule   = "web/src/lib/membership.ts"
-	mirrorSymbol   = "resolvedMilestoneId"
-	contractSymbol = "MEMBERSHIP_CONTRACT"
-	contractModule = "membershipContract"
-	replayCallOpen = "it.each("
-	replayCallSite = replayCallOpen + contractSymbol + ")"
-)
-
-// TestWebImportsTheContract keeps the mechanism armed. The TS-side pins live in
-// one file — it drives the generated fixture through the mirror, and it carries
-// the compile-time row-subset guard — while the freshness test above keeps
-// passing forever whatever happens to it, because it compares Go to Go.
-//
-// This is where the module differs from its internal/webvocab sibling:
-// vocabulary.ts is imported by app code, so deleting its consumer breaks the
-// build. The generated contract is imported only by a test, so deleting its
-// consumer would otherwise be free.
-//
-// It asserts the WIRING rather than three separate facts: ONE *.test.ts must
-// import MEMBERSHIP_CONTRACT, import resolvedMilestoneId, and contain the call
-// site joining them. Requiring the call site is what makes deleting the
-// four-line it.each block — cheaper than deleting the file, and the obvious
-// response to a reddening replay — as loud as deleting the file. Requiring one
-// file to do all three stops a future production importer of
-// resolvedMilestoneId from satisfying the mirror half on the replay's behalf.
-//
-// Skips are checked in two scopes, because the two forms have two different
-// reaches. A `.only` anywhere in the file narrows the WHOLE file to the marked
-// tests, so it is checked file-wide — and it has to be, because vitest's
-// allowOnly defaults to !CI, which makes a committed `.only` silent under `task
-// test` and loud only in CI. A `.skip`/`.todo` reaches only what it marks, so it
-// is checked on the describes ENCLOSING the replay and nowhere else: one on an
-// unrelated test in the same file leaves the replay running, and failing for it
-// would be asserting something this guard has not checked. A skip on the replay
-// call itself needs no check of its own — it changes that call's text, so the
-// wiring assertion catches it.
-//
-// What it does not close: a contributor can still gut the replay's body while
-// leaving the call site standing. It catches the cheap disarm — the one that
-// happens while chasing an unrelated red — not a determined one.
-func TestWebImportsTheContract(t *testing.T) {
-	root := moduleRoot(t)
-	srcDir := filepath.Join(root, "web", "src")
-
-	var scanned int
-	var contractImporters, mirrorImporters, replayFiles, disarmed []string
-	err := filepath.WalkDir(srcDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		if ext := filepath.Ext(path); ext != ".ts" && ext != ".svelte" {
-			return nil
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		slashed := filepath.ToSlash(rel)
-		if slashed == OutputPath {
-			return nil // The generated module declares the symbol; it does not consume it.
-		}
-		scanned++
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		text := string(content)
-
-		importsContract := importsSymbolFrom(text, contractSymbol, contractModule)
-		if importsContract {
-			contractImporters = append(contractImporters, slashed)
-		}
-		// The mirror module itself declares the symbol; it does not consume it.
-		importsMirror := slashed != mirrorModule && importsSymbolFrom(text, mirrorSymbol, "membership")
-		if importsMirror {
-			mirrorImporters = append(mirrorImporters, slashed)
-		}
-
-		at := replayCallAt(text)
-		if !importsContract || !importsMirror || !strings.HasSuffix(slashed, ".test.ts") || at < 0 {
-			return nil
-		}
-		replayFiles = append(replayFiles, slashed)
-		disarmed = append(disarmed, disarmingForms(slashed, text, at)...)
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walking %s: %v — if the web sources moved, update this guard rather than deleting it", srcDir, err)
-	}
-
-	// The walk itself must be alive, or every assertion below passes vacuously.
-	if scanned == 0 {
-		t.Fatalf("no .ts or .svelte files under %s; the guard guards nothing", srcDir)
-	}
-	if len(replayFiles) == 0 {
-		t.Errorf("no *.test.ts under web/src both imports %s and %s AND calls %s — "+
-			"the generated contract at %s is replayed by nobody, and the freshness test above cannot notice because it compares Go to Go.\n"+
-			"  files importing %s: %v\n  files importing %s from %s: %v\n"+
-			"If the replay was restructured rather than removed, point replayCallOpen and contractSymbol at the new call form rather than deleting this guard.",
-			contractSymbol, mirrorSymbol, replayCallSite, OutputPath,
-			contractSymbol, contractImporters, mirrorSymbol, mirrorModule, mirrorImporters)
-	}
-	if len(disarmed) > 0 {
-		t.Errorf("the parity replay is present but does not run: %v — a skipped replay is a disarmed contract", disarmed)
-	}
-	t.Logf("scanned %d web sources; replay in %v; %s imported by %v; %s used by %v",
-		scanned, replayFiles, contractSymbol, contractImporters, mirrorSymbol, mirrorImporters)
-}
-
-// replayCallAt returns the offset of the call driving the contract through the
-// mirror, or -1. The argument is compared rather than the whole call text, so
-// the namespace form (`it.each(contract.MEMBERSHIP_CONTRACT)`) counts too.
-func replayCallAt(text string) int {
-	for i := 0; ; {
-		k := strings.Index(text[i:], replayCallOpen)
-		if k < 0 {
-			return -1
-		}
-		at := i + k
-		i = at + len(replayCallOpen)
-		end := strings.IndexByte(text[i:], ')')
-		if end < 0 {
-			return -1
-		}
-		if arg := strings.TrimSpace(text[i : i+end]); arg == contractSymbol || strings.HasSuffix(arg, "."+contractSymbol) {
-			return at
-		}
-	}
-}
-
-// disarmingForms reports the vitest forms in text that would stop the replay at
-// offset at from running: any `.only` in the file, unless the mark is on one of
-// the replay's own enclosing describes, and a skip or todo form on one of those
-// describes.
-func disarmingForms(file, text string, at int) []string {
-	enclosing := enclosingDescribes(text, at)
-
-	var out []string
-	onlyMarksTheReplay := false
-	for _, open := range enclosing {
-		if strings.HasPrefix(open, "describe.only") {
-			onlyMarksTheReplay = true
-		}
-		for _, form := range []string{"describe.skip", "describe.todo", "xdescribe("} {
-			if strings.HasPrefix(open, form) {
-				out = append(out, file+": the replay's enclosing "+form)
-			}
-		}
-	}
-	if !onlyMarksTheReplay {
-		for _, form := range []string{"describe.only", "it.only", "test.only"} {
-			if strings.Contains(text, form) {
-				out = append(out, file+": "+form+" narrows the file to the marked tests, and the replay is not one of them")
-			}
-		}
-	}
-	return out
-}
-
-// enclosingDescribes returns the opening line of each describe block enclosing
-// the offset, nearest first. Enclosure is read from INDENTATION — a describe
-// indented less than the replay encloses it, one at the same depth is a sibling
-// — which is what keeps a skipped sibling block in the same file from reading as
-// a skipped replay.
-func enclosingDescribes(text string, at int) []string {
-	lines := strings.Split(text, "\n")
-	target := strings.Count(text[:at], "\n")
-	depth := indentWidth(lines[target])
-
-	var out []string
-	for i := target - 1; i >= 0; i-- {
-		open := strings.TrimSpace(lines[i])
-		if !strings.HasPrefix(open, "describe") && !strings.HasPrefix(open, "xdescribe") {
-			continue
-		}
-		if n := indentWidth(lines[i]); n < depth {
-			depth = n
-			out = append(out, open)
-		}
-	}
-	return out
-}
-
-// indentWidth is the number of leading space or tab characters.
-func indentWidth(line string) int {
-	return len(line) - len(strings.TrimLeft(line, " \t"))
-}
-
-// importsSymbolFrom reports whether text binds symbol from a module whose
-// specifier is module or ends in "/"+module.
-//
-// It reads whole import STATEMENTS rather than lines, so the multi-line form
-// web/src/lib/constants.ts already uses for the other Go-generated module
-// satisfies it, and it accepts the namespace form (`import * as ns from …`
-// together with an `ns.symbol` use), which web/src uses for the shadcn component
-// modules. A line beginning with `//` is not a statement, so a mention of the
-// symbol in prose cannot satisfy the guard; an import commented out with `/* */`
-// can, but that file no longer compiles, so the disarm defeats itself.
-func importsSymbolFrom(text, symbol, module string) bool {
-	for _, stmt := range importStatements(text) {
-		spec, ok := quotedSpecifier(stmt)
-		if !ok || (spec != module && !strings.HasSuffix(spec, "/"+module)) {
-			continue
-		}
-		if strings.Contains(stmt, symbol) {
-			return true
-		}
-		if ns, ok := namespaceBinding(stmt); ok && strings.Contains(text, ns+"."+symbol) {
-			return true
-		}
-	}
-	return false
-}
-
-// importStatements returns every ES import statement in text, each joined onto
-// one line: a statement runs from its `import ` line to the line completing its
-// quoted specifier.
-func importStatements(text string) []string {
-	lines := strings.Split(text, "\n")
-	var out []string
-	for i := 0; i < len(lines); i++ {
-		stmt := strings.TrimSpace(lines[i])
-		if !strings.HasPrefix(stmt, "import ") {
-			continue
-		}
-		for {
-			if _, complete := quotedSpecifier(stmt); complete || i+1 >= len(lines) {
-				break
-			}
-			i++
-			stmt += " " + strings.TrimSpace(lines[i])
-		}
-		out = append(out, stmt)
-	}
-	return out
-}
-
-// quotedSpecifier returns the first quoted string in an import statement, which
-// is its module specifier.
-func quotedSpecifier(stmt string) (string, bool) {
-	i := strings.IndexAny(stmt, `"'`)
-	if i < 0 {
-		return "", false
-	}
-	j := strings.IndexByte(stmt[i+1:], stmt[i])
-	if j < 0 {
-		return "", false
-	}
-	return stmt[i+1 : i+1+j], true
-}
-
-// namespaceBinding returns the local name a namespace import binds.
-func namespaceBinding(stmt string) (string, bool) {
-	k := strings.Index(stmt, "* as ")
-	if k < 0 {
-		return "", false
-	}
-	ns := strings.TrimSpace(stmt[k+len("* as "):])
-	if end := strings.IndexAny(ns, " \t,;}"); end >= 0 {
-		ns = ns[:end]
-	}
-	return ns, ns != ""
 }
 
 // moduleRoot walks up from the package directory to the directory holding
