@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -1824,7 +1825,24 @@ func (c *Core) renderAndWriteDeferDirSync(b *nib.Nib, path string, write func(st
 	// Write atomically (temp file + rename) so a crash or a concurrent reader
 	// never observes a half-written nib — a torn file would fail nib.Parse on the
 	// next snapshot build and surface as an OnDiskUnparseableError.
-	unflushedDir, err := write(path, content, 0644)
+	//
+	// The mode is the user's, not this writer's. That rename carries nothing of
+	// the file it replaces, so a mode the user tightened survives only by being
+	// read back and passed through; hardcoding one widens a private nib on the
+	// next unrelated edit. A nib that has never existed has no mode to
+	// preserve and gets the ordinary 0644, the same answer config.Save gives a
+	// config.yml that has never existed. A stat failure that is not "absent" is
+	// reported rather than answered with 0644 — that fallback could only widen a
+	// nib whose real mode was narrower.
+	perm := os.FileMode(0644)
+	switch info, statErr := os.Stat(path); {
+	case statErr == nil:
+		perm = info.Mode().Perm()
+	case !errors.Is(statErr, fs.ErrNotExist):
+		return "", fmt.Errorf("reading the current mode of %s: %w", path, statErr)
+	}
+
+	unflushedDir, err := write(path, content, perm)
 	if err != nil {
 		return "", fmt.Errorf("writing file: %w", err)
 	}
