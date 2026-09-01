@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/svelte";
 import { userEvent } from "@testing-library/user-event";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readable, writable } from "svelte/store";
 import { tick } from "svelte";
 import TreeTable from "./TreeTable.svelte";
@@ -2356,6 +2356,55 @@ describe("TreeTable", () => {
       const { container } = setupWithNibs(nibs, {});
 
       expect(container.querySelector("tr[data-nib-id='nibs-m1'] [data-action='add-child']")).toBeNull();
+    });
+
+    // A drag owns the pointer until it is released or Escaped. The menu handler
+    // touches no drag state, so before the guard the menu opened over a live
+    // gesture whose drop plan was still armed, and the release that dismissed
+    // the menu executed it — a reorder the user was not making.
+    describe("while a drag is in flight", () => {
+      /** Press on a row and cross the 5px threshold, so the drag owns the pointer. */
+      function startDrag(container: HTMLElement, drag: DragState) {
+        const row = container.querySelector("tr[data-nib-id='nibs-001']") as HTMLElement;
+        row.dispatchEvent(new PointerEvent("pointerdown", {
+          clientX: 100, clientY: 100, bubbles: true, button: 0,
+        }));
+        window.dispatchEvent(new PointerEvent("pointermove", {
+          clientX: 130, clientY: 100, bubbles: true,
+        }));
+        // Not an assumption: a gesture that never started would let the menu
+        // through for a reason that has nothing to do with the guard.
+        expect(drag.isDragging).toBe(true);
+        return row;
+      }
+
+      afterEach(() => window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true })));
+
+      it("suppresses the row menu", () => {
+        const onrowcontextmenu = vi.fn();
+        const drag = new DragState();
+        const { container } = setupWithNibs(makeTestNibs(), { onrowcontextmenu }, { drag });
+
+        const row = startDrag(container, drag);
+        row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+
+        expect(onrowcontextmenu).not.toHaveBeenCalled();
+      });
+
+      it("suppresses the menu WITHOUT canceling the gesture", () => {
+        // The chosen affordance, pinned so it cannot drift into the other one:
+        // right-click is not an abort here. The drag survives untouched and
+        // completes on release exactly as if the menu had never been asked for;
+        // Escape remains the way to cancel. Canceling instead would leave this
+        // green only if it also stopped asserting isDragging.
+        const drag = new DragState();
+        const { container } = setupWithNibs(makeTestNibs(), { onrowcontextmenu: vi.fn() }, { drag });
+
+        const row = startDrag(container, drag);
+        row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+
+        expect(drag.isDragging).toBe(true);
+      });
     });
 
     it("context menu dispatches onrowcontextmenu via delegation with preventDefault", async () => {
