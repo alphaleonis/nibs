@@ -76,6 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`nibs new` no longer writes outside the store** — a `--prefix` carrying a path separator, or a store whose `nibs.prefix` did, composed straight into the nib's filename, so `../../` placed the file anywhere the process could write (creating the directories on the way) and `a/b-` buried it in a subdirectory whose name the id lost, leaving the created nib unreachable by the id the create returned.
 - **A nib id that cannot be read back from its own file name is refused** — `nibs new --prefix "a--b-"` returned an id no later command could find, and `nibs config set-prefix a--b` collapsed every nib in the store onto a single id.
 - **A nib named like a grouping bucket no longer crashes the web table** — an id equal to one of the "No X" rows appeared twice in the list, which the keyed render refuses.
+- **Keyboard focus on a grouping bucket row no longer disappears whenever any nib changes** — the "Backlog" and "No X" rows are focusable so Enter toggles the group, but every update to the list dropped that focus.
 
 ## v0.8.3 - 2026-08-13
 

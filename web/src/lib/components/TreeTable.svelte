@@ -393,6 +393,23 @@
     for (const nib of nibs) {
       if (matchesFilter(nib, filter)) matchingIds.add(nib.id);
     }
+    // A grouping bucket is focusable — keyboard nav lands on it so Enter toggles
+    // the group — but names no nib, so the walk above can never yield it and the
+    // dataset set alone drops a live focus on every emission of the list.
+    // Admitting them as an ADDITION is what keeps this a no-op for real nibs:
+    // the rendered set omits containers ranked above the lens's tier (a
+    // milestone has no row under Epics), so retaining it INSTEAD would prune
+    // nibs still in the dataset. Drawing from the current view rather than
+    // testing `isSyntheticRowId` alone is what still prunes another lens's
+    // bucket key. The source is the RENDERED rows rather than the lens's
+    // membership because a bucket is no nib: it never matches the filter
+    // itself, so it has a row only while some member does, and focus has to
+    // follow the row. Collapse cannot cost it that row — buildGroupedTree
+    // returns every section as a root, and collapsing hides a node's
+    // descendants, not the node.
+    for (const id of visibleRowIds) {
+      if (isSyntheticRowId(id)) matchingIds.add(id);
+    }
     // retainOnly reads selection.* — run untracked so those reads don't subscribe
     // this effect (which writes them) and cause effect_update_depth_exceeded. It
     // is a no-op when nothing drops, so re-runs on unrelated data changes are cheap.
