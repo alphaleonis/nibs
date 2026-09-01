@@ -79,6 +79,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Keyboard focus on a grouping bucket row no longer disappears whenever any nib changes** — the "Backlog" and "No X" rows are focusable so Enter toggles the group, but every update to the list dropped that focus.
 - **Right-clicking during a drag no longer opens the row menu over the live gesture**, where releasing the button then performed a reorder the user was not making.
 - **A nib file keeps its permissions across an edit**, where every write reset them to `0644` — so a nib you had made private became world-readable again on the next change.
+- **A newly created nib respects your umask**, instead of always being `0644` — so a `umask 077` shell produces a private nib, and no umask can make one group- or world-writable.
 
 ## v0.8.3 - 2026-08-13
 
