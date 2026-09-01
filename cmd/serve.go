@@ -106,6 +106,31 @@ func resolveServeOptions(cfg *config.Config, flagPort int, flagPortSet bool, fla
 // shutdownTimeout is how long to wait for in-flight requests to complete.
 const shutdownTimeout = 5 * time.Second
 
+// maxRequestBodyBytes bounds a single HTTP request body, applied by
+// requestBodyLimitMiddleware. Far above any nib body a client sends, and low
+// enough that a request cannot make the server buffer without limit.
+const maxRequestBodyBytes = 4 << 20 // 4 MiB
+
+// Per-request bounds on the http.Server. ReadHeaderTimeout already bounds the
+// header phase; these bound the body and the response, and cap the bytes spent
+// parsing the request line and headers (Go's own default there is 1 MiB).
+//
+// They do NOT bound a WebSocket subscription, which is the reason they are safe
+// to set on a server that carries live updates: net/http clears the connection's
+// read and write deadlines the moment a handler hijacks it (hijackLocked in
+// net/http/server.go), and the WebSocket upgrade hijacks. A subscription
+// therefore outlives serveWriteTimeout by design, and its own liveness comes
+// from wsPingPongInterval instead.
+//
+// A GraphQL document sent through the GET transport rides in the request line
+// and so counts against serveMaxHeaderBytes; POST carries it in the body, under
+// maxRequestBodyBytes.
+const (
+	serveReadTimeout    = 30 * time.Second
+	serveWriteTimeout   = 60 * time.Second
+	serveMaxHeaderBytes = 64 << 10 // 64 KiB
+)
+
 // startServer starts the HTTP server. It blocks until ctx is canceled, then
 // gracefully shuts down, draining in-flight requests. The opener function is
 // called with the URL after the listener is bound, allowing tests to inject a fake.
@@ -142,7 +167,10 @@ func startServer(ctx context.Context, app *App, host string, port int, open bool
 	srv := &http.Server{
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       serveReadTimeout,
+		WriteTimeout:      serveWriteTimeout,
 		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    serveMaxHeaderBytes,
 	}
 
 	boundAddr := ln.Addr().String()
@@ -199,7 +227,7 @@ func newServeMux(app *App, staticFS fs.FS) http.Handler {
 	// the 204 preflight short-circuit) wrap the security-header layer, which in
 	// turn applies to every proxied response.
 	csp := buildCSP(staticFS)
-	return corsMiddleware(securityHeadersMiddleware(mux, csp))
+	return corsMiddleware(requestBodyLimitMiddleware(securityHeadersMiddleware(mux, csp)))
 }
 
 // inlineScriptRe matches every <script ...>...</script> block in an HTML
@@ -328,16 +356,47 @@ func isAllowedOrigin(origin string) bool {
 	return u.Scheme == "http" && (host == "localhost" || host == "127.0.0.1")
 }
 
-// corsMiddleware adds CORS headers to all responses and handles preflight requests.
-// Only localhost origins are allowed; the matching origin is echoed back.
+// isSameOrigin reports whether origin names the authority the request was
+// addressed to. Only the authority is compared, never the scheme: a page from a
+// different site has a different authority whatever scheme it loaded over, so
+// the scheme adds nothing to the decision here.
+func isSameOrigin(origin, host string) bool {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return u.Host != "" && u.Host == host
+}
+
+// corsMiddleware decides whether a request is served at all, echoes CORS headers
+// to the cross-origin callers it allows, and answers preflight.
+//
+// A disallowed origin is REFUSED, not merely served without CORS headers. A
+// plain GET triggers no preflight, so a page at any origin can make this server
+// resolve a whole query; the browser then discards the response, but the work is
+// already paid for.
+//
+// Two callers are served. isAllowedOrigin covers a loopback origin, which is the
+// dev-server-on-another-port case. The request's own authority covers same
+// origin: --host binds anywhere, browsers attach Origin to same-origin POSTs,
+// and refusing those would break the UI this guard exists to protect. A
+// same-origin caller is served without CORS headers, which is all it needs.
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Vary", "Origin")
 		origin := r.Header.Get("Origin")
-		if isAllowedOrigin(origin) {
+		switch {
+		case origin == "":
+			// No Origin at all: the CLI, curl, any non-browser client.
+		case isAllowedOrigin(origin):
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		case isSameOrigin(origin, r.Host):
+			// Same origin: nothing to echo, only a request to serve.
+		default:
+			http.Error(w, "origin not allowed", http.StatusForbidden)
+			return
 		}
 
 		if r.Method == http.MethodOptions {
@@ -366,7 +425,16 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 const wsPingPongInterval = 10 * time.Second
 
 // newGraphQLHandler creates a gqlgen HTTP handler with GET, POST, and WebSocket transports.
-// Every operation it executes gets its own graph.RequestCache in context via
+//
+// Every operation it executes is first put through recursionBoundAroundOperations,
+// which refuses a document that re-enters the Nib recursion past
+// maxRecursiveSelectionDepth, or selects more of it than
+// maxRecursiveSelectionTotal. Those bounds belong to the SERVED endpoint alone:
+// the in-process CLI executor (cmd/graphql.go) registers no middleware and is
+// deliberately left unbounded, since it runs in the user's own process with no
+// untrusted page able to drive it.
+//
+// Every operation also gets its own graph.RequestCache in context via
 // requestCacheAroundOperations — resolver helpers (cachedMentions /
 // cachedMentionedBy / cachedSearchAllIDs) use it to memoize reader lookups that
 // one operation would otherwise repeat once per parent. The in-process CLI
@@ -395,6 +463,7 @@ func newGraphQLHandler(app *App, wsPingPong time.Duration) http.Handler {
 		PingPongInterval: wsPingPong,
 	})
 	srv.SetErrorPresenter(etagErrorPresenter)
+	srv.AroundOperations(recursionBoundAroundOperations(recursiveTypeNames(es.Schema())))
 	srv.AroundOperations(requestCacheAroundOperations)
 
 	return srv
