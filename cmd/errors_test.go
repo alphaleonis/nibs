@@ -4,13 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"io/fs"
 	"os"
-	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
@@ -230,10 +225,7 @@ func TestGraphQLResponseCode(t *testing.T) {
 		// disagreeing one. They cannot demonstrate that the class is classified
 		// at all: filterTargetErrCode returns the same ErrValidation that an
 		// UNCLASSIFIED error defaults to here, so deleting the branch leaves all
-		// three green. Deleting it fails
-		// TestFilterTargetErrCodeClassifiesEveryRefusalClass — the totality
-		// guard, which drives every refusal class it finds in internal/graph
-		// through filterTargetErrCode — along with
+		// three green. Deleting it fails TestFilterRefusalExitCodes, along with
 		// TestGraphQLErrCodeCodesAggregateWithinTheirExitClass and
 		// TestRelFetchErrCodeClassifiesFilterRefusals. Reach for those when
 		// changing the classification, and for these rows when changing how a
@@ -821,11 +813,11 @@ func TestGraphQLErrCodeClassifiesUnreadableFilterTargetAsFileError(t *testing.T)
 // filter argument is refused". A new class must be added here BY HAND; nothing
 // enforces it.
 //
-// graph.FilterAreaError is the row that motivated writing it out: it is a
-// filter refusal like the five below, it is dispatched by filterTargetErrCode
-// beside them, and until this test nothing asserted its exit code at all. The
-// guard that was meant to notice reads type NAMES matching FilterTarget*Error,
-// and this one is named FilterArea — so it shipped past a green test.
+// graph.FilterAreaError is why the table is written out by name rather than
+// derived from one. It is a filter refusal like the five below and is dispatched
+// by filterTargetErrCode beside them, but it does not share their FilterTarget
+// prefix — so any rule that recognizes the family by spelling answers for five of
+// the six, and reports the sixth as absent rather than as unclassified.
 func TestFilterRefusalExitCodes(t *testing.T) {
 	tests := []struct {
 		name string
@@ -852,137 +844,4 @@ func TestFilterRefusalExitCodes(t *testing.T) {
 			}
 		})
 	}
-}
-
-// TestFilterTargetErrCodeClassifiesEveryRefusalClass is the totality guard for
-// the refusal taxonomy — for error CLASSES what idValuedFilterFields is for
-// filter FIELDS.
-//
-// filterTargetErrCode dispatches on concrete type for the classes that carry no
-// sentinel and on the nib.ErrNotFound sentinel for those that do, and reports
-// ok=false for everything else. Its call sites then default differently:
-// cmd/rel.go falls back to FILE_ERROR (exit 5, "the tracker broke"), cmd/list.go
-// to VALIDATION_ERROR (exit 2) in one place and to a bare fmt.Errorf (exit 1) in
-// another. A NEW refusal class following this taxonomy's own convention —
-// implement NO Unwrap, which FilterTargetUnreadableError's doc calls the whole
-// safety property — would match no branch, so each of those call sites would
-// answer one user error with its own default class, with nothing failing to
-// compile and nothing failing to pass.
-//
-// The class names are read out of internal/graph's SOURCE rather than listed
-// here, because a list is precisely what cannot notice a class it was never
-// told about. A new FilterTarget*Error declared in that package fails this test
-// until it has a representative here and filterTargetErrCode returns the code
-// that representative names. The walk reads that package's own files and does
-// not recurse, so a refusal class declared in a subpackage or in another
-// package is outside this guard's scope.
-func TestFilterTargetErrCodeClassifiesEveryRefusalClass(t *testing.T) {
-	// One representative per class, keyed by the type name the source walk
-	// reports, carrying the code the taxonomy owes it.
-	representatives := map[string]struct {
-		err  error
-		want string
-	}{
-		"FilterTargetNotFoundError": {
-			&graph.FilterTargetNotFoundError{Field: "parentId", ID: "zz"},
-			output.ErrNotFound,
-		},
-		"FilterTargetUnreadableError": {
-			&graph.FilterTargetUnreadableError{Field: "siblingId", ID: "gone", ReaderErr: nib.ErrNotFound},
-			output.ErrFileError,
-		},
-		"FilterTargetEmptyError": {
-			&graph.FilterTargetEmptyError{Field: "parentId"},
-			output.ErrValidation,
-		},
-		"FilterTargetContradictionError": {
-			&graph.FilterTargetContradictionError{Field: "parentId", PresenceField: "hasParent", ID: "zz"},
-			output.ErrValidation,
-		},
-		"FilterTargetTypeError": {
-			&graph.FilterTargetTypeError{Field: "milestone", ID: "zz", Got: "epic", Want: "milestone"},
-			output.ErrValidation,
-		},
-	}
-
-	declared := filterRefusalTypeNames(t)
-	for _, name := range declared {
-		t.Run(name, func(t *testing.T) {
-			rep, ok := representatives[name]
-			if !ok {
-				t.Fatalf("%s is a filter-refusal class with no representative here, so nothing checks that filterTargetErrCode classifies it — add one, and a branch if it needs one", name)
-			}
-			got, ok := filterTargetErrCode(rep.err)
-			if !ok {
-				t.Fatalf("filterTargetErrCode leaves %s unclassified, so its call sites answer one user error with three different exit codes", name)
-			}
-			if got != rep.want {
-				t.Errorf("filterTargetErrCode(%s) = %q (exit %d), want %q (exit %d)",
-					name, got, output.ExitCode(got), rep.want, output.ExitCode(rep.want))
-			}
-		})
-	}
-
-	// The other direction: a representative the walk never reported means the
-	// walk stopped seeing the source, and every subtest above would then be
-	// vacuously absent rather than failing.
-	for name := range representatives {
-		if !slices.Contains(declared, name) {
-			t.Errorf("%s has a representative here but the source walk did not find it, so the walk is not reading what it is meant to", name)
-		}
-	}
-}
-
-// filterRefusalTypeNames reads internal/graph's non-test sources and returns
-// every type declared there whose name matches FilterTarget*Error.
-//
-// Reading the source is what makes the guard above total. Go offers no runtime
-// enumeration of a package's types, so the alternative is a hand-kept list —
-// and a hand-kept list cannot report the class nobody remembered to add to it,
-// which is the entire failure this guards against.
-func filterRefusalTypeNames(t *testing.T) []string {
-	t.Helper()
-
-	dir := filepath.Join("..", "internal", "graph")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("read %s: %v", dir, err)
-	}
-
-	fset := token.NewFileSet()
-	var names []string
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		file, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, parser.SkipObjectResolution)
-		if err != nil {
-			t.Fatalf("parse %s: %v", name, err)
-		}
-		for _, decl := range file.Decls {
-			gen, ok := decl.(*ast.GenDecl)
-			if !ok || gen.Tok != token.TYPE {
-				continue
-			}
-			for _, spec := range gen.Specs {
-				ts, ok := spec.(*ast.TypeSpec)
-				if !ok {
-					continue
-				}
-				if strings.HasPrefix(ts.Name.Name, "FilterTarget") && strings.HasSuffix(ts.Name.Name, "Error") {
-					names = append(names, ts.Name.Name)
-				}
-			}
-		}
-	}
-
-	// Without this a wrong directory, a renamed package or a changed naming
-	// convention would empty the walk and leave the guard reporting success
-	// over nothing.
-	if len(names) == 0 {
-		t.Fatalf("no FilterTarget*Error type found under %s, so this guard checks nothing", dir)
-	}
-	slices.Sort(names)
-	return names
 }

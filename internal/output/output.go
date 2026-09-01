@@ -85,36 +85,51 @@ const (
 	ExitIO         = 5 // FILE_ERROR, NO_*_DIR (filesystem / IO)
 )
 
+// exitCodes is the CLASSIFIED error-code vocabulary paired with the exit class
+// each member belongs to. It is a map rather than a switch so the vocabulary and
+// its classification are ONE object a caller — or a test — can range over;
+// TestGeneralCode ranges over it in both directions against the generalization
+// table, so no member of it can go without a generalization and no row there can
+// describe a code ExitCode does not classify.
+//
+// Ranging over it says nothing about a code that is ABSENT: an Err* constant
+// declared above and never added here collapses to ExitError through the miss in
+// ExitCode, and nothing in the suite notices. Adding a code means classifying it
+// here.
+//
+// ErrUncategorized carries an entry even though its class is also the fallback,
+// so the map enumerates the whole vocabulary: a deliberately uncategorized
+// failure is distinguishable here from a string ExitCode does not know.
+var exitCodes = map[string]int{
+	ErrNotFound:      ExitNotFound,
+	ErrValidation:    ExitValidation,
+	ErrInvalidStatus: ExitValidation,
+	ErrHierarchy:     ExitValidation,
+	ErrTextNotFound:  ExitValidation,
+	ErrTextAmbiguous: ExitValidation,
+	ErrConflict:      ExitConflict,
+	ErrFileError:     ExitIO,
+	ErrNoNibsDir:     ExitIO,
+	ErrUncategorized: ExitError,
+}
+
 // ExitCode maps a structured error CODE (one of the Err* constants) to a
 // stable process exit status. Unknown codes collapse to ExitError. This is
 // the single source of truth for CLI exit statuses — the cmd boundary is the
 // only caller.
 func ExitCode(code string) int {
-	switch code {
-	case ErrNotFound:
-		return ExitNotFound
-	case ErrValidation, ErrInvalidStatus, ErrHierarchy, ErrTextNotFound, ErrTextAmbiguous:
-		return ExitValidation
-	case ErrConflict:
-		return ExitConflict
-	case ErrFileError, ErrNoNibsDir:
-		return ExitIO
-	case ErrUncategorized:
-		// Listed explicitly rather than left to the default so the switch
-		// enumerates the whole vocabulary: a deliberately uncategorized failure
-		// is distinguishable here from a string this function does not know.
-		return ExitError
-	default:
-		return ExitError
+	if exit, ok := exitCodes[code]; ok {
+		return exit
 	}
+	return ExitError
 }
 
 // GeneralCode returns the most general member of code's exit class — the code to
 // report when a failure's class is established but its kind is not. It is the
 // counterpart of the many-to-one ExitCode: every code sharing an exit status
 // generalizes to the same answer, and ExitCode(GeneralCode(c)) == ExitCode(c) —
-// an invariant TestGeneralCode and TestGeneralCodeCoversEveryDeclaredCode enforce,
-// including for a string this package never declared.
+// an invariant TestGeneralCode and FuzzGeneralCode enforce, including for a
+// string this package never declared.
 //
 // It exists because a single error report can cover SEVERAL failures — the
 // GraphQL error response `nibs query` renders — and those failures can share an
@@ -147,7 +162,9 @@ func GeneralCode(code string) string {
 		return ErrUncategorized
 	default:
 		// Unreachable while ExitCode returns only the Exit* constants. A new exit
-		// class reaches here, which TestGeneralCodeCoversEveryDeclaredCode catches.
+		// class reaches here, and TestGeneralCode fails on it: every member of
+		// exitCodes needs a named row, and a row whose class has no arm above
+		// generalizes to UNCATEGORIZED while exiting elsewhere.
 		return ErrUncategorized
 	}
 }

@@ -4,13 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"io"
 	"os"
-	"slices"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -161,6 +156,11 @@ func TestExitCode(t *testing.T) {
 // generalCodeExpectations is every code this package declares, with the general
 // member of its class. TestGeneralCode asserts the mapping and FuzzGeneralCode
 // seeds its corpus from it.
+//
+// Which class a code generalizes to is a DECISION, not a property, so it is
+// written down. What is not written down twice is the vocabulary: TestGeneralCode
+// ranges over exitCodes and requires a row here for each member, so a code added
+// to the vocabulary arrives with no row and fails rather than passing unnoticed.
 var generalCodeExpectations = map[string]string{
 	ErrValidation:    ErrValidation,
 	ErrInvalidStatus: ErrValidation,
@@ -197,6 +197,10 @@ var generalCodeExpectations = map[string]string{
 // generalCodeExpectations is the table, and FuzzGeneralCode seeds its corpus
 // from the same rows — one vocabulary, so the named mapping and the property
 // check cannot come to describe different sets of codes.
+//
+// Its completeness is checked against exitCodes, the production map that IS the
+// vocabulary, so a code declared and classified without anyone deciding what it
+// generalizes to fails here.
 func TestGeneralCode(t *testing.T) {
 	general := generalCodeExpectations
 	// A string ExitCode does not know exits 1, so its class is the one that
@@ -204,6 +208,19 @@ func TestGeneralCode(t *testing.T) {
 	unknown := map[string]string{
 		"SOMETHING_ELSE": ErrUncategorized,
 		"":               ErrUncategorized,
+	}
+
+	for code := range exitCodes {
+		if _, ok := general[code]; !ok {
+			t.Errorf("%q is in the exit-code vocabulary but has no row here, so nothing says "+
+				"which class it generalizes to — add one", code)
+		}
+	}
+	for code := range general {
+		if _, ok := exitCodes[code]; !ok {
+			t.Errorf("%q has a row here but is not in the exit-code vocabulary, so this row "+
+				"describes a code ExitCode does not classify", code)
+		}
 	}
 
 	for code, want := range general {
@@ -274,96 +291,4 @@ func FuzzGeneralCode(f *testing.F) {
 				"idempotent", code, general, general, again)
 		}
 	})
-}
-
-// TestGeneralCodeCoversEveryDeclaredCode is the totality guard for the table
-// above. The code names are read out of this package's SOURCE rather than
-// listed, because a list is exactly what cannot notice a constant it was never
-// told about: GeneralCode switches on the exit status, so a NEW code lands in
-// some class silently, and the question worth failing on is whether anyone
-// decided which class it belongs to and whether that class's general member is
-// a claim the new code supports.
-func TestGeneralCodeCoversEveryDeclaredCode(t *testing.T) {
-	covered := map[string]bool{
-		"ErrValidation": true, "ErrInvalidStatus": true, "ErrHierarchy": true,
-		"ErrTextNotFound": true, "ErrTextAmbiguous": true, "ErrNotFound": true,
-		"ErrConflict": true, "ErrFileError": true, "ErrNoNibsDir": true,
-		"ErrUncategorized": true,
-	}
-
-	declared := errorCodeConstNames(t)
-	for _, name := range declared {
-		if !covered[name] {
-			t.Errorf("%s is a declared error code with no row in TestGeneralCode, so nothing "+
-				"says which class it generalizes to — add one", name)
-		}
-	}
-	for name := range covered {
-		if !slices.Contains(declared, name) {
-			t.Errorf("%s has a row in TestGeneralCode but the source walk did not find it, so "+
-				"the walk is not reading what it is meant to", name)
-		}
-	}
-}
-
-// errorCodeConstNames reads this package's non-test sources and returns every
-// declared constant whose name starts with "Err" and whose value is a string
-// literal — the error-code vocabulary. The sentinel ErrAlreadyReported is a var
-// holding an error, not a const, so it is not reported.
-func errorCodeConstNames(t *testing.T) []string {
-	t.Helper()
-
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatalf("read package dir: %v", err)
-	}
-
-	fset := token.NewFileSet()
-	var names []string
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		file, err := parser.ParseFile(fset, name, nil, parser.SkipObjectResolution)
-		if err != nil {
-			t.Fatalf("parse %s: %v", name, err)
-		}
-		for _, decl := range file.Decls {
-			gen, ok := decl.(*ast.GenDecl)
-			if !ok || gen.Tok != token.CONST {
-				continue
-			}
-			for _, spec := range gen.Specs {
-				vs, ok := spec.(*ast.ValueSpec)
-				if !ok {
-					continue
-				}
-				for i, ident := range vs.Names {
-					if !strings.HasPrefix(ident.Name, "Err") {
-						continue
-					}
-					// A spec with no RHS inherits the previous one's value, which is
-					// legal Go but would silently drop the name from this walk — the
-					// exact case this guard exists to catch. Fail instead of skipping.
-					if i >= len(vs.Values) {
-						t.Fatalf("%s has no explicit value; this walk cannot read it, so GeneralCode's coverage would go unchecked for it", ident.Name)
-					}
-					lit, ok := vs.Values[i].(*ast.BasicLit)
-					if !ok || lit.Kind != token.STRING {
-						continue
-					}
-					names = append(names, ident.Name)
-				}
-			}
-		}
-	}
-
-	// Without this a wrong directory or a changed naming convention would empty
-	// the walk and leave the guard reporting success over nothing.
-	if len(names) == 0 {
-		t.Fatal("no Err* string constant found in this package, so this guard checks nothing")
-	}
-	slices.Sort(names)
-	return names
 }

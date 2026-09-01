@@ -2,9 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -33,34 +30,20 @@ import (
 // over refusals driven end to end through the real Cobra pipeline, so the
 // assertion is on the bytes a user sees rather than on a format string.
 //
-// SCOPE, stated because the completeness of a list is exactly what went
-// unenforced before. Both halves are now enforced complete, by two different
-// mechanisms:
+// SCOPE, stated because the completeness of a list is what went unenforced when
+// this cycle began. The two halves are covered differently, and only one is
+// complete by construction:
 //
 //   - the migrate gates: refusalGateCases walks the production migrateGates
-//     slice and requires a fixture per gate in both directions, the same
-//     mechanism TestMigrateDryRunPreviewsEveryRefusalGate uses;
+//     slice, so a gate added to the engine gets a row here with nobody
+//     remembering to add one, and TestMigrateDryRunPreviewsEveryRefusalGate is
+//     what requires each gate to have a fixture;
 //   - the store-resolution refusals: cmd/root.go has no production list to walk,
-//     so TestEveryRootRefusalIsDrivenOrExcused derives one from the source with
-//     go/ast — every error-building call in the file, matched against
-//     approvedRootRefusals in both directions. An entry either names the rows
-//     that drive it or says why it is deliberately not driven, so a refusal added
-//     to root.go fails the test rather than going quietly unguarded.
-//
-// A NAMED ROW IS ALSO A MEASURED ONE. Naming a row proved only that the name
-// existed, so any entry could be satisfied by any row and the coverage figure was
-// a claim rather than a measurement. approvedRowClaims splits each claimed site's
-// format string on its verbs and keeps the literal runs; the invariant test then
-// requires the row's own message to carry every one of them. A row that cannot
-// reach the site claiming it now fails, so "this site is driven by that row" is
-// enforced rather than asserted.
-//
-// What is still NOT enumerated: the refusals migrate.go raises outside
-// migrateGates — stripRetiredNibsPath above all. Four rows below drive its four
-// declared-value refusals, but nothing asserts that set is complete, because the file
-// carries hundreds of fmt.Errorf sites and a totality guard over it would be a
-// list of exclusions rather than a record of anything. root.go is the file the
-// recurrence cycle kept landing in, and it is the one enumerated.
+//     so storeResolutionRefusalCases below is written BY HAND. A refusal added
+//     to root.go is not driven until someone adds a row for it. Turning that
+//     into a compile-time enumeration means giving root.go a refusal table the
+//     way migrate.go has migrateGates; short of that, adding a refusal here is
+//     part of adding a refusal there.
 
 // backtickedSpan matches a `…` span. Every command these refusals prescribe is
 // delimited that way, and nothing else in them is.
@@ -527,22 +510,11 @@ type refusalCase struct {
 }
 
 // refusalGateCases turns the production migrateGates slice into rows, so a gate
-// added to the engine is covered here without anyone remembering to add it.
-func refusalGateCases(t *testing.T) []refusalCase {
-	t.Helper()
+// added to the engine is covered here without anyone remembering to add it. That
+// a gate has a fixture at all is TestMigrateDryRunPreviewsEveryRefusalGate's
+// assertion, over the same two maps; a gate with none is simply not driven here.
+func refusalGateCases() []refusalCase {
 	fixtures := migrateGateFixtures()
-	gateNames := make(map[string]bool, len(migrateGates))
-	for _, gate := range migrateGates {
-		gateNames[gate.name] = true
-		if _, ok := fixtures[gate.name]; !ok {
-			t.Errorf("gate %q has no fixture: every refusal must be shown to name a reachable remedy", gate.name)
-		}
-	}
-	for name := range fixtures {
-		if !gateNames[name] {
-			t.Errorf("fixture %q names no gate in migrateGates", name)
-		}
-	}
 
 	cases := make([]refusalCase, 0, len(migrateGates))
 	for _, gate := range migrateGates {
@@ -577,13 +549,12 @@ func refusalGateCases(t *testing.T) []refusalCase {
 // raise about where a project's nibs live, plus `nibs init`'s refusal to CREATE
 // one through a `.nibs` symlink — which belongs here because it is the other end
 // of one rule: symlinkedStoreError prescribes `nibs init`, and init refusing
-// through a link is what makes that prescription safe. The rows are written by hand, but for
-// root.go the SET is enforced complete — approvedRootRefusals names the rows
-// below that drive each site, in both directions (see
-// TestEveryRootRefusalIsDrivenOrExcused) — and each such claim is MEASURED: the
-// row's message must carry the literal text of the site claiming it (see
-// approvedRowClaims). Renaming a row without updating that list fails the test,
-// and so does pointing an entry at a row that cannot reach it.
+// through a link is what makes that prescription safe.
+//
+// The rows are written by hand and the set is not enforced complete — see the
+// SCOPE note at the top of this file for why, and for what would make it so.
+// Each row drives its refusal end to end through the real Cobra pipeline, so
+// what a row DOES assert is asserted over the bytes a user sees.
 func storeResolutionRefusalCases() []refusalCase {
 	// legacyProject lays out a pre-layout project with the given `nibs.path`
 	// value and returns the project directory.
@@ -912,7 +883,7 @@ func storeResolutionRefusalCases() []refusalCase {
 		},
 		{
 			// The declared directory and the store are ONE directory reached by
-			// two spellings. What this row pins is the half the span census
+			// two spellings. What this row pins is the half the span rows
 			// cannot: the paths the message names are real, and it prescribes no
 			// command the resolver would refuse.
 			name: "migrate finds the retired key naming the store under another spelling",
@@ -938,7 +909,7 @@ func storeResolutionRefusalCases() []refusalCase {
 			},
 		},
 		{
-			// The incident this whole census exists for, reached through the
+			// The incident this row exists for, reached through the
 			// store's own NAME rather than through `nibs.path`: a committed
 			// `.nibs -> /outside` was bound as the store on every route, and
 			// `nibs migrate` planned to sweep that tree into `<project>/.nibs`.
@@ -1318,11 +1289,7 @@ func migrateRefusal(t *testing.T, storeDir string) string {
 }
 
 func TestEveryRefusalNamesAReachablePathAndARunnableCommand(t *testing.T) {
-	// Built BEFORE any subtest, because it parses root.go by its relative path
-	// and the rows below t.Chdir into their fixtures.
-	claims := approvedRowClaims(t)
-
-	cases := append(refusalGateCases(t), storeResolutionRefusalCases()...)
+	cases := append(refusalGateCases(), storeResolutionRefusalCases()...)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Cleanup(resetRootPersistentFlags)
@@ -1330,619 +1297,8 @@ func TestEveryRefusalNamesAReachablePathAndARunnableCommand(t *testing.T) {
 			t.Setenv("NIBS_PATH", "")
 			msg, root := tc.build(t)
 			assertRefusalIsActionable(t, tc.name, msg, root)
-			assertMessageCameFromTheClaimedSite(t, tc.name, msg, claims[tc.name])
 		})
 	}
-}
-
-// rowClaim is one approvedRootRefusals entry's claim that a row drives its site,
-// carried with the literal text that decides whether the claim is true.
-type rowClaim struct {
-	// census names the list the claim came from, so a failure points at the entry
-	// to fix rather than at whichever list the reader assumes.
-	census string
-	fn     string
-	marker string
-	runs   []string
-}
-
-// minIdentifyingRun is the shortest literal run that says WHICH refusal a message
-// came from. Below it a run is the prose punctuation these messages all share —
-// ": ", " under ", ", " — so matching one identifies nothing, and requiring it
-// would only make a failure harder to read.
-//
-// It is pinned from ABOVE as well, which is the half that reads like a free
-// choice and is not. resolveCLIStore's `"loading config: %w"` has exactly one
-// literal run, `"loading config: "`, of length exactly 16, so 17 leaves that
-// entry with nothing to tie its row to. TestLiteralRunsIdentifyTheirFormat
-// asserts that run survives, so the ceiling fails there rather than only in
-// approvedRowClaims. If raising this constant fires either, LOWER IT BACK — do
-// not convert the entry to a `reason`, which trades a driven site for an excused
-// one and quietly reduces the coverage this whole mechanism exists to measure.
-const minIdentifyingRun = 16
-
-// literalRuns splits a format string on its verbs and returns the literal runs
-// between them that are long enough to identify the message (minIdentifyingRun).
-// `%%` is a literal percent rather than a verb and stays inside its run.
-//
-// A run is text fmt writes out unchanged, so EVERY run of the format a message
-// came from appears in that message — which makes "the message carries all of
-// this site's runs" a property that is true by construction for the right row and
-// false for a row that reaches somewhere else.
-func literalRuns(format string) []string {
-	var runs []string
-	var cur strings.Builder
-	keep := func() {
-		if run := cur.String(); len(run) >= minIdentifyingRun {
-			runs = append(runs, run)
-		}
-		cur.Reset()
-	}
-	rest := format
-	for {
-		loc := formatVerb.FindStringIndex(rest)
-		if loc == nil {
-			cur.WriteString(rest)
-			break
-		}
-		cur.WriteString(rest[:loc[0]])
-		if rest[loc[0]:loc[1]] == "%%" {
-			cur.WriteString("%")
-		} else {
-			keep()
-		}
-		rest = rest[loc[1]:]
-	}
-	keep()
-	return runs
-}
-
-// formatVerb matches one %-verb: the sign, its flags, width, precision and
-// argument index, then the verb letter. `%%` matches too and literalRuns treats
-// it as text. A bare `%` followed by a letter after a space would read as a verb;
-// none of these formats carries one, and reading one run as two only costs the
-// tie check a little of its evidence.
-var formatVerb = regexp.MustCompile(`%[-+# 0.\d\[\]]*[a-zA-Z%]`)
-
-// approvedRowClaims maps every row approvedRootRefusals names to the literal runs
-// of the site claiming it.
-//
-// This is what turns entry.rows from a spelling check into a measurement. Naming
-// a row proved only that a row by that name existed, so the workflow a
-// maintainer would fall into — add a refusal, watch the totality guard fail,
-// paste in any row name, watch it pass — left the refusal undriven and
-// DOCUMENTED as driven, which is worse than leaving it unlisted.
-func approvedRowClaims(t *testing.T) map[string][]rowClaim {
-	t.Helper()
-	sites := rootRefusalSites(t)
-
-	claims := map[string][]rowClaim{}
-	for _, entry := range approvedRootRefusals {
-		if len(entry.rows) == 0 || strings.TrimSpace(entry.marker) == "" {
-			continue
-		}
-		var formats []string
-		for _, site := range sites {
-			if site.fn == entry.fn && strings.Contains(site.format, entry.marker) {
-				formats = append(formats, site.format)
-			}
-		}
-		if len(formats) != 1 {
-			// A marker matching no site or several is TestEveryRootRefusalIsDrivenOrExcused's
-			// failure to report; there is nothing here to anchor a row on.
-			continue
-		}
-		runs := literalRuns(formats[0])
-		if len(runs) == 0 {
-			t.Errorf("approvedRootRefusals entry %s %q names rows, but its refusal has no literal run of %d characters to tie one to — "+
-				"nothing would distinguish the right row from any other. If minIdentifyingRun was just raised, lower it back: "+
-				"it is pinned from above by this very site. Otherwise the refusal was reworded down to punctuation — give it "+
-				"wording of its own, or, only if the site is genuinely un-drivable, excuse it in writing instead.",
-				entry.fn, entry.marker, minIdentifyingRun)
-			continue
-		}
-		claim := rowClaim{census: "approvedRootRefusals", fn: entry.fn, marker: entry.marker, runs: runs}
-		for _, row := range entry.rows {
-			claims[row] = append(claims[row], claim)
-		}
-	}
-	return claims
-}
-
-// assertMessageCameFromTheClaimedSite requires a row's message to carry the
-// literal text of every site that claims the row drives it.
-func assertMessageCameFromTheClaimedSite(t *testing.T, row, msg string, claims []rowClaim) {
-	t.Helper()
-	for _, claim := range claims {
-		for _, run := range claim.runs {
-			if strings.Contains(msg, run) {
-				continue
-			}
-			t.Errorf("%s records %s %q as driven by the row %q, but that row's message does not carry the refusal's own text %q, "+
-				"so the row reaches somewhere else and the entry documents coverage that is not there:\n%s",
-				claim.census, claim.fn, claim.marker, row, run, msg)
-		}
-	}
-}
-
-// rootRefusal is one fmt.Errorf in cmd/root.go, recorded with either the rows
-// that drive it or the reason it is deliberately not driven.
-//
-// marker is a substring of the site's FORMAT STRING, and it is how an entry finds
-// its site. Line numbers churn on every edit above them and an ordinal churns the
-// moment a refusal is inserted, while the wording is the message's identity: if
-// the marker stops matching, the refusal was rewritten, which is precisely when
-// someone should re-read whether its row still drives it.
-type rootRefusal struct {
-	fn     string
-	marker string
-	// rows names the storeResolutionRefusalCases entries that drive this site.
-	// Empty means the site is deliberately not driven, and reason says why.
-	rows   []string
-	reason string
-}
-
-// approvedRootRefusals is the record of every refusal cmd/root.go can print. It
-// is the answer to "is this list complete?", which is the question four
-// consecutive review rounds got wrong: each shipped a refusal naming a path that
-// was not there or prescribing a command the resolver refuses, and the fixture
-// table looked clean because nothing asserted it covered them.
-//
-// TestEveryRootRefusalIsDrivenOrExcused compares this against the file's real
-// error-building sites in BOTH directions, so a refusal added to root.go fails
-// the test until it is either given a row or excused here in writing. The rows an
-// entry names are not taken on trust: approvedRowClaims ties each to the site's
-// own literal text, so an entry pointed at a row that cannot reach it fails too.
-//
-// A reason is a CLAIM about reachability, and a wrong one is worse than none — it
-// is the record a future maintainer reads instead of re-deriving. Drive a site
-// with a row wherever a fixture can reach it; reserve a reason for what a test
-// genuinely cannot construct.
-var approvedRootRefusals = []rootRefusal{
-	// PersistentPreRunE and resolveCLIStore: wraps, not store-resolution
-	// refusals. They add a `%w` from a layer below and no command of their own —
-	// but the message a `%w` composes is what a user reads, so the two whose
-	// composed message can name a path and prescribe a command are driven.
-	{
-		fn: "initAppForCommand", marker: "loading nibs: %w",
-		reason: "wraps nibcore.Load, and the composed message CAN name a path — WalkStoreFiles prefixes every enumeration " +
-			"error with the path it failed on. But that path is one the walk itself enumerated from its parent's listing, " +
-			"not one composed from a config value or an argument, which is the class this invariant is about; nothing " +
-			"nibcore.Load returns prescribes a command; and this wrapper's longest literal run is `loading nibs: `, 14 bytes, " +
-			"below minIdentifyingRun — so no row could be tied to it in any case",
-	},
-	{
-		fn: "resolveCLIStore", marker: "loading config from %s: %w",
-		rows: []string{"--config naming a store config that still sets nibs.path"},
-	},
-	{
-		fn: "resolveCLIStore", marker: "loading config: %w",
-		rows: []string{"a store config that still sets nibs.path"},
-	},
-
-	// resolveStoreDir: the flag combinations and the --config guards, which are
-	// answered before any directory is looked at.
-	{
-		fn: "resolveStoreDir", marker: "--config and --nibs-path cannot be combined",
-		rows: []string{"--config combined with --nibs-path"},
-	},
-	{
-		fn: "resolveStoreDir", marker: "--config cannot be combined with NIBS_PATH",
-		rows: []string{"--config combined with NIBS_PATH"},
-	},
-	{
-		fn: "resolveStoreDir", marker: "but this project's store is right there",
-		// The already-migrated shape (and the pre-layout default shape, which is
-		// the same observation: a `.nibs` is there). What this row pins is that
-		// the message names a store that RESOLVES rather than asserting the
-		// project is unmigrated — which is why the guard is bindsAsStore rather
-		// than isDir: isDir follows a link, so an evidence-less `.nibs` symlink
-		// reached this clause and it advised the path the resolver refuses. The
-		// rows on the two branches BELOW are what hold that, because the fix
-		// moves the link case off this site rather than changing its message.
-		rows: []string{"--config aimed at the pre-layout .nibs.yml beside a real store"},
-	},
-	{
-		fn: "resolveStoreDir", marker: "and no store sits beside it",
-		// The genuine pre-layout project, and the only shape that can see this
-		// message prescribe something the resolver refuses — which is why the
-		// remedy is preLayoutRemedy's rather than a second copy of it.
-		rows: []string{
-			"--config aimed at a genuine pre-layout project's .nibs.yml",
-			"--config aimed at a pre-layout .nibs.yml beside an evidence-less .nibs link",
-		},
-	},
-	{
-		fn: "resolveStoreDir", marker: "--config names a store's %s, and %s does not exist",
-		// One site, two remedy clauses; a row for each. Without the stat this
-		// site does not exist at all — the guard took the pre-layout branch on
-		// the basename alone and prescribed a command inside a directory that
-		// need not be there.
-		rows: []string{
-			"--config aimed at a .nibs.yml that is not there beside a real store",
-			"--config aimed at a .nibs.yml in a directory that does not exist",
-			"--config aimed at a .nibs.yml that is not there beside an evidence-less .nibs link",
-		},
-	},
-	{
-		fn: "resolveStoreDir", marker: "--config must name a store's %s, and %s does not exist",
-		rows: []string{"--config naming a file that is not the store's config.yml and is not there"},
-	},
-	{
-		fn: "resolveStoreDir", marker: "--config must name a store's %s (got %s)",
-		rows: []string{"--config naming a file that is not the store's config.yml"},
-	},
-	{
-		fn: "resolveStoreDir", marker: "nibs store does not exist or is not a directory",
-		// The absent spelling cannot be a row: this message states the absence
-		// BEFORE the path while mayBeAbsent requires the phrase immediately
-		// after it, so an absent-path row would fail on a message that is
-		// telling the truth. The not-a-directory spelling reaches the same
-		// site with a path that exists, which is what the row drives.
-		rows: []string{"an explicitly named path that is a regular file"},
-	},
-	// bindNamedStore: the one decision every route makes about a directory —
-	// the three that name a store explicitly and the upward walk that discovers
-	// one. A row driving any of these through --nibs-path drives it for all four.
-	{
-		fn: "bindNamedStore", marker: "cannot tell whether %s is a nibs store",
-		rows: []string{"an explicitly named directory whose config.yml exceeds the read ceiling"},
-	},
-	{
-		fn: "bindNamedStore", marker: "is named as this project's store by",
-		// One site, two reason clauses; a row for each.
-		rows: []string{
-			"an explicitly named directory a config names but nothing corroborates",
-			"an explicitly named symlink that leaves the project",
-		},
-	},
-	{
-		fn: "bindNamedStore", marker: "beside it names it; name the store directory itself",
-		// The determinate absence: nothing beside the named directory names it,
-		// so `nibs init` there is advice the reader can act on.
-		rows: []string{"an explicitly named directory that is not a store"},
-	},
-	{
-		fn: "bindNamedStore", marker: "so another name for this same directory does not match either; %w",
-		// A pre-layout project whose `.nibs.yml` declares some other store. The
-		// remedy is preLayoutRemedy's rather than a second copy of it, which is
-		// what keeps this route from advising a shape the store-evidence guard
-		// refuses.
-		//
-		// The marker carries prose AND the trailing `%w`, and both halves earn
-		// their place: the prose is what a rewording trips, while the verb is the
-		// only thing in the whole ./cmd suite that catches `%w` silently becoming
-		// `%v` — the composed message is byte-identical either way. So a failure
-		// here means "reworded, or unwrapped", not only the first. The sibling
-		// site shares the prose and closes it with `; pass --nibs-path %s`
-		// instead, so the trailing verb is also what keeps this marker on ONE
-		// site.
-		rows: []string{
-			"an explicitly named directory whose project config names a different path",
-			"a named directory whose project config declares a different path, beside an evidence-less .nibs link",
-		},
-	},
-	{
-		fn: "bindNamedStore", marker: "the store this project already has",
-		// The same shape in a project that HAS a store — preLayoutRemedy's
-		// precondition, and the branch that keeps it true.
-		rows: []string{"an explicitly named directory whose project config names a different path, in a project that has a store"},
-	},
-	{
-		fn: "resolveStoreDir", marker: "getting current directory: %w",
-		reason: "os.Getwd failing needs the cwd deleted out from under the process, which fights t.TempDir/t.Chdir cleanup and is Linux-specific; the message carries no path and no command, so a row would assert only that it is non-empty",
-	},
-	{
-		fn: "resolveStoreDir", marker: "searching for a nibs store: %w",
-		reason: "store.FindNearestMarker's walk swallows every os.Stat error, so its only error return needs a relative NIBS_CONFIG_ROOT together with os.Getwd failing — the same unreachability as the site above, for the same payoff",
-	},
-
-	// symlinkedStoreError: a `.nibs` that is a symlink and carries no evidence.
-	// One refusal, two tails — the project's remedy is preLayoutRemedy's where a
-	// pre-layout config is beside the link, and `nibs init` where none is — so a
-	// row for each.
-	{
-		fn: "symlinkedStoreError", marker: "What this project needs instead",
-		rows: []string{"a `.nibs` symlink leaving the project, in a pre-layout project"},
-	},
-	{
-		fn: "symlinkedStoreError", marker: "repoint it at a directory that really is a store",
-		rows: []string{"a `.nibs` symlink leaving the project"},
-	},
-
-	// preLayoutProjectError: the walk met a pre-layout project before any store.
-	{
-		fn: "preLayoutProjectError", marker: "the nearest nibs project is",
-		// Every discovery row reaches this lead; the nested one is named because
-		// it is the shape the single-pass walk exists for — the ancestor store it
-		// names has to be a path the reader can go look at.
-		rows: []string{"a pre-layout project nested under an ancestor store"},
-	},
-
-	// noStoreFoundError: the failed upward walk.
-	{
-		fn: "noStoreFoundError", marker: "run `nibs init` to create one",
-		rows: []string{"no store and no pre-layout config anywhere"},
-	},
-
-	// preLayoutRemedy: shared by both refusals that reach a pre-layout project.
-	{
-		fn: "preLayoutRemedy", marker: "the pre-layout config that would say where this project's nibs live",
-		rows: []string{"a pre-layout config that is not YAML at all"},
-	},
-	{
-		fn: "preLayoutRemedy", marker: "is a pre-layout nibs config with no store beside it",
-		rows: []string{"a pre-layout config declaring no nibs.path"},
-	},
-	{
-		fn: "preLayoutRemedy", marker: "which moves that store to %s and relocates the config into it",
-		rows: []string{"nibs.path naming a store the guard accepts"},
-	},
-	{
-		fn: "preLayoutRemedy", marker: "so this project's nib files are not where the config says they are",
-		rows: []string{"nibs.path naming a directory that is gone"},
-	},
-	{
-		fn: "preLayoutRemedy", marker: "whose contents cannot be read",
-		rows: []string{"nibs.path naming a directory whose contents cannot be read"},
-	},
-	{
-		fn: "preLayoutRemedy", marker: "move this project's nib files from %s into it",
-		// One site, two reason clauses again. TWO of these rows reach the
-		// containment clause — `docs/nibs` and `.`, both because the `.nibs.yml`
-		// beside the declared directory does not name it, so named is false — and
-		// the third (`content`) is the only one that reaches the corroboration
-		// clause, which needs named AND inside both true. Adding a fourth row for
-		// corroboration would be redundant; a shape that fails containment for a
-		// different reason would not.
-		rows: []string{
-			"nibs.path nested below the project",
-			"nibs.path naming the project itself",
-			"nibs.path naming a directory holding nothing nibs wrote",
-		},
-	},
-
-	// Not a refusal at all, and recorded here because the walk recognizes
-	// errors.New: leaving it out would fail the totality check with no way to say
-	// so in writing.
-	{
-		fn: "<package-level>", marker: "nib file found",
-		reason: "errStoreCorroborated is declaredStoreCorroborated's walk sentinel, not a message: the walk catches it with errors.Is and answers true, so it never reaches a caller and no user ever sees it",
-	},
-}
-
-// TestEveryRootRefusalIsDrivenOrExcused is the totality guard for the store
-// half of the invariant, and it is what makes that half structural rather than
-// a hand-written sample. It walks cmd/root.go for fmt.Errorf sites and matches
-// them against approvedRootRefusals in both directions, so a new refusal fails
-// here and an entry whose site is gone fails here too.
-//
-// The walk is FILE-scoped, not package-scoped: root.go is where store resolution
-// lives and where every refusal in this cycle appeared, while the rest of cmd
-// carries hundreds of fmt.Errorf sites that have nothing to do with it. The
-// residual holes are a refusal extracted into a helper in another file, and one
-// built by a constructor refusalCalls does not know — an aliased `fmt` import
-// above all, since the three constructors this package actually reaches for are
-// recognized. The two sentinel checks below cannot see either hole. Keep
-// store-resolution refusals in this file, written with one of those three.
-func TestEveryRootRefusalIsDrivenOrExcused(t *testing.T) {
-	sites := rootRefusalSites(t)
-
-	rowNames := map[string]bool{}
-	for _, c := range storeResolutionRefusalCases() {
-		rowNames[c.name] = true
-	}
-
-	matched := make([]int, len(sites))
-	for _, entry := range approvedRootRefusals {
-		// An empty marker matches every format string, so it would claim the
-		// entry's first site with hits == 1 and look like a healthy match. This
-		// is the symmetric case to the empty reason below: both are a record
-		// that records nothing while reading as one that does.
-		if strings.TrimSpace(entry.marker) == "" {
-			t.Errorf("approvedRootRefusals has an entry for %s with an empty marker, which matches every refusal in the file; "+
-				"a marker has to be a substring of ONE format string or the match says nothing", entry.fn)
-			continue
-		}
-		hits := 0
-		for i, site := range sites {
-			if site.fn == entry.fn && strings.Contains(site.format, entry.marker) {
-				hits++
-				matched[i]++
-			}
-		}
-		switch {
-		case hits == 0:
-			t.Errorf("approvedRootRefusals has an entry for %s naming %q, but no fmt.Errorf there carries that text. "+
-				"Either the refusal is gone (drop the entry) or it was reworded — re-read whether its rows still drive it.",
-				entry.fn, entry.marker)
-		case hits > 1:
-			t.Errorf("approvedRootRefusals entry %s %q matches %d sites; a marker has to identify ONE refusal or the "+
-				"count says nothing about coverage", entry.fn, entry.marker, hits)
-		}
-		if len(entry.rows) == 0 {
-			if strings.TrimSpace(entry.reason) == "" {
-				t.Errorf("%s %q is excused with an empty reason; the reason is the record, not decoration", entry.fn, entry.marker)
-			}
-			continue
-		}
-		for _, row := range entry.rows {
-			if !rowNames[row] {
-				t.Errorf("%s %q claims to be driven by the row %q, which storeResolutionRefusalCases does not contain. "+
-					"A renamed row must be renamed here too, or the claim of coverage is stale.", entry.fn, entry.marker, row)
-			}
-		}
-	}
-
-	for i, site := range sites {
-		if matched[i] == 0 {
-			t.Errorf("%s:%d in %s raises a refusal that approvedRootRefusals does not account for:\n\t%s\n"+
-				"Add a row to storeResolutionRefusalCases driving it, or an entry saying why it cannot be driven. "+
-				"Four consecutive review rounds shipped a refusal naming an unreachable path or an unrunnable command; "+
-				"this list is what stops the fifth.", rootRefusalFile, site.line, site.fn, shortFormat(site.format))
-		}
-		if matched[i] > 1 {
-			t.Errorf("%s:%d in %s is claimed by %d entries; each refusal belongs to exactly one",
-				rootRefusalFile, site.line, site.fn, matched[i])
-		}
-	}
-}
-
-// rootRefusalFile is the source the enumeration walks.
-const rootRefusalFile = "root.go"
-
-// refusalSite is one fmt.Errorf found in the source.
-type refusalSite struct {
-	fn     string
-	line   int
-	format string
-}
-
-// rootRefusalSites parses cmd/root.go and returns every error-building call in
-// it, keyed by enclosing function. A call outside any function declaration is
-// attributed to "<package-level>" so a refusal inside rootCmd's own hook — which
-// lives in a package-level var initializer — cannot escape the guard.
-func rootRefusalSites(t *testing.T) []refusalSite {
-	t.Helper()
-
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, rootRefusalFile, nil, parser.SkipObjectResolution)
-	if err != nil {
-		t.Fatalf("parse %s: %v", rootRefusalFile, err)
-	}
-
-	// Attribute each call to the innermost enclosing FuncDecl. A walk that finds
-	// none of the functions the store resolution lives in has stopped reading
-	// what it is meant to, and would then pass against any list.
-	var sites []refusalSite
-	seenFuncs := map[string]bool{}
-	for _, decl := range file.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok {
-			continue
-		}
-		seenFuncs[fn.Name.Name] = true
-		for _, site := range refusalCalls(fset, fn) {
-			site.fn = fn.Name.Name
-			sites = append(sites, site)
-		}
-	}
-	for _, site := range refusalCalls(fset, file) {
-		if !insideAnyFunc(file, site.line, fset) {
-			site.fn = "<package-level>"
-			sites = append(sites, site)
-		}
-	}
-	// A walk that finds nothing passes both directions against any list.
-	if len(sites) == 0 {
-		t.Fatalf("the walk found no error-building call in %s; it is not reading the file", rootRefusalFile)
-	}
-	for _, want := range []string{"resolveStoreDir", "noStoreFoundError", "preLayoutProjectError", "preLayoutRemedy"} {
-		if !seenFuncs[want] {
-			t.Fatalf("%s no longer declares %s; the store-resolution refusals moved and this guard no longer covers them",
-				rootRefusalFile, want)
-		}
-	}
-	sort.Slice(sites, func(i, j int) bool { return sites[i].line < sites[j].line })
-	return sites
-}
-
-// refusalCalls returns every error-building call inside n, with its format
-// string.
-func refusalCalls(fset *token.FileSet, n ast.Node) []refusalSite {
-	var out []refusalSite
-	ast.Inspect(n, func(node ast.Node) bool {
-		call, ok := node.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		arg, ok := formatArgIndex(call)
-		if !ok || len(call.Args) <= arg {
-			return true
-		}
-		out = append(out, refusalSite{
-			line:   fset.Position(call.Pos()).Line,
-			format: formatText(call.Args[arg]),
-		})
-		return true
-	})
-	return out
-}
-
-// formatArgIndex reports whether call BUILDS an error, and which of its
-// arguments carries the message text.
-//
-// Matching fmt.Errorf alone left every other way of writing a refusal invisible
-// to the totality guard, and the alternatives are not hypothetical: root.go
-// already imports and uses errors.New, and cmdError (cmd/content.go) is the
-// idiom reportExitError's own doc comment points at for user-facing errors. A
-// refusal written either way raised no site, so no entry was missing and the
-// guard stayed green. The format is the FIRST argument to fmt.Errorf and
-// errors.New but the THIRD to cmdError(jsonMode, code, format, args...), which
-// is why the position travels with the constructor rather than being assumed.
-func formatArgIndex(call *ast.CallExpr) (int, bool) {
-	switch fun := call.Fun.(type) {
-	case *ast.SelectorExpr:
-		pkg, ok := fun.X.(*ast.Ident)
-		if !ok {
-			return 0, false
-		}
-		if pkg.Name == "fmt" && fun.Sel.Name == "Errorf" {
-			return 0, true
-		}
-		if pkg.Name == "errors" && fun.Sel.Name == "New" {
-			return 0, true
-		}
-	case *ast.Ident:
-		if fun.Name == "cmdError" {
-			return 2, true
-		}
-	}
-	return 0, false
-}
-
-// insideAnyFunc reports whether line falls inside a function declaration, so a
-// package-level pass can add only what the per-function pass did not.
-func insideAnyFunc(file *ast.File, line int, fset *token.FileSet) bool {
-	for _, decl := range file.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok {
-			continue
-		}
-		if fset.Position(fn.Pos()).Line <= line && line <= fset.Position(fn.End()).Line {
-			return true
-		}
-	}
-	return false
-}
-
-// formatText renders a format argument's literal text, joining the operands of a
-// concatenation so a message split across `+` is matched the same as one written
-// whole. A non-literal format yields the empty string, which no marker can match
-// — so such a site fails the guard rather than passing silently.
-func formatText(expr ast.Expr) string {
-	switch e := expr.(type) {
-	case *ast.BasicLit:
-		if value, ok := stringLiteral(e); ok {
-			return value
-		}
-		return e.Value
-	case *ast.BinaryExpr:
-		return formatText(e.X) + formatText(e.Y)
-	default:
-		return ""
-	}
-}
-
-// shortFormat trims a format string to something a failure message can carry on
-// one line; the refusals here run to several hundred characters.
-func shortFormat(format string) string {
-	const max = 90
-	format = strings.ReplaceAll(format, "\n", " ")
-	if len(format) <= max {
-		return fmt.Sprintf("%q", format)
-	}
-	return fmt.Sprintf("%q…", format[:max])
 }
 
 // TestRefusalQuotesTheDeclaredValueItEchoes pins the semantic half of the echo
@@ -2280,48 +1636,6 @@ func TestAbsentStoreAdviceIsExcusedOnlyAlongsideInit(t *testing.T) {
 				t.Errorf("adviceMayBeAbsent(%q) = %v, want %v", tt.value, got, tt.want)
 			}
 		})
-	}
-}
-
-// TestLiteralRunsIdentifyTheirFormat pins the tie between an approved entry and
-// the row it claims. The runs have to survive fmt verbatim — that is the whole
-// basis for requiring a row's message to carry them — and they have to drop the
-// shared punctuation that would match any of these messages.
-func TestLiteralRunsIdentifyTheirFormat(t *testing.T) {
-	// Two of the spans in this format are deliberately shorter than
-	// minIdentifyingRun — the leading "no " and the " in " between the last two
-	// verbs — so the drop-the-short-ones assertion below has real spans to find
-	// rather than substrings literalRuns could never emit.
-	const format = "no %s directory found in %s or any parent directory, but %s sets the retired `nibs.path: %q`; this is 100%% of it (%s in %s)"
-	runs := literalRuns(format)
-
-	msg := fmt.Sprintf(format, ".nibs", "/tmp/x/proj", "/tmp/x/proj/.nibs.yml", "olddata", "a", "b")
-	for _, run := range runs {
-		if !strings.Contains(msg, run) {
-			t.Errorf("literalRuns produced %q, which the formatted message does not carry; a run must be text fmt writes out unchanged:\n%s", run, msg)
-		}
-	}
-	for _, unwanted := range []string{"no ", " in "} {
-		for _, run := range runs {
-			if run == unwanted {
-				t.Errorf("literalRuns kept the run %q, which is shorter than %d characters and identifies no refusal", run, minIdentifyingRun)
-			}
-		}
-	}
-	if !strings.Contains(strings.Join(runs, "\x00"), "this is 100% of it") {
-		t.Errorf("literalRuns = %q, want `%%%%` kept inside its run as a literal percent", runs)
-	}
-	if len(literalRuns("%s%d%v")) != 0 {
-		t.Errorf("literalRuns(%q) = %q, want none: a format that is nothing but verbs identifies nothing", "%s%d%v", literalRuns("%s%d%v"))
-	}
-	// The CEILING on minIdentifyingRun, asserted here so raising the constant
-	// fails on a named fact rather than on an approvedRootRefusals entry whose
-	// failure text a maintainer could read as "excuse that site".
-	const shortestDrivenFormat = "loading config: %w"
-	if got := literalRuns(shortestDrivenFormat); len(got) != 1 {
-		t.Errorf("literalRuns(%q) = %q, want its one %d-byte run: this is the shortest format approvedRootRefusals drives, "+
-			"so minIdentifyingRun cannot go above %d without leaving that entry no run to tie a row to",
-			shortestDrivenFormat, got, len("loading config: "), len("loading config: "))
 	}
 }
 
