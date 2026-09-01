@@ -77,6 +77,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **A nib id that cannot be read back from its own file name is refused** — `nibs new --prefix "a--b-"` returned an id no later command could find, and `nibs config set-prefix a--b` collapsed every nib in the store onto a single id.
 - **A nib named like a grouping bucket no longer crashes the web table** — an id equal to one of the "No X" rows appeared twice in the list, which the keyed render refuses.
 - **Keyboard focus on a grouping bucket row no longer disappears whenever any nib changes** — the "Backlog" and "No X" rows are focusable so Enter toggles the group, but every update to the list dropped that focus.
+- **Right-clicking during a drag no longer opens the row menu over the live gesture**, where releasing the button then performed a reorder the user was not making.
 
 ## v0.8.3 - 2026-08-13
 
