@@ -816,6 +816,44 @@ func TestGraphQLErrCodeClassifiesUnreadableFilterTargetAsFileError(t *testing.T)
 	}
 }
 
+// TestFilterRefusalExitCodes names the exit class every filter-refusal type
+// carries. It is the table a caller reads to answer "what does $? mean when a
+// filter argument is refused". A new class must be added here BY HAND; nothing
+// enforces it.
+//
+// graph.FilterAreaError is the row that motivated writing it out: it is a
+// filter refusal like the five below, it is dispatched by filterTargetErrCode
+// beside them, and until this test nothing asserted its exit code at all. The
+// guard that was meant to notice reads type NAMES matching FilterTarget*Error,
+// and this one is named FilterArea — so it shipped past a green test.
+func TestFilterRefusalExitCodes(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"FilterTargetNotFoundError", &graph.FilterTargetNotFoundError{Field: "parentId", ID: "zz"}, output.ErrNotFound},
+		{"FilterTargetUnreadableError", &graph.FilterTargetUnreadableError{Field: "siblingId", ID: "gone", ReaderErr: nib.ErrNotFound}, output.ErrFileError},
+		{"FilterTargetEmptyError", &graph.FilterTargetEmptyError{Field: "parentId"}, output.ErrValidation},
+		{"FilterTargetContradictionError", &graph.FilterTargetContradictionError{Field: "parentId", PresenceField: "hasParent", ID: "zz"}, output.ErrValidation},
+		{"FilterTargetTypeError", &graph.FilterTargetTypeError{Field: "milestone", ID: "zz", Got: "epic", Want: "milestone"}, output.ErrValidation},
+		{"FilterAreaError", &graph.FilterAreaError{Field: "area", Path: "nope", Declared: "core, web"}, output.ErrValidation},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := filterTargetErrCode(tt.err)
+			if !ok {
+				t.Fatalf("filterTargetErrCode leaves %s unclassified, so its call sites answer one user error with three different exit codes", tt.name)
+			}
+			if got != tt.want {
+				t.Errorf("filterTargetErrCode(%s) = %q (exit %d), want %q (exit %d)",
+					tt.name, got, output.ExitCode(got), tt.want, output.ExitCode(tt.want))
+			}
+		})
+	}
+}
+
 // TestFilterTargetErrCodeClassifiesEveryRefusalClass is the totality guard for
 // the refusal taxonomy — for error CLASSES what idValuedFilterFields is for
 // filter FIELDS.

@@ -271,6 +271,46 @@ func TestETagErrorPresenter_TagsBulkReorderPreValidationConflict(t *testing.T) {
 	}
 }
 
+// TestWireErrorCodeConstantsAreNamedInTheSchema requires the SDL to spell every
+// wire code the error presenter can mint. The SDL is the shipped contract — its
+// descriptions propagate verbatim into internal/graph/model/models_gen.go, into
+// web/src/lib/gql/graphql.ts (what a web developer reads on hover) and into
+// `nibs catalog schema` (what an agent is told) — so a code minted here but
+// never named there is one no client can discover by reading the contract, and
+// no behavioral test can see it: a missing description produces no wrong answer
+// at runtime, only a client that cannot be written.
+//
+// The claim runs presenter -> SDL and only that direction. The reverse (every
+// code the SDL names must be mintable) is deliberately not asserted: the SDL's
+// SCREAMING_SNAKE token space is mostly enum members (UPDATED_AT, DESC) and
+// prose emphasis (EMPTY, BOTH), with no notation separating a wire code from a
+// capitalized word.
+//
+// The rows are a hand-written list, so any code reaching the wire that this list
+// is not updated for is what this does not see — a review question.
+func TestWireErrorCodeConstantsAreNamedInTheSchema(t *testing.T) {
+	schemaPath := filepath.Join("..", "internal", "graph", "schema.graphqls")
+	sdl, err := os.ReadFile(schemaPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", schemaPath, err)
+	}
+
+	for _, code := range []string{wireCodeETagMismatch, wireCodeFilterContradiction, wireCodeNotFound} {
+		// A whole-word match, not a parse: the claim is only that the contract
+		// SPELLS the code, which is what a client greps for and what survives any
+		// rewording of the sentence around it. RE2 counts _ as a word character,
+		// so \b refuses a longer token that merely contains the code
+		// (NOT_FOUND_ANYWHERE) while matching both spellings in live use — prose
+		// ("refused with a NOT_FOUND error") and quoted (code = "NOT_FOUND").
+		if !regexp.MustCompile(`\b` + regexp.QuoteMeta(code) + `\b`).Match(sdl) {
+			t.Errorf("the error presenter can mint extensions.code = %q, but %s never spells it, "+
+				"so a client reading the shipped contract has nothing to branch on for this refusal — "+
+				"name the code in the description of every field whose refusal carries it",
+				code, schemaPath)
+		}
+	}
+}
+
 // TestEveryMintableWireErrorCodeIsNamedInTheSchema pins the half of the code
 // contract the tests above cannot reach: that every extensions.code this
 // presenter can mint is also SPELLED in internal/graph/schema.graphqls. The SDL

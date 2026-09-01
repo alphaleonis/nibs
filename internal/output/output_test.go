@@ -158,6 +158,22 @@ func TestExitCode(t *testing.T) {
 	}
 }
 
+// generalCodeExpectations is every code this package declares, with the general
+// member of its class. TestGeneralCode asserts the mapping and FuzzGeneralCode
+// seeds its corpus from it.
+var generalCodeExpectations = map[string]string{
+	ErrValidation:    ErrValidation,
+	ErrInvalidStatus: ErrValidation,
+	ErrHierarchy:     ErrValidation,
+	ErrTextNotFound:  ErrValidation,
+	ErrTextAmbiguous: ErrValidation,
+	ErrNotFound:      ErrNotFound,
+	ErrConflict:      ErrConflict,
+	ErrFileError:     ErrFileError,
+	ErrNoNibsDir:     ErrFileError,
+	ErrUncategorized: ErrUncategorized,
+}
+
 // TestGeneralCode pins the code a caller reports when it knows a failure's exit
 // class but not its kind — the answer cmd/errors.go's graphQLResponseCode needs
 // for a response holding several failures that share an exit status.
@@ -177,22 +193,12 @@ func TestExitCode(t *testing.T) {
 //     response every one of whose failures agreed on the exit.
 //   - It is idempotent: generalizing an already-general code is a no-op, so a
 //     caller cannot drift further from the class by asking twice.
+//
+// generalCodeExpectations is the table, and FuzzGeneralCode seeds its corpus
+// from the same rows — one vocabulary, so the named mapping and the property
+// check cannot come to describe different sets of codes.
 func TestGeneralCode(t *testing.T) {
-	// Every code this package declares, with the general member of its class.
-	// TestGeneralCodeCoversEveryDeclaredCode reads the source to prove no
-	// declared code is missing from this table.
-	general := map[string]string{
-		ErrValidation:    ErrValidation,
-		ErrInvalidStatus: ErrValidation,
-		ErrHierarchy:     ErrValidation,
-		ErrTextNotFound:  ErrValidation,
-		ErrTextAmbiguous: ErrValidation,
-		ErrNotFound:      ErrNotFound,
-		ErrConflict:      ErrConflict,
-		ErrFileError:     ErrFileError,
-		ErrNoNibsDir:     ErrFileError,
-		ErrUncategorized: ErrUncategorized,
-	}
+	general := generalCodeExpectations
 	// A string ExitCode does not know exits 1, so its class is the one that
 	// makes no claim.
 	unknown := map[string]string{
@@ -227,6 +233,47 @@ func assertGeneralCode(t *testing.T, code, want string) {
 		t.Errorf("GeneralCode(%q) = %q, but GeneralCode(%q) = %q — generalizing must be "+
 			"idempotent", code, got, got, again)
 	}
+}
+
+// FuzzGeneralCode asserts the two properties GeneralCode's callers rely on,
+// over arbitrary strings rather than over a list of them. GeneralCode is total
+// on strings — it switches on ExitCode, which answers for every input — so both
+// properties are universally quantified and hold for a code this package never
+// declared as readily as for one it did:
+//
+//   - It stays inside the class: ExitCode(GeneralCode(s)) == ExitCode(s).
+//   - It is idempotent: GeneralCode(GeneralCode(s)) == GeneralCode(s).
+//
+// Quantifying over the input rather than over a hand-listed vocabulary is the
+// point: a code declared as a var, as a typed value, or without the Err prefix
+// is an ordinary string here and is covered on the same terms as any other.
+//
+// The corpus is seeded from generalCodeExpectations so an ordinary `go test`
+// run — which executes the seeds without fuzzing — exercises every code that
+// table names, plus two strings ExitCode does not know.
+//
+// What this does NOT do is notice a code added to the vocabulary later: an
+// input the corpus never holds and the fuzzer never synthesizes is not tested.
+// TestGeneralCode's named rows are what say which class each declared code
+// belongs to, and that claim is not a property — it is a decision.
+func FuzzGeneralCode(f *testing.F) {
+	for code := range generalCodeExpectations {
+		f.Add(code)
+	}
+	f.Add("")
+	f.Add("SOMETHING_ELSE")
+
+	f.Fuzz(func(t *testing.T, code string) {
+		general := GeneralCode(code)
+		if got, want := ExitCode(general), ExitCode(code); got != want {
+			t.Errorf("GeneralCode(%q) = %q, which exits %d while %q exits %d — the general "+
+				"member must stay inside its own class", code, general, got, code, want)
+		}
+		if again := GeneralCode(general); again != general {
+			t.Errorf("GeneralCode(%q) = %q, but GeneralCode(%q) = %q — generalizing must be "+
+				"idempotent", code, general, general, again)
+		}
+	})
 }
 
 // TestGeneralCodeCoversEveryDeclaredCode is the totality guard for the table
