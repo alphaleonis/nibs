@@ -790,6 +790,16 @@
   }
 
   function handleDelegatedContextMenu(e: MouseEvent) {
+    // A drag owns the pointer until it is released or Escaped. Nothing here
+    // touches drag state, so opening the menu over a live gesture leaves its
+    // drop plan armed, and the release that dismisses the menu executes it —
+    // a reorder the user was not making.
+    //
+    // Suppressing rather than canceling is the deliberate choice: right-click
+    // is not an abort, so the gesture completes on release exactly as if the
+    // menu had never been asked for, and Escape stays the only way to cancel.
+    if (drag.isDragging) return;
+
     const nibId = getNibIdFromEvent(e);
     if (!nibId) return;
 
