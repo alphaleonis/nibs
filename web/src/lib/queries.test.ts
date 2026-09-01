@@ -1,5 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { print } from "graphql";
+import {
+  NoUnusedVariablesRule,
+  buildSchema,
+  parse,
+  print,
+  validate,
+  type DocumentNode,
+} from "graphql";
+import { readFileSync } from "node:fs";
+import * as queries from "./queries";
 import {
   NIB_DETAIL_QUERY,
   NIB_CONFLICT_SNAPSHOT_QUERY,
@@ -53,27 +62,19 @@ describe("REORDER_NIB_MUTATION", () => {
   // The ordering axis is a wire argument, not a client-side notion: a document
   // that declares no `$scope` can only ever reach the server's PARENT default,
   // so a milestone-queue move would silently land on the sibling order key.
-  it("declares $scope and passes it to the reorderNib field", () => {
+  //
+  // Only the DECLARATION is asserted. The general unused-variable guard below
+  // owns the other half — a `$scope` declared but never forwarded — and cannot
+  // see this one, because a variable that was never declared is never unused.
+  // Measured in both directions rather than reasoned: dropping only the
+  // argument reddens the general guard alone, dropping the declaration too
+  // reddens only this test.
+  it("declares $scope, which the server's default would otherwise silently replace", () => {
     const source = print(REORDER_NIB_MUTATION);
 
-    // The operation signature must declare the variable...
     const signature = source.match(/mutation\s+ReorderNib\s*\(([^)]*)\)/)?.[1] ?? "";
     expect(signature).not.toBe("");
     expect(signature).toMatch(/\$scope:\s*OrderScope\b/);
-
-    // ...and the field must actually forward it. The two assertions guard two
-    // different failures, so neither is redundant. Declaring no `$scope` at all
-    // reaches only the server's PARENT default: a milestone move then rewrites
-    // the sibling `order` key and says nothing. Declaring it but not forwarding
-    // it is refused outright — `Variable "$scope" is never used` — and since
-    // this is the only reorder document in the app, that breaks every reorder.
-    // Nothing upstream catches either: graphql-codegen strips
-    // NoUnusedVariables from its rule set (the server does not), and the
-    // generated Variables type is derived from the declarations, so a caller
-    // passing `scope` type-checks in both half-states.
-    const args = source.match(/reorderNib\s*\(([\s\S]*?)\)\s*\{/)?.[1] ?? "";
-    expect(args).not.toBe("");
-    expect(args).toMatch(/\bscope:\s*\$scope\b/);
   });
 });
 
@@ -112,5 +113,46 @@ describe("NIB_CONFLICT_SNAPSHOT_QUERY", () => {
     expect(source).not.toMatch(/\bchildren\b/);
     expect(source).not.toMatch(/\bblockedBy\b/);
     expect(source).not.toMatch(/\bmentions\b/);
+  });
+});
+
+// --- Every document: no declared variable left unforwarded ---
+//
+// gqlgen validates with gqlparser's FULL default rule set, so a document that
+// declares `$x` and never passes it to a field argument is refused outright —
+// `Variable "$x" is never used` — failing every caller of that document, not
+// just the one argument. Re-applied here because nothing else client-side sees
+// it: @graphql-codegen/core hardcodes NoUnusedVariables out of its rule set
+// (the list is push-only, so no config re-enables it), the generated
+// `…Variables` type derives from the declarations rather than from what
+// consumes them, and gql.ts keys its documents map on the raw source literal,
+// so the overload tracks the defect instead of detecting it.
+describe("every exported GraphQL document", () => {
+  // Same path spelling codegen.ts uses, resolved the same way: relative to
+  // web/, which is where both the codegen run and the canonical vitest command
+  // start (resolve.alias in vitest.config.ts already resolves from cwd). One
+  // schema location, so the guard cannot validate against a different SDL than
+  // the one the documents were generated from. A wrong cwd is an ENOENT naming
+  // the path, not a silent skip.
+  const schema = buildSchema(readFileSync("../internal/graph/schema.graphqls", "utf8"));
+
+  const documents = Object.entries(queries).filter(
+    (entry): entry is [string, DocumentNode] =>
+      typeof entry[1] === "object" && entry[1] !== null && (entry[1] as DocumentNode).kind === "Document",
+  );
+
+  // A rule applied to nothing passes silently, and this suite's whole subject is
+  // the document set — so an empty walk is a failure, not a vacuous pass.
+  it("finds documents to check", () => {
+    expect(documents.length).toBeGreaterThan(0);
+  });
+
+  it.each(documents)("%s forwards every variable it declares", (_name, document) => {
+    // Re-parse the printed source rather than validating the generated AST
+    // directly: TypedDocumentNodes carry no location info, and the round trip
+    // restores it so a failure names the line.
+    const errors = validate(schema, parse(print(document)), [NoUnusedVariablesRule]);
+
+    expect(errors.map(e => e.message)).toEqual([]);
   });
 });
