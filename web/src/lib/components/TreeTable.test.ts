@@ -3774,6 +3774,78 @@ describe("TreeTable", () => {
       expect(container.querySelector("tr[data-nib-id='/__backlog__']")).toBeNull();
       expect(sel.focusedNibId).toBeNull();
     });
+
+    // A bucket's MEMBERSHIP survives a client filter but its ROW does not: the
+    // bucket is no nib, so it never matches the filter itself and is rendered
+    // only while some member does. Focus has to follow the row, not the lens.
+    it("prunes a focused bucket only once the filter has emptied it", async () => {
+      const sel = new SelectionState();
+      sel.focus("/__backlog__");
+
+      // Backlog holds one task and one bug, so a type filter can empty it in
+      // two steps: first partially, then completely.
+      const nibs = [
+        ...makeNibs(),
+        makeTreeTableNib({ id: "nibs-t3", title: "Unassigned task", type: "task" }),
+        makeTreeTableNib({ id: "nibs-b2", title: "Unassigned bug", type: "bug" }),
+      ];
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+      );
+
+      const { container, rerender } = renderTreeTable(
+        { filter: {}, viewLevel: "milestones" as ViewLevel },
+        { selection: sel },
+      );
+      await tick();
+      expect(container.querySelector("tr[data-nib-id='/__backlog__']")).not.toBeNull();
+      expect(sel.focusedNibId).toBe("/__backlog__");
+
+      // Some members removed — the bucket still has a row, so focus stays.
+      await rerender({ filter: { type: ["task"] }, viewLevel: "milestones" as ViewLevel });
+      await tick();
+      expect(container.querySelector("tr[data-nib-id='/__backlog__']")).not.toBeNull();
+      expect(sel.focusedNibId).toBe("/__backlog__");
+
+      // Every member removed (the milestone still matches, so the table is not
+      // empty) — the bucket has no row and focus must not survive on it.
+      await rerender({ filter: { type: ["milestone"] }, viewLevel: "milestones" as ViewLevel });
+      await tick();
+      expect(container.querySelector("tr[data-nib-id='/__backlog__']")).toBeNull();
+      expect(sel.focusedNibId).toBeNull();
+    });
+
+    // Collapsing a bucket hides its members, never its own row — every section
+    // is a root of the grouped tree. Focus on it is therefore still on screen.
+    it("keeps a focused bucket row when the bucket is collapsed", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+
+      const nibs = [
+        ...makeNibs(),
+        makeTreeTableNib({ id: "nibs-t3", title: "Unassigned task", type: "task" }),
+      ];
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+      );
+
+      const { container } = renderTreeTable(
+        { filter: {}, viewLevel: "milestones" as ViewLevel },
+        { selection: sel },
+      );
+      await tick();
+      sel.focus("/__backlog__");
+
+      const toggle = container.querySelector(
+        "tr[data-nib-id='/__backlog__'] [data-action='toggle']"
+      ) as HTMLElement;
+      await user.click(toggle);
+      await tick();
+
+      expect(screen.queryByText("Unassigned task")).not.toBeInTheDocument();
+      expect(container.querySelector("tr[data-nib-id='/__backlog__']")).not.toBeNull();
+      expect(sel.focusedNibId).toBe("/__backlog__");
+    });
   });
 });
 
