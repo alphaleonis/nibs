@@ -1829,12 +1829,20 @@ func (c *Core) renderAndWriteDeferDirSync(b *nib.Nib, path string, write func(st
 	// The mode is the user's, not this writer's. That rename carries nothing of
 	// the file it replaces, so a mode the user tightened survives only by being
 	// read back and passed through; hardcoding one widens a private nib on the
-	// next unrelated edit. A nib that has never existed has no mode to
-	// preserve and gets the ordinary 0644, the same answer config.Save gives a
-	// config.yml that has never existed. A stat failure that is not "absent" is
-	// reported rather than answered with 0644 — that fallback could only widen a
-	// nib whose real mode was narrower.
-	perm := os.FileMode(0644)
+	// next unrelated edit.
+	//
+	// A nib that has never existed has no mode to preserve, only a umask — and
+	// this writer sets the mode with Chmod, which the umask never reaches, so
+	// fsutil.ModeForNewFile applies it deliberately. The base is 0644 rather than
+	// the 0666 a plain create would request: masking can only clear bits, so a
+	// tightened umask is honored while a permissive one cannot hand out a
+	// group- or world-WRITABLE nib. The umask is a creation-time question only —
+	// the branch above returns an existing file's own mode untouched, so editing
+	// from a tightened shell never re-narrows a nib the user already widened.
+	//
+	// A stat failure that is not "absent" is reported rather than answered with a
+	// default — that fallback could only widen a nib whose real mode was narrower.
+	perm := fsutil.ModeForNewFile(0644)
 	switch info, statErr := os.Stat(path); {
 	case statErr == nil:
 		perm = info.Mode().Perm()

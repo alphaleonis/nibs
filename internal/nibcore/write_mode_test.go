@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/alphaleonis/nibs/internal/fsutil"
 	"github.com/alphaleonis/nibs/internal/testskip"
 )
 
@@ -42,22 +43,73 @@ func TestWritePreservesExistingFileMode(t *testing.T) {
 	}
 }
 
-// The create path has no mode to preserve, so it keeps the 0644 this project
-// already settled on for a file that has never existed (config.Save makes the
-// same choice for config.yml). Pinned so the preservation change above cannot
-// quietly become "whatever the temp file happened to be", which os.CreateTemp
-// makes 0600.
-func TestCreateUsesTheDefaultMode(t *testing.T) {
+// A nib that has never existed has no mode to preserve, so it takes the base
+// 0644 with the process umask subtracted — the mode a plain create would have
+// produced, except clamped: a umask can only clear bits, so a permissive one
+// cannot widen a nib past 0644 into group- or world-writable. Tightening is
+// honored, loosening is not offered.
+func TestCreateAppliesTheUmaskToTheDefaultMode(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		umask os.FileMode
+		want  os.FileMode
+	}{
+		{"typical 022 leaves the default alone", 0o022, 0o644},
+		{"private 077 tightens to owner-only", 0o077, 0o600},
+		{"group-only 027", 0o027, 0o640},
+		{"permissive 000 is CLAMPED, not widened to 0666", 0o000, 0o644},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			core, nibsDir := setupTestCore(t)
+			testskip.NeedPosixFileModes(t, storeData(t, nibsDir))
+
+			restore := fsutil.Umask
+			fsutil.Umask = func() os.FileMode { return tc.umask }
+			t.Cleanup(func() { fsutil.Umask = restore })
+
+			b := createTestNib(t, core, "test-umask", "A new nib", "todo")
+
+			info, err := os.Stat(filepath.Join(core.Root(), b.Path))
+			if err != nil {
+				t.Fatalf("stat after create: %v", err)
+			}
+			if got := info.Mode().Perm(); got != tc.want {
+				t.Errorf("new nib under umask %04o = %04o, want %04o", tc.umask, got, tc.want)
+			}
+		})
+	}
+}
+
+// The umask applies to a file being CREATED and to nothing else. An existing
+// nib's mode is the user's answer already, so a umask must not re-narrow it on
+// every subsequent write — that would walk a 0644 nib down to 0600 behind the
+// user's back the first time they edited it from a tightened shell.
+func TestUmaskDoesNotNarrowAnExistingFile(t *testing.T) {
 	core, nibsDir := setupTestCore(t)
 	testskip.NeedPosixFileModes(t, storeData(t, nibsDir))
 
-	b := createTestNib(t, core, "test-002", "A new nib", "todo")
+	b := createTestNib(t, core, "test-003", "Already exists", "todo")
+	path := filepath.Join(core.Root(), b.Path)
 
-	info, err := os.Stat(filepath.Join(core.Root(), b.Path))
-	if err != nil {
-		t.Fatalf("stat after create: %v", err)
+	const want os.FileMode = 0o664
+	if err := os.Chmod(path, want); err != nil {
+		t.Fatalf("chmod %v: %v", want, err)
 	}
-	if got, want := info.Mode().Perm(), os.FileMode(0o644); got != want {
-		t.Errorf("mode of a newly created nib = %v, want %v", got, want)
+
+	restore := fsutil.Umask
+	fsutil.Umask = func() os.FileMode { return 0o077 }
+	t.Cleanup(func() { fsutil.Umask = restore })
+
+	b.Priority = "high"
+	if err := core.Update(b, nil); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat after update: %v", err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Errorf("existing nib after an edit under umask 077 = %04o, want %04o (preserved, not re-masked)", got, want)
 	}
 }
