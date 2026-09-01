@@ -393,6 +393,17 @@
     for (const nib of nibs) {
       if (matchesFilter(nib, filter)) matchingIds.add(nib.id);
     }
+    // A grouping bucket is focusable — keyboard nav lands on it so Enter toggles
+    // the group — but names no nib, so the walk above can never yield it and the
+    // dataset set alone drops a live focus on every emission of the list.
+    // Admitting them as an ADDITION is what keeps this a no-op for real nibs:
+    // `viewMemberIds` omits containers ranked above the lens's tier (a milestone
+    // has no row under Epics), so retaining that set INSTEAD would prune nibs
+    // still in the dataset. Drawing from the current view rather than testing
+    // `isSyntheticRowId` alone is what still prunes another lens's bucket key.
+    for (const id of viewMemberIds) {
+      if (isSyntheticRowId(id)) matchingIds.add(id);
+    }
     // retainOnly reads selection.* — run untracked so those reads don't subscribe
     // this effect (which writes them) and cause effect_update_depth_exceeded. It
     // is a no-op when nothing drops, so re-runs on unrelated data changes are cheap.

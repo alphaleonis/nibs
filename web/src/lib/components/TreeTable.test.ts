@@ -3694,6 +3694,86 @@ describe("TreeTable", () => {
       expect(sel.selectedIds.has("nibs-deep2")).toBe(true);
       expect(sel.selectedIds.size).toBe(2);
     });
+
+    // A grouping bucket is a row the user can focus (keyboard nav lands on it so
+    // Enter toggles the group), but its id names no nib, so it can never appear
+    // in a set built from the dataset. Pruning against that set alone would
+    // therefore drop a live focus on every emission of the list query.
+    it("keeps a focused bucket row when a nib-change event re-emits the list", async () => {
+      const sel = new SelectionState();
+      const store = writable<any>({
+        fetching: false,
+        error: undefined,
+        data: { nibs: makeNibs() },
+        stale: false,
+      });
+      mockQueryStore.mockReturnValue(store as any);
+
+      const { container } = renderTreeTable(
+        { filter: {}, viewLevel: "epics" as ViewLevel },
+        { selection: sel },
+      );
+      await tick();
+
+      // The lens has a row for the bucket, so focusing it is legitimate.
+      expect(container.querySelector("tr[data-nib-id='/__no_epic__']")).not.toBeNull();
+      sel.focus("/__no_epic__");
+
+      // A change event refetches the list; the result arrives as a fresh array.
+      store.set({ fetching: false, error: undefined, data: { nibs: makeNibs() }, stale: false });
+      await tick();
+
+      expect(sel.focusedNibId).toBe("/__no_epic__");
+    });
+
+    it("keeps a focused bucket row across the initial settle and a filter edit", async () => {
+      const sel = new SelectionState();
+      sel.focus("/__backlog__");
+
+      // One nib with no milestone, so the Milestones lens has a Backlog bucket.
+      const nibs = [
+        ...makeNibs(),
+        makeTreeTableNib({ id: "nibs-t3", title: "Unassigned task", type: "task" }),
+      ];
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+      );
+
+      const { container, rerender } = renderTreeTable(
+        { filter: {}, viewLevel: "milestones" as ViewLevel },
+        { selection: sel },
+      );
+      await tick();
+
+      expect(container.querySelector("tr[data-nib-id='/__backlog__']")).not.toBeNull();
+      expect(sel.focusedNibId).toBe("/__backlog__");
+
+      await rerender({ filter: { type: ["task"] }, viewLevel: "milestones" as ViewLevel });
+      await tick();
+
+      expect(sel.focusedNibId).toBe("/__backlog__");
+    });
+
+    // The union draws from the CURRENT lens's members rather than from an
+    // `isSyntheticRowId` test alone, so a bucket the view no longer has is stale
+    // state and still prunes — the same reason a filtered-out nib does.
+    it("still prunes a bucket id the current lens has no row for", async () => {
+      const sel = new SelectionState();
+      sel.focus("/__backlog__"); // the Milestones lens's bucket…
+
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs: makeNibs() }, stale: false }) as any
+      );
+
+      const { container } = renderTreeTable(
+        { filter: {}, viewLevel: "epics" as ViewLevel }, // …while the Epics lens is showing
+        { selection: sel },
+      );
+      await tick();
+
+      expect(container.querySelector("tr[data-nib-id='/__backlog__']")).toBeNull();
+      expect(sel.focusedNibId).toBeNull();
+    });
   });
 });
 
