@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { GATE_REASONS, adjacencyReflectsOrdering, dragBlockFor } from "./dragBlock";
 import type { DragBlockReason } from "./dragBlock";
-import { VIEW_LEVEL_LABELS } from "./types";
+import { VIEW_LEVELS, VIEW_LEVEL_LABELS } from "./types";
 import type { NibFilter } from "./types";
 
 describe("dragBlockFor", () => {
@@ -46,6 +46,18 @@ describe("dragBlockFor", () => {
     });
   });
 
+  // The remedy has to LIFT the gate it explains. Naming the blocked view itself
+  // would offer the user the view they are already in; naming any other view is
+  // only a remedy while reorder is available there. Recovering the offered level
+  // from the label is what ties the two together — the label is all the toast
+  // carries, so a level the label does not name is not what is offered.
+  it("offers a view reordering is actually available in", () => {
+    const label = dragBlockFor({}, "flat", null)?.actionLabel;
+    const offered = VIEW_LEVELS.filter((level) => label === `Switch to ${VIEW_LEVEL_LABELS[level]}`);
+    expect(offered).toHaveLength(1);
+    expect(dragBlockFor({}, offered[0], null)).toBeNull();
+  });
+
   // Precedence is deterministic so the toast and its action can never disagree
   // about which gate they refer to. Flat outranks the rest because reorder has no
   // meaning at all in that view; search outranks sort for the same reason.
@@ -70,7 +82,7 @@ describe("dragBlockFor", () => {
       Object.assign(VIEW_LEVEL_LABELS, original);
     });
 
-    it("follows a renamed default view in the action label", () => {
+    it("follows a renamed tree view in the action label", () => {
       VIEW_LEVEL_LABELS.none = "Outline";
       expect(dragBlockFor({}, "flat", null)?.actionLabel).toBe("Switch to Outline");
     });

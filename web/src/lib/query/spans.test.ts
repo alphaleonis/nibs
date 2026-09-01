@@ -220,6 +220,24 @@ describe("tokenizeSpans — per-token classification", () => {
         { start: 3, end: 10, kind: "value" },
       ],
     },
+    {
+      name: "milestone:tnib-1 colors like any other id-valued token",
+      input: "milestone:tnib-1",
+      expected: [
+        { start: 0, end: 9, kind: "field" },
+        { start: 9, end: 10, kind: "operator" },
+        { start: 10, end: 16, kind: "value" },
+      ],
+    },
+    {
+      name: "is:backlog splits into field, colon, value",
+      input: "is:backlog",
+      expected: [
+        { start: 0, end: 2, kind: "field" },
+        { start: 2, end: 3, kind: "operator" },
+        { start: 3, end: 10, kind: "value" },
+      ],
+    },
 
     // --- a negated rel/existence token renders `invalid` (whole token). This is
     // the ONE place the overlay gained a red underline: `parseQuery` parks these in
@@ -427,6 +445,7 @@ describe("tokenizeSpans — full contiguous coverage", () => {
     "parent:tnib-1,tnib-2 sibling:tnib:3",
     "  type:bug   -parent:tnib-1   has:parent  ",
     "Parent:TNIB-1 HAS:PARENT Is:Blocked",
+    "milestone:tnib-1 is:backlog -milestone:tnib-2 milestone: has:milestone",
   ];
 
   for (const input of inputs) {

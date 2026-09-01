@@ -27,19 +27,19 @@ describe("storage", () => {
 
   it("returns defaults when localStorage is empty", () => {
     const loaded = loadPreferences();
-    expect(loaded).toEqual({ query: "", viewLevel: "none", theme: "graphite" });
+    expect(loaded).toEqual({ query: "", viewLevel: "milestones", theme: "graphite" });
   });
 
   it("returns defaults when localStorage has corrupt JSON", () => {
     store["nibs-filter-preferences"] = "not valid json{{{";
     const loaded = loadPreferences();
-    expect(loaded).toEqual({ query: "", viewLevel: "none", theme: "graphite" });
+    expect(loaded).toEqual({ query: "", viewLevel: "milestones", theme: "graphite" });
   });
 
   it("returns defaults when localStorage has non-object value", () => {
     store["nibs-filter-preferences"] = '"just a string"';
     const loaded = loadPreferences();
-    expect(loaded).toEqual({ query: "", viewLevel: "none", theme: "graphite" });
+    expect(loaded).toEqual({ query: "", viewLevel: "milestones", theme: "graphite" });
   });
 
   // The query is persisted as a STRING under the `q` key (mirroring the `?q=` URL
@@ -57,7 +57,7 @@ describe("storage", () => {
       viewMode: "hierarchy",
     });
     const loaded = loadPreferences();
-    expect(loaded).toEqual({ query: "old", viewLevel: "none", theme: "graphite" });
+    expect(loaded).toEqual({ query: "old", viewLevel: "milestones", theme: "graphite" });
   });
 
   // Legacy migration: an older build persisted the STRUCTURED `filter: NibFilter`
@@ -105,7 +105,7 @@ describe("storage", () => {
       viewLevel: "unknown-value",
     });
     const loaded = loadPreferences();
-    expect(loaded).toEqual({ query: "", viewLevel: "none", theme: "graphite" });
+    expect(loaded).toEqual({ query: "", viewLevel: "milestones", theme: "graphite" });
   });
 
   it("accepts the renamed 'features' viewLevel", () => {

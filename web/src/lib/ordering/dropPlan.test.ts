@@ -3,11 +3,18 @@ import { describe, it, expect } from "vitest";
 // vite/client), following region.test.ts — it keeps node built-ins out, so
 // svelte-check stays clean without @types/node.
 import dropPlanSource from "./dropPlan.ts?raw";
-import { entryRegionOf, planDrop, type DropIndicator, type DropPlan, type DropRefusalReason } from "./dropPlan";
+import {
+  entryRegionOf,
+  planDrop,
+  refusalAction,
+  type DropIndicator,
+  type DropPlan,
+  type DropRefusalReason,
+} from "./dropPlan";
 import type { Region } from "./region";
 import { collectDescendantIds } from "../dropZone";
 import type { DropZone } from "../drag.svelte";
-import { batch, reorderChain, reorderNib, reparentAndReorder, sequence, setParent } from "../mutations/commands";
+import { batch, reorderChain, reorderNib, reparentAndReorder, sequence, setParent, updateNib } from "../mutations/commands";
 import type { AnyCommand, CommandResult } from "../mutations/types";
 import { rowRegion, type RowData } from "../tableData";
 import { canHaveChildren } from "../typeHierarchy";
@@ -172,12 +179,23 @@ function resolveSteps(command: AnyCommand): AnyCommand {
   };
 }
 
+/** `resolveSteps` over a slot that may be empty — a refusal offering no write. */
+function resolveOptionalSteps(command: AnyCommand | undefined): AnyCommand | undefined {
+  return command === undefined ? undefined : resolveSteps(command);
+}
+
 type Expected =
   | { ok: true; region: Region; indicator: DropIndicator; command: AnyCommand }
-  // `region` is asserted for every refusal, present or absent: without a slot
-  // here the table cannot see it, and deleting it from a refusal site left the
-  // whole suite green.
-  | { ok: false; reason: DropRefusalReason; actionLabel?: string; region?: Region };
+  // `region`, `actionLabel` and `actionCommand` are asserted for every refusal,
+  // present or absent: without a slot here the table cannot see them, and
+  // deleting `region` from a refusal site left the whole suite green.
+  | {
+      ok: false;
+      reason: DropRefusalReason;
+      actionLabel?: string;
+      actionCommand?: AnyCommand;
+      region?: Region;
+    };
 
 interface Case {
   name: string;
@@ -489,6 +507,46 @@ const CASES: Case[] = [
       command: reorderNib("E1", { first: true, scope: "MILESTONE" }),
     },
   },
+  // --- A milestone dragged onto a milestone header, all three zones. The
+  // queue under the cursor is one the dragged row can never be a member of
+  // (`nibtypes.ValidateAxes`: "a milestone is a waypoint, not work"), so the
+  // entry promotion must not swallow the header's own sibling reorder — and no
+  // zone may answer with a reassignment the server would refuse. ---
+  {
+    name: "the top edge of a milestone header reorders the sections",
+    drag: ["M2"],
+    target: "M1",
+    zone: "before",
+    expected: { ok: true, region: TOP_LEVEL, indicator: "before", command: reorderNib("M2", { beforeId: "M1" }) },
+  },
+  {
+    name: "the bottom edge of a milestone header reorders the sections too, rather than entering the queue",
+    drag: ["M2"],
+    target: "M1",
+    zone: "after",
+    expected: { ok: true, region: TOP_LEVEL, indicator: "after", command: reorderNib("M2", { afterId: "M1" }) },
+  },
+  {
+    name: "the middle of a milestone header refuses as the type question it is, not as an assignment",
+    drag: ["M2"],
+    target: "M1",
+    zone: "reparent",
+    expected: { ok: false, reason: "invalid-parent-type" },
+  },
+  {
+    // One move positions one group, so a queue that refuses ONE dragged row
+    // refuses the drag — the whole selection falls back to the positioned drop.
+    name: "a selection carrying a milestone stays out of the queue too",
+    drag: ["M2", "B1"],
+    target: "M1",
+    zone: "after",
+    expected: {
+      ok: true,
+      region: TOP_LEVEL,
+      indicator: "after",
+      command: reorderChain(["M2", "B1"], "M1", "after"),
+    },
+  },
   {
     name: "several rows entering a queue chain behind the first",
     drag: ["E1", "E2"],
@@ -505,18 +563,75 @@ const CASES: Case[] = [
     },
   },
   {
+    // The remedy enters at the FRONT, exactly where the accepted in-queue form
+    // of this gesture puts a row — an entry indicator names no neighbor.
     name: "entering a queue from outside it is an assignment, not a move",
     drag: ["B1"],
     target: "M1",
     zone: "after",
-    expected: { ok: false, reason: "needs-assignment", actionLabel: "Assign to M1", region: QUEUE_M1 },
+    expected: {
+      ok: false,
+      reason: "needs-assignment",
+      actionLabel: "Assign to M1",
+      actionCommand: sequence([
+        updateNib("B1", { milestone: "M1" }),
+        reorderNib("B1", { first: true, scope: "MILESTONE" }),
+      ]),
+      region: QUEUE_M1,
+    },
   },
   {
+    // Every assignment lands last in the target queue, so the position the drop
+    // pointed at is a second write — and one the anchor can carry, since a
+    // milestone section's own rows ARE that queue's members.
     name: "moving between two queues is a reassignment",
     drag: ["E3"],
     target: "E1",
     zone: "before",
-    expected: { ok: false, reason: "needs-assignment", actionLabel: "Assign to M1", region: QUEUE_M1 },
+    expected: {
+      ok: false,
+      reason: "needs-assignment",
+      actionLabel: "Assign to M1",
+      actionCommand: sequence([
+        updateNib("E3", { milestone: "M1" }),
+        reorderNib("E3", { beforeId: "E1", scope: "MILESTONE" }),
+      ]),
+      region: QUEUE_M1,
+    },
+  },
+  {
+    // A milestone is the one type no queue can hold, so the assignment behind
+    // the button would be refused by the server every time. The refusal still
+    // stands — the destination is a queue and the subject is not in it — it just
+    // leads nowhere, which is the honest answer for a type that can never join.
+    name: "a dragged milestone is refused a queue with no assignment offered",
+    drag: ["M2"],
+    target: "E1",
+    zone: "before",
+    expected: { ok: false, reason: "needs-assignment", region: QUEUE_M1 },
+  },
+  {
+    // Assign-then-position PER ROW, not every assignment followed by every
+    // position: the dispatcher stops a sequence at its first failure, and one
+    // row that cannot be assigned would otherwise strand the rows before it
+    // assigned but unpositioned — parked at the end of the queue rather than
+    // where the drop pointed.
+    name: "several rows joining a queue are assigned and positioned one row at a time",
+    drag: ["B1", "B2"],
+    target: "M1",
+    zone: "after",
+    expected: {
+      ok: false,
+      reason: "needs-assignment",
+      actionLabel: "Assign to M1",
+      actionCommand: sequence([
+        updateNib("B1", { milestone: "M1" }),
+        reorderNib("B1", { first: true, scope: "MILESTONE" }),
+        updateNib("B2", { milestone: "M1" }),
+        reorderNib("B2", { afterId: "B1", scope: "MILESTONE" }),
+      ]),
+      region: QUEUE_M1,
+    },
   },
   {
     name: "ordering a queue member in a parent group needs the assignment cleared",
@@ -655,6 +770,9 @@ describe("planDrop", () => {
       if (plan.ok) throw new Error("unreachable: the assertion above already failed");
       expect(plan.refusal.reason).toBe(expected.reason);
       expect(plan.refusal.actionLabel).toBe(expected.actionLabel);
+      expect(resolveOptionalSteps(plan.refusal.actionCommand)).toEqual(
+        resolveOptionalSteps(expected.actionCommand),
+      );
       expect(plan.refusal.region).toEqual(expected.region);
       expect(plan.refusal.message.length).toBeGreaterThan(0);
     }
@@ -697,6 +815,55 @@ describe("planDrop refusal messages", () => {
     expect(outOf.refusal.reason).toBe("needs-unassignment");
     // And the queue to join arrives as data, not only inside the prose.
     expect(into.refusal.region).toEqual(QUEUE_M1);
+
+    // The pair a caller renders: a label with the write behind it, or nothing.
+    expect(refusalAction(into.refusal)).toEqual({
+      label: "Assign to M1",
+      command: into.refusal.actionCommand,
+    });
+    expect(refusalAction(outOf.refusal)).toBeNull();
+  });
+
+  // A milestone accepts no children (`VALID_CHILD_TYPES.milestone` is `[]`), so
+  // the remedy has to travel the SCHEDULING axis: `updateNib`'s `milestone`
+  // field, never a parent link. Read off the command itself, since that is what
+  // the dispatcher turns into variables.
+  it("offers an assignment, never a parent write", () => {
+    const plan = planFor(["B1", "B2"], "M1", "after");
+    if (plan.ok) throw new Error("entering a queue from outside should be refused");
+    const remedy = refusalAction(plan.refusal);
+    if (remedy === null) throw new Error("the assignment refusal should offer a remedy");
+    const command = resolveSteps(remedy.command);
+    if (command.kind !== "sequence") throw new Error("the remedy should be a sequence");
+
+    for (const step of command.steps) {
+      if (typeof step === "function") throw new Error("resolveSteps left a closure behind");
+      switch (step.kind) {
+        case "update-nib":
+          // The whole input, so a `parent` smuggled in beside the assignment
+          // fails here rather than passing an "is there a milestone" check.
+          expect(step.input).toEqual({ milestone: "M1" });
+          break;
+        case "reorder-nib":
+          expect(step.scope).toBe("MILESTONE");
+          // `reorderNib`'s own `parentId` is a container change, which is the
+          // same write under another name — and the server refuses it together
+          // with MILESTONE scope.
+          expect(step).not.toHaveProperty("parentId");
+          break;
+        default:
+          throw new Error(`the remedy should assign and position only, not ${step.kind}`);
+      }
+    }
+    // Both halves ran for both rows, paired: each row's assignment lands before
+    // its own positioning, and no row is assigned until the row before it is
+    // where the drop asked for it.
+    expect(command.steps.map((s) => (typeof s === "function" ? "fn" : s.kind))).toEqual([
+      "update-nib",
+      "reorder-nib",
+      "update-nib",
+      "reorder-nib",
+    ]);
   });
 
   it("caps the list of groups a mixed selection spans", () => {
@@ -913,8 +1080,9 @@ describe("dropPlan.ts import isolation", () => {
     expect(importLines).toEqual([
       'import type { DropZone } from "../drag.svelte";',
       'import { isValidCrossParentDrop, isValidDropTarget } from "../dropZone";',
-      'import { batch, reorderChain, reorderNib, reparentAndReorder, sequence, setParent } from "../mutations/commands";',
-      'import type { AnyCommand, CommandResult, SequenceStep } from "../mutations/types";',
+      'import { batch, reorderChain, reorderNib, reparentAndReorder, sequence, setParent, updateNib } from "../mutations/commands";',
+      'import type { AnyCommand, CommandResult, LeafCommand, SequenceStep } from "../mutations/types";',
+      'import { canBeInMilestoneQueue } from "../membership";',
       'import type { RowData } from "../tableData";',
       'import { canHaveChildren } from "../typeHierarchy";',
       'import { BY_ID, commonRegion, describeRegion, sameRegion, scopeOf, spellId, type Region, type RegionNamer } from "./region";',

@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **A store is fenced against migration while a `nibs serve` or `nibs tui` holds it** — `nibs migrate` refuses while either is running and either refuses to start while a migration runs, because a session that loaded the store beforehand writes its pre-migration copy back afterwards with nothing to detect it.
 - **The web table remembers a scroll position per view**, so switching away and back returns you to where you were rather than to wherever the other view's list left the offset.
 - **A drag says which list it will reorder within** — a badge follows the cursor naming the destination by title, a rule marks where an ordering group's run of rows ends, and a drop that cannot happen explains why instead of doing nothing.
+- **The web's filter box speaks the assignment axis** — `milestone:<id>` selects that milestone's queue, and `is:backlog` the work in no milestone's plan, its own or an inherited one.
 
 ### Changed
 - **BREAKING: moving more than one nib at once now requires `--block`** — `nibs mv <a> <b> --first` is refused instead of quietly reordering a nib you did not name, which is what a mistyped single move produced, since `--first` takes no anchor and a trailing id became a second one; the help and cheat grammars that invited it are corrected too.
@@ -33,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **A `.nibs` symlink must lead to a directory that is already a store** — a link at anything else is refused rather than adopted as the project's store, and `nibs init` will not create one through a link. A store reached that way needs the manual steps the refusal prints before `nibs migrate` will run; to keep nibs out of the code repository, initialize the directory with `--nibs-path` (and `--prefix`, since a store outside the project derives its prefix from its own parent) and link `.nibs` at it afterwards.
 - **The web table's view control is labelled "View"**, since two of the five it offers — Tree and Flat — group nothing.
 - **A drop beside a row whose real parent the view has hidden now moves the row there**, where it was refused before because the drag read the row's position on screen rather than the group it orders in.
+- **The web opens on the milestone-grouped view** — the Milestones view groups work by its milestone assignment instead of by type, each queue in its own order with a Backlog tail for whatever is in none, and a drag reorders within a queue or offers to assign into one; a stored view preference still wins, and the hierarchical view is still there as Tree.
 
 ### Fixed
 - **Switching the web table's view no longer leaves a nib selected that the new view has no row for**, where it stayed focused and a legal target for a bulk action the user could not see.

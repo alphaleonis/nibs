@@ -17,9 +17,10 @@ import type { OrderScope } from "../gql/graphql";
  * The milestone arm holds the same group id the server keys that scope by:
  * `scopeTable[ScopeMilestone].group` is `resolvedMilestoneID` (orderer.go), the
  * nib id a nib's `milestone:` field resolves to — not the field's raw text and
- * not a title. No lens shipped today mints this arm, so every value of it in the
- * tree is currently hand-built in a test; the lens that will mint them is
- * nibs-iaqd's, and this sentence is what it has to satisfy.
+ * not a title. The Milestones view's membership lens is what mints this arm, and
+ * keying its sections on `milestoneOf`'s answer rather than on the raw
+ * `milestone:` field is what holds it to the resolved id — see `childRegion`'s
+ * invariant in tree.ts, which is where that obligation is written down.
  *
  * Not to be confused with `reorderNib`'s own `parentId` argument, which is a
  * CONTAINER CHANGE under the opposite convention (`nil` = reparent nothing, `""`
@@ -70,9 +71,7 @@ export function scopeOf(region: Region): OrderScope {
  * One-directional: same region means one `reorderNib` can position them against
  * each other, but a false answer does NOT mean it cannot. A region names the
  * single group a row's display position sits in, while a nib can be in several
- * server groups at once — two nibs sharing a milestone queue under different
- * parents get different parent-axis regions in every view shipped today, and a
- * MILESTONE-scope reorder still positions them against each other.
+ * server groups at once.
  *
  * `null` is the absence of a region, so it matches nothing, INCLUDING another
  * null: two rows that are in no orderable list are not thereby in one together.

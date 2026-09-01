@@ -10,6 +10,7 @@ const mockStorage = {
 Object.defineProperty(globalThis, "localStorage", { value: mockStorage, writable: true });
 
 import { Preferences } from "./preferences.svelte";
+import { resolveViewLevel } from "./resolvePrefs";
 import { ALL_COLUMN_KEYS, DEFAULT_VISIBLE_COLUMNS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT } from "./types";
 
 describe("Preferences", () => {
@@ -37,10 +38,25 @@ describe("Preferences", () => {
     expect(prefs.filter).toEqual({});
     expect(prefs.invalidTokens).toEqual([]);
     expect(prefs.query).toBe("");
-    expect(prefs.viewLevel).toBe("none");
+    expect(prefs.viewLevel).toBe("milestones");
     expect(prefs.columnVisibility).toEqual({});
     expect(prefs.columnWidths).toEqual({});
     expect(prefs.columnOrder).toEqual({});
+  });
+
+  // The whole read path a page load takes — localStorage → loadPreferences →
+  // Preferences → resolveViewLevel — because that is where the default and a
+  // stored choice meet. The default may only fill an ABSENT key: a view the user
+  // picked, including the one the default used to be, has to come back unchanged.
+  describe("the view a page load resolves to", () => {
+    it("is the app default when nothing is stored", () => {
+      expect(resolveViewLevel(new Preferences(), undefined)).toBe("milestones");
+    });
+
+    it("is the stored view when one was picked", () => {
+      store["nibs-filter-preferences"] = JSON.stringify({ q: "", viewLevel: "none" });
+      expect(resolveViewLevel(new Preferences(), undefined)).toBe("none");
+    });
   });
 
   it("save() persists the canonical query string (incl. invalid tokens) under `q`", () => {
@@ -124,7 +140,7 @@ describe("Preferences", () => {
     prefs.save();
 
     const stored = JSON.parse(store["nibs-filter-preferences"]);
-    expect(stored.columnOrder.none).toEqual(perm);
+    expect(stored.columnOrder.milestones).toEqual(perm);
   });
 
   it("currentColumnWidths returns defaults when no overrides", () => {
@@ -154,8 +170,8 @@ describe("Preferences", () => {
 
     prefs.setColumnWidth("id", 250);
 
-    // Should update the underlying columnWidths for the current viewLevel (default "none")
-    expect(prefs.columnWidths.none?.id).toBe(250);
+    // Should update the underlying columnWidths for the current viewLevel
+    expect(prefs.columnWidths.milestones?.id).toBe(250);
     // Should NOT have saved to localStorage
     expect(mockStorage.setItem).not.toHaveBeenCalled();
   });
@@ -169,7 +185,7 @@ describe("Preferences", () => {
 
     expect(mockStorage.setItem).toHaveBeenCalledTimes(1);
     const stored = JSON.parse(store["nibs-filter-preferences"]);
-    expect(stored.columnWidths.none.title).toBe(500);
+    expect(stored.columnWidths.milestones.title).toBe(500);
   });
 
   it("detailPanelWidth defaults to DEFAULT_DETAIL_PANEL_WIDTH when nothing persisted", () => {

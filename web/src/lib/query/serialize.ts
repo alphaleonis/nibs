@@ -13,9 +13,9 @@ import { REL_TOKEN_ORDER } from "./relations";
  *     alphabetical for tags) and comma-joined, with any group whose members are
  *     all present collapsed to the group name (`status:open`).
  *  2. Relationship/existence tokens in the fixed `REL_TOKEN_ORDER` — grouped by
- *     relationship dimension (hierarchy: parent + ancestor/descendant/sibling, then
- *     blocking, blocked-by + is:blocked, mentions, mentioned-by), id token before
- *     has/no within each dimension.
+ *     dimension (hierarchy: parent + ancestor/descendant/sibling, then blocking,
+ *     blocked-by + is:blocked, mentions, mentioned-by, and last the assignment
+ *     axis: milestone + is:backlog), id token before has/no within each dimension.
  *  3. Free-text `search`.
  *  4. Preserved `invalidTokens`, flagged, at the very end.
  *

@@ -54,6 +54,30 @@ for (const level of VIEW_LEVELS) {
   });
 }
 
+// Where the grouped list runs out, which every capture above is too short to
+// reach: the rows the lens could place in no queue follow under a section no
+// nib heads.
+//
+// Centered rather than aligned to the top — `block: "start"` parks the row under
+// the sticky header, which hides the one row this capture exists for.
+test("table — milestones, the leftover tail", async ({ page }) => {
+  await openApp(page, "milestones");
+  await expect(page.locator('tr[data-nib-id="/__backlog__"]')).toHaveCount(1);
+  await page.evaluate(() => {
+    document.querySelector('tr[data-nib-id="/__backlog__"]')?.scrollIntoView({ block: "center" });
+  });
+  await shot(page, "table-milestones-tail");
+});
+
+// What a first visit actually shows. The captures above all seed a stored
+// preference, so none of them can show which view an unseeded session lands in —
+// this one stores nothing at all.
+test("table — first visit, nothing stored", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator("tr[data-nib-id]").first()).toBeVisible({ timeout: 10_000 });
+  await shot(page, "table-first-visit");
+});
+
 // Flat view with an ACTIVE date sort: the Modified header shows its direction
 // arrow and rows are ordered by recency (default is sort-off, so this state is
 // otherwise uncaptured).
@@ -354,6 +378,45 @@ for (const theme of ["daylight", "graphite"] as const) {
 
     // Escape rather than a release: the capture must not reorder the fixture
     // under the captures that run after it.
+    await page.keyboard.press("Escape");
+    await page.mouse.up();
+  });
+}
+
+// The same three affordances on the MILESTONE axis, which the capture above
+// cannot reach: it drags two siblings, and siblings order on the parent axis.
+// Two members of one milestone's queue order on the queue's own key instead, and
+// every surface says so in `--region-queue` rather than `--ring` — a distinction
+// each palette has to keep readable, and the row a queue drop is aimed at may
+// already carry a band in that same color (nibs-v39j).
+//
+// The first queue member is collapsed so the second is a row away; the fully
+// expanded view puts a whole epic's subtree between them.
+for (const theme of ["daylight", "graphite"] as const) {
+  test(`drag affordance — the queue axis — ${theme}`, async ({ page }) => {
+    await openApp(page, "milestones", theme);
+    await page.locator('tr[data-nib-id="tnib-e002"] [data-action="toggle"]').click();
+    await expect(page.locator('tr[data-nib-id="tnib-f004"]')).toHaveCount(0);
+    await page.evaluate(() => {
+      document.querySelector('tr[data-nib-id="tnib-e002"]')?.scrollIntoView({ block: "center" });
+    });
+    const source = await page.locator('tr[data-nib-id="tnib-e003"]').boundingBox();
+    const target = await page.locator('tr[data-nib-id="tnib-e002"]').boundingBox();
+    if (!source || !target) throw new Error("the queue rows are not laid out");
+
+    await page.mouse.move(source.x + 300, source.y + source.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(source.x + 314, source.y + source.height / 2, { steps: 5 });
+    await page.mouse.move(target.x + 300, target.y + 4, { steps: 8 });
+    await expect(page.getByTestId("drag-badge-label")).toBeVisible();
+
+    await shot(page, `drag-affordance-queue-${theme}`);
+    await page.screenshot({
+      path: join(OUT, `drag-affordance-queue-${theme}-cropped.png`),
+      clip: { x: target.x, y: target.y - 90, width: 760, height: 200 },
+      animations: "disabled",
+    });
+
     await page.keyboard.press("Escape");
     await page.mouse.up();
   });

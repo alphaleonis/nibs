@@ -52,8 +52,8 @@ describe("resolveViewLevel", () => {
     expect(resolveViewLevel(undefined, "epics")).toBe("epics");
   });
 
-  it("returns 'none' when both are undefined", () => {
-    expect(resolveViewLevel(undefined, undefined)).toBe("none");
+  it("returns the app default when both are undefined", () => {
+    expect(resolveViewLevel(undefined, undefined)).toBe("milestones");
   });
 });
 

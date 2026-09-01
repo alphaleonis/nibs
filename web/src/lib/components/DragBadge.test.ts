@@ -35,8 +35,9 @@ describe("DragBadge", () => {
     expect(screen.queryByTestId("drag-badge-count")).toBeNull();
   });
 
-  // The queue label the RFC asks for, on a region no shipped lens can mint yet
-  // (nibs-iaqd's membership lens is what will) — so it is built here directly.
+  // The queue label the RFC asks for. The region is built here directly rather
+  // than taken from the Milestones view that mints one: a badge reads its region
+  // off the plan it is handed, so a lens is not in this path at all.
   it("carries a queue destination and marks the badge with the queue's own color", () => {
     renderBadge(dragging(["a"], { label: "Reorder in the Q3 Launch queue", region: QUEUE }));
     expect(screen.getByTestId("drag-badge-label")).toHaveTextContent("Reorder in the Q3 Launch queue");

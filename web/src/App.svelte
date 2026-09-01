@@ -16,7 +16,8 @@
   import ConfirmDialog from "./lib/components/ConfirmDialog.svelte";
   import { SelectionState } from "./lib/selection.svelte";
   import { DragState } from "./lib/drag.svelte";
-  import { DROP_REFUSAL_TOAST_ID, type DropPlan } from "./lib/ordering/dropPlan";
+  import { DROP_REFUSAL_TOAST_ID, refusalAction, type DropPlan } from "./lib/ordering/dropPlan";
+  import type { AnyCommand } from "./lib/mutations/types";
   import { TreeViewState } from "./lib/treeView.svelte";
   import { provideSelection, provideDrag, provideTreeView, provideConfirmDialog, provideActiveView, provideHistoryNav, provideConnection } from "./lib/contexts";
   import { useConnectionRecovery } from "./lib/composables/useConnectionRecovery.svelte";
@@ -432,6 +433,12 @@
 
   /** Execute the drop the drag decided on, or say why it cannot happen. */
   async function handleDrop(plan: DropPlan) {
+    // Copied before anything can await: `ondrop` runs just ahead of `endDrag()`,
+    // which clears draggedIds as soon as this function suspends — and a
+    // refusal's action outlives the gesture entirely. Never empty — `ondrop`
+    // fires only while `drag.isDragging`, which IS a non-empty drag.
+    const ids = [...drag.draggedIds];
+
     if (!plan.ok) {
       // One refusal is how a drag is CANCELED rather than rejected: releasing
       // back on the row you grabbed. A wiggle that clears the drag threshold and
@@ -441,20 +448,35 @@
       // so it is shown. The judgment is made once, here — `plan.refusal.reason`
       // has no other reader.
       if (plan.refusal.reason !== "drop-on-self") {
-        toast.error(plan.refusal.message, { id: DROP_REFUSAL_TOAST_ID });
+        // A refusal that names a separate write gets a button that performs it,
+        // so the answer is one click rather than a re-read of the sentence.
+        const remedy = refusalAction(plan.refusal);
+        // `action` is always PASSED, never spread in conditionally: sonner merges
+        // a repeat raise into the live toast, so an omitted key leaves the
+        // previous refusal's button — and its onClick — on a message that no
+        // longer describes it. An explicit `undefined` is what clears it.
+        toast.error(plan.refusal.message, {
+          id: DROP_REFUSAL_TOAST_ID,
+          action:
+            remedy === null
+              ? undefined
+              : { label: remedy.label, onClick: () => void applyRemedy(remedy.command, ids) },
+        });
       }
       return;
     }
-
-    // Copied before the first await: `ondrop` runs just ahead of `endDrag()`,
-    // which clears draggedIds as soon as this function suspends. Never empty —
-    // `ondrop` fires only while `drag.isDragging`, which IS a non-empty drag.
-    const ids = [...drag.draggedIds];
 
     await mutations.execute(plan.command);
 
     // After mutation, ensure the primary dragged nib is visible in the tree
     // (TreeTable will expand collapsed ancestors and scroll it into view)
+    selection.ensureVisible(ids[0]);
+  }
+
+  /** Run the write a refusal offered. The rows move to a group the drag could
+   *  not reach, so the accepted path's follow-up applies here too. */
+  async function applyRemedy(command: AnyCommand, ids: string[]) {
+    await mutations.execute(command);
     selection.ensureVisible(ids[0]);
   }
 

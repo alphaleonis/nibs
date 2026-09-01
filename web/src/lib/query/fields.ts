@@ -28,12 +28,16 @@ export type QueryFilter = Pick<
   | "blockedById"
   | "mentionsId"
   | "mentionedById"
-  // Existence/state booleans (phase 5). Tri-state: `has:`/`no:` token pairs
-  // write true/false on one field each.
+  // The assignment axis: `milestone:<id>` (that milestone's queue) and
+  // `is:backlog` (the work no milestone plan covers).
+  | "milestone"
+  // Existence/state booleans (phase 5). Tri-state: a `has:`/`no:` token pair
+  // writes true/false on one field; an `is:` token writes only its one value.
   | "hasParent"
   | "hasBlocking"
   | "hasBlockedBy"
   | "isBlocked"
+  | "noMilestone"
 >;
 
 type IncludeKey = "type" | "priority" | "status" | "estimate" | "tags";

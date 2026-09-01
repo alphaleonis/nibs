@@ -1,5 +1,4 @@
 import type { ViewLevel } from "./types";
-import { DEFAULT_VIEW_LEVEL } from "./types";
 import { PerViewMap } from "./perViewMap.svelte";
 import type { ViewTransition } from "./viewTransition";
 
@@ -108,7 +107,10 @@ export class TreeViewState {
    * resembles: it lags a full transition (it advances only when one is consumed)
    * and is absent entirely for a caller holding no `TreeViewState`.
    */
-  #activeLevel: ViewLevel = $state(DEFAULT_VIEW_LEVEL);
+  // No seed: the constructor assigns unconditionally, so an initializer here is
+  // discarded before any caller can observe it — and one naming a level would
+  // contradict the required parameter below.
+  #activeLevel: ViewLevel = $state()!;
 
   /** `initialLevel` is required rather than defaulted: it is the key the FIRST
    *  parked scroll offset is filed under, so a construction site that let it

@@ -127,8 +127,10 @@ describe("a membership section header (a real nib holding rows that are not its 
 
 /**
  * The same injection, for the other half of the section header: what it declares
- * its rows are ORDERED in. No shipped lens declares anything yet, so the
- * declaration is put on the injected node directly.
+ * its rows are ORDERED in. The declaration is put on the injected node directly
+ * rather than taken from the Milestones lens that mints one, so these cases can
+ * vary the shape beneath it — a queued epic carrying a subtree of its own —
+ * without also having to satisfy that lens's placement rule.
  */
 describe("a container that declares a childRegion", () => {
   const header = makeTreeTableNib({ id: "M1", title: "v2.0", type: "milestone" });

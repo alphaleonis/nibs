@@ -258,6 +258,50 @@ describe("parseQuery — relationship + existence tokens (phase 5)", () => {
   });
 });
 
+// The assignment axis, whose two tokens land on two differently-shaped fields:
+// `milestone` is a scalar id read as DIRECT assignment, `noMilestone` a tri-state
+// read over DERIVED membership. Only the true half of the tri-state is typeable,
+// which is what keeps the grammar's `no:` prefix meaning false everywhere.
+describe("parseQuery — assignment axis tokens", () => {
+  const cases: { name: string; input: string; expected: ParsedQuery }[] = [
+    { name: "milestone:<id>", input: "milestone:tnib-1", expected: { filter: { milestone: "tnib-1" }, invalidTokens: [] } },
+    { name: "milestone field-name and id are lowercased", input: "MILESTONE:TNIB-ABC", expected: { filter: { milestone: "tnib-abc" }, invalidTokens: [] } },
+    { name: "repeated milestone overwrites (last wins)", input: "milestone:a milestone:b", expected: { filter: { milestone: "b" }, invalidTokens: [] } },
+    {
+      name: "is:backlog writes noMilestone TRUE — the backlog is the nibs no plan covers",
+      input: "is:backlog",
+      expected: { filter: { noMilestone: true }, invalidTokens: [] },
+    },
+    { name: "is:backlog is case-insensitive", input: "IS:BACKLOG", expected: { filter: { noMilestone: true }, invalidTokens: [] } },
+    // `noMilestone` has no `has:`/`no:` pair, so those spellings stay unrecognized
+    // and reach free text like `has:mentions` does.
+    { name: "has:milestone is not a token → free text", input: "has:milestone", expected: { filter: { search: "has:milestone" }, invalidTokens: [] } },
+    { name: "no:milestone is not a token → free text", input: "no:milestone", expected: { filter: { search: "no:milestone" }, invalidTokens: [] } },
+    // Empty value: the id grammar requires a non-empty one, so the whole token is
+    // free text rather than an assignment filter set to "" (which the server
+    // refuses as malformed).
+    { name: "milestone: with empty value is free text", input: "milestone:", expected: { filter: { search: "milestone:" }, invalidTokens: [] } },
+    { name: "-milestone: (negated, empty value) → free text", input: "-milestone:", expected: { filter: { search: "-milestone:" }, invalidTokens: [] } },
+    // Negation is metadata-only here as everywhere else in the rel grammar.
+    { name: "-milestone:x → invalid", input: "-milestone:x", expected: { filter: {}, invalidTokens: ["-milestone:x"] } },
+    { name: "-is:backlog → invalid", input: "-is:backlog", expected: { filter: {}, invalidTokens: ["-is:backlog"] } },
+    {
+      name: "both axis tokens coexist with metadata and free text",
+      input: "type:epic milestone:tnib-1 is:backlog login",
+      expected: {
+        filter: { type: ["epic"], milestone: "tnib-1", noMilestone: true, search: "login" },
+        invalidTokens: [],
+      },
+    },
+  ];
+
+  for (const { name, input, expected } of cases) {
+    it(name, () => {
+      expect(parseQuery(input)).toEqual(expected);
+    });
+  }
+});
+
 describe("parseQuery — hierarchy relationship tokens", () => {
   // Directions mirror the server `NibFilter` fields exactly: `ancestorId: X` keeps
   // nibs with X in their parent chain (X's descendants), `descendantId: X` keeps

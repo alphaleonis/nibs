@@ -56,7 +56,7 @@ describe("buildTableData", () => {
   it("resolves parent-child hierarchy with correct depths, parentNib, and hasChildren", () => {
     const milestone = makeTreeTableNib({ id: "nibs-001", type: "milestone", title: "Milestone" });
     const task = makeTreeTableNib({ id: "nibs-002", type: "task", title: "Task", parentId: "nibs-001" });
-    const result = buildTableData([milestone, task], emptyFilter, "milestones", noCollapsed);
+    const result = buildTableData([milestone, task], emptyFilter, "none", noCollapsed);
 
     expect(result.rows).toHaveLength(2);
 
@@ -90,7 +90,7 @@ describe("buildTableData", () => {
       makeTreeTableNib({ id: "nibs-002", type: "epic", parentId: "nibs-001" }),
       makeTreeTableNib({ id: "nibs-003", type: "task", parentId: "nibs-002" }),
     ];
-    const result = buildTableData(nibs, emptyFilter, "milestones", noCollapsed);
+    const result = buildTableData(nibs, emptyFilter, "none", noCollapsed);
 
     expect(result.parentIds.has("nibs-001")).toBe(true);
     expect(result.parentIds.has("nibs-002")).toBe(true);
@@ -104,7 +104,7 @@ describe("buildTableData", () => {
       makeTreeTableNib({ id: "nibs-002", type: "bug", title: "Bug", parentId: "nibs-001" }),
     ];
     const bugFilter: NibFilter = { type: ["bug"] };
-    const result = buildTableData(nibs, bugFilter, "milestones", noCollapsed);
+    const result = buildTableData(nibs, bugFilter, "none", noCollapsed);
 
     expect(result.rows).toHaveLength(2);
 
@@ -125,7 +125,7 @@ describe("buildTableData", () => {
       makeTreeTableNib({ id: "nibs-004", type: "task", title: "Task under B", parentId: "nibs-003" }),
     ];
     const bugFilter: NibFilter = { type: ["bug"] };
-    const result = buildTableData(nibs, bugFilter, "milestones", noCollapsed);
+    const result = buildTableData(nibs, bugFilter, "none", noCollapsed);
 
     // Only Milestone A (ancestor) and Bug (match) should be visible
     const ids = result.rows.map(r => r.nib.id);
@@ -142,7 +142,7 @@ describe("buildTableData", () => {
       makeTreeTableNib({ id: "nibs-002", type: "task", title: "Task", parentId: "nibs-001" }),
     ];
     const collapsed = new Set(["nibs-001"]);
-    const result = buildTableData(nibs, emptyFilter, "milestones", collapsed);
+    const result = buildTableData(nibs, emptyFilter, "none", collapsed);
 
     expect(result.rows).toHaveLength(1);
     expect(result.rows[0].nib.id).toBe("nibs-001");
@@ -161,7 +161,7 @@ describe("buildTableData", () => {
         makeTreeTableNib({ id: "nibs-002", type: "task", status: "in-progress", title: "Active task", parentId: "nibs-001" }),
       ];
       const filter: NibFilter = { status: [...OPEN_STATUSES] };
-      const result = buildTableData(nibs, filter, "milestones", noCollapsed);
+      const result = buildTableData(nibs, filter, "none", noCollapsed);
 
       // Both rows present: the excluded (completed) parent survives as a dimmed
       // ancestor of its active child, keeping the child visible.
@@ -181,7 +181,7 @@ describe("buildTableData", () => {
         makeTreeTableNib({ id: "nibs-002", type: "task", status: "completed", title: "Done leaf", parentId: "nibs-001" }),
       ];
       const filter: NibFilter = { status: [...OPEN_STATUSES] };
-      const result = buildTableData(nibs, filter, "milestones", noCollapsed);
+      const result = buildTableData(nibs, filter, "none", noCollapsed);
 
       const ids = result.rows.map(r => r.nib.id);
       expect(ids).toContain("nibs-001");
@@ -237,7 +237,7 @@ describe("buildTableData", () => {
         makeTreeTableNib({ id: "nibs-002", type: "task", status: "in-progress", title: "Active task", parentId: "nibs-001" }),
       ];
       const filter: NibFilter = { excludeStatus: ["completed"] };
-      const result = buildTableData(nibs, filter, "milestones", noCollapsed);
+      const result = buildTableData(nibs, filter, "none", noCollapsed);
 
       // The excluded parent survives as a dimmed ancestor of its active child,
       // rather than being dropped (which would re-root the orphaned child).
@@ -261,7 +261,7 @@ describe("buildTableData", () => {
         makeTreeTableNib({ id: "nibs-002", type: "task", status: "completed", title: "Done leaf", parentId: "nibs-001" }),
       ];
       const filter: NibFilter = { excludeStatus: ["completed"] };
-      const result = buildTableData(nibs, filter, "milestones", noCollapsed);
+      const result = buildTableData(nibs, filter, "none", noCollapsed);
 
       const ids = result.rows.map(r => r.nib.id);
       expect(ids).toContain("nibs-001");
@@ -286,14 +286,30 @@ describe("buildTableData", () => {
       expect(result.rows.map(r => r.depth)).toEqual([0, 1, 2, 3]);
     });
 
-    it("milestones view: milestones as roots with full subtrees", () => {
-      const result = buildTableData(hierarchyNibs, emptyFilter, "milestones", noCollapsed);
+    it("milestones view: a milestone's section holds what is ASSIGNED to it, not what is nested under it", () => {
+      // The same chain, plus an assignment. `hierarchyNibs` nests the epic UNDER
+      // the milestone with no assignment at all, which schedules nothing — so it
+      // and its subtree belong to the Backlog, and the milestone's own section is
+      // empty. Assigning a second epic is what fills it.
+      const assigned = makeTreeTableNib({
+        id: "nibs-005", type: "epic", title: "Assigned epic",
+        milestone: "nibs-001", milestoneOrder: "a",
+      });
+      const result = buildTableData([...hierarchyNibs, assigned], emptyFilter, "milestones", noCollapsed);
 
       expect(result.rows[0].nib.id).toBe("nibs-001");
       expect(result.rows[0].depth).toBe(0);
       expect(result.rows[0].nib.type).toBe("milestone");
-      // All descendants present
-      expect(result.rows).toHaveLength(4);
+      expect(result.rows[1].nib.id).toBe("nibs-005");
+      expect(result.rows[1].depth).toBe(1);
+
+      // The structurally-nested chain is in the Backlog, headed by the epic whose
+      // parent (the milestone) is drawn elsewhere.
+      const backlog = result.rows.find(r => isSyntheticRowId(r.nib.id))!;
+      expect(backlog.nib.title).toBe("Backlog (1)");
+      expect(result.rows.map(r => r.nib.id)).toEqual([
+        "nibs-001", "nibs-005", backlog.nib.id, "nibs-002", "nibs-003", "nibs-004",
+      ]);
     });
 
     it("features view: features/bugs as headers with their full subtrees; milestone/epic rows hidden", () => {
@@ -697,7 +713,7 @@ describe("buildTableData", () => {
       expect(t1.region).toEqual({ axis: "parent", parentId: "E1" });
     });
 
-    it("no lens shipped today declares a childRegion, so every row carries null", () => {
+    it("only a milestone section declares a childRegion; every other row carries null", () => {
       const nibs: TreeTableNib[] = [
         makeTreeTableNib({ id: "M1", type: "milestone" }),
         makeTreeTableNib({ id: "E1", type: "epic", parentId: "M1" }),
@@ -707,8 +723,33 @@ describe("buildTableData", () => {
       for (const level of VIEW_LEVELS) {
         const { rows } = buildTableData(nibs, emptyFilter, level, noCollapsed);
         expect(rows.length, level).toBeGreaterThan(0);
-        for (const row of rows) expect(row.childRegion, `${level}/${row.nib.id}`).toBeNull();
+        for (const row of rows) {
+          const declares = level === "milestones" && row.nib.id === "M1";
+          expect(row.childRegion, `${level}/${row.nib.id}`).toEqual(
+            declares ? { axis: "milestone", milestoneId: "M1" } : null,
+          );
+        }
       }
+    });
+
+    it("a milestone section hands its queue to its assignees and to nothing deeper", () => {
+      // The declaration reaches the section node's DIRECT children and stops:
+      // an assignee's own subtree carries no assignment, so those rows keep
+      // their parent group. `flatten` passing each node's OWN declaration down
+      // is what bounds it.
+      const nibs: TreeTableNib[] = [
+        makeTreeTableNib({ id: "M1", type: "milestone" }),
+        makeTreeTableNib({ id: "E1", type: "epic", milestone: "M1", milestoneOrder: "a" }),
+        makeTreeTableNib({ id: "T1", type: "task", parentId: "E1" }),
+        makeTreeTableNib({ id: "L1", type: "task" }),
+      ];
+      const { rows } = buildTableData(nibs, emptyFilter, "milestones", noCollapsed);
+
+      expect(rows.find(r => r.nib.id === "E1")!.region).toEqual({ axis: "milestone", milestoneId: "M1" });
+      expect(rows.find(r => r.nib.id === "T1")!.region).toEqual({ axis: "parent", parentId: "E1" });
+      // The Backlog declares nothing, so its rows keep their own parent group.
+      expect(rows.find(r => r.nib.id === "L1")!.region).toEqual({ axis: "parent", parentId: null });
+      expect(rows.find(r => isSyntheticRowId(r.nib.id))!.region).toBeNull();
     });
 
     describe("grouping lens (epics), where the display position and the group diverge", () => {
@@ -943,7 +984,7 @@ describe("buildTableData — global promoted-header ordering under an active sor
       makeTreeTableNib({ id: "t1", title: "T-Alpha", type: "task" }),
     ];
     const result = buildTableData(nibs, emptyFilter, "milestones", noCollapsed, titleAsc);
-    expect(result.rows.map((r) => r.nib.id)).toEqual(["m1", "m2", "/__no_milestone__", "t1", "t2"]);
+    expect(result.rows.map((r) => r.nib.id)).toEqual(["m1", "m2", "/__backlog__", "t1", "t2"]);
   });
 });
 
@@ -1026,7 +1067,7 @@ describe("buildTableData — an id appears at most once in rows (nibs-pxk4)", ()
   const tasksOnly: NibFilter = { type: ["task"] };
   // Containers at three tiers plus a bucket, so collapse gating runs on a
   // promoted header, a nested same-tier container and a synthetic bucket.
-  const someCollapsed = new Set(["e1", "f1", "m2", "/__no_epic__", "/__no_milestone__"]);
+  const someCollapsed = new Set(["e1", "f1", "m2", "/__no_epic__", "/__backlog__"]);
 
   for (const viewLevel of VIEW_LEVELS) {
     describe(`${viewLevel} lens`, () => {
@@ -1062,7 +1103,7 @@ describe("buildTableData — an id appears at most once in rows (nibs-pxk4)", ()
     // Guards the cases above against going vacuous: without a bucket row the
     // scan would never see a synthetic id at all.
     const buckets: [ViewLevel, string][] = [
-      ["milestones", "/__no_milestone__"],
+      ["milestones", "/__backlog__"],
       ["epics", "/__no_epic__"],
       ["features", "/__no_feature_or_bug__"],
     ];
@@ -1105,7 +1146,7 @@ describe("buildTableData — an id appears at most once in rows (nibs-pxk4)", ()
    * The one shape the invariant above cannot reach on its own: a nib whose id is
    * the underscore-fenced string a lens's bucket USED to be called. Nothing stops
    * a store from holding one — an id comes from its filename and `ParseFilename`
-   * applies no charset gate, so a hand-created or imported `__no_milestone__.md`
+   * applies no charset gate, so a hand-created or imported `__backlog__.md`
    * yields it verbatim — and while the bucket carried that same string, minting
    * the bucket put the id in `rows` twice.
    *
@@ -1120,7 +1161,7 @@ describe("buildTableData — an id appears at most once in rows (nibs-pxk4)", ()
    * of the keyed `{#each}`, in production builds too.
    */
   const formerBucketIds: [ViewLevel, string, string][] = [
-    ["milestones", "__no_milestone__", "/__no_milestone__"],
+    ["milestones", "__backlog__", "/__backlog__"],
     ["epics", "__no_epic__", "/__no_epic__"],
     ["features", "__no_feature_or_bug__", "/__no_feature_or_bug__"],
   ];

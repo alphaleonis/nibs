@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getContextClient } from "@urql/svelte";
-  import { DEFAULT_BLOCKED_EMPHASIS, DEFAULT_OPEN_DETAIL_ON, DEFAULT_VIEW_LEVEL } from "../types";
+  import { DEFAULT_BLOCKED_EMPHASIS, DEFAULT_OPEN_DETAIL_ON } from "../types";
   import type { NibFilter, ViewLevel, RowDensity, BlockedEmphasis, OpenDetailGesture, RowSubtreeActions, TreeTableNib, TableSort, SortField } from "../types";
   import type { ColumnKey } from "../columns";
   import type { Preferences } from "../preferences.svelte";
@@ -8,7 +8,7 @@
   import { isSyntheticRowId, containingSectionRowId, buildViewTree, collectDescendantIds } from "../tree";
   import { applySort, nextTableSort } from "../tableSort";
   import { prepareFilter, matchesFilter } from "../filter";
-  import { adjacencyReflectsOrdering, dragBlockFor, DRAG_BLOCK_TOAST_ID } from "../dragBlock";
+  import { adjacencyReflectsOrdering, dragBlockFor, DRAG_BLOCK_TOAST_ID, FLAT_BLOCK_REMEDY_VIEW } from "../dragBlock";
   import type { DragBlock } from "../dragBlock";
   import { toast } from "svelte-sonner";
   import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnWidths, resolveColumnOrder, resolveTableSort, emitFilter, emitTableSort, emitColumnOrder, switchViewLevel } from "../resolvePrefs";
@@ -637,7 +637,7 @@
         break;
       }
       case "flat":
-        switchViewLevel(prefs, onviewlevelchange, treeView, resolvedViewLevel, DEFAULT_VIEW_LEVEL);
+        switchViewLevel(prefs, onviewlevelchange, treeView, resolvedViewLevel, FLAT_BLOCK_REMEDY_VIEW);
         break;
     }
   }

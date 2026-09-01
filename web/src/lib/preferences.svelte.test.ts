@@ -45,7 +45,7 @@ describe("Preferences — per-view save-timing split (auto vs flush)", () => {
     prefs.flushColumnWidths();
     expect(mockStorage.setItem).toHaveBeenCalledTimes(1);
     const afterFlush = JSON.parse(store["nibs-filter-preferences"]);
-    expect(afterFlush.columnWidths.none.id).toBe(250);
+    expect(afterFlush.columnWidths.milestones.id).toBe(250);
     mockStorage.setItem.mockClear();
 
     // A visibility change mutates the auto-mode map — the effect MUST fire and save.
@@ -53,7 +53,7 @@ describe("Preferences — per-view save-timing split (auto vs flush)", () => {
     flushSync();
     expect(mockStorage.setItem).toHaveBeenCalledTimes(1);
     const afterToggle = JSON.parse(store["nibs-filter-preferences"]);
-    expect(afterToggle.columnVisibility.none).toEqual(["id", "title"]);
+    expect(afterToggle.columnVisibility.milestones).toEqual(["id", "title"]);
     mockStorage.setItem.mockClear();
 
     // An order change mutates the third auto-mode map (columnOrder) — same as
@@ -62,7 +62,7 @@ describe("Preferences — per-view save-timing split (auto vs flush)", () => {
     flushSync();
     expect(mockStorage.setItem).toHaveBeenCalledTimes(1);
     const afterReorder = JSON.parse(store["nibs-filter-preferences"]);
-    expect(afterReorder.columnOrder.none).toEqual(["title", "id"]);
+    expect(afterReorder.columnOrder.milestones).toEqual(["title", "id"]);
 
     dispose();
   });
