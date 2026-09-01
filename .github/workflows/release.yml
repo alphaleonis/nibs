@@ -32,10 +32,22 @@ jobs:
     # keeps third-party code from being repointed at something that reads it.
     environment: release
     steps:
+      # A `${{ }}` expression is substituted into the script text before any
+      # shell reads it, so a value the dispatcher chooses — the input, and the
+      # ref the run was dispatched from — is program source rather than data,
+      # and no amount of quoting at the call site changes that: a value carrying
+      # a quote closes the string and the rest parses as code. The steps below
+      # therefore take both through `env:` and read them as shell variables.
+      # internal/ciguard fails `task test` when a `run:` body names the
+      # `inputs`, `env`, `github.event` or `github.ref`/`ref_name`/`head_ref`/
+      # `base_ref` contexts. It is a denylist, not a proof: a value laundered
+      # through `$GITHUB_OUTPUT` and read back as `steps.*.outputs.*` is not
+      # covered.
       - name: Validate version format
         id: version
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
-          VERSION="${{ inputs.version }}"
           if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-.+)?$ ]]; then
             echo "::error::Version must match vX.Y.Z or vX.Y.Z-suffix format (got: $VERSION)"
             exit 1
@@ -47,9 +59,11 @@ jobs:
           fi
 
       - name: Require release from main
+        env:
+          REF: ${{ github.ref }}
         run: |
-          if [[ "${{ github.ref }}" != "refs/heads/main" ]]; then
-            echo "::error::Release must be dispatched from main (got: ${{ github.ref }}). CI only runs on main, so other refs have no signal to gate on."
+          if [[ "$REF" != "refs/heads/main" ]]; then
+            echo "::error::Release must be dispatched from main (got: $REF). CI only runs on main, so other refs have no signal to gate on."
             exit 1
           fi
 
@@ -83,36 +97,51 @@ jobs:
           fetch-depth: 0
 
       - name: Check tag does not exist
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
-          if git rev-parse "${{ inputs.version }}" >/dev/null 2>&1; then
-            echo "::error::Tag ${{ inputs.version }} already exists"
+          if git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "::error::Tag $VERSION already exists"
             exit 1
           fi
 
       - name: Verify changelog entry
         if: steps.version.outputs.prerelease == 'false'
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
-          if ! grep -q "^## ${{ inputs.version }}" CHANGELOG.md; then
-            echo "::error::CHANGELOG.md has no entry for ${{ inputs.version }}"
+          if ! grep -q "^## $VERSION" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no entry for $VERSION"
             exit 1
           fi
 
       - name: Extract release notes
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
           if [[ "${{ steps.version.outputs.prerelease }}" == "true" ]]; then
             echo "Pre-release build from $(git rev-parse --short HEAD)." > ${{ runner.temp }}/release-notes.md
           else
-            awk '/^## ${{ inputs.version }}/{found=1; next} /^## /{if(found) exit} found' CHANGELOG.md > ${{ runner.temp }}/release-notes.md
+            # ENVIRON rather than -v: awk processes escape sequences in a -v
+            # assignment, so `\n` in the value would reach the program as a
+            # newline (measured: length 3 via -v, 4 via ENVIRON). index()==1 is
+            # the anchored literal prefix the heading is meant to be matched by.
+            awk 'BEGIN { heading = "## " ENVIRON["VERSION"] }
+                 index($0, heading) == 1 { found = 1; next }
+                 /^## / { if (found) exit }
+                 found' CHANGELOG.md > ${{ runner.temp }}/release-notes.md
             if [[ ! -s ${{ runner.temp }}/release-notes.md ]]; then
-              echo "::error::Release notes for ${{ inputs.version }} are empty"
+              echo "::error::Release notes for $VERSION are empty"
               exit 1
             fi
           fi
 
       - name: Create and push tag
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
-          git tag "${{ inputs.version }}"
-          git push origin "${{ inputs.version }}"
+          git tag "$VERSION"
+          git push origin "$VERSION"
 
       # Every tool this job runs — go, node, goreleaser, go-licenses — comes
       # from mise.toml, the same file ci.yml reads. That makes the published
@@ -199,4 +228,6 @@ jobs:
 
       - name: Delete tag on failure
         if: failure()
-        run: git push origin --delete "${{ inputs.version }}" || true
+        env:
+          VERSION: ${{ inputs.version }}
+        run: git push origin --delete "$VERSION" || true
