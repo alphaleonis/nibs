@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	gonanoid "github.com/matoous/go-nanoid/v2"
 )
@@ -211,6 +212,9 @@ func BuildFilename(id, slug string) string {
 	return id + "--" + slug + ".md"
 }
 
+// maxSlugBytes caps the slug component of a nib's file name (see BuildFilename).
+const maxSlugBytes = 50
+
 // Slugify converts a title to a URL-friendly slug.
 func Slugify(title string) string {
 	// Convert to lowercase
@@ -236,9 +240,16 @@ func Slugify(title string) string {
 	// Trim dashes from ends
 	s = strings.Trim(s, "-")
 
-	// Truncate to reasonable length
-	if len(s) > 50 {
-		s = s[:50]
+	// Truncate to reasonable length. The budget is in bytes, so the cut backs up to
+	// the start of any rune it lands inside — the slug becomes part of the nib's
+	// file name, and a nib's id and slug are derived from that name on every load,
+	// so a name severed mid-rune is not valid UTF-8.
+	if len(s) > maxSlugBytes {
+		cut := maxSlugBytes
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
+		}
+		s = s[:cut]
 		// Don't end with a dash
 		s = strings.TrimRight(s, "-")
 	}
