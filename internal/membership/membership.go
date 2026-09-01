@@ -26,6 +26,22 @@
 //
 // The package sits below nibcontext, graph and cmd, and imports only
 // internal/nib — a consumer wanting a seam declares its own.
+//
+// THE RULE FOR CONSUMERS: ask this package "what belongs to container X" rather
+// than re-deriving it from the raw `parent:` link. The rival walks listed above
+// each stayed self-consistent while disagreeing with the others, and the field
+// they disagreed over is one string — so a second derivation is not a second
+// opinion, it is a second answer nobody reconciles.
+//
+// What that rule does NOT forbid is reading `b.Parent` at all. It is the stored
+// link, and a site whose subject IS the stored link — a diagnostic that shows
+// both spellings, a change detector, a walk that hands the value straight to a
+// lookup — is reading it correctly. cmd/close.go is the shape to copy: it tests
+// `b.Parent != ""` and immediately resolves it through the reader, keeping the
+// value only long enough to ask whether anything answers to it, which is the
+// same answer resolving gives. What is forbidden is deciding "does this nib
+// belong to X" from the string's emptiness, because a link naming no nib is a
+// non-empty string and no membership.
 package membership
 
 import "github.com/alphaleonis/nibs/internal/nib"

@@ -603,13 +603,42 @@ func parentChain(b *nib.Nib, reader NibReader) []string {
 // names, not just this one. Do not restate the rationale below at a call site.
 //
 // Deciding parent-ness from the raw b.Parent string instead is the mistake this
-// exists to prevent, and prose has not been able to prevent it: a surface that
-// needs the rule without a reader in hand has to re-derive it against whatever
-// it does have, and every such re-derivation is a place the rule can drift.
-// Each one is expected to say what its equivalence rests on. This comment
-// deliberately does not enumerate them — successive attempts to keep a list
-// here have each gone stale, which is why enforcement is being moved out of
-// prose entirely.
+// exists to prevent: a surface that needs the rule without a reader in hand has
+// to re-derive it against whatever it does have, and every such re-derivation is
+// a place the rule can drift. Each one is expected to say what its equivalence
+// rests on.
+//
+// Re-deriving is not the same as READING the stored field, and the two are worth
+// separating because most raw reads in this package are legitimate. What every
+// legitimate one has in common is that "is the string empty" is not its answer:
+//
+//   - The rule's own body, here. Reading the field is what it is for.
+//   - WRITES. Storing a normalized parent, or clearing it, produces the spelling
+//     every reader then has to resolve; there is nothing to resolve first.
+//   - A GraphQL INPUT struct's Parent (model.CreateNibInput, model.UpdateNibInput).
+//     That is a question about the request — was the field supplied at all — and
+//     not about any nib.
+//   - A value handed STRAIGHT to a resolving lookup: the parent-chain walk's next
+//     iteration, and the early-out asking whether there is any link to start a
+//     walk from. A link naming no nib ends the walk on its first lookup, which is
+//     the answer resolving would give, so resolving here would change only the
+//     cost.
+//   - The stored spelling AS THE SUBJECT. storedParentId and the `-f stored_parent`
+//     CLI field exist so a broken link stays inspectable; a diagnostic that
+//     deliberately prints both spellings would lose the information it exists to
+//     carry if it were routed through the rule.
+//   - A resolution by another route. Nib.parent resolves through GetSnapshot,
+//     which runs the same exact-then-prefix lookup as Get — a dependency not
+//     obvious at the call site, so it is pinned by
+//     TestParentResolverDependsOnGetSnapshotIDResolution rather than left to a
+//     reader to notice.
+//
+// That list covers this package. Surfaces OUTSIDE it read the raw link to decide
+// root-ness, which is why what is worth checking of them is agreement on the
+// ANSWER rather than the reading: a link naming no nib is absent from the id set
+// ui.BuildTree and membership.View each walk, so for a dangling link both arrive
+// at this rule's answer without calling it. The dangling link is the whole of the
+// claim; nothing here holds either surface to this rule for any other shape.
 //
 // The rule has one home because a surface that re-derives it from the raw
 // b.Parent string stays self-consistent while disagreeing with every other
@@ -620,18 +649,11 @@ func parentChain(b *nib.Nib, reader NibReader) []string {
 // and is offered as a root's sibling by one surface while being refused as that
 // root's reorder anchor by another.
 //
-// Every surface that decides parent-ness is routed through here; none reads the
-// raw b.Parent to answer that question. The stored string is still reachable —
-// the storedParentId GraphQL field and the `-f stored_parent` CLI field report
-// it verbatim — but as an inspection value, so a broken link stays diagnosable,
-// never as an answer to "does this nib have a parent".
-//
-// The sites that DO touch the stored field directly, and why each is entitled
-// to, are recorded in approvedParentReads (parent_read_guard_test.go). That list
-// is derived from this package's source and compared against the source in both
-// directions, so it cannot go stale the way a count in this comment did — the
-// sentence it replaces said "one caller" when there were nine. Do not restate
-// the set here; a second copy is a second thing to be wrong.
+// Every surface IN THIS PACKAGE that decides parent-ness is routed through here;
+// none reads the raw b.Parent to answer that question. The stored string is
+// still reachable — the storedParentId GraphQL field and the `-f stored_parent`
+// CLI field report it verbatim — but as an inspection value, so a broken link
+// stays diagnosable, never as an answer to "does this nib have a parent".
 //
 // Resolving is also what compares a short-form link under its resolved
 // spelling. Canonicalization makes the two spellings coincide, and every

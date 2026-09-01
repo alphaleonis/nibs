@@ -224,6 +224,14 @@ func resolveCLIStore() (string, *config.Config, error) {
 // What that walk finds still goes through bindNamedStore: it matches a `.nibs`
 // on its NAME, which is evidence for a real directory and no evidence at all for
 // a link.
+//
+// A refusal added anywhere in this family goes undriven by
+// TestEveryRefusalNamesAReachablePathAndARunnableCommand — which requires every
+// path a refusal prints to exist and every `nibs …` invocation it prints to be
+// runnable — until a row for it is added to that test's
+// storeResolutionRefusalCases by hand. There is no production list here for it
+// to walk, the way it walks migrate.go's migrateGates, so adding a refusal here
+// is part of adding a refusal there.
 func resolveStoreDir() (string, error) {
 	// --config and an explicitly named store are MUTUALLY EXCLUSIVE. Supplied
 	// together they break resolveCLIStore's invariant that a store is always read
@@ -1119,8 +1127,7 @@ func isRealImmediateChild(dir, parent string) (bool, error) {
 // never provenance: anyone who knows the rule can write a file that passes, and
 // whoever authors `.nibs.yml` authors the .md files beside it. So against a
 // repository that CHOSE its `nibs.path` this proves nothing, and no further
-// raising of the bar would change that — measured, in
-// TestCorroborationDocMatchesWhatTheArtifactProves.
+// raising of the bar would change that.
 //
 // isRealImmediateChild is what answers that case, and it is the reason this one
 // may stay this weak: the named directory has to resolve, symlinks and all, to a

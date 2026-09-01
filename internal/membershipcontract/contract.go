@@ -28,33 +28,30 @@
 //     the fixture stops being able to tell a rule from a mutant of it, so a
 //     fixture edit cannot hollow the two above out.
 //
-// All of them are BOUNDED BY FIXTURE COVERAGE: a change on either side that
-// moves no fixture row's answer renders identical bytes and replays
-// identically, so it fails nothing. Two kinds of test here narrow that bound
-// rather than remove it — TestResolvedMilestoneIDShapeIsPinned and
-// TestMilestoneOfShapeIsPinned redden on a change to a Go rule's field reads or
-// clause count and state the obligation such a change carries (a fixture row
-// exercising it, and a mutant for it), and
-// TestRuleIsComputableFromTheWireProjection reddens when a rule starts reading a
-// field the wire projection cannot carry AND a fixture row varies it. What the
-// projection carries on the parent axis is the RESOLVED parent, so following a
-// parent link cannot redden that test while telling a DANGLING link apart from
-// no parent at all does — `t9` links to a nib that does not exist, and is the
-// row that varies the two readings. `status:` is outside the projection
-// altogether, but no fixture row sets it, so a clause reading `status:` is free
-// there and only the shape pins see it.
+// All of them are BOUNDED BY FIXTURE COVERAGE, and the bound is the deliberate
+// residual: a change on either side that moves no fixture row's answer renders
+// identical bytes and replays identically, so it fails nothing. A clause added
+// over the three fields the fixture already varies is the shape that gets
+// through, on either side of the parity.
 //
-// Both watch the GO side only, and that is where the deliberate residual is:
-// a further clause over the modeled fields, moving no fixture row's answer,
-// still passes everything when it is added to a TS MIRROR. Closing it
-// symmetrically would mean driving a TypeScript parser from Go. Added to a Go
-// rule the same clause reddens that rule's shape pin, which is why those tests
-// exist.
+// TestRuleIsComputableFromTheWireProjection narrows the bound in one direction
+// rather than removing it: it reddens when a rule starts reading a field the wire
+// projection cannot carry AND a fixture row varies it. What the projection
+// carries on the parent axis is the RESOLVED parent, so following a parent link
+// cannot redden it while telling a DANGLING link apart from no parent at all does
+// — `t9` links to a nib that does not exist, and is the row that varies the two
+// readings. `status:` is outside the projection altogether, but no fixture row
+// sets it, so a clause reading `status:` is free.
+//
+// So a new decision carries an obligation nothing enforces: add a fixture row
+// whose answer it moves, add a mutant that undoes it, mirror it in
+// web/src/lib/membership.ts, and run `task codegen`. That is the price of a
+// fixture-bounded contract, and it is cheaper than the alternative — the two
+// rules were fingerprinted structurally for a while, and five of six
+// behavior-preserving edits to them reddened the fingerprint.
 //
 // TestRenderedTypeIsTheWireType holds the projection those tests answer over:
-// `type` is the effective type and `parentId` the resolved parent, and the test
-// reads the Nib.type and Nib.parentId resolvers out of internal/graph rather
-// than restating what they do.
+// `type` is the effective type and `parentId` the resolved parent.
 //
 // The rendering shape follows internal/webvocab: `task codegen` writes the file
 // via go:generate, and the committed bytes are pinned by a test, so the web

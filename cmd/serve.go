@@ -510,11 +510,11 @@ func etagErrorPresenter(ctx context.Context, err error) *gqlerror.Error {
 // A code the presenter mints but the SDL never names is one no client can
 // discover.
 //
-// Only the weaker half of that is mechanized: adding a code here that the SDL
-// never spells AT ALL fails TestEveryMintableWireErrorCodeIsNamedInTheSchema.
-// That a code is named at every site whose refusal really carries it — and at
-// no site whose refusal does not — remains a review obligation; no test can
-// see it.
+// TestWireErrorCodeConstantsAreNamedInTheSchema requires the SDL to spell each
+// constant below. It reads its own copy of that list, so a fourth constant has
+// to be added there too — nothing enforces that. Neither does anything enforce
+// that a code is named at every site whose refusal really carries it, and at no
+// site whose refusal does not; that stays a review obligation.
 const (
 	wireCodeETagMismatch        = "ETAG_MISMATCH"
 	wireCodeFilterContradiction = "FILTER_CONTRADICTION"

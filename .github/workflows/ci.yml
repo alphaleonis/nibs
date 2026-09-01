@@ -24,14 +24,18 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       # Where internal/testskip appends its tally of guards that did not run
-      # because the runner could not build their fixture. This job runs
-      # `go test ./...`, which prints one `ok <pkg>` line for a package whose
-      # tests all pass or skip and discards that package's output — so without
-      # this file a green windows leg is indistinguishable from one where every
-      # symlink-dependent guard skipped, and fifteen fixtures here skip on
-      # os.Symlink failing. Absolute, because `go test ./...` runs each package's
-      # binary with that package's own source directory as its cwd.
+      # because the runner could not build their fixture. The tally is a COUNT
+      # PER CAPABILITY, which is what the skip enumeration below cannot produce:
+      # that step names tests, and a test name does not say which capability went
+      # missing. It is also the set NIBS_REQUIRE_SYMLINKS and its siblings turn
+      # into failures. Absolute, because the go tool runs each package's binary
+      # with that package's own source directory as its cwd.
       NIBS_SKIP_REPORT: ${{ github.workspace }}/skipped-guards.txt
+      # Where the `go test -json` event stream is teed, for the skip
+      # enumeration two steps below. Relative because both steps that touch it
+      # run in the workspace, which spares the windows leg the backslash-path
+      # conversion NIBS_SKIP_REPORT needs.
+      GO_TEST_EVENTS: go-test-events.json
       # Required on BOTH legs: a symlink skip is now a regression in the
       # environment rather than a limitation of it, whichever runner it happens
       # on. Linux always supported them. The windows leg was left permissive
@@ -137,7 +141,66 @@ jobs:
       # this is the lane that blocks a merge, so the order-dependence guard runs
       # where it can stop a regression rather than only on whichever developer
       # draws an unlucky seed (nibs-ni02). The seed is printed on failure.
-      - run: go test -count=1 -shuffle=on ./...
+      #
+      # -json is what the skip enumeration below reads: it emits a `skip` event
+      # naming the test for every test that skipped, whatever the call that
+      # skipped it looked like, where the plain form prints one `ok <pkg>` line
+      # for a package whose tests all pass or skip and discards the rest. The
+      # stream is teed to a file for that step and rendered back to text for the
+      # log, since raw JSON is not something to read. -json runs the test
+      # binaries verbosely, so what the log gets is the `go test -v` form: a RUN
+      # and a result line per test rather than one line per package. That is a
+      # deliberate trade for the discarded output this step exists to recover.
+      # node does the rendering because this job already depends on it —
+      # `task web:build` above is what installs and uses it.
+      #
+      # The renderer prints EVERY event carrying Output, not only the ones whose
+      # Action is "output": a compile or vet failure in a _test.go arrives as
+      # "build-output" and nowhere else — stderr stays empty — so filtering on
+      # the action reduces a broken test file to `FAIL <pkg> [build failed]` with
+      # the path, line and message gone. `go build ./...` above does not cover
+      # that; it exits 0 with a _test.go that does not compile.
+      - name: Go tests
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -count=1 -shuffle=on -json ./... | tee "$GO_TEST_EVENTS" | node -e '
+            const rl = require("readline").createInterface({ input: process.stdin });
+            rl.on("line", (line) => {
+              let event;
+              try { event = JSON.parse(line); } catch { process.stdout.write(line + "\n"); return; }
+              if (event.Output) process.stdout.write(event.Output);
+            });
+          '
+      # ADVISORY, not a gate: this step prints the skip set and exits 0 whatever
+      # it contains. The cross-leg comparison — "the windows leg skipped 15 tests
+      # the linux leg ran" is a question about the runner, and neither leg's log
+      # can raise it alone — is a human reading two job summaries.
+      #
+      # It is wider than the tally below, which counts only the skips
+      # internal/testskip is told about, but it sees only skips that actually
+      # FIRED. A symlink skip on a leg where symlinks work never runs, so it does
+      # not appear here at all — which is why this does NOT replace the static
+      # enrollment guard in internal/testskip, the one that fails the build when
+      # such a skip is WRITTEN rather than when it runs.
+      - name: List the tests that skipped
+        if: always()
+        shell: bash
+        run: |
+          [ -s "$GO_TEST_EVENTS" ] || exit 0
+          node -e '
+            const fs = require("fs");
+            const skipped = new Set();
+            for (const line of fs.readFileSync(process.env.GO_TEST_EVENTS, "utf8").split("\n")) {
+              if (!line) continue;
+              let event;
+              try { event = JSON.parse(line); } catch { continue; }
+              if (event.Action === "skip" && event.Test) skipped.add(event.Package + "." + event.Test);
+            }
+            const names = [...skipped].sort();
+            console.log("## " + names.length + " test(s) skipped on ${{ matrix.os }}");
+            for (const name of names) console.log("- `" + name + "`");
+          ' | tee -a "$GITHUB_STEP_SUMMARY"
       # The counts the step above cannot print. `if: always()` because a failing
       # test run is exactly when knowing which guards never ran matters most, and
       # the job summary because a log line still has to be gone looking for.
