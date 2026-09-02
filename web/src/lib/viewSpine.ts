@@ -6,7 +6,7 @@ import { buildShapedTableData } from "./tableData";
 import type { TableData } from "./tableData";
 import { shapedAdjacencyReflectsOrdering, shapedDragBlockFor } from "./dragBlock";
 import type { DragBlock } from "./dragBlock";
-import { EMPTY_AREAS, LOADING_AREAS } from "./areas";
+import { EMPTY_AREAS, LOADING_AREAS, UNAVAILABLE_AREAS } from "./areas";
 import type { AreaVocabulary } from "./areas";
 
 /**
@@ -121,3 +121,12 @@ export const LOADING_SPINE: ViewSpine = makeViewSpine(LOADING_AREAS);
 /** The spine of a project that declares no areas — and the one tests destructure
  *  when the vocabulary is beside the point. */
 export const EMPTY_SPINE: ViewSpine = makeViewSpine(EMPTY_AREAS);
+
+/**
+ * The spine when the config query failed.
+ *
+ * Distinct from `LOADING_SPINE` because that one promises an answer shortly, and
+ * from `EMPTY_SPINE` because that one asserts the project declares no areas —
+ * neither is true here. `validity()` answers "unknown" as it does while loading.
+ */
+export const UNAVAILABLE_SPINE: ViewSpine = makeViewSpine(UNAVAILABLE_AREAS);

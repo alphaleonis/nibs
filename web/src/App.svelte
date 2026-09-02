@@ -21,7 +21,7 @@
   import { TreeViewState } from "./lib/treeView.svelte";
   import { provideSelection, provideDrag, provideTreeView, provideConfirmDialog, provideActiveView, provideHistoryNav, provideConnection, provideViewSpine } from "./lib/contexts";
   import { createAreaVocabulary } from "./lib/areas";
-  import { makeViewSpine, LOADING_SPINE } from "./lib/viewSpine";
+  import { makeViewSpine, LOADING_SPINE, UNAVAILABLE_SPINE } from "./lib/viewSpine";
   import { useConnectionRecovery } from "./lib/composables/useConnectionRecovery.svelte";
   import type { ConnectionRecovery } from "./lib/connectionRecovery";
   import { createHistoryNav } from "./lib/composables/useHistoryNav.svelte";
@@ -74,10 +74,19 @@
   // is NOT gated on it: the five shipped view levels need none of it, and the
   // pre-load spine is a stable singleton whose `validity()` answers "unknown"
   // rather than "undeclared".
+  //
+  // Three no-vocabulary answers, not one. `Config.areas` is `[Area!]!`, so a
+  // project declaring none sends `[]` and `[] ?? null` is `[]` — the `?? null`
+  // sentinel therefore means "no answer yet", never "declares none". When the
+  // query FAILED there is likewise no answer, but none is coming either: the
+  // exchange chain has no retry, so waiting on LOADING_SPINE would last the
+  // session. That case takes its own spine so a consumer can stop rather than
+  // wait.
   let declaredAreas = $derived($configResult.data?.config?.areas ?? null);
-  let viewSpine = $derived(
-    declaredAreas === null ? LOADING_SPINE : makeViewSpine(createAreaVocabulary(declaredAreas)),
-  );
+  let viewSpine = $derived.by(() => {
+    if (declaredAreas !== null) return makeViewSpine(createAreaVocabulary(declaredAreas));
+    return $configResult.error ? UNAVAILABLE_SPINE : LOADING_SPINE;
+  });
   provideViewSpine(() => viewSpine);
 
   $effect(() => {

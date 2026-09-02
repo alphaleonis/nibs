@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createAreaVocabulary, EMPTY_AREAS, LOADING_AREAS } from "./areas";
+import { createAreaVocabulary, EMPTY_AREAS, LOADING_AREAS, UNAVAILABLE_AREAS } from "./areas";
 import type { AreaNode, AreaVocabulary } from "./areas";
 
 function area(path: string, depth: number, extra: Partial<AreaNode> = {}): AreaNode {
@@ -137,13 +137,16 @@ describe("createAreaVocabulary", () => {
 });
 
 describe("status", () => {
-  // Three answers, not two. "none" is a project that declares no areas — normal
+  // Four answers, not two. "none" is a project that declares no areas — normal
   // and permanent — and it must not be reachable from the pre-load window, or
-  // the UI would announce a settled fact while still waiting.
+  // the UI would announce a settled fact while still waiting. "unavailable" is
+  // the config query having failed: also permanent, but a failure rather than a
+  // fact about the project, so it is not "none" either.
   const cases: { name: string; vocab: AreaVocabulary; want: string }[] = [
     { name: "before the config resolves", vocab: LOADING_AREAS, want: "loading" },
     { name: "when the project declares none", vocab: EMPTY_AREAS, want: "none" },
     { name: "when areas are declared", vocab: createAreaVocabulary(DECLARED), want: "ready" },
+    { name: "when the config query failed", vocab: UNAVAILABLE_AREAS, want: "unavailable" },
   ];
   for (const c of cases) {
     it(`is "${c.want}" ${c.name}`, () => {
@@ -171,11 +174,20 @@ describe("validity", () => {
     expect(createAreaVocabulary(DECLARED).validity("")).toBe("undeclared");
     expect(EMPTY_AREAS.validity("")).toBe("undeclared");
   });
+
+  // A failed config query never learned what is declared, so it cannot judge a
+  // stored token — the same answer the pre-load window gives, for a different
+  // cause.
+  it("answers \"unknown\" when the config query failed", () => {
+    expect(UNAVAILABLE_AREAS.validity("web/dashboard")).toBe("unknown");
+    expect(UNAVAILABLE_AREAS.validity("retired")).toBe("unknown");
+    expect(UNAVAILABLE_AREAS.validity("")).toBe("unknown");
+  });
 });
 
 describe("the degenerate vocabularies", () => {
   it("answer emptily without throwing", () => {
-    for (const vocab of [LOADING_AREAS, EMPTY_AREAS]) {
+    for (const vocab of [LOADING_AREAS, EMPTY_AREAS, UNAVAILABLE_AREAS]) {
       expect(vocab.sections()).toEqual([]);
       expect(vocab.resolve("web")).toBeNull();
       expect(vocab.subtreeOf("web")).toEqual([]);
@@ -186,7 +198,7 @@ describe("the degenerate vocabularies", () => {
   // Module singletons, shared by every test file a vitest worker runs, so one
   // reassigned method would follow the worker into unrelated suites.
   it("are frozen", () => {
-    for (const vocab of [LOADING_AREAS, EMPTY_AREAS]) {
+    for (const vocab of [LOADING_AREAS, EMPTY_AREAS, UNAVAILABLE_AREAS]) {
       expect(Object.isFrozen(vocab)).toBe(true);
       expect(() => {
         (vocab as unknown as Record<string, unknown>).validity = () => "declared";

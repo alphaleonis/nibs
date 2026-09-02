@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { EMPTY_SPINE, LOADING_SPINE, makeViewSpine } from "./viewSpine";
+import { EMPTY_SPINE, LOADING_SPINE, UNAVAILABLE_SPINE, makeViewSpine } from "./viewSpine";
 import { createAreaVocabulary, EMPTY_AREAS } from "./areas";
 import type { AreaNode } from "./areas";
 import { VIEW_LEVELS } from "./types";
@@ -81,13 +81,25 @@ describe("spine identity", () => {
     expect(EMPTY_SPINE.areas.validity("web")).toBe("undeclared");
   });
 
+  // The failed-query spine shares its EMPTINESS with both of the others and its
+  // "unknown" with the pre-load one, so `status` is the only thing telling a
+  // consumer it is looking at a failure rather than at a wait or at a healthy
+  // project with nothing declared.
+  it("distinguishes the failed-config spine from both of the other empty ones", () => {
+    expect(UNAVAILABLE_SPINE.areas.status).toBe("unavailable");
+    expect(UNAVAILABLE_SPINE.areas.validity("web")).toBe("unknown");
+    expect(UNAVAILABLE_SPINE.areas.sections()).toEqual([]);
+    expect(UNAVAILABLE_SPINE).not.toBe(LOADING_SPINE);
+    expect(UNAVAILABLE_SPINE).not.toBe(EMPTY_SPINE);
+  });
+
   // `EMPTY_SPINE` and `LOADING_SPINE` are module singletons every test file in a
   // vitest worker shares, so a swapped method or a swapped vocabulary would
   // follow the worker into unrelated suites. The shape this replaced was a
   // module namespace, whose bindings are non-writable; the freeze is what keeps
   // that property.
   it("cannot have a method or its vocabulary swapped through a cast", () => {
-    for (const spine of [EMPTY_SPINE, LOADING_SPINE, makeViewSpine(webAreas)]) {
+    for (const spine of [EMPTY_SPINE, LOADING_SPINE, UNAVAILABLE_SPINE, makeViewSpine(webAreas)]) {
       expect(Object.isFrozen(spine)).toBe(true);
       expect(() => {
         (spine as unknown as Record<string, unknown>).buildTableData = () => undefined;
@@ -98,6 +110,7 @@ describe("spine identity", () => {
     }
     expect(EMPTY_SPINE.areas.status).toBe("none");
     expect(LOADING_SPINE.areas.status).toBe("loading");
+    expect(UNAVAILABLE_SPINE.areas.status).toBe("unavailable");
   });
 
   it("gives the same view answers whatever vocabulary it is bound to, while no lens reads one", () => {

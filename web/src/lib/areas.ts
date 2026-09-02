@@ -45,8 +45,14 @@ export interface AreaVocabulary {
    * (`config.AreasDeclared` is the same question), distinct from "loading".
    * Never conflated with `sections().length`, because those are different
    * answers to different questions.
+   *
+   * "unavailable" means the config query FAILED, and is neither of the other
+   * two: "loading" would promise an answer shortly that is never coming, and
+   * "none" would assert a fact about the project we could not ask about. Both
+   * empty states are "no sections to show", but only one of them is a healthy
+   * project, and they earn different remedies.
    */
-  readonly status: "loading" | "none" | "ready";
+  readonly status: "loading" | "none" | "ready" | "unavailable";
   /** Every declared area in DECLARATION order. */
   sections(): readonly AreaNode[];
   /** What a nib's stored `area:` resolves to, or null when it names no declared
@@ -127,3 +133,21 @@ export const LOADING_AREAS: AreaVocabulary = Object.freeze({
 
 /** The vocabulary of a project that declares no areas. */
 export const EMPTY_AREAS: AreaVocabulary = createAreaVocabulary([]);
+
+/**
+ * The vocabulary when the config query failed.
+ *
+ * `validity()` still answers "unknown", for the same reason `LOADING_AREAS` does
+ * — a stored `area:` token must not be judged undeclared on the strength of an
+ * answer that never arrived. `status` is the only member that differs from
+ * `LOADING_AREAS`, and it is what lets a consumer that would wait on "loading"
+ * stop instead and say why.
+ */
+export const UNAVAILABLE_AREAS: AreaVocabulary = Object.freeze({
+  status: "unavailable",
+  sections: () => EMPTY_NODES,
+  resolve: () => null,
+  validity: () => "unknown",
+  subtreeOf: () => EMPTY_NODES,
+  completions: () => EMPTY_PATHS,
+} satisfies AreaVocabulary);

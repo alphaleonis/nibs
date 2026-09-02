@@ -53,14 +53,14 @@ const { vanishingNib, vanishingDetailData, nibSubData, configData } = await vi.h
       data: undefined,
       stale: false,
     }),
-    // CONFIG_QUERY. Writable so the areas test can settle it to a config that
-    // DECLARES areas — the default value below carries no `areas` key, which is
-    // the same `undefined` App reads before the query resolves, so every other
-    // test in this file sits on the pre-load spine.
+    // CONFIG_QUERY. Writable so the areas tests can settle it to a config that
+    // DECLARES areas, or to a query failure — the default value below carries no
+    // `areas` key, which is the same `undefined` App reads before the query
+    // resolves, so every other test in this file sits on the pre-load spine.
     configData: writable<{
       fetching: boolean;
-      error: undefined;
-      data: { config: Record<string, unknown> };
+      error: CombinedError | undefined;
+      data: { config: Record<string, unknown> } | undefined;
       stale: boolean;
     }>({
       fetching: false,
@@ -76,6 +76,18 @@ const setConfig = (config: Record<string, unknown>) =>
   configData.set({ fetching: false, error: undefined, data: { config }, stale: false });
 /** Restore the shared config store so one test's areas don't leak into the next. */
 const resetConfig = () => setConfig({ projectName: "test-project" });
+/** Settle CONFIG_QUERY to a FAILURE, the way urql delivers one: `error` set and
+ *  `data` undefined. Measured, not assumed — urql's `makeErrorResult` hardcodes
+ *  `data: void 0` for any networkError, and `queryStore`'s scan assigns `data`
+ *  unconditionally, so a failed fetch overwrites a cached result rather than
+ *  keeping it beside the error. */
+const failConfig = () =>
+  configData.set({
+    fetching: false,
+    error: new CombinedError({ networkError: new Error("offline") }),
+    data: undefined,
+    stale: false,
+  });
 
 /** Settle the vanishing nib's detail query to "no such nib". */
 const vanishNib = () =>
@@ -229,7 +241,7 @@ vi.mock("@urql/svelte", async () => {
   };
 });
 
-import { queryStore } from "@urql/svelte";
+import { CombinedError, queryStore } from "@urql/svelte";
 const mockQueryStore = vi.mocked(queryStore);
 
 describe("App", () => {
@@ -295,6 +307,20 @@ describe("App", () => {
       render(App);
 
       expect(currentSpine().areas.status).toBe("loading");
+      expect(currentSpine().areas.validity("web")).toBe("unknown");
+    });
+
+    // A failed query carries the same `undefined` data an unresolved one does,
+    // so the spine cannot be chosen from `data` alone. It must not be the
+    // pre-load spine: the exchange chain has no retry, so nothing re-asks and
+    // "loading" would be a promise the app never keeps.
+    it("binds the unavailable spine when the config query failed", () => {
+      failConfig();
+      render(App);
+
+      expect(currentSpine().areas.status).toBe("unavailable");
+      // Still "unknown" rather than "undeclared" — a stored `area:` token must
+      // not be judged against a vocabulary that never arrived.
       expect(currentSpine().areas.validity("web")).toBe("unknown");
     });
   });
