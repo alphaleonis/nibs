@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestIsIDChar(t *testing.T) {
@@ -79,6 +80,100 @@ func TestSlugify(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := Slugify(tt.input)
+			if got != tt.expected {
+				t.Errorf("Slugify(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+// TestSlugifyTruncatesOnRuneBoundary pins the length cap to a rune boundary. A
+// slug becomes part of a nib's file name (BuildFilename), and a nib's id and
+// slug are DERIVED from that name on every load, so a cap measured in bytes but
+// applied mid-rune would leave the store holding a file name that is not valid
+// UTF-8.
+//
+// The multi-byte cases use LETTERS. Slugify keeps only letters, digits and
+// dashes, so a currency sign or an emoji is stripped before the cap is ever
+// reached and cannot straddle it — the two cases at the end of the table stand
+// for that.
+func TestSlugifyTruncatesOnRuneBoundary(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			"ascii exactly at the cap",
+			strings.Repeat("a", 50),
+			strings.Repeat("a", 50),
+		},
+		{
+			"ascii one byte over the cap",
+			strings.Repeat("a", 51),
+			strings.Repeat("a", 50),
+		},
+		{
+			"two-byte runes filling the cap exactly",
+			strings.Repeat("\u00e9", 25),
+			strings.Repeat("\u00e9", 25),
+		},
+		{
+			"two-byte rune straddling the cap",
+			strings.Repeat("a", 49) + "\u00e9",
+			strings.Repeat("a", 49),
+		},
+		{
+			"three-byte rune straddling the cap",
+			strings.Repeat("a", 48) + "\u4e2d",
+			strings.Repeat("a", 48),
+		},
+		{
+			"four-byte rune straddling the cap",
+			strings.Repeat("a", 47) + "\U00020000",
+			strings.Repeat("a", 47),
+		},
+		{
+			"run of three-byte runes truncated mid-rune",
+			strings.Repeat("\u4e2d", 20),
+			strings.Repeat("\u4e2d", 16),
+		},
+		{
+			"run of four-byte runes truncated mid-rune",
+			strings.Repeat("\U00020000", 20),
+			strings.Repeat("\U00020000", 12),
+		},
+		{
+			"trailing dash trimmed after backing up to the boundary",
+			strings.Repeat("a", 48) + " \u4e2d",
+			strings.Repeat("a", 48),
+		},
+		{
+			"currency sign never reaches the cap",
+			strings.Repeat("a", 49) + "\u20ac",
+			strings.Repeat("a", 49),
+		},
+		{
+			"invalid utf-8 in the title never reaches the cap",
+			"\xff\xfe" + strings.Repeat("a", 51),
+			strings.Repeat("a", 50),
+		},
+		{
+			"emoji never reaches the cap",
+			strings.Repeat("a", 49) + "\U0001f642",
+			strings.Repeat("a", 49),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Slugify(tt.input)
+			if !utf8.ValidString(got) {
+				t.Errorf("Slugify(%q) = % x, which is not valid UTF-8", tt.input, got)
+			}
+			if len(got) > 50 {
+				t.Errorf("Slugify(%q) = %q (%d bytes), want at most 50", tt.input, got, len(got))
+			}
 			if got != tt.expected {
 				t.Errorf("Slugify(%q) = %q, want %q", tt.input, got, tt.expected)
 			}

@@ -80,6 +80,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Right-clicking during a drag no longer opens the row menu over the live gesture**, where releasing the button then performed a reorder the user was not making.
 - **A nib file keeps its permissions across an edit**, where every write reset them to `0644` — so a nib you had made private became world-readable again on the next change.
 - **A newly created nib respects your umask**, instead of always being `0644` — so a `umask 077` shell produces a private nib, and no umask can make one group- or world-writable.
+- **A nib's file name is no longer cut mid-character**, which left it invalid UTF-8 when an accented character straddled the slug's length cap.
+
+### Security
+- **`nibs serve` now bounds how deep and how wide a query may recurse, and refuses a disallowed origin instead of answering it** — a page at any origin could otherwise make it resolve a tree that multiplied at every level.
+- **The release workflow no longer pastes its version input into the shell programs it runs**, where a dispatched value could run as code on the job that holds the signing key.
 
 ## v0.8.3 - 2026-08-13
 
