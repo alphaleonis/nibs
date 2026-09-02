@@ -1,6 +1,6 @@
 import type { TreeTableNib, NibFilter, TreeNode, TableSort } from "./types";
 import type { Region } from "./ordering/region";
-import { buildShapedViewTree, holdsChildrenByDisplay, isSyntheticRowId } from "./tree";
+import { buildShapedViewTree, holdsChildrenByDisplay, isSyntheticRowId, SECTION_RULES } from "./tree";
 import type { ViewShape } from "./tree";
 import { makeNibComparator } from "./tableSort";
 import { hasClientFilters, matchesFilter } from "./filter";
@@ -60,10 +60,9 @@ export interface RowData {
    * type-lookup key with no guard of their own. That excludes both kinds of
    * display container: a synthetic bucket, whose id names no nib, and a real nib
    * heading a section of rows that are not its children. Rows under either
-   * inherit that container's OWN display parent (`null` for today's single
-   * top-level bucket) rather than naming it. If display containers ever nest,
-   * the recursion in `flatten` must pass the container's own resolved display
-   * parent rather than the value threaded down.
+   * inherit that container's OWN display parent rather than naming it, at any
+   * depth of nesting — the value `flatten` threads down IS the container's own
+   * resolved display parent, computed one level up by this same rule.
    */
   displayParentId: string | null;
   /**
@@ -257,8 +256,22 @@ export function buildShapedTableData(
       if (byDisplay) {
         parentIds.add(node.nib.id);
       }
-      const selfVisible = (visibleIds ? visibleIds.has(node.nib.id) : true) || childVisible;
-      if (visibleIds && byDisplay && selfVisible) {
+      // A DECLARED section is a row because the lens said it exists, not because
+      // something landed in it — so a client filter that empties it must leave
+      // it standing, while a discovered one (today's every section, the Backlog
+      // included) still prunes.
+      // Only a FABRICATED row can persist on the declaration alone. A real nib
+      // heading a declared section is still a nib, and a client filter that
+      // excludes it must hide it like any other row — asking `isSyntheticRowId`
+      // here keeps `SectionMeta.persistence` honest about the SECTION rather
+      // than bending it to mean the row.
+      const persists =
+        node.section !== undefined &&
+        isSyntheticRowId(node.nib.id) &&
+        SECTION_RULES[node.section.persistence].rendersWhenEmpty;
+      const selfVisible =
+        persists || (visibleIds ? visibleIds.has(node.nib.id) : true) || childVisible;
+      if (visibleIds && (byDisplay || persists) && selfVisible) {
         visibleIds.add(node.nib.id);
       }
       anyVisible = anyVisible || selfVisible;
@@ -288,7 +301,7 @@ export function buildShapedTableData(
         : node.children;
       const parentNib = node.nib.parentId ? nibMap.get(node.nib.parentId) ?? null : null;
 
-      const childRegion = node.childRegion ?? null;
+      const childRegion = node.section?.childRegion ?? null;
       const region = rowRegion(node.nib.id, node.nib.parentId, enclosingChildRegion);
 
       rows.push({
@@ -312,8 +325,6 @@ export function buildShapedTableData(
         // RowData.displayParentId invariant. Naming it would hand a reorder a
         // parent id the backend rejects: a synthetic bucket resolves to no nib,
         // and a milestone heading a section accepts no children of any type.
-        // (If display containers ever nest, this must resolve the node's own
-        // display parent rather than the value threaded down.)
         // The region declaration passed down is this node's OWN, not the one it
         // received: a declaration covers a container's rows, not everything
         // beneath them. Under a queued epic, a subtask carrying no assignment of

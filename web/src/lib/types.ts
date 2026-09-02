@@ -1,4 +1,6 @@
-import type { Region } from "./ordering/region";
+// Type-only, so it is erased from the emitted JS: tree.ts imports this module's
+// types, and the mutual reference never becomes a runtime import cycle.
+import type { SectionMeta } from "./tree";
 
 export interface NibSummary {
   id: string;
@@ -123,15 +125,16 @@ export interface TreeNode<T extends TreeNib = TreeNib> {
   children: TreeNode<T>[];
   depth: number;
   /**
-   * The ordering group this node's children are members of, when the node
-   * DECLARES one; absent or null means it declares nothing and each child falls
-   * back to its own resolved parent group.
+   * The section facts, present exactly on the nodes that ARE sections: the
+   * ordering group this node's children are members of, and whether the section
+   * was declared by the lens or discovered from a placement.
    *
-   * Optional because only a grouped view's section containers can declare one —
-   * `buildTree` and the flat shape emit nodes that never do — so the many nodes
-   * with nothing to say are not made to say it.
+   * Optional because only a grouped view's section containers are sections —
+   * `buildTree` and the flat shape emit nodes that are not — so the many nodes
+   * with nothing to say are not made to say it. ONE optional carrying both
+   * facts, so a node either is a section and answers both or is not one at all.
    */
-  childRegion?: Region | null;
+  section?: SectionMeta;
 }
 
 /**

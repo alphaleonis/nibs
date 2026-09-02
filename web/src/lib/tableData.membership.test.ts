@@ -145,7 +145,7 @@ describe("a container that declares a childRegion", () => {
       {
         nib: header,
         depth: 0,
-        childRegion: queue,
+        section: { childRegion: queue, persistence: "discovered" },
         children: [{ nib: queued, depth: 1, children: [{ nib: sub, depth: 2, children: [] }] }],
       },
     ];
@@ -182,7 +182,7 @@ describe("a container that declares a childRegion", () => {
       {
         nib: header,
         depth: 0,
-        childRegion: queue,
+        section: { childRegion: queue, persistence: "discovered" },
         children: [{ nib: queued, depth: 1, children: [{ nib: assigned, depth: 2, children: [] }] }],
       },
     ] satisfies TreeNode<TreeTableNib>[];
