@@ -202,11 +202,6 @@ export interface GroupingLens<T extends TreeNib = TreeNib> {
    * Decide where one nib goes. Must be TOTAL and SELF-CONSISTENT: every nib gets
    * an answer, and the same answer every time it is asked about the same nib
    * under the same `byId`.
-   *
-   * Both halves are load-bearing on the caller side. `buildGroupedTree` asks once
-   * per nib and reads a memo thereafter, while `shapedContainingSectionRowId` asks
-   * again on demand — so a lens that answers a second ask differently makes those
-   * two disagree about which row contains a nib.
    */
   place(nib: T, byId: ReadonlyMap<string, T>): Placement;
   /**
@@ -608,85 +603,6 @@ export function holdsChildrenByDisplay<T extends TreeNib>(node: TreeNode<T>): bo
 }
 
 /**
- * The id of the row CONTAINING this item in the given view — the section it
- * lands in — or null when it has none: it heads a section itself, the lens hides
- * it, or the view is not grouped at all.
- *
- * Used to un-collapse an item's enclosing section when revealing it. An
- * ancestor-chain walk cannot find that section on its own: a container holding
- * its rows by arrangement is never their `parentId`, and under a membership lens
- * even a real header is not their ancestor.
- *
- * This asks `place` rather than restating its rule, so the answer cannot drift
- * from where `buildShapedViewTree` actually put the row. Asking again rather than
- * sharing the builder's memo is sound because `place` is contracted to answer the
- * same way for the same inputs; the cost is a placement or two recomputed per
- * call.
- */
-export function shapedContainingSectionRowId<T extends TreeNib>(
-  byId: ReadonlyMap<string, T>,
-  nibId: string,
-  shape: ViewShape,
-): string | null {
-  if (shape.kind !== "grouped") return null;
-  const self = byId.get(nibId);
-  if (self === undefined) return null;
-
-  const placement = shape.lens.place(self, byId);
-  if (placement.kind !== "member") return null;
-
-  // A section keyed on a nib that does not actually head it (a dangling
-  // assignment, say) is drawn by a fabricated container instead.
-  const claimant = byId.get(placement.section);
-  const claim = claimant !== undefined ? shape.lens.place(claimant, byId) : null;
-  const headed = claim?.kind === "header" && claim.section === placement.section;
-  return headed ? placement.section : sectionRowId(placement.section, shape.lens);
-}
-
-/**
- * Finds the node with the given id anywhere in a (view) tree. Returns null if
- * absent. Depth-first; the tree is shallow so recursion is fine.
- */
-function findNode<T extends TreeNib>(nodes: TreeNode<T>[], id: string): TreeNode<T> | null {
-  for (const node of nodes) {
-    if (node.nib.id === id) return node;
-    const found = findNode(node.children, id);
-    if (found) return found;
-  }
-  return null;
-}
-
-/**
- * Collects the ids of every descendant of `rootId` within the given tree,
- * EXCLUDING `rootId` itself. Returns an empty set when `rootId` is not present.
- *
- * The tree must be the DISPLAYED view tree (from `buildShapedViewTree`), not the raw
- * nib list: the grouping lens reparents nodes (headers keep their subtree,
- * above-tier containers are hidden, loose items fall into a synthetic "No X"
- * bucket whose id is not a real `parentId`). Walking `node.children` here —
- * rather than raw `nib.parentId` — yields exactly the rows currently shown under
- * the subtree. A visited guard makes the walk safe even if a malformed tree ever
- * contained a cycle.
- */
-export function collectDescendantIds<T extends TreeNib>(
-  tree: TreeNode<T>[],
-  rootId: string,
-): Set<string> {
-  const result = new Set<string>();
-  const root = findNode(tree, rootId);
-  if (!root) return result;
-
-  const stack: TreeNode<T>[] = [...root.children];
-  while (stack.length > 0) {
-    const node = stack.pop()!;
-    if (result.has(node.nib.id)) continue; // cycle guard
-    result.add(node.nib.id);
-    for (const child of node.children) stack.push(child);
-  }
-  return result;
-}
-
-/**
  * Build a fabricated section-container node — a row for a section no nib heads.
  *
  * The literal is annotated `TreeTableNib`, the widest shape any caller
@@ -770,11 +686,7 @@ function buildGroupedTree<T extends TreeNib>(
   const byId = new Map<string, T>();
   for (const nib of nibs) byId.set(nib.id, nib);
 
-  // Every placement is decided here, before any assembly. `byId` is complete
-  // before this loop and never mutated after it, and `place` is contracted total
-  // and self-consistent, so asking again is equivalent —
-  // `shapedContainingSectionRowId` leans on exactly that and asks again outside the
-  // build rather than sharing this map.
+  // Every placement is decided here, before any assembly.
   //
   // It is worth being blunt about what this map is NOT, because both tempting
   // readings of it are wrong. It is not load-bearing for correctness: the

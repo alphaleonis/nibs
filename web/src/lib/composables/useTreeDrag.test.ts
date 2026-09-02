@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { SelectionState } from "../selection.svelte";
+import { buildContainmentIndex, type ContainmentIndex } from "../containment";
 import { DragState } from "../drag.svelte";
 import { batch, reorderNib, reparentAndReorder, setParent } from "../mutations/commands";
 import type { DropPlan } from "../ordering/dropPlan";
@@ -85,6 +86,9 @@ describe("useTreeDrag", () => {
     scrollContainer?: HTMLElement | null;
     dragBlock?: import("../dragBlock").DragBlock | null;
     onblockeddrag?: (block: import("../dragBlock").DragBlock) => void;
+    /** Defaults to the index of an EMPTY view: these cases are about the
+     *  gesture, and the destination check they would reach is `dropPlan`'s. */
+    containment?: ContainmentIndex;
   } = {}) {
     const selection = overrides.selection ?? new SelectionState();
     const drag = overrides.drag ?? new DragState();
@@ -97,6 +101,7 @@ describe("useTreeDrag", () => {
       drag,
       getRows: () => rows,
       getScrollContainer: () => overrides.scrollContainer ?? null,
+      getContainment: () => overrides.containment ?? buildContainmentIndex([]),
       getDragBlock: () => overrides.dragBlock ?? null,
       ondrop,
       onblockeddrag,

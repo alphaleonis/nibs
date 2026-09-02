@@ -111,7 +111,8 @@ const FIXTURE: TreeTableNib[] = [
 ];
 
 const noFilter: NibFilter = {};
-const ROWS: RowData[] = buildShapedTableData(FIXTURE, noFilter, areaShape, new Set()).rows;
+const TABLE = buildShapedTableData(FIXTURE, noFilter, areaShape, new Set());
+const ROWS: RowData[] = TABLE.rows;
 const ROWS_BY_ID = new Map(ROWS.map((r) => [r.nib.id, r]));
 
 function row(id: string): RowData {
@@ -128,6 +129,7 @@ function planFor(draggedIds: string[], targetId: string, zone: DropZone): DropPl
     target: row(targetId),
     zone,
     descendantIds: collectDescendantIds(draggedIds, ROWS),
+    containment: TABLE.containment,
   });
 }
 
@@ -333,7 +335,8 @@ describe("a drag whose rows are in SEVERAL sections", () => {
     // sections that decide nothing still take an ordinary reorder, because the
     // write says nothing false about where they end up.
     const byRowShape: ViewShape = { kind: "grouped", lens: { ...areaLens, meaning: () => GOVERNS_NOTHING } };
-    const rows = buildShapedTableData(FIXTURE, noFilter, byRowShape, new Set()).rows;
+    const table = buildShapedTableData(FIXTURE, noFilter, byRowShape, new Set());
+    const rows = table.rows;
     const byId = new Map(rows.map((r) => [r.nib.id, r]));
     const plan = planDrop({
       draggedIds: ["xa", "ya"],
@@ -342,6 +345,7 @@ describe("a drag whose rows are in SEVERAL sections", () => {
       target: byId.get("na")!,
       zone: "before",
       descendantIds: collectDescendantIds(["xa", "ya"], rows),
+      containment: table.containment,
     });
     if (!plan.ok) throw new Error(plan.refusal.message);
     expect(plan.kind).toBe("position");
@@ -461,7 +465,8 @@ describe("a drop ONTO an assigning section", () => {
             : areaLens.meaning(section),
       },
     };
-    const rows = buildShapedTableData(FIXTURE, noFilter, refusingShape, new Set()).rows;
+    const table = buildShapedTableData(FIXTURE, noFilter, refusingShape, new Set());
+    const rows = table.rows;
     const byId = new Map(rows.map((r) => [r.nib.id, r]));
     const plan = planDrop({
       draggedIds: ["xa"],
@@ -470,6 +475,7 @@ describe("a drop ONTO an assigning section", () => {
       target: byId.get("ya")!,
       zone: "before",
       descendantIds: collectDescendantIds(["xa"], rows),
+      containment: table.containment,
     });
 
     if (plan.ok) throw new Error(`expected a refusal, got ${plan.label}`);
@@ -552,7 +558,8 @@ describe("a section that refuses entry", () => {
           : { memberRegion: null, onEnter: { kind: "refuse", message: `${section} is read-only here.` } },
     },
   };
-  const rows = buildShapedTableData(FIXTURE, noFilter, shape, new Set()).rows;
+  const table = buildShapedTableData(FIXTURE, noFilter, shape, new Set());
+  const rows = table.rows;
   const byId = new Map(rows.map((r) => [r.nib.id, r]));
 
   function planOntoWeb(draggedIds: string[]): DropPlan {
@@ -563,6 +570,7 @@ describe("a section that refuses entry", () => {
       target: byId.get(WEB)!,
       zone: "reparent",
       descendantIds: collectDescendantIds(draggedIds, rows),
+      containment: table.containment,
     });
   }
 

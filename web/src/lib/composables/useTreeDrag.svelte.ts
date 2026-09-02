@@ -1,3 +1,4 @@
+import type { ContainmentIndex } from "../containment";
 import type { SelectionState } from "../selection.svelte";
 import type { AcceptedDrop, DragState, DropZone } from "../drag.svelte";
 import type { RowData } from "../tableData";
@@ -35,6 +36,9 @@ export function useTreeDrag(opts: {
   drag: DragState;
   getRows: () => RowData[];
   getScrollContainer: () => HTMLElement | null;
+  /** What the current view draws inside what, for the destination check
+   *  `planDrop` cannot answer from the rows alone. */
+  getContainment: () => ContainmentIndex;
   /** The gate currently suppressing drag-reorder, or null when drag is available. */
   getDragBlock?: () => DragBlock | null;
   /**
@@ -261,6 +265,7 @@ export function useTreeDrag(opts: {
       target: targetRow,
       zone,
       descendantIds: dragDescendantIds,
+      containment: opts.getContainment(),
       nameOf,
     });
     dropPlan = plan;

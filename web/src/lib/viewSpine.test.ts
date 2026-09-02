@@ -129,16 +129,15 @@ describe("spine identity", () => {
 // the one-line destructure at the top of the view tests legal.
 describe("destructured methods", () => {
   it("work detached from the spine", () => {
-    const { buildViewTree, viewShapeFor, containingSectionRowId, buildTableData, dragBlockFor, adjacencyReflectsOrdering } =
+    const { buildViewTree, viewShapeFor, buildTableData, dragBlockFor, adjacencyReflectsOrdering } =
       makeViewSpine(EMPTY_AREAS);
     const nibs = [makeTreeNib({ id: "m1", type: "milestone" }), makeTreeNib({ id: "t1" })];
-    const byId = new Map(nibs.map((n) => [n.id, n]));
 
     expect(viewShapeFor("flat")).toEqual({ kind: "flat" });
     expect(buildViewTree(nibs, "flat").map((n) => n.nib.id)).toEqual(["m1", "t1"]);
-    expect(containingSectionRowId(byId, "t1", "milestones")).not.toBeNull();
-    expect(containingSectionRowId(byId, "t1", "flat")).toBeNull();
-    expect(buildTableData([], {}, "none", new Set()).rows).toEqual([]);
+    const empty = buildTableData([], {}, "none", new Set());
+    expect(empty.rows).toEqual([]);
+    expect(empty.containment.has("t1")).toBe(false);
     expect(dragBlockFor({}, "none", null)).toBeNull();
     expect(adjacencyReflectsOrdering({}, "none", null)).toBe(true);
   });

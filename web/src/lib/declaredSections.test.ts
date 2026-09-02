@@ -4,19 +4,21 @@ import {
   buildShapedViewTree,
   holdsChildrenByDisplay,
   isSyntheticRowId,
-  shapedContainingSectionRowId,
 } from "./tree";
 import { buildShapedTableData } from "./tableData";
+import { useKeyboardNav } from "./composables/useKeyboardNav.svelte";
+import { SelectionState } from "./selection.svelte";
+import { DEFAULT_OPEN_DETAIL_ON } from "./types";
 import { GOVERNS_NOTHING } from "./ordering/sectionMeaning";
 import type { NibFilter, TableSort, TreeTableNib } from "./types";
 
 /**
  * One fixture, driven through every surface that answers "what contains this
  * row" — the emitted view tree, `holdsChildrenByDisplay`, `parentIds`,
- * `displayParentId`, `viewMemberIds` and `containingSectionRowId` — and required
- * to agree. Deliberately not an allowlist of call sites: a surface added later
- * that gets this wrong shows up as a disagreement here, and a rename dodges
- * nothing.
+ * `displayParentId`, `viewMemberIds`, the containment index, reveal and
+ * ArrowLeft — and required to agree. Deliberately not an allowlist of call
+ * sites: a surface added later that gets this wrong shows up as a disagreement
+ * here, and a rename dodges nothing.
  *
  * The lens is local because no shipped view level declares sections yet: all
  * three answer `{kind:"none"}`, so the declared-forest half of the builder has
@@ -81,7 +83,6 @@ const FIXTURE: TreeTableNib[] = [
   nib({ id: "u1", title: "Unfiled", area: "", priority: "low" }),
 ];
 
-const byId = new Map(FIXTURE.map((n) => [n.id, n]));
 const noFilter: NibFilter = {};
 const noCollapsed = new Set<string>();
 
@@ -191,10 +192,11 @@ describe("a lens that declares its sections", () => {
     // The two catch-alls are separate rows, and each holds its own nib.
     expect(ids.indexOf("r1")).toBe(ids.indexOf(LEGACY) + 1);
     expect(ids.indexOf("u1")).toBe(ids.indexOf(NO_AREA) + 1);
-    // The on-demand answer agrees with where the builder actually put them.
-    expect(shapedContainingSectionRowId(byId, "r1", areaShape)).toBe(LEGACY);
-    expect(shapedContainingSectionRowId(byId, "u1", areaShape)).toBe(NO_AREA);
-    expect(shapedContainingSectionRowId(byId, "a1", areaShape)).toBe(API);
+    // And the index agrees with where the builder actually put them.
+    const { containment } = tableOf(noFilter);
+    expect(containment.containerOf("r1")).toBe(LEGACY);
+    expect(containment.containerOf("u1")).toBe(NO_AREA);
+    expect(containment.containerOf("a1")).toBe(API);
   });
 
   it("keeps declared order under an active column sort, which orders members within a section", () => {
@@ -340,5 +342,90 @@ describe("a declared section a nib heads", () => {
     ).rows;
 
     expect(rows.map((r) => r.nib.id)).not.toContain("H");
+  });
+});
+
+/**
+ * The consumers of containment, on the shape only a declared forest makes: a row
+ * inside a section inside a section.
+ *
+ * No shipped view level declares one, so these drive the two consumers directly
+ * rather than through `TreeTable` — which can only be rendered at a shipped view
+ * level. The single-section path each of them takes in a shipped view is driven
+ * through the component in TreeTable.test.ts.
+ */
+describe("what contains a row when sections nest", () => {
+  const BOTH_SHUT = new Set([WEB, API]);
+
+  function idsUnder(collapsed: ReadonlySet<string>): string[] {
+    return buildShapedTableData(FIXTURE, noFilter, areaShape, collapsed, null).rows.map((r) => r.nib.id);
+  }
+
+  it("keeps the chain of a row inside a collapsed section, which has no row at all", () => {
+    const { rows, containment } = buildShapedTableData(FIXTURE, noFilter, areaShape, BOTH_SHUT, null);
+
+    expect(rows.map((r) => r.nib.id)).not.toContain("a1");
+    // Nothing about the index moved: it is read off the tree, and the collapse
+    // set reaches it only as which ids got a row.
+    expect(containment.chainOf("a1")).toEqual([API, WEB]);
+    expect(containment.contains(WEB, "a1")).toBe(true);
+  });
+
+  it("needs the WHOLE chain opened to reveal a row, not the innermost container", () => {
+    const { containment } = buildShapedTableData(FIXTURE, noFilter, areaShape, BOTH_SHUT, null);
+    const chain = containment.chainOf("a1");
+    expect(chain.length).toBeGreaterThan(1);
+
+    // Opening only the section the row is directly in leaves it hidden — what a
+    // single container id could do, and the whole of the reveal defect.
+    const innermostOnly = new Set(BOTH_SHUT);
+    innermostOnly.delete(chain[0]);
+    expect(idsUnder(innermostOnly)).not.toContain("a1");
+
+    // Opening every container the chain names is what reveal does, and it is
+    // enough: the row is drawn.
+    const wholeChain = new Set(BOTH_SHUT);
+    for (const id of chain) wholeChain.delete(id);
+    expect(idsUnder(wholeChain)).toContain("a1");
+  });
+
+  describe("ArrowLeft", () => {
+    function focusAfterArrowLeft(from: string, collapsed: ReadonlySet<string> = noCollapsed): string | null {
+      const { rows, containment } = buildShapedTableData(FIXTURE, noFilter, areaShape, collapsed, null);
+      const selection = new SelectionState();
+      selection.focus(from);
+      const { handleKeydown } = useKeyboardNav({
+        selection,
+        getRows: () => rows,
+        getVisibleRowIds: () => rows.map((r) => r.nib.id),
+        getCollapsedIds: () => collapsed,
+        getContainment: () => containment,
+        toggleNode: () => {},
+        getScrollContainer: () => null,
+        onDragKeyDown: () => {},
+        navigateToNib: () => {},
+        getOpenDetailOn: () => DEFAULT_OPEN_DETAIL_ON,
+      });
+      handleKeydown(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true }));
+      return selection.focusedNibId;
+    }
+
+    it("steps a member out to the section drawn around it", () => {
+      // Its real parent is null and its display parent is null; the only thing
+      // that answers here is what DRAWS it.
+      const { rows } = buildShapedTableData(FIXTURE, noFilter, areaShape, noCollapsed, null);
+      expect(rows.find((r) => r.nib.id === "a1")!.displayParentId).toBeNull();
+
+      expect(focusAfterArrowLeft("a1")).toBe(API);
+    });
+
+    it("steps a section out to the section that declares it", () => {
+      // Collapsed, or ArrowLeft closes the section instead of leaving it.
+      expect(focusAfterArrowLeft(API, new Set([API]))).toBe(WEB);
+    });
+
+    it("stays put at the display root", () => {
+      expect(focusAfterArrowLeft(WEB, new Set([WEB]))).toBe(WEB);
+    });
   });
 });

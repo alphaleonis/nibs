@@ -1,7 +1,7 @@
 import { VIEW_LEVELS } from "./types";
 import type { NibFilter, TableSort, TreeNib, TreeNode, TreeTableNib, ViewLevel } from "./types";
 import type { ViewShape } from "./tree";
-import { buildShapedViewTree, shapedContainingSectionRowId, viewShapeFor } from "./tree";
+import { buildShapedViewTree, viewShapeFor } from "./tree";
 import { buildShapedTableData } from "./tableData";
 import type { TableData } from "./tableData";
 import { shapedAdjacencyReflectsOrdering, shapedDragBlockFor } from "./dragBlock";
@@ -47,11 +47,6 @@ export interface ViewSpine {
     level: ViewLevel,
     sortComparator?: (a: T, b: T) => number,
   ): TreeNode<T>[];
-  containingSectionRowId<T extends TreeNib>(
-    byId: ReadonlyMap<string, T>,
-    nibId: string,
-    level: ViewLevel,
-  ): string | null;
   buildTableData(
     nibs: TreeTableNib[],
     filter: NibFilter,
@@ -99,8 +94,6 @@ export function makeViewSpine(areas: AreaVocabulary): ViewSpine {
     bucketIds: bucketIdsFor(viewShapeFor),
     buildViewTree: (nibs, level, sortComparator) =>
       buildShapedViewTree(nibs, viewShapeFor(level), sortComparator),
-    containingSectionRowId: (byId, nibId, level) =>
-      shapedContainingSectionRowId(byId, nibId, viewShapeFor(level)),
     buildTableData: (nibs, filter, level, collapsed, sort = null) =>
       buildShapedTableData(nibs, filter, viewShapeFor(level), collapsed, sort),
     dragBlockFor: (filter, level, sort) => shapedDragBlockFor(filter, viewShapeFor(level), sort),

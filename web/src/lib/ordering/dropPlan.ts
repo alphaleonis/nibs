@@ -2,6 +2,7 @@ import type { DropZone } from "../drag.svelte";
 import { isValidCrossParentDrop, isValidDropTarget } from "../dropZone";
 import { batch, reorderChain, reorderNib, reparentAndReorder, sequence, setParent, updateNib } from "../mutations/commands";
 import type { AnyCommand, CommandResult, LeafCommand, SequenceStep } from "../mutations/types";
+import type { ContainmentIndex } from "../containment";
 import { takesAssignmentAxes } from "../membership";
 import type { RowData } from "../tableData";
 import type { SectionKey } from "../tree";
@@ -150,6 +151,15 @@ export interface DropRequest {
    *  function is not O(rows) per pointermove. */
   readonly descendantIds: Set<string>;
   /**
+   * What the current view draws inside what — read for the one question a
+   * position plan cannot answer from `rowsById`: whether the container the rows
+   * would land in is itself drawn inside the row the indicator points at.
+   *
+   * `contains` is O(depth), so a pointermove pays a walk out of one row
+   * rather than a scan.
+   */
+  readonly containment: ContainmentIndex;
+  /**
    * Spells the ids inside this plan's own prose — the queue a move stays in, the
    * container it enters — as titles.
    *
@@ -212,7 +222,7 @@ export function entryRegionOf(row: RowData): Region | null {
 export function planDrop(req: DropRequest): DropPlan {
   // Defaulted once, here, so every phrase below takes a REQUIRED namer. The
   // optional parameter is the request's, not the spelling functions'.
-  const { draggedIds, rowsById, draggedRowsById, target, zone, descendantIds, nameOf = BY_ID } = req;
+  const { draggedIds, rowsById, draggedRowsById, target, zone, descendantIds, containment, nameOf = BY_ID } = req;
 
   if (draggedIds.length === 0) {
     return refuse("no-source", "Nothing is being dragged.");
@@ -592,14 +602,25 @@ export function planDrop(req: DropRequest): DropPlan {
 
       // The rows come from another container, so the move is a reparent
       // positioned against the target — unless the container they would land in
-      // is itself drawn inside the target's own subtree. `promotedCycleRoots`
-      // makes exactly that shape: a severed cycle member keeps a real parent the
-      // view renders as its own child, the server accepts the write, and the rows
-      // land inside a container drawn BELOW the line they were dropped on. The
-      // promoted HEADER case this module means to unlock is a different
-      // population — there the hidden container has no row at all, so the walk
-      // finds nothing and the drop stands.
-      if (dest.parentId !== null && isRenderedUnder(dest.parentId, target.nib.id, rowsById)) {
+      // is the target row itself, or lies inside its subtree. Two shapes make
+      // that, and in both the server accepts the write while the rows land
+      // inside a container the view draws BELOW the line they were dropped on: a
+      // severed cycle member, which `promotedCycleRoots` leaves with a real
+      // parent the view renders as its own child, and a section header whose own
+      // parent is one of the section's members. The relation is read off the view
+      // TREE, not off the drawn rows, so collapsing the target's section — which
+      // takes the destination's row away while the write still lands there —
+      // refuses too. The promoted HEADER case this module means to unlock is a
+      // different population: there the destination container has no NODE in the
+      // view tree at all, which `contains` answers false for.
+      //
+      // The identity arm is what covers a ONE-member cycle: `promotedCycleRoots`
+      // severs a self-parented nib like any other cycle, so it keeps a real
+      // parent that is itself, and the guard above has pinned `dest.parentId` to
+      // `target.nib.parentId` — so that arm fires on exactly that shape. It has
+      // to be stated here because the index's relations all exclude the
+      // container itself, `contains` included.
+      if (dest.parentId !== null && (dest.parentId === target.nib.id || containment.contains(target.nib.id, dest.parentId))) {
         return refuse(
           "destination-inside-target",
           `${describeRegion(dest, nameOf)} is drawn inside ${target.nib.title}, so the drop would land below the row it points at.`,
@@ -906,25 +927,6 @@ function destContainerType(
   }
   const row = rowsById.get(parentId);
   return row === undefined ? { known: false } : { known: true, type: row.nib.type };
-}
-
-/**
- * Whether `containerId` is DRAWN inside `ancestorId`'s subtree, walking the
- * display parent chain — which is what decides where the user sees a drop land.
- * A container with no row here is drawn nowhere, so the answer for it is false.
- *
- * The visited set is the termination guard. `displayParentId` is acyclic as the
- * view tree builds it; this walk does not need that to stay true.
- */
-function isRenderedUnder(containerId: string, ancestorId: string, rowsById: ReadonlyMap<string, RowData>): boolean {
-  const seen = new Set<string>();
-  let current: string | null = containerId;
-  while (current !== null && !seen.has(current)) {
-    if (current === ancestorId) return true;
-    seen.add(current);
-    current = rowsById.get(current)?.displayParentId ?? null;
-  }
-  return false;
 }
 
 function listRegions(rows: RowData[], nameOf: RegionNamer): string {

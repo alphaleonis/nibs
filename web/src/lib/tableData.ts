@@ -3,6 +3,8 @@ import type { Region } from "./ordering/region";
 import type { SectionEntry } from "./ordering/sectionMeaning";
 import { buildShapedViewTree, holdsChildrenByDisplay, isSyntheticRowId, SECTION_RULES } from "./tree";
 import type { SectionKey, ViewShape } from "./tree";
+import { buildContainmentIndex } from "./containment";
+import type { ContainmentIndex } from "./containment";
 import { makeNibComparator } from "./tableSort";
 import { hasClientFilters, matchesFilter } from "./filter";
 
@@ -50,11 +52,13 @@ export interface RowData {
   parentNib: TreeTableNib | null;
   /**
    * The id of the nib this row would REORDER AGAINST in the current view tree,
-   * or null when it reorders at the display root. This is the structural
-   * authority for drag reorder: under a grouping lens it differs from
-   * `nib.parentId` (a promoted header's display parent is null though its real
-   * parent is a hidden container). Distinct from `parentNib`, which stays the
-   * real logical parent used by the "Parent" column.
+   * or null when it reorders at the display root. Under a grouping lens it
+   * differs from `nib.parentId` (a promoted header's display parent is null
+   * though its real parent is a hidden container). Distinct from `parentNib`,
+   * which stays the real logical parent used by the "Parent" column, and from
+   * `TableData.containment`, which answers who DRAWS this row — this is that
+   * relation with the display containers elided, which is what keeps the value
+   * a backend-acceptable `parentId`.
    *
    * INVARIANT: always a real nib id that could hold this row as a child, or
    * `null` — so consumers can use it directly as a backend `parentId` /
@@ -64,6 +68,13 @@ export interface RowData {
    * inherit that container's OWN display parent rather than naming it, at any
    * depth of nesting — the value `flatten` threads down IS the container's own
    * resolved display parent, computed one level up by this same rule.
+   *
+   * STATUS: produced and tested here, read by nothing in production — so the
+   * threading rule below upholds an invariant no live caller depends on. Kept
+   * deliberately, with its removal tracked separately; what would read it is a
+   * path needing a backend-acceptable parent id for a row, which is the one
+   * thing `TableData.containment` cannot answer because it names the display
+   * containers this elides.
    */
   displayParentId: string | null;
   /**
@@ -140,6 +151,14 @@ export interface TableData {
    * already owns that dimension.
    */
   viewMemberIds: Set<string>;
+  /**
+   * What contains what in this view — the one answer reveal, ArrowLeft, subtree
+   * expand/collapse and the drag's destination check all read.
+   *
+   * Built off the view TREE, so it answers for a nib inside a collapsed section,
+   * which `rows` has no entry for at all.
+   */
+  containment: ContainmentIndex;
 }
 
 /**
@@ -389,5 +408,10 @@ export function buildShapedTableData(
 
   flatten(tree, null, null, null);
 
-  return { rows, allTags, parentIds, viewMemberIds };
+  // Off `tree`, not `rows`: build it from the rows instead and a nib inside a
+  // collapsed section has no chain, so reveal can never open the sections
+  // hiding it.
+  const containment = buildContainmentIndex(tree);
+
+  return { rows, allTags, parentIds, viewMemberIds, containment };
 }

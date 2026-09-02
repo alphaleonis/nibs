@@ -9,7 +9,7 @@ import { DEFAULT_COLUMN_WIDTHS } from "../types";
 import { isSyntheticRowId } from "../tree";
 import { EMPTY_SPINE } from "../viewSpine";
 
-const { containingSectionRowId } = EMPTY_SPINE;
+const { buildTableData } = EMPTY_SPINE;
 import { OPEN_STATUSES } from "../constants";
 import { SelectionState } from "../selection.svelte";
 import { DragState } from "../drag.svelte";
@@ -2530,7 +2530,7 @@ describe("TreeTable", () => {
     }
 
     function milestoneBucketId(nibs: TreeTableNib[]): string {
-      const bucketId = containingSectionRowId(new Map(nibs.map(n => [n.id, n])), "nibs-loose", "milestones");
+      const bucketId = buildTableData(nibs, {}, "milestones", new Set()).containment.containerOf("nibs-loose");
       expect(bucketId).not.toBeNull();
       expect(isSyntheticRowId(bucketId!)).toBe(true);
       return bucketId!;
@@ -3440,6 +3440,31 @@ describe("TreeTable", () => {
 
       // Still filtered out — expansion did not (and cannot) reveal it.
       expect(screen.queryByText("Filtered Task")).not.toBeInTheDocument();
+    });
+
+    // The other way a nib in the dataset can have no row: the current lens gives
+    // it no node at all. Under Epics a milestone is descended into and never
+    // drawn, so no expansion can produce a row for it and reveal must clear
+    // rather than hold the request open.
+    it("clears when the current lens has no row for the nib", async () => {
+      const sel = new SelectionState();
+      const nibs: TreeTableNib[] = [
+        makeTreeTableNib({ id: "nibs-m1", title: "Waypoint one", type: "milestone" }),
+        makeTreeTableNib({ id: "nibs-e1", title: "Epic one", type: "epic", parentId: "nibs-m1" }),
+      ];
+
+      const { container } = setupWithNibs(nibs, { viewLevel: "epics" as ViewLevel }, { selection: sel });
+      const rowExists = (id: string) => container.querySelector(`tr[data-nib-id="${id}"]`) !== null;
+
+      expect(rowExists("nibs-e1")).toBe(true);
+      expect(rowExists("nibs-m1")).toBe(false);
+
+      sel.ensureVisible("nibs-m1");
+
+      await waitFor(() => {
+        expect(sel.pendingEnsureVisibleId).toBeNull();
+      });
+      expect(rowExists("nibs-m1")).toBe(false);
     });
 
     // Regression: a cold deep-link runs syncFromUrl on
