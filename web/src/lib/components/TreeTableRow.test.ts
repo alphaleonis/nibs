@@ -1395,3 +1395,87 @@ describe("TreeTableRow single-sourced row opacity precedence", () => {
     });
   }
 });
+
+/**
+ * The section metadata channel, at the end of it: what a fabricated section row
+ * draws now that its count is no longer part of its title.
+ */
+describe("TreeTableRow section metadata", () => {
+  const sectionNib = makeTreeTableNib({ id: "/__no_area__", title: "No area", type: "", status: "", priority: "", tags: [] });
+
+  function sectionRow(display: { label: string; description: string; color: string }, count = 3) {
+    return renderRow({
+      nib: sectionNib,
+      depth: 0,
+      drawsSection: { key: "/__no_area__", display, count, onEnter: { kind: "byRow" } },
+    });
+  }
+
+  it("draws the count beside the label rather than inside it", () => {
+    const { container } = sectionRow({ label: "No area", description: "", color: "" });
+
+    expect(container.querySelector("[data-testid='title-text']")!.textContent).toBe("No area");
+    expect(container.querySelector("[data-testid='section-count']")!.textContent).toBe("(3)");
+  });
+
+  it("draws a declared description and color", () => {
+    const { container } = sectionRow({ label: "Web", description: "Everything over HTTP", color: "#3366ff" });
+
+    expect(container.querySelector("[data-testid='section-description']")!.textContent).toBe("Everything over HTTP");
+    const dot = container.querySelector("[data-testid='section-color']") as HTMLElement;
+    expect(dot.style.backgroundColor).not.toBe("");
+  });
+
+  it("omits the description and the color dot where the declaration set neither", () => {
+    const { container } = sectionRow({ label: "Web", description: "", color: "" });
+
+    expect(container.querySelector("[data-testid='section-description']")).toBeNull();
+    expect(container.querySelector("[data-testid='section-color']")).toBeNull();
+  });
+
+  it("takes a bare color name as readily as a hex code — AreaConfig.Color admits either", () => {
+    const { container } = sectionRow({ label: "Docs", description: "", color: "slateblue" });
+
+    const dot = container.querySelector("[data-testid='section-color']") as HTMLElement;
+    expect(dot.style.backgroundColor).not.toBe("");
+  });
+
+  it("draws no dot at all for a color carrying a second declaration", () => {
+    // The color is config text reaching an inline style, and `setProperty` does
+    // not stop this: written straight through, the CSSOM here applies the
+    // background-image too. `cssColor` refusing the value is what does.
+    const { container } = sectionRow({
+      label: "Hostile",
+      description: "",
+      color: "red; background-image: url(https://example.invalid/x.png)",
+    });
+
+    expect(container.querySelector("[data-testid='section-color']")).toBeNull();
+  });
+
+  it("draws no section chrome on a row that draws no section", () => {
+    const { container } = renderRow({ nib: makeTreeTableNib(), depth: 0 });
+
+    expect(container.querySelector("[data-testid='section-count']")).toBeNull();
+    expect(container.querySelector("[data-testid='section-description']")).toBeNull();
+    expect(container.querySelector("[data-testid='section-color']")).toBeNull();
+  });
+
+  it("draws none of it on a section a real nib heads, whose cells are the nib's own", () => {
+    // A milestone heading its queue is a nib: it has an id, a type and a status
+    // to render, and what a heading should add there is the view's decision.
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ id: "nibs-m1", title: "v1.0", type: "milestone" }),
+      depth: 0,
+      drawsSection: {
+        key: "nibs-m1",
+        display: { label: "v1.0", description: "", color: "" },
+        count: 7,
+        onEnter: { kind: "byRow" },
+      },
+    });
+
+    expect(container.querySelector("[data-testid='title-text']")!.textContent).toBe("v1.0");
+    expect(container.querySelector("[data-testid='section-count']")).toBeNull();
+  });
+});

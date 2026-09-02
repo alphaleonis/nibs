@@ -934,6 +934,7 @@
           dimmed={row.dimmed}
           collapsed={treeView.isCollapsed(row.nib.id)}
           parentNib={row.parentNib}
+          drawsSection={row.drawsSection}
           visibleColumns={resolvedVisibleColumns}
           columnOrder={resolvedColumnOrder}
           draggable={!isSyntheticRowId(row.nib.id) && dragAllowed}

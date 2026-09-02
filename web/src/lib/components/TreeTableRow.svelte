@@ -3,6 +3,7 @@
   import type { TreeTableNib, BlockedEmphasis, OpenDetailGesture } from "../types";
   import { ALL_COLUMN_KEYS } from "../columns";
   import type { ColumnKey, RowContext } from "../columns";
+  import type { RowSection } from "../tableData";
   import { Plus } from "@lucide/svelte";
   import { canHaveChildren } from "../typeHierarchy";
   import { useSelection, useDrag } from "../contexts";
@@ -27,6 +28,8 @@
     openDetailOn?: OpenDetailGesture;
     /** The axis of the region boundary running above this row, or null for none. */
     regionBand?: BandAxis | null;
+    /** The section this row draws, or null — `RowData.drawsSection`. */
+    drawsSection?: RowSection | null;
   }
 
   let {
@@ -44,6 +47,7 @@
     blockedEmphasis = DEFAULT_BLOCKED_EMPHASIS,
     openDetailOn = DEFAULT_OPEN_DETAIL_ON,
     regionBand = null,
+    drawsSection = null,
   }: Props = $props();
 
   const selection = useSelection();
@@ -60,7 +64,7 @@
 
   // The bag each cell adapter reads. Cells are pure functions of this — they
   // touch no selection/drag context — so ambient row state stays on the <tr>.
-  let rowCtx: RowContext = $derived({ nib, depth, parentNib, hasChildren, collapsed, blockedEmphasis });
+  let rowCtx: RowContext = $derived({ nib, depth, parentNib, hasChildren, collapsed, blockedEmphasis, drawsSection });
 
   // Computed from context + nib.id. `selectedIds` and `selectedNibId` are two
   // independent facts, so they get two independent channels here:

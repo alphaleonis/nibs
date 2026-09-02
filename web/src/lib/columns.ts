@@ -10,6 +10,7 @@
 // identity is declared exactly once.
 
 import type { TreeTableNib, BlockedEmphasis } from "./types";
+import type { RowSection } from "./tableData";
 
 // Canonical column order. Consumers loop over this (filtered to the visible
 // set) so the rendered th/td sequence follows a single ordering. Column
@@ -66,6 +67,16 @@ export interface RowContext {
   hasChildren: boolean;
   collapsed: boolean;
   blockedEmphasis: BlockedEmphasis;
+  /**
+   * The section this row DRAWS, or null for the rows that draw none — which is
+   * most of them, and every row of an ungrouped view.
+   *
+   * The only channel a FABRICATED section row has for what it IS: it names no
+   * nib, and `nib` is a placeholder carrying the section's label with empty
+   * strings around it. A section a real nib heads answers here too, and its
+   * cells still come from that nib.
+   */
+  drawsSection: RowSection | null;
 }
 
 // The single source of truth for every column's identity + capabilities. The

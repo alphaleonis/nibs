@@ -56,8 +56,14 @@ const areaLens: GroupingLens = {
   declares: {
     kind: "forest",
     roots: [
-      { key: "infra", label: "infra", children: [] },
-      { key: "web", label: "web", children: [{ key: "web/api", label: "web/api", children: [] }] },
+      { key: "infra", label: "infra", description: "", color: "", children: [] },
+      {
+        key: "web",
+        label: "web",
+        description: "",
+        color: "",
+        children: [{ key: "web/api", label: "web/api", description: "", color: "", children: [] }],
+      },
     ],
   },
   nestHeadersStructurally: false,
@@ -158,6 +164,8 @@ describe("the rows an assigning lens produces", () => {
   it("says what entering each section does, on the section's own row", () => {
     expect(row(WEB).drawsSection).toEqual({
       key: "web",
+      display: { label: "web", description: "", color: "" },
+      count: 4,
       onEnter: { kind: "assign", field: "area", value: "web", noun: "area" },
     });
     expect(row(NO_AREA).drawsSection?.onEnter).toEqual({ kind: "byRow" });

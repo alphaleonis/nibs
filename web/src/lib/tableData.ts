@@ -2,7 +2,7 @@ import type { TreeTableNib, NibFilter, TreeNode, TableSort } from "./types";
 import type { Region } from "./ordering/region";
 import type { SectionEntry } from "./ordering/sectionMeaning";
 import { buildShapedViewTree, holdsChildrenByDisplay, isSyntheticRowId, SECTION_RULES } from "./tree";
-import type { SectionKey, ViewShape } from "./tree";
+import type { SectionDisplay, SectionKey, ViewShape } from "./tree";
 import { buildContainmentIndex } from "./containment";
 import type { ContainmentIndex } from "./containment";
 import { makeNibComparator } from "./tableSort";
@@ -122,14 +122,36 @@ export interface RowData {
 }
 
 /**
- * As much of a section as a row consumer needs: which one it is, and what
- * entering it does.
+ * As much of a section as a row consumer needs: which one it is, what it shows,
+ * and what entering it does.
  *
  * `SectionMeaning` minus `memberRegion` — see `RowData.section` for why that
  * member does not travel this far.
  */
 export interface RowSection {
   readonly key: SectionKey;
+  /** Label, description and color, as the lens declared or derived them. */
+  readonly display: SectionDisplay;
+  /**
+   * How many NIB rows the section draws — its own members, everything nested
+   * under them, and every declared sub-section's rows. A row the view
+   * FABRICATED does not count, because it names no nib; a real nib heading a
+   * section does, like any other row.
+   *
+   * A ROLLUP, and one that tracks the client filter: it is the number of rows
+   * `flatten` draws inside the section with every container opened, so a reader
+   * who expands the heading counts the same number the heading shows. That is
+   * the whole point of computing it here rather than in `assembleSection`, which
+   * sees neither the descendants (a member arrives as one node with a subtree)
+   * nor the filter. Collapse is deliberately not in it — a collapsed section
+   * reporting 0 would take the summary away exactly when it is the only thing
+   * left.
+   *
+   * A DECLARED section that a filter empties still renders (`SECTION_RULES`),
+   * and this then reads 0 — true of what is there, where the membership count
+   * would assert rows the view is not drawing.
+   */
+  readonly count: number;
   readonly onEnter: SectionEntry;
 }
 
@@ -291,12 +313,20 @@ export function buildShapedTableData(
   // The walk visits every emitted node exactly once, so `viewMemberIds` is
   // collected here rather than in a pass of its own. It takes EVERY node, not
   // just the display containers: it answers which ids the lens has a row for.
+  //
+  // `sectionCounts` rides along for the same reason, and can ride ONLY here:
+  // the number a section heading shows is over the rows `flatten` will draw, so
+  // it needs `visibleIds` — settled just above, and force-added to within this
+  // very walk — which `assembleSection` never sees.
   const viewMemberIds = new Set<string>();
-  (function foldDisplayContainers(nodes: TreeNode<TreeTableNib>[]): boolean {
+  const sectionCounts = new Map<string, number>();
+  (function foldDisplayContainers(nodes: TreeNode<TreeTableNib>[]): { anyVisible: boolean; drawnNibs: number } {
     let anyVisible = false;
+    let drawnNibs = 0;
     for (const node of nodes) {
       viewMemberIds.add(node.nib.id);
-      const childVisible = foldDisplayContainers(node.children);
+      const below = foldDisplayContainers(node.children);
+      const childVisible = below.anyVisible;
       // `some` over the children, so this is false for a childless node and the
       // "has rows under it" half of the collapse question comes for free.
       const byDisplay = holdsChildrenByDisplay(node);
@@ -321,9 +351,20 @@ export function buildShapedTableData(
       if (visibleIds && (byDisplay || persists) && selfVisible) {
         visibleIds.add(node.nib.id);
       }
+      // Read AFTER the add above, so this is `flatten`'s own first line rather
+      // than a second rule that could disagree with it: the rows it draws, with
+      // the collapse set left out (a collapsed node still has its row, and its
+      // subtree still belongs to the section around it).
+      const drawn = visibleIds === null || visibleIds.has(node.nib.id);
+      if (node.section !== undefined) sectionCounts.set(node.nib.id, below.drawnNibs);
+      // A synthetic id names no nib, so a section row does not count toward the
+      // section around it; every other row does, a nib heading a section
+      // included. A row `flatten` skips takes its whole subtree with it, so an
+      // undrawn node contributes nothing rather than its children's total.
+      if (drawn) drawnNibs += below.drawnNibs + (isSyntheticRowId(node.nib.id) ? 0 : 1);
       anyVisible = anyVisible || selfVisible;
     }
-    return anyVisible;
+    return { anyVisible, drawnNibs };
   })(tree);
 
   // Stage 6: Flatten tree with collapse gating, visibility filtering, dimming, parent resolution
@@ -352,7 +393,14 @@ export function buildShapedTableData(
       const drawsSection: RowSection | null =
         node.section === undefined
           ? null
-          : { key: node.section.key, onEnter: node.section.meaning.onEnter };
+          : {
+              key: node.section.key,
+              display: node.section.display,
+              // Set by the walk above for every node carrying a `section`, over
+              // the same `tree` this one flattens.
+              count: sectionCounts.get(node.nib.id) ?? 0,
+              onEnter: node.section.meaning.onEnter,
+            };
       const memberRegion = node.section?.meaning.memberRegion ?? null;
       const region = rowRegion(node.nib.id, node.nib.parentId, enclosingMemberRegion);
 

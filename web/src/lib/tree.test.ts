@@ -593,7 +593,7 @@ describe("buildViewTree", () => {
   });
 
   describe("bucket node", () => {
-    it("titles the bucket with its direct-child count (not recursive descendants)", () => {
+    it("titles the bucket with its label alone, and keeps a nested row under its own parent", () => {
       const nibs: TreeNib[] = [
         makeTreeNib({ id: "nibs-001", title: "Loose feature", type: "feature" }),
         makeTreeNib({ id: "nibs-002", title: "Loose bug", type: "bug" }),
@@ -604,8 +604,12 @@ describe("buildViewTree", () => {
       const result = buildViewTree(nibs, "epics");
 
       const bucket = result.find(r => isSyntheticRowId(r.nib.id))!;
-      // Count is direct children only — the nested task is (3) if recursive, (2) if direct.
-      expect(bucket.nib.title).toBe("No epic (2)");
+      // The title is the label and nothing else. A count here could only ever
+      // have been over `children`, which is why it read 2 for the three nibs in
+      // this section; it is computed in `buildShapedTableData` instead, where
+      // the descendants and the filter are both in view.
+      expect(bucket.nib.title).toBe("No epic");
+      expect(bucket.section?.display).toEqual({ label: "No epic", description: "", color: "" });
       expect(bucket.children).toHaveLength(2);
       // The nested task lives under the feature, not as a direct bucket child.
       const feature = bucket.children.find(c => c.nib.id === "nibs-001")!;

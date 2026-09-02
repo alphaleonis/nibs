@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createAreaVocabulary, EMPTY_AREAS, LOADING_AREAS, UNAVAILABLE_AREAS } from "./areas";
+import { createAreaVocabulary, cssColor, EMPTY_AREAS, LOADING_AREAS, UNAVAILABLE_AREAS } from "./areas";
 import type { AreaNode, AreaVocabulary } from "./areas";
 
 function area(path: string, depth: number, extra: Partial<AreaNode> = {}): AreaNode {
@@ -204,5 +204,38 @@ describe("the degenerate vocabularies", () => {
         (vocab as unknown as Record<string, unknown>).validity = () => "declared";
       }).toThrow();
     }
+  });
+});
+
+describe("cssColor", () => {
+  it("passes the two shapes AreaConfig.Color documents", () => {
+    for (const value of ["teal", "slateblue", "#abc", "#abcd", "#3366ff", "#3366ffcc", "#ABCDEF"]) {
+      expect(cssColor(value)).toBe(value);
+    }
+  });
+
+  it("refuses everything else, an unset color included", () => {
+    for (const value of ["", "rgb(1,2,3)", "var(--brand)", "#12345", "light blue", "url(x)", "#gggggg"]) {
+      expect(cssColor(value)).toBeNull();
+    }
+  });
+
+  it("is the boundary, because the style sink is not", () => {
+    const hostile = "red; background-image: url(https://example.invalid/x.png)";
+
+    // How Svelte's `style:` directive renders: one assignment to `cssText`,
+    // which parses a declaration LIST — so the value's own `;` ends the first
+    // declaration and starts a second.
+    const viaCssText = document.createElement("span");
+    viaCssText.style.cssText = `background-color: ${hostile}`;
+    expect(viaCssText.style.backgroundImage).not.toBe("");
+
+    // And why the sink cannot be reasoned about from the call it resembles: the
+    // single-property form refuses the same string outright.
+    const viaSetProperty = document.createElement("span");
+    viaSetProperty.style.setProperty("background-color", hostile);
+    expect(viaSetProperty.style.backgroundImage).toBe("");
+
+    expect(cssColor(hostile)).toBeNull();
   });
 });

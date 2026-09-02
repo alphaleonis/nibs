@@ -49,10 +49,18 @@ function nib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
 
 const NO_AREA = "/__no_area__";
 
-/** Two roots, one of them nested, one of them barren. */
+/** Two roots, one of them nested, one of them barren. Description and color are
+ *  set on `web` and left empty on its sub-section, so the row assertions can
+ *  tell "carried through" from "defaulted". */
 const FOREST: readonly DeclaredSection[] = [
-  { key: "web", label: "web", children: [{ key: "web/api", label: "web/api", children: [] }] },
-  { key: "docs", label: "docs", children: [] },
+  {
+    key: "web",
+    label: "Web",
+    description: "Everything served over HTTP",
+    color: "#3366ff",
+    children: [{ key: "web/api", label: "web/api", description: "", color: "", children: [] }],
+  },
+  { key: "docs", label: "docs", description: "Prose, not code", color: "slateblue", children: [] },
 ];
 
 /** Groups by the stored `area:` verbatim — so an undeclared value reaches the
@@ -229,7 +237,10 @@ describe("a lens that declares its sections", () => {
   it("refuses a forest node keyed on the lens's own leftover key", () => {
     const collidingLens: GroupingLens = {
       ...areaLens,
-      declares: { kind: "forest", roots: [{ key: NO_AREA, label: "No area", children: [] }] },
+      declares: {
+        kind: "forest",
+        roots: [{ key: NO_AREA, label: "No area", description: "", color: "", children: [] }],
+      },
     };
 
     // `SectionKey` is `string`, so the types cannot close this; a silent accept
@@ -245,8 +256,8 @@ describe("a lens that declares its sections", () => {
       declares: {
         kind: "forest",
         roots: [
-          { key: "web", label: "Web one", children: [] },
-          { key: "web", label: "Web two", children: [] },
+          { key: "web", label: "Web one", description: "", color: "", children: [] },
+          { key: "web", label: "Web two", description: "", color: "", children: [] },
         ],
       },
     };
@@ -263,7 +274,15 @@ describe("a lens that declares its sections", () => {
       ...areaLens,
       declares: {
         kind: "forest",
-        roots: [{ key: "web", label: "Web", children: [{ key: "web", label: "Web again", children: [] }] }],
+        roots: [
+          {
+            key: "web",
+            label: "Web",
+            description: "",
+            color: "",
+            children: [{ key: "web", label: "Web again", description: "", color: "", children: [] }],
+          },
+        ],
       },
     };
 
@@ -290,7 +309,7 @@ describe("a declared section a nib heads", () => {
       leftover: { key: NO_AREA, label: "No area" },
       declares: {
         kind: "forest",
-        roots: [{ key: "H", label: "Headed", children: declaredChildren }],
+        roots: [{ key: "H", label: "Headed", description: "", color: "", children: declaredChildren }],
       },
       nestHeadersStructurally: true,
       meaning: () => GOVERNS_NOTHING,
@@ -309,7 +328,8 @@ describe("a declared section a nib heads", () => {
   ];
 
   it("refuses to also hold declared sub-sections", () => {
-    expect(() => buildShapedViewTree(HEADED_FIXTURE, headed([{ key: "sub", label: "Sub", children: [] }]))).toThrow(
+    const sub: DeclaredSection = { key: "sub", label: "Sub", description: "", color: "", children: [] };
+    expect(() => buildShapedViewTree(HEADED_FIXTURE, headed([sub]))).toThrow(
       /declared section "H" is headed by nib "H" and also declares children/,
     );
   });
@@ -427,5 +447,173 @@ describe("what contains a row when sections nest", () => {
     it("stays put at the display root", () => {
       expect(focusAfterArrowLeft(WEB, new Set([WEB]))).toBe(WEB);
     });
+  });
+});
+
+/**
+ * What a section row SHOWS: its label, description and color, and a count.
+ *
+ * Both facts used to live in the row's nib title as `${label} (${n})`, where n
+ * was `members.length` — the section's top-level member NODES. That number is
+ * neither of the two a heading could mean: a member arrives with its own
+ * subtree attached, so a chain of three nibs counts 1, and a declared
+ * sub-section is not in the array at all, so a node holding only sub-sections
+ * counts 0 while visibly holding rows.
+ *
+ * THE RULE THIS FILE PINS. The count is over the nib rows the section draws:
+ * its members, everything nested under them, and every declared sub-section's
+ * rows, rolled up; the section rows themselves are not counted, because they
+ * name no nib. It tracks the client filter — a row the filter hides is not
+ * drawn and is not counted — and it does NOT track collapse, which hides rows
+ * precisely when the summary is the only thing left.
+ *
+ * Filter-tracking is the half that had a defensible alternative: a count of the
+ * section's MEMBERSHIP, unmoved by a filter, telling a reader what the area
+ * holds behind the one they typed. It loses because a declared section renders
+ * when a filter empties it (`SECTION_RULES.declared.rendersWhenEmpty`), so that
+ * count would sit above zero drawn rows asserting rows nobody can see — the
+ * same disagreement between a heading and the rows under it that the old
+ * concatenated count was, restated. Expanding a heading and counting is how a
+ * reader checks the number, and it is the only check available to them.
+ */
+describe("what a section row shows", () => {
+  /** `top` declares a sub-section and has no members of its own — the shape
+   *  that made a heading read `(0)` above a visibly occupied section. */
+  const ROLLUP_FOREST: readonly DeclaredSection[] = [
+    {
+      key: "top",
+      label: "Top",
+      description: "Holds no work of its own",
+      color: "teal",
+      children: [{ key: "top/inner", label: "Inner", description: "", color: "", children: [] }],
+    },
+  ];
+  const rollupShape: ViewShape = {
+    kind: "grouped",
+    lens: { ...areaLens, declares: { kind: "forest", roots: ROLLUP_FOREST } },
+  };
+
+  const TOP = "/section:top_";
+  const INNER = "/section:top/inner_";
+
+  /** `c1` is `p1`'s child, and both are in `top/inner` — so the section's
+   *  `members` array holds ONE root and the section holds two nibs. */
+  const ROLLUP_FIXTURE: TreeTableNib[] = [
+    nib({ id: "p1", title: "Parent", area: "top/inner", priority: "high" }),
+    nib({ id: "c1", title: "Child", area: "top/inner", parentId: "p1", priority: "low" }),
+    nib({ id: "o1", title: "Outside", area: "", priority: "low" }),
+  ];
+
+  function rollupRows(filter: NibFilter, collapsed: ReadonlySet<string> = noCollapsed) {
+    const data = buildShapedTableData(ROLLUP_FIXTURE, filter, rollupShape, collapsed, null);
+    return {
+      rows: data.rows,
+      ids: data.rows.map((r) => r.nib.id),
+      row: (id: string) => data.rows.find((r) => r.nib.id === id)!,
+    };
+  }
+
+  it("counts a declared node that holds only sub-sections by what they hold", () => {
+    const { ids, row } = rollupRows(noFilter);
+
+    // Not vacuous: `top` really does hold no member of its own, which is what
+    // made the old count read 0 for it.
+    expect(buildShapedViewTree(ROLLUP_FIXTURE, rollupShape)[0].children.map((n) => n.nib.id)).toEqual([INNER]);
+    expect(ids).toEqual([TOP, INNER, "p1", "c1", NO_AREA, "o1"]);
+    expect(row(TOP).drawsSection!.count).toBe(2);
+  });
+
+  it("counts a member's descendants, which arrive as one node", () => {
+    const tree = buildShapedViewTree(ROLLUP_FIXTURE, rollupShape);
+    const inner = tree[0].children[0];
+    // The trap, stated as the builder sees it: `buildTree` nests c1 under p1
+    // when it rebuilds the section, so the array a count could be taken over
+    // has one entry for the two nibs in the section.
+    expect(inner.children.map((n) => n.nib.id)).toEqual(["p1"]);
+
+    expect(rollupRows(noFilter).row(INNER).drawsSection!.count).toBe(2);
+  });
+
+  it("leaves the section rows themselves out of the count", () => {
+    const { row } = rollupRows(noFilter);
+    // `top` draws three rows: the `top/inner` heading and the two nibs. Two of
+    // them name a nib, and the count is over those.
+    expect(row(TOP).drawsSection!.count).toBe(2);
+    expect(row(INNER).drawsSection!.count).toBe(2);
+  });
+
+  it("drops a filtered-out row from the count, at every level it rolls through", () => {
+    // Not vacuous: unfiltered both read 2, and the filter takes exactly c1.
+    expect(rollupRows(noFilter).row(TOP).drawsSection!.count).toBe(2);
+
+    const { ids, row } = rollupRows(HIGH_ONLY);
+
+    expect(ids).not.toContain("c1");
+    expect(row(INNER).drawsSection!.count).toBe(1);
+    expect(row(TOP).drawsSection!.count).toBe(1);
+  });
+
+  it("reads 0 for a declared section a filter emptied, which still renders", () => {
+    const { ids, row } = rollupRows({ priority: ["critical"] });
+
+    // The case where "what is in the section" and "what is drawn" come apart:
+    // the section stands on its declaration, and the count answers for the rows.
+    expect(ids).toEqual([TOP, INNER]);
+    expect(row(TOP).drawsSection!.count).toBe(0);
+    expect(row(INNER).drawsSection!.count).toBe(0);
+  });
+
+  it("keeps the count of a collapsed section, whose rows are the ones it summarizes", () => {
+    const { ids, row } = rollupRows(noFilter, new Set([TOP]));
+
+    expect(ids).toEqual([TOP, NO_AREA, "o1"]);
+    expect(row(TOP).drawsSection!.count).toBe(2);
+  });
+
+  it("carries the declared description and color to the row, and empties them where nothing declared any", () => {
+    const { row } = rollupRows(noFilter);
+
+    expect(row(TOP).drawsSection!.display).toEqual({
+      label: "Top",
+      description: "Holds no work of its own",
+      color: "teal",
+    });
+    // A declared section that set neither, and the leftover, which has no
+    // declaration to set them from.
+    expect(row(INNER).drawsSection!.display).toEqual({ label: "Inner", description: "", color: "" });
+    expect(row(NO_AREA).drawsSection!.display).toEqual({ label: "No area", description: "", color: "" });
+  });
+
+  it("labels a discovered section with its key, having nothing else to name it", () => {
+    const { row } = tableOf(noFilter);
+
+    expect(row(LEGACY)!.drawsSection!.display).toEqual({ label: "legacy", description: "", color: "" });
+    expect(row(WEB)!.drawsSection!.display.label).toBe("Web");
+  });
+
+  it("puts nothing but the label in a section row's title", () => {
+    // The property the count violated by living there: a row title is read as
+    // prose by whatever holds a row and needs to name it, and none of those
+    // callers can subtract a suffix the view added. Asserted over every section
+    // in the table rather than at the callers, so a new one is covered without
+    // being enrolled anywhere.
+    const rows = [...tableOf(noFilter).rows, ...rollupRows(noFilter).rows];
+    const sections = rows.filter((r) => r.drawsSection !== null);
+    expect(sections.length).toBeGreaterThan(4);
+
+    for (const r of sections) {
+      expect(r.nib.title).toBe(r.drawsSection!.display.label);
+    }
+  });
+
+  it("gives a member row the enclosing section's display and count, transitively", () => {
+    const { row } = rollupRows(noFilter);
+
+    // c1 is nested under a member, so the section around it is its ancestor's.
+    expect(row("c1").drawsSection).toBeNull();
+    expect(row("c1").section).toEqual(row("p1").section);
+    expect(row("c1").section!.key).toBe("top/inner");
+    expect(row("c1").section!.count).toBe(2);
+    expect(row("c1").section!.display.label).toBe("Inner");
   });
 });

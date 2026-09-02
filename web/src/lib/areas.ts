@@ -67,6 +67,27 @@ export interface AreaVocabulary {
   completions(partial: string): readonly string[];
 }
 
+/**
+ * A declared color narrowed to what may be handed to CSS, or null for one that
+ * may not.
+ *
+ * `AreaConfig.Color` is free text out of a store's config.yml and reaches an
+ * inline style, so it is narrowed here rather than trusted at the sink: a bare
+ * CSS color name or a hex code — the two shapes that field documents — and
+ * nothing else. Narrowing loses a color a project wrote some other legal way
+ * (`rgb(...)`, `oklch(...)`), which is the price of not passing a `;` into a
+ * style declaration.
+ *
+ * The narrowing is the boundary, and it has to be: an inline style is a
+ * declaration LIST, so a value carrying its own `;` can end its declaration and
+ * open another rather than being rejected as one malformed value. Executed
+ * against the sink rather than reasoned about — the single-property form drops
+ * the same string, so the sink cannot be judged by the call it resembles.
+ */
+export function cssColor(color: string): string | null {
+  return /^[a-zA-Z]+$|^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(color) ? color : null;
+}
+
 const EMPTY_NODES: readonly AreaNode[] = Object.freeze([]);
 const EMPTY_PATHS: readonly string[] = Object.freeze([]);
 

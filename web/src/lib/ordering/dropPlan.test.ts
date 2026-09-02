@@ -80,7 +80,7 @@ function makeRow(
 /** A section whose rows order in one queue, in the shape the milestone lens's
  *  `meaning` returns: one region answering both halves. */
 function queueSection(key: string, region: Region): RowSection {
-  return { key, onEnter: { kind: "region", region } };
+  return { key, display: { label: key, description: "", color: "" }, count: 0, onEnter: { kind: "region", region } };
 }
 
 /**
@@ -139,7 +139,12 @@ const ROWS: RowData[] = [
   makeRow(makeNib({ id: "M2", type: "milestone", title: "v2.0" }), { drawsSection: queueSection("M2", QUEUE_M2) }),
   makeRow(makeNib({ id: "E3", type: "epic", title: "Epic three", milestone: "M2" }), { enclosing: QUEUE_M2 }),
   makeRow(makeNib({ id: BACKLOG_ID, type: "", title: "Backlog" }), {
-    drawsSection: { key: BACKLOG_ID, onEnter: { kind: "byRow" } },
+    drawsSection: {
+      key: BACKLOG_ID,
+      display: { label: "Backlog", description: "", color: "" },
+      count: 5,
+      onEnter: { kind: "byRow" },
+    },
   }),
   makeRow(makeNib({ id: "B1", type: "task", title: "Backlog one" })),
   makeRow(makeNib({ id: "B2", type: "task", title: "Backlog two" })),

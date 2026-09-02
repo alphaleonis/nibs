@@ -131,11 +131,29 @@ export type LeftoverKey = `/__${string}__`;
  * order, `children` is the nesting, and being in the forest at all is
  * renders-when-empty.
  */
-export interface DeclaredSection {
+export interface DeclaredSection extends SectionDisplay {
   readonly key: SectionKey;
-  readonly label: string;
   /** Required: `[]` is a leaf you wrote, not a question you skipped. */
   readonly children: readonly DeclaredSection[];
+}
+
+/**
+ * What a section row shows, beside the count `buildShapedTableData` computes
+ * for it — the channel a section had none of while its label and its count were
+ * both concatenated into a nib title.
+ *
+ * In the shape `AreaNode` already carries them (areas.ts): all required, empty
+ * meaning unset. Required is what makes a lens mapping a vocabulary node into a
+ * declaration fail to compile until it carries all three, rather than dropping
+ * one where nothing would notice.
+ */
+export interface SectionDisplay {
+  readonly label: string;
+  /** Empty when unset. */
+  readonly description: string;
+  /** A hex code or a bare color name — `AreaConfig.Color` admits either.
+   *  Empty when unset. */
+  readonly color: string;
 }
 
 /** What a lens states up front — a forest of sections, or nothing. */
@@ -149,7 +167,7 @@ export type SectionPersistence = "discovered" | "declared";
 
 /**
  * The section facts a node carries, as ONE optional on `TreeNode` — so a node
- * either IS a section and answers all three, or is not one and says nothing.
+ * either IS a section and answers all of them, or is not one and says nothing.
  */
 export interface SectionMeta {
   /** The key the lens minted or declared, so a consumer holding a row can say
@@ -157,6 +175,9 @@ export interface SectionMeta {
   readonly key: SectionKey;
   readonly persistence: SectionPersistence;
   readonly meaning: SectionMeaning;
+  /** What the row shows for it. Not the count: that is over the rows a client
+   *  filter leaves, which this tree is built before — see `RowSection.count`. */
+  readonly display: SectionDisplay;
 }
 
 /**
@@ -638,8 +659,9 @@ function makeSectionNode<T extends TreeNib>(id: string, title: string, children:
 interface Section<T extends TreeNib> {
   key: SectionKey;
   persistence: SectionPersistence;
-  /** The label the declaration gave it, or null to derive one from the key. */
-  label: string | null;
+  /** The display facts the declaration gave it, or null for a section no
+   *  declaration named. */
+  declared: SectionDisplay | null;
   /** The nib whose row IS this section, when one claimed it. */
   header: TreeNode<T> | null;
   /** Rows placed into the section by something other than heading it. */
@@ -713,7 +735,7 @@ function buildGroupedTree<T extends TreeNib>(
       section = {
         key,
         persistence: "discovered",
-        label: null,
+        declared: null,
         header: null,
         members: [],
         declaredChildren: [],
@@ -755,7 +777,7 @@ function buildGroupedTree<T extends TreeNib>(
         }
         const section = sectionFor(node.key);
         section.persistence = "declared";
-        section.label = node.label;
+        section.declared = { label: node.label, description: node.description, color: node.color };
         into.push(section);
         seed(node.children, section.declaredChildren);
       }
@@ -885,10 +907,27 @@ function assembleSection<T extends TreeNib>(
   // `memberRegion` would put them in it alongside the placed members. Nothing in
   // the type system rules that pairing out; tree.test.ts asserts no shipped lens
   // makes it.
+
+  // What the row shows, in one expression both branches below read, so the
+  // header arm and the fabricated arm cannot name the section differently.
+  //
+  // A headed section's row IS the nib and the table draws its title, so that
+  // title is the label whatever else named the section; description and color
+  // still come from the declaration, which is the only thing that has them.
+  const display: SectionDisplay = {
+    label:
+      section.header?.nib.title ??
+      section.declared?.label ??
+      (section.key === lens.leftover.key ? lens.leftover.label : section.key),
+    description: section.declared?.description ?? "",
+    color: section.declared?.color ?? "",
+  };
+
   const meta: SectionMeta = {
     key: section.key,
     persistence: section.persistence,
     meaning: lens.meaning(section.key),
+    display,
   };
 
   if (section.header !== null) {
@@ -904,9 +943,13 @@ function assembleSection<T extends TreeNib>(
   // Sub-sections lead their section's rows, the same way declared roots lead the
   // top level.
   const nested = section.declaredChildren.map((child) => assembleSection(child, lens, sortComparator));
-  const label =
-    section.label ?? (section.key === lens.leftover.key ? lens.leftover.label : section.key);
-  const node = makeSectionNode(sectionRowId(section.key, lens), `${label} (${members.length})`, [
+  // The title is the label alone, so a caller naming this row in a sentence
+  // gets the section's name and nothing to subtract. A count concatenated here
+  // could only be over `members` — the section's top-level member NODES —
+  // which is neither the nibs in the section (a member's own subtree is not in
+  // that array) nor the rows drawn under the heading (a declared sub-section is
+  // not either). The count travels as `RowSection.count` instead.
+  const node = makeSectionNode(sectionRowId(section.key, lens), display.label, [
     ...nested,
     ...members,
   ]);

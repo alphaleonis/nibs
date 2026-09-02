@@ -149,6 +149,7 @@ describe("a container that declares a member region", () => {
           key: "M1",
           persistence: "discovered",
           meaning: { memberRegion: queue, onEnter: { kind: "region", region: queue } },
+          display: { label: header.title, description: "", color: "" },
         },
         children: [{ nib: queued, depth: 1, children: [{ nib: sub, depth: 2, children: [] }] }],
       },
@@ -170,7 +171,12 @@ describe("a container that declares a member region", () => {
     // The container is a real nib, so it is a member of its own parent group
     // like any other row; only what it declares for its children differs.
     expect(row("M1").region).toEqual({ axis: "parent", parentId: null });
-    expect(row("M1").drawsSection).toEqual({ key: "M1", onEnter: { kind: "region", region: queue } });
+    expect(row("M1").drawsSection).toEqual({
+      key: "M1",
+      display: { label: "v2.0", description: "", color: "" },
+      count: 2,
+      onEnter: { kind: "region", region: queue },
+    });
     // The rows the section draws carry its identity, so a consumer holding two
     // rows can say whether one line crosses a section boundary.
     expect(row("E1").section?.key).toBe("M1");
@@ -198,6 +204,7 @@ describe("a container that declares a member region", () => {
           key: "M1",
           persistence: "discovered",
           meaning: { memberRegion: queue, onEnter: { kind: "region", region: queue } },
+          display: { label: header.title, description: "", color: "" },
         },
         children: [{ nib: queued, depth: 1, children: [{ nib: assigned, depth: 2, children: [] }] }],
       },

@@ -855,8 +855,12 @@ describe("TreeTable", () => {
     expect(titles).toContain("Milestone A");
     expect(titles).toContain("Epic in A");
     // Nothing is dropped: the unassigned task shows under the Backlog section
-    expect(titles).toContain("Backlog (1)");
+    expect(titles).toContain("Backlog");
     expect(titles).toContain("Standalone task");
+    // The count is drawn beside the label rather than inside it, so the title a
+    // consumer reads as prose is the section's name alone.
+    const counts = Array.from(container.querySelectorAll("[data-testid='section-count']")).map(e => e.textContent);
+    expect(counts).toEqual(["(1)"]);
   });
 
   // The region band, end to end through the real producer: `buildTableData`
