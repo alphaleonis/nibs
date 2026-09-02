@@ -133,7 +133,7 @@ describe("a membership section header (a real nib holding rows that are not its 
  * vary the shape beneath it — a queued epic carrying a subtree of its own —
  * without also having to satisfy that lens's placement rule.
  */
-describe("a container that declares a childRegion", () => {
+describe("a container that declares a member region", () => {
   const header = makeTreeTableNib({ id: "M1", title: "v2.0", type: "milestone" });
   const queued = makeTreeTableNib({ id: "E1", title: "Queued epic", type: "epic" });
   const sub = makeTreeTableNib({ id: "T1", title: "Subtask", type: "task", parentId: "E1" });
@@ -145,7 +145,11 @@ describe("a container that declares a childRegion", () => {
       {
         nib: header,
         depth: 0,
-        section: { childRegion: queue, persistence: "discovered" },
+        section: {
+          key: "M1",
+          persistence: "discovered",
+          meaning: { memberRegion: queue, onEnter: { kind: "region", region: queue } },
+        },
         children: [{ nib: queued, depth: 1, children: [{ nib: sub, depth: 2, children: [] }] }],
       },
     ];
@@ -161,12 +165,20 @@ describe("a container that declares a childRegion", () => {
     // The declaration covers the container's rows, not everything beneath them:
     // a queued epic's subtask orders under the epic, not in the queue the epic
     // sits in.
-    expect(row("E1").childRegion).toBeNull();
+    expect(row("E1").drawsSection).toBeNull();
     expect(row("T1").region).toEqual({ axis: "parent", parentId: "E1" });
     // The container is a real nib, so it is a member of its own parent group
     // like any other row; only what it declares for its children differs.
     expect(row("M1").region).toEqual({ axis: "parent", parentId: null });
-    expect(row("M1").childRegion).toEqual(queue);
+    expect(row("M1").drawsSection).toEqual({ key: "M1", onEnter: { kind: "region", region: queue } });
+    // The rows the section draws carry its identity, so a consumer holding two
+    // rows can say whether one line crosses a section boundary.
+    expect(row("E1").section?.key).toBe("M1");
+    // The section identity does NOT stop where the region does. T1 orders under
+    // E1 and is still a member of M1's section — the two answers are what a
+    // consumer needs to tell "which list does this row order in" from "which
+    // section is this row in".
+    expect(row("T1").section?.key).toBe("M1");
   });
 
   it("keeps a descendant with its own assignment out of the queue too", () => {
@@ -182,7 +194,11 @@ describe("a container that declares a childRegion", () => {
       {
         nib: header,
         depth: 0,
-        section: { childRegion: queue, persistence: "discovered" },
+        section: {
+          key: "M1",
+          persistence: "discovered",
+          meaning: { memberRegion: queue, onEnter: { kind: "region", region: queue } },
+        },
         children: [{ nib: queued, depth: 1, children: [{ nib: assigned, depth: 2, children: [] }] }],
       },
     ] satisfies TreeNode<TreeTableNib>[];

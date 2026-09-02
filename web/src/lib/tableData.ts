@@ -1,7 +1,8 @@
 import type { TreeTableNib, NibFilter, TreeNode, TableSort } from "./types";
 import type { Region } from "./ordering/region";
+import type { SectionEntry } from "./ordering/sectionMeaning";
 import { buildShapedViewTree, holdsChildrenByDisplay, isSyntheticRowId, SECTION_RULES } from "./tree";
-import type { ViewShape } from "./tree";
+import type { SectionKey, ViewShape } from "./tree";
 import { makeNibComparator } from "./tableSort";
 import { hasClientFilters, matchesFilter } from "./filter";
 
@@ -86,12 +87,39 @@ export interface RowData {
    */
   region: Region | null;
   /**
-   * The ordering group this row's children are members of, or null when it
-   * declares none — in which case each child falls back to its own resolved
-   * parent group. Read off the view tree, so only a container a lens declared one
-   * for carries anything here.
+   * The section this row DRAWS — null for every row that is not a section's own
+   * row, which is most of them. Read off the view tree, so only a grouped view's
+   * section containers carry anything here.
+   *
+   * The pair of `section` below, and the pair is the point: this answers what
+   * aiming AT this row means, that one which section this row is drawn in. A
+   * MEMBER of a section carries the second and not the first, so a drop into a
+   * member is decided by the row and not by the section around it.
    */
-  childRegion: Region | null;
+  drawsSection: RowSection | null;
+  /**
+   * The section this row is a MEMBER of — transitively, so a row nested under a
+   * member answers the section holding its ancestor. Null when no section
+   * encloses it: every row of an ungrouped view, and a grouped view's outermost
+   * section rows.
+   *
+   * Carries `onEnter` and not `memberRegion`: the enclosing section's member
+   * region is already folded into `region` above by `rowRegion`, and carrying it
+   * again would be two authorities for one question.
+   */
+  section: RowSection | null;
+}
+
+/**
+ * As much of a section as a row consumer needs: which one it is, and what
+ * entering it does.
+ *
+ * `SectionMeaning` minus `memberRegion` — see `RowData.section` for why that
+ * member does not travel this far.
+ */
+export interface RowSection {
+  readonly key: SectionKey;
+  readonly onEnter: SectionEntry;
 }
 
 export interface TableData {
@@ -285,7 +313,8 @@ export function buildShapedTableData(
   function flatten(
     nodes: TreeNode<TreeTableNib>[],
     displayParentId: string | null,
-    enclosingChildRegion: Region | null,
+    enclosingMemberRegion: Region | null,
+    enclosingSection: RowSection | null,
   ): void {
     for (const node of nodes) {
       // If we have visibility filtering, skip non-visible nodes
@@ -301,8 +330,12 @@ export function buildShapedTableData(
         : node.children;
       const parentNib = node.nib.parentId ? nibMap.get(node.nib.parentId) ?? null : null;
 
-      const childRegion = node.section?.childRegion ?? null;
-      const region = rowRegion(node.nib.id, node.nib.parentId, enclosingChildRegion);
+      const drawsSection: RowSection | null =
+        node.section === undefined
+          ? null
+          : { key: node.section.key, onEnter: node.section.meaning.onEnter };
+      const memberRegion = node.section?.meaning.memberRegion ?? null;
+      const region = rowRegion(node.nib.id, node.nib.parentId, enclosingMemberRegion);
 
       rows.push({
         nib: node.nib,
@@ -316,7 +349,8 @@ export function buildShapedTableData(
         // not its raw nib.parentId.
         displayParentId,
         region,
-        childRegion,
+        drawsSection,
+        section: enclosingSection,
       });
 
       if (!collapsedIds.has(node.nib.id)) {
@@ -335,12 +369,25 @@ export function buildShapedTableData(
         // ancestor is already assigned. A hand-authored file can still hold that
         // pair, and the rule is deliberately the same for it — the row is drawn
         // under its parent, so that is the list its position governs.
-        flatten(node.children, holdsChildrenByDisplay(node) ? displayParentId : node.nib.id, childRegion);
+        //
+        // The section identity does NOT stop there — it travels the whole way
+        // down, because both assembly modes put a member's descendants in the
+        // member's own section: a placement lens rebuilds each section's nesting
+        // with `buildTree` over only the nibs that landed in it, and a
+        // structural lens hands a claiming nib its entire subtree. So a row
+        // nested under a member is a member of that section too, and answering
+        // `null` there would say it is in no section at all.
+        flatten(
+          node.children,
+          holdsChildrenByDisplay(node) ? displayParentId : node.nib.id,
+          memberRegion,
+          drawsSection ?? enclosingSection,
+        );
       }
     }
   }
 
-  flatten(tree, null, null);
+  flatten(tree, null, null, null);
 
   return { rows, allTags, parentIds, viewMemberIds };
 }

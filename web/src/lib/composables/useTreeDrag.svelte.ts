@@ -1,5 +1,5 @@
 import type { SelectionState } from "../selection.svelte";
-import type { DragState, DropZone } from "../drag.svelte";
+import type { AcceptedDrop, DragState, DropZone } from "../drag.svelte";
 import type { RowData } from "../tableData";
 import { computeDropZone, collectDescendantIds } from "../dropZone";
 import { planDrop, type DropIndicator, type DropPlan } from "../ordering/dropPlan";
@@ -12,6 +12,22 @@ const AUTO_SCROLL_SPEED = 8;
 /** A plan's indicator in the vocabulary `TreeTableRow`'s drop classes are keyed on. */
 function dropZoneOf(indicator: DropIndicator): DropZone {
   return indicator === "into" ? "reparent" : indicator;
+}
+
+/**
+ * The accepted plan as the affordance reads it, or null for a refusal.
+ *
+ * An exhaustive switch on the plan's kind, so an arm added to `DropPlan` cannot
+ * reach the badge and the drop indicator as one of the arms already there.
+ */
+function acceptedDropOf(plan: DropPlan): AcceptedDrop | null {
+  if (!plan.ok) return null;
+  switch (plan.kind) {
+    case "position":
+      return { kind: "position", label: plan.label, region: plan.region };
+    case "assign":
+      return { kind: "assign", label: plan.label };
+  }
 }
 
 export function useTreeDrag(opts: {
@@ -258,7 +274,7 @@ export function useTreeDrag(opts: {
       targetRow.nib.id,
       plan.ok ? dropZoneOf(plan.indicator) : zone,
       plan.ok,
-      plan.ok ? { label: plan.label, region: plan.region } : null,
+      acceptedDropOf(plan),
     );
     handleAutoScroll(e);
   }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { regionBandAt, type BandRow } from "./regionBand";
+import { dropTreatment, regionBandAt, type BandRow } from "./regionBand";
 import type { Region } from "./region";
 
 const TOP: Region = { axis: "parent", parentId: null };
@@ -62,5 +62,25 @@ describe("regionBandAt", () => {
 
   it("does not band a row that descends INTO a fabricated container", () => {
     expect(regionBandAt(row(1, TOP), row(0, null))).toBeNull();
+  });
+});
+
+describe("dropTreatment", () => {
+  it("colors a position by its axis", () => {
+    expect(dropTreatment({ kind: "position", region: TOP })).toBe("parent");
+    expect(dropTreatment({ kind: "position", region: UNDER_E1 })).toBe("parent");
+    expect(dropTreatment({ kind: "position", region: QUEUE_M1 })).toBe("queue");
+  });
+
+  it("gives an assignment a treatment of its own", () => {
+    // The whole point of the switch: an assignment carries no region, so an
+    // axis read would answer for it by default, and the default is the parent
+    // axis — the sibling reorder it sits on the same pixel as.
+    expect(dropTreatment({ kind: "assign" })).toBe("assign");
+  });
+
+  it("colors nothing when nothing is accepted", () => {
+    expect(dropTreatment(null)).toBeNull();
+    expect(dropTreatment(undefined)).toBeNull();
   });
 });

@@ -1,5 +1,6 @@
 import type { TreeNib, TreeNode, TreeTableNib, ViewLevel } from "./types";
 import type { Region } from "./ordering/region";
+import { GOVERNS_NOTHING, type SectionMeaning } from "./ordering/sectionMeaning";
 import { MILESTONE_TYPE, milestoneOf } from "./membership";
 import { typeRank } from "./typeHierarchy";
 
@@ -148,11 +149,14 @@ export type SectionPersistence = "discovered" | "declared";
 
 /**
  * The section facts a node carries, as ONE optional on `TreeNode` — so a node
- * either IS a section and answers both, or is not one and says nothing.
+ * either IS a section and answers all three, or is not one and says nothing.
  */
 export interface SectionMeta {
-  readonly childRegion: Region | null;
+  /** The key the lens minted or declared, so a consumer holding a row can say
+   *  WHICH section it is looking at and not merely that it is one. */
+  readonly key: SectionKey;
   readonly persistence: SectionPersistence;
+  readonly meaning: SectionMeaning;
 }
 
 /**
@@ -230,34 +234,40 @@ export interface GroupingLens<T extends TreeNib = TreeNib> {
    * An active column sort outranks it: sorting a column means the user asked
    * for that order specifically.
    *
-   * Required rather than optional, for the reason `childRegion` below is: a new
+   * Required rather than optional, for the reason `meaning` below is: a new
    * lens has to answer, and "no order of my own" is an answer.
    */
   orderWithinSection(section: SectionKey): ((a: T, b: T) => number) | null;
   /**
-   * The ordering group a section's rows are members of, or null to declare none
-   * — in which case each row falls back to its own resolved parent group.
+   * What one section MEANS: the ordering group its rows are members of, and
+   * what a drop INTO it does.
+   *
+   * Per KEY, where `declares` is per lens — because a section need not be
+   * declared to have a meaning. The milestone lens mints every section from the
+   * nibs that arrived, and every lens has a leftover, so folding meaning into
+   * the declaration forest would leave those with none.
    *
    * Required rather than optional, so a new lens has to answer: a lens grouping
    * by an ASSIGNMENT puts rows in a queue keyed by that assignment, and a queue
    * whose rows still claim their parent group would reorder against the wrong
-   * list. Every type lens declares null, because grouping by type moves no row
-   * out of its parent's sibling set.
+   * list. Every type lens answers `GOVERNS_NOTHING`, because grouping by type
+   * moves no row out of its parent's sibling set and entering a section means
+   * whatever the row under the cursor means.
    *
    * INVARIANT the lens owns: every row it puts in section S must satisfy the
-   * server's group resolution for `childRegion(S)`. The milestone arm must
-   * therefore carry the RESOLVED assignment, not the raw `milestone:` field,
-   * which arrives verbatim and can name a deleted nib or a non-milestone. The
-   * lens is the only place that can hold this up, and it can: `place` runs first
-   * and already receives `byId`, so a section key can be minted only for an
-   * assignment that resolves.
+   * server's group resolution for `meaning(S).memberRegion`. The milestone arm
+   * must therefore carry the RESOLVED assignment, not the raw `milestone:`
+   * field, which arrives verbatim and can name a deleted nib or a non-milestone.
+   * The lens is the only place that can hold this up, and it can: `place` runs
+   * first and already receives `byId`, so a section key can be minted only for
+   * an assignment that resolves.
    *
-   * A declaration overrides the fallback for EVERY member, so a parent-axis one
-   * on a catch-all section is wrong: `{axis:"parent", parentId:null}` claims the
-   * root group even for members whose resolved parent is not null. Declare null
-   * there and let each row fall back.
+   * A `memberRegion` overrides the fallback for EVERY member, so a parent-axis
+   * one on a catch-all section is wrong: `{axis:"parent", parentId:null}` claims
+   * the root group even for members whose resolved parent is not null. Declare
+   * null there and let each row fall back.
    */
-  childRegion(section: SectionKey): Region | null;
+  meaning(section: SectionKey): SectionMeaning;
   /**
    * Whether a section's rows follow PARENTAGE or PLACEMENT.
    *
@@ -310,8 +320,9 @@ function typeLens(grouping: string[], leftoverKey: LeftoverKey, leftoverLabel: s
     // column sort's. There is no third order to declare.
     orderWithinSection: () => null,
     // Grouping by type rearranges which rows are DRAWN together; it moves no row
-    // into another ordering group, so every row keeps its own parent one.
-    childRegion: () => null,
+    // into another ordering group, so every row keeps its own parent one — and a
+    // drop into a section means what the row under the cursor means.
+    meaning: () => GOVERNS_NOTHING,
 
     place(nib, byId) {
       // The section is decided by the OUTERMOST ancestor-or-self at or below the
@@ -420,7 +431,7 @@ function byMilestoneOrder(a: TreeNib, b: TreeNib): number {
  * would drift with nothing to catch it.
  *
  * Two properties follow from keying on `milestoneOf`'s answer rather than on
- * the raw `milestone:` field, and both are what `childRegion`'s invariant asks
+ * the raw `milestone:` field, and both are what `meaning`'s invariant asks
  * for:
  *
  *   - A section key is always the id of a milestone-typed nib present in
@@ -460,11 +471,19 @@ const MILESTONE_MEMBERSHIP_LENS: GroupingLens = {
   nestHeadersStructurally: false,
   // The declaration a membership lens exists for: a milestone section's rows
   // are in that milestone's queue, so a drag inside one reorders on the
-  // MILESTONE scope. The Backlog declares NOTHING — "" is memberless in that
-  // scope, and its rows are not all at the display root either, so each falls
-  // back to its own resolved parent group.
-  childRegion: (section) =>
-    section === BACKLOG_KEY ? null : { axis: "milestone", milestoneId: section },
+  // MILESTONE scope and a drop into the section joins that queue. The Backlog
+  // means NOTHING — "" is memberless in that scope, and its rows are not all at
+  // the display root either, so each falls back to its own resolved parent
+  // group.
+  //
+  // One `Region` value serves both members, which is the milestone axis's own
+  // shape rather than a coincidence worth generalizing: the queue a section's
+  // rows are ordered in IS the queue a drop into it joins.
+  meaning: (section) => {
+    if (section === BACKLOG_KEY) return GOVERNS_NOTHING;
+    const queue: Region = { axis: "milestone", milestoneId: section };
+    return { memberRegion: queue, onEnter: { kind: "region", region: queue } };
+  },
   // The Backlog has no queue, so it takes the walk's order (or the active
   // column sort's) rather than a key none of its rows share.
   orderWithinSection: (section) => (section === BACKLOG_KEY ? null : byMilestoneOrder),
@@ -947,15 +966,17 @@ function assembleSection<T extends TreeNib>(
     );
   }
 
-  // The declaration lands on the section's node, which is where `flatten` reads
-  // it from: it reaches that node's direct children and stops there. Under
+  // The meaning lands on the section's node, which is where `flatten` reads it
+  // from: it reaches that node's direct children and stops there. Under
   // `nestHeadersStructurally` those children include the header's own structural
-  // subtree roots, so a lens that nests structurally AND declares a region would
-  // put them in it alongside the placed members. Nothing in the type system
-  // rules that pairing out; tree.test.ts asserts no shipped lens makes it.
+  // subtree roots, so a lens that nests structurally AND declares a
+  // `memberRegion` would put them in it alongside the placed members. Nothing in
+  // the type system rules that pairing out; tree.test.ts asserts no shipped lens
+  // makes it.
   const meta: SectionMeta = {
-    childRegion: lens.childRegion(section.key),
+    key: section.key,
     persistence: section.persistence,
+    meaning: lens.meaning(section.key),
   };
 
   if (section.header !== null) {

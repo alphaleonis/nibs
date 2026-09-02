@@ -1,4 +1,4 @@
-import type { OrderScope } from "../gql/graphql";
+import type { OrderScope, UpdateNibInput as GeneratedUpdateNibInput } from "../gql/graphql";
 
 // --- Leaf command types ---
 
@@ -36,6 +36,10 @@ export type UpdateNibInput = {
    *  clears the assignment; omitted leaves it unchanged. Distinct from `parent`
    *  — a milestone accepts no children, so joining its queue is this write. */
   milestone?: string | null;
+  /** The ownership axis: the declared area path the nib belongs to. Null or ""
+   *  clears the assignment; omitted leaves it unchanged. Unlike `milestone` it
+   *  names no nib, so nothing is resolved and no queue moves. */
+  area?: string | null;
   addBlocking?: string[];
   removeBlocking?: string[];
   addBlockedBy?: string[];
@@ -44,6 +48,32 @@ export type UpdateNibInput = {
   addDocuments?: string[];
   removeDocuments?: string[];
 };
+
+// Compile-time guard binding the hand-written UpdateNibInput above to the
+// codegen'd one, so the two key sets cannot drift — the same pair, and for the
+// same reason, as NibFilter's in ../types.ts.
+//
+// The input reaches the wire as a variable rather than an object literal, so
+// TypeScript's excess-property check never runs on it; and `assignmentFor` in
+// ordering/dropPlan.ts builds one with a COMPUTED key, which is not checked at
+// all. Without this pair a client-side key the server has no argument for
+// type-checks, ships, and is silently ignored.
+//
+// BOTH directions are required: a one-way `extends` is satisfied by extra
+// properties, so it would miss exactly that case.
+//
+// `ifMatch` is the one deliberate difference, and it is excluded on the
+// generated side rather than added here: it is command-level in this layer —
+// UpdateNibCommand carries it beside `input`, and the dispatcher merges the two.
+type GeneratedUpdateKeys = Exclude<keyof GeneratedUpdateNibInput, "ifMatch">;
+
+type _UpdateKeysExistOnGenerated = keyof UpdateNibInput extends GeneratedUpdateKeys ? true : never;
+const _updateKeysCheck: _UpdateKeysExistOnGenerated = true;
+void _updateKeysCheck;
+
+type _GeneratedUpdateKeysExistOnClient = GeneratedUpdateKeys extends keyof UpdateNibInput ? true : never;
+const _generatedUpdateKeysCheck: _GeneratedUpdateKeysExistOnClient = true;
+void _generatedUpdateKeysCheck;
 
 export type CreateNibCommand = { kind: "create-nib"; input: CreateNibInput };
 export type UpdateNibCommand = { kind: "update-nib"; id: string; input: UpdateNibInput; ifMatch?: string };

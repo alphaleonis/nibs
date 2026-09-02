@@ -1154,6 +1154,7 @@ describe("TreeTableRow context-based state", () => {
       const queue = new DragState();
       queue.startDrag(["nibs-other"]);
       queue.setDropTarget("nibs-abc1", zone, true, {
+        kind: "position",
         label: "Reorder in the Q3 Launch queue",
         region: { axis: "milestone", milestoneId: "tnib-m001" },
       });
@@ -1165,6 +1166,7 @@ describe("TreeTableRow context-based state", () => {
       const parent = new DragState();
       parent.startDrag(["nibs-other"]);
       parent.setDropTarget("nibs-abc1", zone, true, {
+        kind: "position",
         label: "Reorder in the top level",
         region: { axis: "parent", parentId: null },
       });
@@ -1172,8 +1174,29 @@ describe("TreeTableRow context-based state", () => {
       const parentedRow = parented.container.querySelector("tr") as HTMLElement;
       expect(parentedRow.classList.contains(`drop-${zone}`)).toBe(true);
       expect(parentedRow.classList.contains("drop-queue")).toBe(false);
+      // The three treatments are exclusive: a positioned drop is never marked
+      // as an assignment, whichever axis it is on.
+      expect(queuedRow.classList.contains("drop-assign")).toBe(false);
+      expect(parentedRow.classList.contains("drop-assign")).toBe(false);
     },
   );
+
+  it("colors an ASSIGNMENT drop in its own class, not the parent axis's", () => {
+    // The class the row renders, not the helper's return. An assignment's
+    // indicator is fixed at "into", so `reparent` is the only zone it reaches.
+    const assign = new DragState();
+    assign.startDrag(["nibs-other"]);
+    assign.setDropTarget("nibs-abc1", "reparent", true, { kind: "assign", label: "Move to the web area" });
+
+    const { container } = renderRowWithContext(
+      { nib: makeTreeTableNib({ id: "nibs-abc1" }) },
+      { drag: assign },
+    );
+    const row = container.querySelector("tr") as HTMLElement;
+    expect(row.classList.contains("drop-reparent")).toBe(true);
+    expect(row.classList.contains("drop-assign")).toBe(true);
+    expect(row.classList.contains("drop-queue")).toBe(false);
+  });
 
   it("does not color a REFUSED drop by axis — a refusal carries no region", () => {
     const drag = new DragState();
@@ -1187,11 +1210,12 @@ describe("TreeTableRow context-based state", () => {
   });
 
   it("does not color a row that is not the drop target", () => {
-    // `dropRegion` is one ambient value read by every row, so the axis class has
-    // to be gated on being the target the way the zone classes are.
+    // `dropAccepted` is one ambient value read by every row, so the treatment
+    // class has to be gated on being the target the way the zone classes are.
     const drag = new DragState();
     drag.startDrag(["nibs-other"]);
     drag.setDropTarget("nibs-elsewhere", "before", true, {
+      kind: "position",
       label: "Reorder in the Q3 Launch queue",
       region: { axis: "milestone", milestoneId: "tnib-m001" },
     });

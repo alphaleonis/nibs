@@ -10,6 +10,8 @@ import type { GroupingLens, Placement, ViewShape } from "./tree";
 import { makeNibComparator } from "./tableSort";
 import { milestoneOf, resolvedMilestoneId } from "./membership";
 import { typeRank } from "./typeHierarchy";
+import { GOVERNS_NOTHING } from "./ordering/sectionMeaning";
+import type { Region } from "./ordering/region";
 import type { TreeNib, TreeTableNib, TreeNode, ViewLevel, TableSort } from "./types";
 import { VIEW_LEVELS } from "./types";
 
@@ -853,7 +855,7 @@ describe("milestone membership lens", () => {
   });
 
   /**
-   * The invariant `childRegion` says the lens owns: every row a section declares
+   * The invariant `meaning` says the lens owns: every row a section declares
    * its queue over is in that queue by the server's own rule — which is the
    * DIRECT one (`scopeTable[ScopeMilestone].group` is `resolvedMilestoneID`),
    * not the derived membership that decided the section.
@@ -868,7 +870,7 @@ describe("milestone membership lens", () => {
     const lookup = lookupOver(nibs);
     let checked = 0;
     for (const section of buildViewTree(nibs, "milestones")) {
-      const region = section.section?.childRegion ?? null;
+      const region = section.section?.meaning.memberRegion ?? null;
       if (region === null || region.axis !== "milestone") continue;
       for (const child of section.children) {
         checked++;
@@ -931,7 +933,7 @@ describe("milestone membership lens", () => {
       const m2 = tree.find((r) => r.nib.id === "m2")!;
       expect(m2.nib.status).toBe("completed");
       expect(isSyntheticRowId(m2.nib.id)).toBe(false);
-      expect(m2.section?.childRegion).toEqual({ axis: "milestone", milestoneId: "m2" });
+      expect(m2.section?.meaning.memberRegion).toEqual({ axis: "milestone", milestoneId: "m2" });
       expect(collectIds([tree.find((r) => r.nib.id === BACKLOG)!])).not.toContain("e2");
     });
 
@@ -1173,13 +1175,17 @@ describe("GroupingLens seam", () => {
     declares: { kind: "none" },
     nestHeadersStructurally: false,
     orderWithinSection: () => (a, b) => a.milestoneOrder.localeCompare(b.milestoneOrder),
-    // The declaration a membership lens is FOR: a section's rows are in that
-    // milestone's queue. The leftover declares NOTHING rather than the root
-    // group — its members are in no queue, but they are not all at the top
-    // level either (a member whose parent the filter left out has a real
-    // resolved parent), and the per-row fallback gets both right.
-    childRegion: (section) =>
-      section === BACKLOG ? null : { axis: "milestone", milestoneId: section },
+    // The meaning a membership lens is FOR: a section's rows are in that
+    // milestone's queue, and a drop into the section joins it. The leftover
+    // governs NOTHING rather than the root group — its members are in no queue,
+    // but they are not all at the top level either (a member whose parent the
+    // filter left out has a real resolved parent), and the per-row fallback gets
+    // both right.
+    meaning: (section) => {
+      if (section === BACKLOG) return GOVERNS_NOTHING;
+      const queue: Region = { axis: "milestone", milestoneId: section };
+      return { memberRegion: queue, onEnter: { kind: "region", region: queue } };
+    },
     place(nib, byId): Placement {
       if (nib.type === "milestone") return { kind: "header", section: nib.id };
       const visited = new Set<string>();
@@ -1226,7 +1232,7 @@ describe("GroupingLens seam", () => {
     expect(backlog.children.map((c) => c.nib.id)).toEqual(["T9"]);
   });
 
-  it("puts the lens's childRegion declaration on the node that renders the section", () => {
+  it("puts the lens's member-region declaration on the node that renders the section", () => {
     const nibs: TreeNib[] = [
       makeTreeNib({ id: "M1", type: "milestone" }),
       makeTreeNib({ id: "E1", type: "epic", milestone: "M1", milestoneOrder: "a0" }),
@@ -1238,11 +1244,14 @@ describe("GroupingLens seam", () => {
     // Both kinds of section container carry what the lens answered: the one a
     // real nib heads, and the fabricated leftover — which here declares nothing,
     // so its members keep the per-row fallback.
-    expect(tree.find((r) => r.nib.id === "M1")!.section?.childRegion).toEqual({
+    expect(tree.find((r) => r.nib.id === "M1")!.section?.meaning.memberRegion).toEqual({
       axis: "milestone",
       milestoneId: "M1",
     });
-    expect(tree.find((r) => r.nib.id === BACKLOG)!.section?.childRegion).toBeNull();
+    expect(tree.find((r) => r.nib.id === BACKLOG)!.section?.meaning.memberRegion).toBeNull();
+    // The key travels with it, so a row can name the section it is drawn in.
+    expect(tree.find((r) => r.nib.id === "M1")!.section?.key).toBe("M1");
+    expect(tree.find((r) => r.nib.id === BACKLOG)!.section?.key).toBe(BACKLOG);
   });
 
   it("carries a non-null declaration onto a fabricated section container too", () => {
@@ -1263,7 +1272,7 @@ describe("GroupingLens seam", () => {
     expect(section).toBeDefined();
     expect(isSyntheticRowId(section.nib.id)).toBe(true);
     expect(section.children.map((c) => c.nib.id)).toEqual(["E1"]);
-    expect(section.section?.childRegion).toEqual({ axis: "milestone", milestoneId: "M1" });
+    expect(section.section?.meaning.memberRegion).toEqual({ axis: "milestone", milestoneId: "M1" });
   });
 
   it("leaves a type lens's section nodes declaring nothing", () => {
@@ -1273,7 +1282,7 @@ describe("GroupingLens seam", () => {
 
     // Grouping by type moves no row out of its parent's sibling set, so every
     // section declares null and each row keeps its own parent group.
-    for (const node of tree) expect(node.section?.childRegion).toBeNull();
+    for (const node of tree) expect(node.section?.meaning.memberRegion).toBeNull();
   });
 
   it("orders a section's top-level members by the lens, and lets a column sort outrank it", () => {
@@ -1351,7 +1360,7 @@ describe("GroupingLens seam", () => {
       declares: { kind: "none" },
       nestHeadersStructurally: false,
       orderWithinSection: () => null,
-      childRegion: () => null,
+      meaning: () => GOVERNS_NOTHING,
       place: (nib): Placement =>
         nib.id === "stray"
           ? { kind: "member", section: garbage }
@@ -1727,7 +1736,7 @@ describe("isSyntheticRowId", () => {
 // `viewShapeFor` for the same reason `bucketIds` is: a hand-kept list enrolls a
 // new lens only if someone remembers to.
 describe("shipped grouping lenses", () => {
-  it("never nest headers structurally AND declare a childRegion", () => {
+  it("never nest headers structurally AND declare a member region", () => {
     const lenses = VIEW_LEVELS.map(viewShapeFor)
       .filter((shape) => shape.kind === "grouped")
       .map((shape) => shape.lens);
@@ -1740,7 +1749,7 @@ describe("shipped grouping lenses", () => {
       // Section keys are derived from nib data, so probe an arbitrary one as
       // well as the leftover: a lens may answer differently per section.
       for (const key of [lens.leftover.key, "nibs-probe1"]) {
-        expect(lens.childRegion(key), `${lens.leftover.key} / ${key}`).toBeNull();
+        expect(lens.meaning(key).memberRegion, `${lens.leftover.key} / ${key}`).toBeNull();
       }
     }
   });

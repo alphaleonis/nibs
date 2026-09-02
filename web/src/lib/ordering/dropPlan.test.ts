@@ -16,7 +16,7 @@ import { collectDescendantIds } from "../dropZone";
 import type { DropZone } from "../drag.svelte";
 import { batch, reorderChain, reorderNib, reparentAndReorder, sequence, setParent, updateNib } from "../mutations/commands";
 import type { AnyCommand, CommandResult } from "../mutations/types";
-import { rowRegion, type RowData } from "../tableData";
+import { rowRegion, type RowData, type RowSection } from "../tableData";
 import { canHaveChildren } from "../typeHierarchy";
 import type { TreeTableNib } from "../types";
 
@@ -56,7 +56,8 @@ function makeRow(
   nib: TreeTableNib,
   opts: {
     enclosing?: Region | null;
-    childRegion?: Region | null;
+    drawsSection?: RowSection | null;
+    section?: RowSection | null;
     parentNib?: TreeTableNib | null;
     displayParentId?: string | null;
   } = {},
@@ -69,8 +70,15 @@ function makeRow(
     parentNib: opts.parentNib ?? null,
     displayParentId: opts.displayParentId ?? null,
     region: rowRegion(nib.id, nib.parentId, opts.enclosing ?? null),
-    childRegion: opts.childRegion ?? null,
+    drawsSection: opts.drawsSection ?? null,
+    section: opts.section ?? null,
   };
+}
+
+/** A section whose rows order in one queue, in the shape the milestone lens's
+ *  `meaning` returns: one region answering both halves. */
+function queueSection(key: string, region: Region): RowSection {
+  return { key, onEnter: { kind: "region", region } };
 }
 
 /**
@@ -116,15 +124,17 @@ const CY2_NIB = makeNib({ id: "CY2", type: "epic", title: "Cycle two", parentId:
 const HIDDEN_CHILDREN: Region = { axis: "parent", parentId: "E9" };
 
 const ROWS: RowData[] = [
-  makeRow(makeNib({ id: "M1", type: "milestone", title: "v1.0" }), { childRegion: QUEUE_M1 }),
+  makeRow(makeNib({ id: "M1", type: "milestone", title: "v1.0" }), { drawsSection: queueSection("M1", QUEUE_M1) }),
   makeRow(E1_NIB, { enclosing: QUEUE_M1 }),
   makeRow(makeNib({ id: "T1", type: "task", title: "Task one", parentId: "E1" }), { parentNib: E1_NIB }),
   makeRow(makeNib({ id: "E2", type: "epic", title: "Epic two", milestone: "M1" }), { enclosing: QUEUE_M1 }),
   makeRow(makeNib({ id: "E4", type: "epic", title: "Epic four", milestone: "M1" }), { enclosing: QUEUE_M1 }),
   makeRow(makeNib({ id: "QT", type: "task", title: "Queued task", milestone: "M1" }), { enclosing: QUEUE_M1 }),
-  makeRow(makeNib({ id: "M2", type: "milestone", title: "v2.0" }), { childRegion: QUEUE_M2 }),
+  makeRow(makeNib({ id: "M2", type: "milestone", title: "v2.0" }), { drawsSection: queueSection("M2", QUEUE_M2) }),
   makeRow(makeNib({ id: "E3", type: "epic", title: "Epic three", milestone: "M2" }), { enclosing: QUEUE_M2 }),
-  makeRow(makeNib({ id: BACKLOG_ID, type: "", title: "Backlog" })),
+  makeRow(makeNib({ id: BACKLOG_ID, type: "", title: "Backlog" }), {
+    drawsSection: { key: BACKLOG_ID, onEnter: { kind: "byRow" } },
+  }),
   makeRow(makeNib({ id: "B1", type: "task", title: "Backlog one" })),
   makeRow(makeNib({ id: "B2", type: "task", title: "Backlog two" })),
   makeRow(B3_NIB),
@@ -135,13 +145,13 @@ const ROWS: RowData[] = [
   makeRow(makeNib({ id: "NP", type: "task", title: "No parent nib", parentId: "H9" })),
   makeRow(CY1_NIB, { parentNib: CY2_NIB }),
   makeRow(CY2_NIB, { parentNib: CY1_NIB, displayParentId: "CY1" }),
-  makeRow(makeNib({ id: "RS", type: "milestone", title: "Root section" }), { childRegion: TOP_LEVEL }),
+  makeRow(makeNib({ id: "RS", type: "milestone", title: "Root section" }), { drawsSection: queueSection("RS", TOP_LEVEL) }),
   makeRow(makeNib({ id: "DR1", type: "task", title: "Declared one" }), { enclosing: TOP_LEVEL }),
   makeRow(makeNib({ id: "DR2", type: "task", title: "Declared two", parentId: "B3" }), {
     enclosing: TOP_LEVEL,
     parentNib: B3_NIB,
   }),
-  makeRow(makeNib({ id: "HS", type: "milestone", title: "Hidden section" }), { childRegion: HIDDEN_CHILDREN }),
+  makeRow(makeNib({ id: "HS", type: "milestone", title: "Hidden section" }), { drawsSection: queueSection("HS", HIDDEN_CHILDREN) }),
 ];
 
 const ROWS_BY_ID = new Map(ROWS.map((r) => [r.nib.id, r]));
@@ -755,6 +765,11 @@ describe("planDrop", () => {
     expect(plan.ok, plan.ok ? "" : plan.refusal.message).toBe(expected.ok);
     if (expected.ok) {
       if (!plan.ok) throw new Error("unreachable: the assertion above already failed");
+      // Every case in this table plans a POSITION. The discriminant is asserted
+      // rather than assumed, because the assign arm carries no `region` at all
+      // and reading one off it would not compile — see sectionEntry.test.ts for
+      // that arm.
+      if (plan.kind !== "position") throw new Error(`expected a position plan, got ${plan.kind}`);
       // The four together: a plan whose indicator and command disagree is the
       // defect this function exists to make unrepresentable.
       expect({
@@ -1083,10 +1098,12 @@ describe("dropPlan.ts import isolation", () => {
       'import { isValidCrossParentDrop, isValidDropTarget } from "../dropZone";',
       'import { batch, reorderChain, reorderNib, reparentAndReorder, sequence, setParent, updateNib } from "../mutations/commands";',
       'import type { AnyCommand, CommandResult, LeafCommand, SequenceStep } from "../mutations/types";',
-      'import { canBeInMilestoneQueue } from "../membership";',
+      'import { takesAssignmentAxes } from "../membership";',
       'import type { RowData } from "../tableData";',
+      'import type { SectionKey } from "../tree";',
       'import { canHaveChildren } from "../typeHierarchy";',
       'import { BY_ID, commonRegion, describeRegion, sameRegion, scopeOf, spellId, type Region, type RegionNamer } from "./region";',
+      'import type { AssignableField, SectionEntry } from "./sectionMeaning";',
     ]);
     // A multi-line import still begins a line with `import`, so the equality
     // above is what catches it — its first line alone would not match. These

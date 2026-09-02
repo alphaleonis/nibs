@@ -7,6 +7,7 @@ import {
   shapedContainingSectionRowId,
 } from "./tree";
 import { buildShapedTableData } from "./tableData";
+import { GOVERNS_NOTHING } from "./ordering/sectionMeaning";
 import type { NibFilter, TableSort, TreeTableNib } from "./types";
 
 /**
@@ -58,7 +59,7 @@ const areaLens: GroupingLens = {
   leftover: { key: NO_AREA, label: "No area" },
   declares: { kind: "forest", roots: FOREST },
   nestHeadersStructurally: false,
-  childRegion: () => null,
+  meaning: () => GOVERNS_NOTHING,
   orderWithinSection: () => null,
   place: (item): Placement => ({
     kind: "member",
@@ -290,7 +291,7 @@ describe("a declared section a nib heads", () => {
         roots: [{ key: "H", label: "Headed", children: declaredChildren }],
       },
       nestHeadersStructurally: true,
-      childRegion: () => null,
+      meaning: () => GOVERNS_NOTHING,
       orderWithinSection: () => null,
       place: (item): Placement =>
         item.id === "H"

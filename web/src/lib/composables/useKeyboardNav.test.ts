@@ -42,7 +42,8 @@ function makeRow(nib: TreeTableNib, opts: Partial<RowData> = {}): RowData {
     // built through this helper must come out a member of nothing, as it does
     // in a real table.
     region: rowRegion(nib.id, nib.parentId),
-    childRegion: null,
+    drawsSection: null,
+    section: null,
     ...opts,
   };
 }

@@ -38,7 +38,18 @@ function block(selector: string): string {
   return body;
 }
 
-const DECLARED = /^\s*--region-queue:\s*oklch\(/m;
+/**
+ * The two color tokens the drop affordances are drawn in — the queue axis's, and
+ * the one an ASSIGNMENT takes. Both are declared in the same three blocks and
+ * both reach a consumer, so they are checked by one rule rather than by two
+ * copies of it.
+ */
+const TOKENS = [
+  { name: "region-queue", spelled: "border-region-queue" },
+  { name: "region-assign", spelled: "border-region-assign" },
+];
+
+const declared = (name: string) => new RegExp(`^\\s*--${name}:\\s*oklch\\(`, "m");
 
 // Tailwind v4 needs a color in TWO layers: the bare variable, and an `@theme
 // inline` registration that turns it into utilities. With only the first,
@@ -48,30 +59,41 @@ const DECLARED = /^\s*--region-queue:\s*oklch\(/m;
 // styled through the utility rather than through a `var()` in a style block: a
 // `var()` reaches the variable directly and so cannot notice the registration
 // going missing.
-describe("--region-queue", () => {
+describe.each(TOKENS)("--$name", ({ name, spelled }) => {
   it("is declared as a bare variable and registered as a Tailwind color", () => {
     // The base `:root` value specifically: only dracula and daylight override
     // it, so midnight (which has no block at all) and graphite (whose block
-    // declares no `--region-queue`) resolve through this one.
-    expect(block(":root {")).toMatch(DECLARED);
-    expect(block("@theme inline {")).toContain("--color-region-queue: var(--region-queue);");
+    // declares no override) resolve through this one.
+    expect(block(":root {")).toMatch(declared(name));
+    expect(block("@theme inline {")).toContain(`--color-${name}: var(--${name});`);
   });
 
   it("is retuned for the light palette, where the dark-theme value washes out", () => {
-    expect(block(':root[data-theme="daylight"] {')).toMatch(DECLARED);
+    expect(block(':root[data-theme="daylight"] {')).toMatch(declared(name));
   });
 
-  it("is retuned for dracula, whose cyan is the palette's own", () => {
+  it("is retuned for dracula, whose accents are the palette's own", () => {
     // The third and last declaration. Without this the guard covered two of the
     // three, and deleting this override left the suite green — the shape the
     // block() scoping exists to prevent, one palette further along.
-    expect(block(':root[data-theme="dracula"] {')).toMatch(DECLARED);
+    expect(block(':root[data-theme="dracula"] {')).toMatch(declared(name));
   });
 
-  it("is what the drag badge's queue border is spelled as", () => {
+  it("is what the drag badge spells its border as", () => {
     // Pins the consumer to the registered name: renaming one half of the pair
     // without the other leaves this file the only thing that notices, since
     // Tailwind emits nothing and reports nothing for an unknown color.
-    expect(badge).toContain("border-region-queue");
+    expect(badge).toContain(spelled);
+  });
+});
+
+describe("the row indicator", () => {
+  // The row draws through `var()` in a scoped style block rather than through a
+  // utility, so the registration above is not what it depends on — the bare
+  // variable is, and this is what says so.
+  const rowStyles = read("./components/TreeTableRow.svelte").replace(/\/\*[\s\S]*?\*\//g, "");
+
+  it.each(TOKENS)("paints its --$name form", ({ name }) => {
+    expect(rowStyles).toContain(`var(--${name})`);
   });
 });

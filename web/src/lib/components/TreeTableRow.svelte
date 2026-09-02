@@ -9,7 +9,7 @@
   import { useColumnAdapters } from "../ColumnAdapters.svelte";
 
   import type { DropZone } from "../drag.svelte";
-  import { isQueueAxis, type BandAxis } from "../ordering/regionBand";
+  import { dropTreatment, isQueueAxis, type BandAxis } from "../ordering/regionBand";
 
   interface Props {
     nib: TreeTableNib;
@@ -94,10 +94,11 @@
   let isDropTarget = $derived(drag.dropTargetId === nib.id);
   let dropZone: DropZone | null = $derived(isDropTarget ? drag.dropZone : null);
   let dropValid = $derived(isDropTarget ? drag.dropValid : false);
-  // Which list the accepted drop writes in. Only the axis reaches the styling —
-  // a queue move is the one that does not touch a parent link, and drawing it in
-  // the parent-axis color is the confusion this seam exists to remove.
-  let dropQueue = $derived(dropValid && isQueueAxis(drag.dropRegion?.axis));
+  // How the accepted drop is colored. Decided from the plan's KIND, not from an
+  // axis read through `?.`: `isQueueAxis` answers `false` for a missing axis, so
+  // a plan with no region — an assignment — would take the parent axis's colors,
+  // which is the one gesture it must not be confused with.
+  let treatment = $derived(dropValid ? dropTreatment(drag.dropAccepted) : null);
 
   const isBlocked = $derived(nib.blockedByIds.length > 0);
   // `pill-dim` additionally dims the whole row. Gated off during drag, while a
@@ -145,7 +146,8 @@
   class:drop-after={isDropTarget && dropZone === "after" && dropValid}
   class:drop-reparent={isDropTarget && dropZone === "reparent" && dropValid}
   class:drop-invalid={isDropTarget && !dropValid}
-  class:drop-queue={dropQueue}
+  class:drop-queue={treatment === "queue"}
+  class:drop-assign={treatment === "assign"}
   class:region-band={regionBand !== null}
   class:region-band-queue={isQueueAxis(regionBand)}
   class:nib-highlighted={highlighted}
@@ -308,6 +310,15 @@
   .tree-row.drop-reparent.drop-queue {
     background-color: color-mix(in oklab, var(--region-queue), transparent 88%);
     box-shadow: inset 0 0 0 1px var(--region-queue);
+  }
+
+  /* A drop that ASSIGNS — it sets a field and writes no position, so the only
+     indicator it can take is the container fill. There is no before/after form
+     of this rule because there is no before/after form of the gesture: an
+     assignment's indicator is fixed at "into" by the plan's own type. */
+  .tree-row.drop-reparent.drop-assign {
+    background-color: color-mix(in oklab, var(--region-assign), transparent 88%);
+    box-shadow: inset 0 0 0 1px var(--region-assign);
   }
 
   /* .tree-row.drop-invalid intentionally has no styling — invalid drop targets

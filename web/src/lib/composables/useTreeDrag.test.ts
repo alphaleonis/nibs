@@ -50,7 +50,8 @@ function makeRow(nib: TreeTableNib, opts: Partial<RowData> = {}): RowData {
     // built through this helper must come out a member of nothing, as it does
     // in a real table.
     region: rowRegion(nib.id, nib.parentId),
-    childRegion: null,
+    drawsSection: null,
+    section: null,
     ...opts,
   };
 }
@@ -1073,7 +1074,11 @@ describe("useTreeDrag", () => {
       // The id would read "the children of E1"; the namer is what makes the
       // badge worth showing.
       expect(composable.drag.dropLabel).toBe("Reorder in the children of User Authentication");
-      expect(composable.drag.dropRegion).toEqual({ axis: "parent", parentId: "E1" });
+      expect(composable.drag.dropAccepted).toEqual({
+        kind: "position",
+        label: "Reorder in the children of User Authentication",
+        region: { axis: "parent", parentId: "E1" },
+      });
 
       unhover();
       cleanup?.();
@@ -1110,7 +1115,7 @@ describe("useTreeDrag", () => {
       expect(composable.drag.dropTargetId).toBe("T2");
       expect(composable.drag.dropValid).toBe(false);
       expect(composable.drag.dropLabel).toBeNull();
-      expect(composable.drag.dropRegion).toBeNull();
+      expect(composable.drag.dropAccepted).toBeNull();
 
       unhover();
       cleanup?.();
@@ -1128,7 +1133,7 @@ describe("useTreeDrag", () => {
       window.dispatchEvent(new PointerEvent("pointermove", { clientX: 200, clientY: 500, bubbles: true }));
 
       expect(composable.drag.dropLabel).toBeNull();
-      expect(composable.drag.dropRegion).toBeNull();
+      expect(composable.drag.dropAccepted).toBeNull();
       cleanup?.();
     });
   });

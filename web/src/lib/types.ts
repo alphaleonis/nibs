@@ -125,14 +125,15 @@ export interface TreeNode<T extends TreeNib = TreeNib> {
   children: TreeNode<T>[];
   depth: number;
   /**
-   * The section facts, present exactly on the nodes that ARE sections: the
-   * ordering group this node's children are members of, and whether the section
-   * was declared by the lens or discovered from a placement.
+   * The section facts, present exactly on the nodes that ARE sections: which
+   * section this is, whether the lens declared it or a placement discovered it,
+   * and what it means — the group its rows order in and what entering it does.
    *
    * Optional because only a grouped view's section containers are sections —
    * `buildTree` and the flat shape emit nodes that are not — so the many nodes
-   * with nothing to say are not made to say it. ONE optional carrying both
-   * facts, so a node either is a section and answers both or is not one at all.
+   * with nothing to say are not made to say it. ONE optional carrying every
+   * fact, so a node either is a section and answers all of them or is not one at
+   * all.
    */
   section?: SectionMeta;
 }

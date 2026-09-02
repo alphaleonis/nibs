@@ -716,7 +716,7 @@ describe("buildTableData", () => {
       expect(t1.region).toEqual({ axis: "parent", parentId: "E1" });
     });
 
-    it("only a milestone section declares a childRegion; every other row carries null", () => {
+    it("only a milestone section draws a queue-entering section; every other row carries null", () => {
       const nibs: TreeTableNib[] = [
         makeTreeTableNib({ id: "M1", type: "milestone" }),
         makeTreeTableNib({ id: "E1", type: "epic", parentId: "M1" }),
@@ -728,7 +728,12 @@ describe("buildTableData", () => {
         expect(rows.length, level).toBeGreaterThan(0);
         for (const row of rows) {
           const declares = level === "milestones" && row.nib.id === "M1";
-          expect(row.childRegion, `${level}/${row.nib.id}`).toEqual(
+          // Read through the entry's own arm: a section that governs no ordering
+          // group still DRAWS a section (answering `byRow`), and what this
+          // asserts is that none of them names a group.
+          const entry = row.drawsSection?.onEnter;
+          const named = entry?.kind === "region" ? entry.region : null;
+          expect(named, `${level}/${row.nib.id}`).toEqual(
             declares ? { axis: "milestone", milestoneId: "M1" } : null,
           );
         }

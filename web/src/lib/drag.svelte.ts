@@ -4,13 +4,17 @@ export type DropZone = "before" | "after" | "reparent";
 
 /**
  * What an ACCEPTED plan tells the affordance: the sentence it will carry out,
- * and the list it will carry it out in. The two travel together because a
+ * and what KIND of write it is — the list for a move, nothing but the kind for
+ * an assignment, which writes no position. They travel together because a
  * refusal has neither, so nothing can end up showing one without the other.
+ *
+ * The plan's own discriminant rather than a nullable region, so a surface
+ * coloring by axis has to answer for the arm that has none instead of reading
+ * `region?.axis` and taking the parent axis's colors by default.
  */
-export interface AcceptedDrop {
-  label: string;
-  region: Region;
-}
+export type AcceptedDrop =
+  | { readonly kind: "position"; readonly label: string; readonly region: Region }
+  | { readonly kind: "assign"; readonly label: string };
 
 export class DragState {
   /** IDs of the nibs being dragged */
@@ -21,10 +25,13 @@ export class DragState {
   dropTargetId: string | null = $state(null);
   dropZone: DropZone | null = $state(null);
   dropValid: boolean = $state(false);
+  /**
+   * The accepted plan, or null while nothing would happen — what the badge and
+   * the row indicator are drawn from.
+   */
+  dropAccepted: AcceptedDrop | null = $state(null);
   /** The accepted plan's own sentence, or null while nothing would happen. */
-  dropLabel: string | null = $state(null);
-  /** The list the accepted drop writes in, so the indicator can say which axis. */
-  dropRegion: Region | null = $state(null);
+  dropLabel: string | null = $derived(this.dropAccepted?.label ?? null);
 
   /** Cursor position (for the badge) */
   cursorX: number = $state(0);
@@ -38,16 +45,14 @@ export class DragState {
     this.dropTargetId = nibId;
     this.dropZone = zone;
     this.dropValid = valid;
-    this.dropLabel = accepted?.label ?? null;
-    this.dropRegion = accepted?.region ?? null;
+    this.dropAccepted = accepted;
   }
 
   clearDropTarget(): void {
     this.dropTargetId = null;
     this.dropZone = null;
     this.dropValid = false;
-    this.dropLabel = null;
-    this.dropRegion = null;
+    this.dropAccepted = null;
   }
 
   endDrag(): void {
