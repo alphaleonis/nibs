@@ -17,8 +17,10 @@ import (
 	"github.com/vektah/gqlparser/v2/ast"
 	"github.com/vektah/gqlparser/v2/validator/rules"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/nibcore"
 )
 
 // The endpoint `nibs serve` exposes is reachable by any page the user happens to
@@ -624,5 +626,81 @@ func TestWebSocketSurvivesHTTPServerWriteTimeout(t *testing.T) {
 	}
 	if pings < 2 {
 		t.Fatalf("only %d ping(s); the window did not outlast the write deadline", pings)
+	}
+}
+
+// areaDepthApp builds a store whose declared areas nest `depth` levels in a
+// single chain, so a query against it exercises a vocabulary deeper than the
+// document bound would ever allow a recursive type to be walked.
+func areaDepthApp(t *testing.T, depth int) *App {
+	t.Helper()
+	tmpDir := t.TempDir()
+	nibsDir := filepath.Join(tmpDir, ".nibs")
+	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
+		t.Fatalf("creating the test store: %v", err)
+	}
+
+	// Built from the leaf up, since a node owns its children.
+	node := config.AreaConfig{Name: fmt.Sprintf("level%d", depth-1)}
+	for i := depth - 2; i >= 0; i-- {
+		node = config.AreaConfig{Name: fmt.Sprintf("level%d", i), Children: []config.AreaConfig{node}}
+	}
+	cfg := config.Default()
+	cfg.Areas = []config.AreaConfig{node}
+	if err := cfg.ValidateAreas(); err != nil {
+		t.Fatalf("the chain fixture is not a valid vocabulary: %v", err)
+	}
+
+	testCore := nibcore.New(nibsDir, cfg)
+	if err := testCore.Load(); err != nil {
+		t.Fatalf("loading the test store: %v", err)
+	}
+	t.Cleanup(func() { _ = testCore.Close() })
+	return &App{Core: testCore}
+}
+
+// `Area` is deliberately NOT self-recursive, and this is the guard that keeps it
+// that way. Area nesting in a store's config is unbounded, while this endpoint
+// refuses a document that nests a recursive type past
+// maxRecursiveSelectionDepth — so an `Area` carrying `children` would enroll
+// itself in that bound and leave a vocabulary nested deeper than the bound with
+// no queryable shape at all. The flat, depth-carrying list exists so the
+// document's depth stays fixed however deep the vocabulary goes.
+func TestAreaVocabularyIsQueryableBelowTheRecursionBound(t *testing.T) {
+	schema := graph.NewExecutableSchema(graph.Config{Resolvers: &graph.Resolver{}}).Schema()
+	if recursiveTypeNames(schema)["Area"] {
+		t.Fatal("Area is counted as a recursive type; a vocabulary nested past the depth bound would be unqueryable")
+	}
+
+	depth := maxRecursiveSelectionDepth + 3
+	server := httptest.NewServer(newServeMux(areaDepthApp(t, depth), nil))
+	defer server.Close()
+
+	status, resp := postGraphQL(t, server.URL, `{ config { areas { path depth } } }`)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if len(resp.Errors) > 0 {
+		t.Fatalf("query refused: %s", resp.Errors[0].Message)
+	}
+
+	var decoded struct {
+		Config struct {
+			Areas []struct {
+				Path  string `json:"path"`
+				Depth int    `json:"depth"`
+			} `json:"areas"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal(resp.Data, &decoded); err != nil {
+		t.Fatalf("decoding data: %v", err)
+	}
+	areas := decoded.Config.Areas
+	if len(areas) != depth {
+		t.Fatalf("got %d areas, want the whole %d-deep chain", len(areas), depth)
+	}
+	deepest := areas[len(areas)-1]
+	if deepest.Depth != depth-1 {
+		t.Errorf("deepest area depth = %d, want %d", deepest.Depth, depth-1)
 	}
 }

@@ -2,11 +2,43 @@
 
 scalar Time
 
+"""
+One node of the per-project areas vocabulary declared in the store's config.yml.
+
+Deliberately NOT self-recursive: area nesting is unbounded (validateAreaNodes
+recurses with no depth limit), while the served endpoint refuses an operation
+nesting a self-recursive schema type past maxRecursiveSelectionDepth. A
+`children` field here would enroll Area in that bound and make a deeply nested
+vocabulary unqueryable. The nesting travels in `depth` and in the order of
+`Config.areas` instead.
+"""
+type Area {
+  "Full path from a root, segments joined with '/' — the value a nib's `area:` carries."
+  path: String!
+  "This node's own segment."
+  name: String!
+  "What belongs in this area; empty when the declaration omits it."
+  description: String!
+  "Display color — hex code or bare color name; empty when unset."
+  color: String!
+  "Depth from a root; 0 at the top level."
+  depth: Int!
+}
+
 type Config {
   "Project name derived from the config file directory"
   projectName: String!
   "Configured nib ID prefix (e.g., 'nibs-', 'myproj-'). Empty if unset."
   prefix: String!
+  """
+  The declared areas, FLATTENED in declaration order — a parent immediately
+  before the subtree it heads (config.AreaPaths' order). That ordering is the
+  CONTRACT, not an incidental: a node's subtree is the maximal run of following
+  entries with a greater `depth`, which is how a client answers the
+  downward-closed `area:` filter's membership without restating the rule.
+  Empty when none are declared.
+  """
+  areas: [Area!]!
 }
 
 "Result of the best-effort check for a newer nibs release."
