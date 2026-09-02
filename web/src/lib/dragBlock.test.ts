@@ -1,5 +1,8 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { GATE_REASONS, adjacencyReflectsOrdering, dragBlockFor } from "./dragBlock";
+import { GATE_REASONS } from "./dragBlock";
+import { EMPTY_SPINE } from "./viewSpine";
+
+const { adjacencyReflectsOrdering, dragBlockFor } = EMPTY_SPINE;
 import type { DragBlockReason } from "./dragBlock";
 import { VIEW_LEVELS, VIEW_LEVEL_LABELS } from "./types";
 import type { NibFilter } from "./types";

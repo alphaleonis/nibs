@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { buildTableData } from "./tableData";
+import { EMPTY_SPINE } from "./viewSpine";
+
+const { buildTableData } = EMPTY_SPINE;
 import { isSyntheticRowId } from "./tree";
 import { applySort } from "./tableSort";
 import { typeRank } from "./typeHierarchy";
@@ -22,6 +24,7 @@ function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
     parentId: null,
     milestone: "",
     milestoneOrder: "",
+    area: "",
     blockingIds: [],
     blockedByIds: [],
     etag: "etag-test",

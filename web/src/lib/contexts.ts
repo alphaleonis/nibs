@@ -8,6 +8,8 @@ import type { HistoryNav } from './composables/useHistoryNav.svelte';
 import type { ActiveView } from './composables/useActiveView.svelte';
 import type { ConnectionRecovery } from './connectionRecovery';
 import { COLUMN_ADAPTERS_KEY, columnAdapters } from './ColumnAdapters.svelte';
+import { EMPTY_SPINE } from './viewSpine';
+import type { ViewSpine } from './viewSpine';
 
 export const SELECTION_KEY = 'nibs:selection';
 export const DRAG_KEY = 'nibs:drag';
@@ -16,6 +18,7 @@ export const CONFIRM_DIALOG_KEY = 'nibs:confirm-dialog';
 export const HISTORY_NAV_KEY = 'nibs:history-nav';
 export const ACTIVE_VIEW_KEY = 'nibs:active-view';
 export const CONNECTION_KEY = 'nibs:connection';
+export const VIEW_SPINE_KEY = 'nibs:view-spine';
 
 export function provideSelection(s: SelectionState) { setContext(SELECTION_KEY, s); }
 export function useSelection(): SelectionState {
@@ -28,6 +31,21 @@ export function useDrag(): DragState {
   const d = getContext<DragState>(DRAG_KEY);
   if (!d) throw new Error('useDrag() called outside provider — call provideDrag() in a parent component');
   return d;
+}
+
+/**
+ * The view core, supplied as a GETTER rather than as the spine itself.
+ *
+ * The spine's identity changes once, when the areas vocabulary arrives, and a
+ * component that captured the value at setup would hold the pre-load one for the
+ * rest of the session. Read through the getter, a `$derived` re-runs on that
+ * change and a delegated handler reads the current spine at call time.
+ */
+export function provideViewSpine(get: () => ViewSpine) { setContext(VIEW_SPINE_KEY, get); }
+export function useViewSpine(): () => ViewSpine {
+  const g = getContext<() => ViewSpine>(VIEW_SPINE_KEY);
+  if (!g) throw new Error('useViewSpine() called outside provider — call provideViewSpine() in a parent component');
+  return g;
 }
 
 export function provideConnection(c: ConnectionRecovery) { setContext(CONNECTION_KEY, c); }
@@ -80,6 +98,7 @@ export function makeTestContext(
     confirmDialog?: ConfirmDialogState;
     historyNav?: HistoryNav;
     activeView?: ActiveView;
+    viewSpine?: ViewSpine;
   },
 ): Map<string, unknown> {
   const m = new Map<string, unknown>();
@@ -89,6 +108,11 @@ export function makeTestContext(
   // cells/headers (TreeTable, TreeTableRow) work in tests without wrapping them
   // in <ColumnAdapters>. Mirrors how the real app provides them.
   m.set(COLUMN_ADAPTERS_KEY, columnAdapters);
+  // Always provide a view spine, so components that build rows work in tests
+  // without one. The default declares no areas — the same answer a project with
+  // no `areas:` block gets.
+  const spine = opts?.viewSpine ?? EMPTY_SPINE;
+  m.set(VIEW_SPINE_KEY, () => spine);
   // Always provide a tree-view so components that read collapse state work in
   // tests without extra setup.
   m.set(TREE_VIEW_KEY, opts?.treeView ?? new TreeViewState(DEFAULT_VIEW_LEVEL));

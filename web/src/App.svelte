@@ -19,7 +19,9 @@
   import { DROP_REFUSAL_TOAST_ID, refusalAction, type DropPlan } from "./lib/ordering/dropPlan";
   import type { AnyCommand } from "./lib/mutations/types";
   import { TreeViewState } from "./lib/treeView.svelte";
-  import { provideSelection, provideDrag, provideTreeView, provideConfirmDialog, provideActiveView, provideHistoryNav, provideConnection } from "./lib/contexts";
+  import { provideSelection, provideDrag, provideTreeView, provideConfirmDialog, provideActiveView, provideHistoryNav, provideConnection, provideViewSpine } from "./lib/contexts";
+  import { createAreaVocabulary } from "./lib/areas";
+  import { makeViewSpine, LOADING_SPINE } from "./lib/viewSpine";
   import { useConnectionRecovery } from "./lib/composables/useConnectionRecovery.svelte";
   import type { ConnectionRecovery } from "./lib/connectionRecovery";
   import { createHistoryNav } from "./lib/composables/useHistoryNav.svelte";
@@ -66,6 +68,17 @@
 
   const configResult = queryStore({ client, query: CONFIG_QUERY });
   let projectName = $derived($configResult.data?.config?.projectName ?? "");
+
+  // The areas vocabulary is the one per-project vocabulary codegen cannot
+  // supply, so it arrives here at runtime and binds the view core. First paint
+  // is NOT gated on it: the five shipped view levels need none of it, and the
+  // pre-load spine is a stable singleton whose `validity()` answers "unknown"
+  // rather than "undeclared".
+  let declaredAreas = $derived($configResult.data?.config?.areas ?? null);
+  let viewSpine = $derived(
+    declaredAreas === null ? LOADING_SPINE : makeViewSpine(createAreaVocabulary(declaredAreas)),
+  );
+  provideViewSpine(() => viewSpine);
 
   $effect(() => {
     if (projectName) {

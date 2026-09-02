@@ -4,7 +4,10 @@ import { DragState } from "../drag.svelte";
 import { batch, reorderNib, reparentAndReorder, setParent } from "../mutations/commands";
 import type { DropPlan } from "../ordering/dropPlan";
 import type { RowData } from "../tableData";
-import { buildTableData, rowRegion } from "../tableData";
+import { rowRegion } from "../tableData";
+import { EMPTY_SPINE } from "../viewSpine";
+
+const { buildTableData } = EMPTY_SPINE;
 import type { TreeTableNib } from "../types";
 import { useTreeDrag } from "./useTreeDrag.svelte";
 
@@ -27,6 +30,7 @@ function makeNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
     parentId: null,
     milestone: "",
     milestoneOrder: "",
+    area: "",
     blockingIds: [],
     blockedByIds: [],
     etag: "etag-test",

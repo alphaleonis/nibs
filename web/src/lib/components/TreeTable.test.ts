@@ -6,7 +6,10 @@ import { tick } from "svelte";
 import TreeTable from "./TreeTable.svelte";
 import type { TreeTableNib, ViewLevel, ColumnKey } from "../types";
 import { DEFAULT_COLUMN_WIDTHS } from "../types";
-import { containingSectionRowId, isSyntheticRowId } from "../tree";
+import { isSyntheticRowId } from "../tree";
+import { EMPTY_SPINE } from "../viewSpine";
+
+const { containingSectionRowId } = EMPTY_SPINE;
 import { OPEN_STATUSES } from "../constants";
 import { SelectionState } from "../selection.svelte";
 import { DragState } from "../drag.svelte";
@@ -30,6 +33,7 @@ function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
     parentId: null,
     milestone: "",
     milestoneOrder: "",
+    area: "",
     blockingIds: [],
     blockedByIds: [],
     etag: "etag-test",

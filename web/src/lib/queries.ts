@@ -5,6 +5,13 @@ export const CONFIG_QUERY = graphql(`
     config {
       projectName
       prefix
+      areas {
+        path
+        name
+        description
+        color
+        depth
+      }
     }
   }
 `);
@@ -190,6 +197,7 @@ export const TREE_TABLE_QUERY = graphql(`
       parentId
       milestone
       milestoneOrder
+      area
       blockingIds
       blockedByIds
       etag

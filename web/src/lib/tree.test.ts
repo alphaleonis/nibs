@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { buildTree, buildViewTree, buildShapedViewTree, viewShapeFor, isSyntheticRowId, holdsChildrenByDisplay, containingSectionRowId, collectDescendantIds, BUCKET_IDS } from "./tree";
+import { buildTree, buildShapedViewTree, isSyntheticRowId, holdsChildrenByDisplay, collectDescendantIds } from "./tree";
+import { EMPTY_SPINE } from "./viewSpine";
+
+// The spine's methods are closures in an object literal and never read `this`,
+// so destructuring them is legal — which is what keeps the call sites below
+// spelled exactly as they were when these were module-level functions.
+const { buildViewTree, viewShapeFor, containingSectionRowId, bucketIds } = EMPTY_SPINE;
 import type { GroupingLens, Placement, ViewShape } from "./tree";
 import { makeNibComparator } from "./tableSort";
 import { milestoneOf, resolvedMilestoneId } from "./membership";
@@ -21,6 +27,7 @@ function makeTreeNib(overrides: Partial<TreeNib> = {}): TreeNib {
     parentId: null,
     milestone: "",
     milestoneOrder: "",
+    area: "",
     ...overrides,
   };
 }
@@ -1684,11 +1691,15 @@ describe("isSyntheticRowId", () => {
   // keeps it out of the filename-derived id space, and a last character outside
   // [0-9a-z] keeps it out of `nib.NewID`'s prefix-plus-nanoid space. This rule
   // has already been written down wrongly once as prose, which has no compiler —
-  // so it is asserted here instead, against the derived set the production code
-  // actually uses.
+  // so it is asserted here instead, over the same derivation `bucketIds` is: every
+  // shipped lens, reached through `viewShapeFor`'s exhaustive switch.
   it("every bucket id leads with a slash and ends outside the nanoid charset", () => {
-    expect(BUCKET_IDS.size, "no bucket ids to check — this guard would pass vacuously").toBeGreaterThan(0);
-    for (const id of BUCKET_IDS) {
+    const keys = VIEW_LEVELS.flatMap((level) => {
+      const shape = viewShapeFor(level);
+      return shape.kind === "grouped" ? [shape.lens.leftover.key] : [];
+    });
+    expect(keys.length, "no bucket ids to check — this guard would pass vacuously").toBeGreaterThan(0);
+    for (const id of keys) {
       expect(
         id.startsWith("/"),
         `bucket id ${JSON.stringify(id)} must lead with "/" — otherwise an id parsed from a filename could equal it`,
@@ -1697,6 +1708,7 @@ describe("isSyntheticRowId", () => {
         /[0-9a-z]$/.test(id),
         `bucket id ${JSON.stringify(id)} must not end in [0-9a-z] — otherwise nib.NewID could mint it from a caller prefix`,
       ).toBe(false);
+      expect(bucketIds.has(id), `bucketIds is missing ${JSON.stringify(id)}`).toBe(true);
     }
   });
 });
@@ -1707,7 +1719,7 @@ describe("isSyntheticRowId", () => {
 // sweeps genuine parent-axis children into it, giving them a group whose
 // membership the server would refuse. Nothing in the type system rules the
 // combination out, so it is asserted here, over lenses DERIVED from
-// `viewShapeFor` for the same reason BUCKET_IDS is: a hand-kept list enrolls a
+// `viewShapeFor` for the same reason `bucketIds` is: a hand-kept list enrolls a
 // new lens only if someone remembers to.
 describe("shipped grouping lenses", () => {
   it("never nest headers structurally AND declare a childRegion", () => {

@@ -12,7 +12,7 @@
  * injected `SourcePorts`. That keeps this decision logic provable in plain vitest
  * with a fake clock — no jsdom, no `$effect.root`, no urql mock.
  *
- * Distinct from `tableData.ts` / `buildTableData`, which assembles the view rows
+ * Distinct from `tableData.ts` / `buildShapedTableData`, which assembles the view rows
  * from a nib list; this decides when to (re)source that list.
  */
 

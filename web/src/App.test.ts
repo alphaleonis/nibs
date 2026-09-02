@@ -4,12 +4,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import App from "./App.svelte";
 import { CONFIG_QUERY, NIB_DETAIL_QUERY } from "./lib/queries";
 import { openSubmenu } from "./lib/testing/menu";
+import type { ViewSpine } from "./lib/viewSpine";
 
 // The detail query for a nib that exists NOW but can be made to vanish mid-session
 // (deleted / archived while the user has it open). Hoisted so the mock factory and
 // the tests share one store instance: the factory serves it for `nibs-vanish`, and
 // a test settles it to `{ nib: null }` once the buffer is dirty.
-const { vanishingNib, vanishingDetailData, nibSubData } = await vi.hoisted(async () => {
+const { vanishingNib, vanishingDetailData, nibSubData, configData } = await vi.hoisted(async () => {
   const { writable } = await import("svelte/store");
   const nib = {
     id: "nibs-vanish",
@@ -52,8 +53,29 @@ const { vanishingNib, vanishingDetailData, nibSubData } = await vi.hoisted(async
       data: undefined,
       stale: false,
     }),
+    // CONFIG_QUERY. Writable so the areas test can settle it to a config that
+    // DECLARES areas — the default value below carries no `areas` key, which is
+    // the same `undefined` App reads before the query resolves, so every other
+    // test in this file sits on the pre-load spine.
+    configData: writable<{
+      fetching: boolean;
+      error: undefined;
+      data: { config: Record<string, unknown> };
+      stale: boolean;
+    }>({
+      fetching: false,
+      error: undefined,
+      data: { config: { projectName: "test-project" } },
+      stale: false,
+    }),
   };
 });
+
+/** Settle CONFIG_QUERY to `config`. */
+const setConfig = (config: Record<string, unknown>) =>
+  configData.set({ fetching: false, error: undefined, data: { config }, stale: false });
+/** Restore the shared config store so one test's areas don't leak into the next. */
+const resetConfig = () => setConfig({ projectName: "test-project" });
 
 /** Settle the vanishing nib's detail query to "no such nib". */
 const vanishNib = () =>
@@ -80,16 +102,32 @@ const archiveNib = (id: string) =>
 const resetNibSub = () =>
   nibSubData.set({ fetching: false, error: undefined, data: undefined, stale: false });
 
+// App hands the view spine to its children as a getter in Svelte context, and no
+// child exposes it back — so the provider is wrapped to keep hold of the getter.
+// The real one still runs, so consumers inside App read the same spine.
+const { spineGetters } = vi.hoisted(() => ({ spineGetters: [] as (() => ViewSpine)[] }));
+
+vi.mock("./lib/contexts", async () => {
+  const actual = await vi.importActual<typeof import("./lib/contexts")>("./lib/contexts");
+  return {
+    ...actual,
+    provideViewSpine: (get: () => ViewSpine) => {
+      spineGetters.push(get);
+      actual.provideViewSpine(get);
+    },
+  };
+});
+
+/** The spine App provided on the most recent render. */
+const currentSpine = (): ViewSpine => {
+  const get = spineGetters.at(-1);
+  if (!get) throw new Error("App did not provide a view spine");
+  return get();
+};
+
 vi.mock("@urql/svelte", async () => {
   const { readable } = await import("svelte/store");
   const actual = await vi.importActual<typeof import("@urql/svelte")>("@urql/svelte");
-
-  const configData = readable({
-    fetching: false,
-    error: undefined,
-    data: { config: { projectName: "test-project" } },
-    stale: false,
-  });
 
   // `reexecute`: TreeTable calls it on every change event that is not a delete
   // (a delete defers it behind the fade timer). A bare `readable` has no such
@@ -210,6 +248,55 @@ describe("App", () => {
     // would leak into the next one. Same for the shared subscription store.
     restoreVanishingNib();
     resetNibSub();
+    // The config store is module-level too, so a declared-areas config would
+    // otherwise leak into the next test.
+    resetConfig();
+    spineGetters.length = 0;
+  });
+
+  describe("areas vocabulary", () => {
+    const areas = [
+      { path: "web", name: "web", description: "Frontend", color: "#0ea5e9", depth: 0 },
+      { path: "web/dashboard", name: "dashboard", description: "", color: "", depth: 1 },
+      { path: "infra", name: "infra", description: "", color: "", depth: 0 },
+    ];
+
+    it("binds the view spine to the declared areas when the config carries them", () => {
+      setConfig({ projectName: "test-project", areas });
+      render(App);
+
+      const vocabulary = currentSpine().areas;
+      expect(vocabulary.status).toBe("ready");
+      expect(vocabulary.sections().map((n) => n.path)).toEqual([
+        "web",
+        "web/dashboard",
+        "infra",
+      ]);
+      expect(vocabulary.resolve("web")?.description).toBe("Frontend");
+      expect(vocabulary.validity("web/dashboard")).toBe("declared");
+      expect(vocabulary.validity("nope")).toBe("undeclared");
+      expect(vocabulary.subtreeOf("web").map((n) => n.path)).toEqual(["web", "web/dashboard"]);
+    });
+
+    // `Config.areas` is `[Area!]!`, so a project declaring none sends `[]` — a
+    // settled answer, not a pending one, and the spine must say so.
+    it("reports no areas, not a pending load, for an empty list", () => {
+      setConfig({ projectName: "test-project", areas: [] });
+      render(App);
+
+      expect(currentSpine().areas.status).toBe("none");
+      expect(currentSpine().areas.validity("web")).toBe("undeclared");
+    });
+
+    // The default stub carries no `areas` key, which reaches App as the same
+    // `undefined` an unresolved query does — the branch every other test here
+    // sits on.
+    it("holds the pre-load spine while the config has not answered", () => {
+      render(App);
+
+      expect(currentSpine().areas.status).toBe("loading");
+      expect(currentSpine().areas.validity("web")).toBe("unknown");
+    });
   });
 
   it("renders with dark theme shell containing Toolbar and TreeTable", () => {

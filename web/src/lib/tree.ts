@@ -1,4 +1,3 @@
-import { VIEW_LEVELS } from "./types";
 import type { TreeNib, TreeNode, TreeTableNib, ViewLevel } from "./types";
 import type { Region } from "./ordering/region";
 import { MILESTONE_TYPE, milestoneOf } from "./membership";
@@ -140,7 +139,7 @@ export interface GroupingLens<T extends TreeNib = TreeNib> {
    * under the same `byId`.
    *
    * Both halves are load-bearing on the caller side. `buildGroupedTree` asks once
-   * per nib and reads a memo thereafter, while `containingSectionRowId` asks
+   * per nib and reads a memo thereafter, while `shapedContainingSectionRowId` asks
    * again on demand — so a lens that answers a second ask differently makes those
    * two disagree about which row contains a nib.
    */
@@ -296,7 +295,7 @@ const FEATURE_TYPE_LENS = typeLens(["feature", "bug"], "/__no_feature_or_bug__",
  * (cmd/roadmap_test.go) now guards against on the Go side.
  *
  * The key satisfies both halves of `isSyntheticRowId` — asserted over the
- * derived `BUCKET_IDS` in tree.test.ts, not left to this sentence.
+ * derived `bucketIds` in tree.test.ts, not left to this sentence.
  */
 const BACKLOG_KEY: SectionKey = "/__backlog__";
 
@@ -418,29 +417,6 @@ export function viewShapeFor(viewLevel: ViewLevel): ViewShape {
 }
 
 /**
- * Exact set of leftover-section keys, derived by asking every view level what it
- * renders as.
- *
- * DERIVED, not listed. The guard in tree.test.ts is only worth anything if every
- * shipped lens is enrolled in it, and a hand-kept list beside `viewShapeFor`
- * enrolls a new lens only if someone remembers to — while the switch above
- * enrolls it or fails to compile. An unenrolled leftover key that misses the
- * `isSyntheticRowId` property makes its own section row classify as a REAL nib
- * on every render: selectable, a legal Delete/batch target, a drop target, and
- * a member of the root ordering group (`makeSectionNode` gives every fabricated
- * container `parentId: null`, which is the fallback `rowRegion` then applies).
- *
- * Evaluated after the lens constants and after `viewShapeFor` (a hoisted
- * declaration), so the module-level initialization is well ordered.
- */
-export const BUCKET_IDS = new Set<string>(
-  VIEW_LEVELS.flatMap((level) => {
-    const shape = viewShapeFor(level);
-    return shape.kind === "grouped" ? [shape.lens.leftover.key] : [];
-  }),
-);
-
-/**
  * The row id for a section no nib heads.
  *
  * The leftover key is the lens's own literal and already lives in the synthetic
@@ -496,7 +472,7 @@ function sectionRowId(key: SectionKey, lens: GroupingLens): string {
  * puts the burden on the LENS: a leftover key meeting only one half — `/no-area`
  * leads with a slash but ends in `a` — makes its own section row answer FALSE
  * here and classify as a real nib. Every shipped `leftover.key` is asserted
- * against both halves in tree.test.ts, against the derived `BUCKET_IDS`, so such
+ * against both halves in tree.test.ts, against the derived `bucketIds`, so such
  * a key fails there rather than reaching a render.
  */
 export function isSyntheticRowId(id: string): boolean {
@@ -542,12 +518,11 @@ export function holdsChildrenByDisplay<T extends TreeNib>(node: TreeNode<T>): bo
  * same way for the same inputs; the cost is a placement or two recomputed per
  * call.
  */
-export function containingSectionRowId<T extends TreeNib>(
+export function shapedContainingSectionRowId<T extends TreeNib>(
   byId: ReadonlyMap<string, T>,
   nibId: string,
-  viewLevel: ViewLevel,
+  shape: ViewShape,
 ): string | null {
-  const shape = viewShapeFor(viewLevel);
   if (shape.kind !== "grouped") return null;
   const self = byId.get(nibId);
   if (self === undefined) return null;
@@ -580,7 +555,7 @@ function findNode<T extends TreeNib>(nodes: TreeNode<T>[], id: string): TreeNode
  * Collects the ids of every descendant of `rootId` within the given tree,
  * EXCLUDING `rootId` itself. Returns an empty set when `rootId` is not present.
  *
- * The tree must be the DISPLAYED view tree (from `buildViewTree`), not the raw
+ * The tree must be the DISPLAYED view tree (from `buildShapedViewTree`), not the raw
  * nib list: the grouping lens reparents nodes (headers keep their subtree,
  * above-tier containers are hidden, loose items fall into a synthetic "No X"
  * bucket whose id is not a real `parentId`). Walking `node.children` here —
@@ -630,6 +605,7 @@ function makeSectionNode<T extends TreeNib>(id: string, title: string, children:
     parentId: null,
     milestone: "",
     milestoneOrder: "",
+    area: "",
     blockingIds: [],
     blockedByIds: [],
     etag: "",
@@ -675,16 +651,6 @@ export function buildShapedViewTree<T extends TreeNib>(
   }
 }
 
-/** `buildShapedViewTree` addressed by view level, for the many callers that hold
- *  one rather than a shape. */
-export function buildViewTree<T extends TreeNib>(
-  nibs: T[],
-  viewLevel: ViewLevel,
-  sortComparator?: (a: T, b: T) => number,
-): TreeNode<T>[] {
-  return buildShapedViewTree(nibs, viewShapeFor(viewLevel), sortComparator);
-}
-
 function buildGroupedTree<T extends TreeNib>(
   nibs: T[],
   lens: GroupingLens,
@@ -696,7 +662,7 @@ function buildGroupedTree<T extends TreeNib>(
   // Every placement is decided here, before any assembly. `byId` is complete
   // before this loop and never mutated after it, and `place` is contracted total
   // and self-consistent, so asking again is equivalent —
-  // `containingSectionRowId` leans on exactly that and asks again outside the
+  // `shapedContainingSectionRowId` leans on exactly that and asks again outside the
   // build rather than sharing this map.
   //
   // It is worth being blunt about what this map is NOT, because both tempting

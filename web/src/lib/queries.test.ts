@@ -10,6 +10,7 @@ import {
 import { readFileSync } from "node:fs";
 import * as queries from "./queries";
 import {
+  CONFIG_QUERY,
   NIB_DETAIL_QUERY,
   NIB_CONFLICT_SNAPSHOT_QUERY,
   TREE_TABLE_QUERY,
@@ -53,6 +54,27 @@ describe("TREE_TABLE_QUERY", () => {
     const selection = source.match(/nibs\s*\([^)]*\)\s*\{([\s\S]*)\}/)?.[1] ?? "";
     expect(selection).not.toBe("");
     for (const field of ["milestone", "milestoneOrder"]) {
+      expect(selection).toMatch(new RegExp(`^\\s*${field}\\s*$`, "m"));
+    }
+  });
+
+  it("selects the area assignment", () => {
+    const source = print(TREE_TABLE_QUERY);
+    const selection = source.match(/nibs\s*\([^)]*\)\s*\{([\s\S]*)\}/)?.[1] ?? "";
+    expect(selection).not.toBe("");
+    expect(selection).toMatch(/^\s*area\s*$/m);
+  });
+});
+
+describe("CONFIG_QUERY", () => {
+  // Dropping this selection does not fail: the vocabulary is simply built from
+  // nothing, and `status` then reports "none" — indistinguishable from a project
+  // that genuinely declares no areas.
+  it("selects every field the areas vocabulary is built from", () => {
+    const source = print(CONFIG_QUERY);
+    const selection = source.match(/areas\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(selection).not.toBe("");
+    for (const field of ["path", "name", "description", "color", "depth"]) {
       expect(selection).toMatch(new RegExp(`^\\s*${field}\\s*$`, "m"));
     }
   });

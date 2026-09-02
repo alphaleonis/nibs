@@ -23,7 +23,7 @@ vi.mock("./tree", async (importOriginal) => {
   };
 });
 
-const { buildTableData } = await import("./tableData");
+const { buildTableData } = (await import("./viewSpine")).EMPTY_SPINE;
 
 function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
   return {
@@ -39,6 +39,7 @@ function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
     parentId: null,
     milestone: "",
     milestoneOrder: "",
+    area: "",
     blockingIds: [],
     blockedByIds: [],
     etag: "etag-test",

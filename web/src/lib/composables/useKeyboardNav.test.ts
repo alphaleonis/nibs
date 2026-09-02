@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { SelectionState } from "../selection.svelte";
-import { buildTableData, rowRegion, type RowData } from "../tableData";
+import { rowRegion, type RowData } from "../tableData";
+import { EMPTY_SPINE } from "../viewSpine";
+
+const { buildTableData } = EMPTY_SPINE;
 import type { TreeTableNib, OpenDetailGesture } from "../types";
 import { DEFAULT_OPEN_DETAIL_ON } from "../types";
 import { useKeyboardNav } from "./useKeyboardNav.svelte";
@@ -19,6 +22,7 @@ function makeNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
     parentId: null,
     milestone: "",
     milestoneOrder: "",
+    area: "",
     blockingIds: [],
     blockedByIds: [],
     etag: "etag-test",

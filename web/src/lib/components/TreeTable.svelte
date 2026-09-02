@@ -4,11 +4,10 @@
   import type { NibFilter, ViewLevel, RowDensity, BlockedEmphasis, OpenDetailGesture, RowSubtreeActions, TreeTableNib, TableSort, SortField } from "../types";
   import type { ColumnKey } from "../columns";
   import type { Preferences } from "../preferences.svelte";
-  import { buildTableData } from "../tableData";
-  import { isSyntheticRowId, containingSectionRowId, buildViewTree, collectDescendantIds } from "../tree";
+  import { isSyntheticRowId, collectDescendantIds } from "../tree";
   import { applySort, nextTableSort } from "../tableSort";
   import { prepareFilter, matchesFilter } from "../filter";
-  import { adjacencyReflectsOrdering, dragBlockFor, DRAG_BLOCK_TOAST_ID, FLAT_BLOCK_REMEDY_VIEW } from "../dragBlock";
+  import { DRAG_BLOCK_TOAST_ID, FLAT_BLOCK_REMEDY_VIEW } from "../dragBlock";
   import type { DragBlock } from "../dragBlock";
   import { toast } from "svelte-sonner";
   import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnWidths, resolveColumnOrder, resolveTableSort, emitFilter, emitTableSort, emitColumnOrder, switchViewLevel } from "../resolvePrefs";
@@ -21,7 +20,7 @@
   import type { DropPlan } from "../ordering/dropPlan";
   import { regionBandAt, type BandAxis } from "../ordering/regionBand";
   import type { PanelPolicy } from "../selection.svelte";
-  import { useSelection, useDrag, useActiveView, useTreeView, useConnection } from "../contexts";
+  import { useSelection, useDrag, useActiveView, useTreeView, useConnection, useViewSpine } from "../contexts";
   import { useColumnResize } from "../composables/useColumnResize.svelte";
   import { useColumnDrag } from "../composables/useColumnDrag.svelte";
   import { useTreeDrag } from "../composables/useTreeDrag.svelte";
@@ -102,6 +101,10 @@
   // {#key position} block) so it survives a TreeTable remount on a dock-position
   // toggle — see treeView.svelte.ts.
   const treeView = useTreeView();
+  // A getter, never the spine itself: its identity changes once, when the areas
+  // vocabulary arrives, and the `$derived`s below have to see that. Capturing the
+  // value here would pin them to the pre-load spine.
+  const viewSpine = useViewSpine();
 
   // Resolve values: prefs takes precedence over individual props
   let resolvedFilter = $derived(resolveFilter(prefs, filter));
@@ -145,7 +148,7 @@
   // dragBlockFor is the single source of truth for BOTH the gate and the
   // explanation raised on a blocked drag attempt, so the row's affordance and the
   // toast can never disagree about which gate is shut.
-  let dragBlock = $derived(dragBlockFor(resolvedFilter, resolvedViewLevel, activeSort));
+  let dragBlock = $derived(viewSpine().dragBlockFor(resolvedFilter, resolvedViewLevel, activeSort));
   let dragAllowed = $derived(dragBlock === null);
   let showColumn = $derived((key: ColumnKey) => resolvedVisibleColumns.includes(key));
 
@@ -253,7 +256,7 @@
 
   // The client-side filter is the original filter (not the server-stripped version).
   // buildTableData uses hasClientFilters/matchesFilter from filter.ts directly.
-  let tableData = $derived(buildTableData(orderedNibs, resolvedFilter, resolvedViewLevel, treeView.collapsedIds, activeSort));
+  let tableData = $derived(viewSpine().buildTableData(orderedNibs, resolvedFilter, resolvedViewLevel, treeView.collapsedIds, activeSort));
   let rows = $derived(tableData.rows);
   // Which ids the CURRENT lens has a row for — collapse- and filter-independent
   // (see TableData.viewMemberIds). The view-transition applier reconciles against
@@ -273,7 +276,7 @@
   // gate `dragBlockFor` shuts today, so the two predicates agree; they are asked
   // separately so a gate added for another reason cannot delete the bands.
   let regionBands: (BandAxis | null)[] = $derived(
-    adjacencyReflectsOrdering(resolvedFilter, resolvedViewLevel, activeSort)
+    viewSpine().adjacencyReflectsOrdering(resolvedFilter, resolvedViewLevel, activeSort)
       ? rows.map((row, i) => regionBandAt(row, i === 0 ? null : rows[i - 1]))
       : [],
   );
@@ -461,7 +464,7 @@
       // is not the target's ancestor — which no real nib names as its parentId,
       // so the chain walk above cannot reach it. Un-collapse the section the
       // current lens puts this nib in too.
-      const containerId = containingSectionRowId(nibMap, nibId, resolvedViewLevel);
+      const containerId = viewSpine().containingSectionRowId(nibMap, nibId, resolvedViewLevel);
       if (containerId) next.delete(containerId);
       // If expansion changes nothing yet the nib is still not visible, it is in
       // the dataset but has no row, regardless of collapse state — either an
@@ -533,7 +536,7 @@
   // re-sorting the top-level headers / bucket items can't change which ids are a
   // node's descendants. Building the tree unsorted here is cheaper and equivalent.
   function expandSubtree(rootId: string) {
-    const viewTree = buildViewTree<TreeTableNib>(allNibs, resolvedViewLevel);
+    const viewTree = viewSpine().buildViewTree<TreeTableNib>(allNibs, resolvedViewLevel);
     const descendantIds = collectDescendantIds(viewTree, rootId);
     const next = new Set(treeView.collapsedIds);
     next.delete(rootId);
@@ -542,7 +545,7 @@
   }
 
   function collapseSubtree(rootId: string) {
-    const viewTree = buildViewTree<TreeTableNib>(allNibs, resolvedViewLevel);
+    const viewTree = viewSpine().buildViewTree<TreeTableNib>(allNibs, resolvedViewLevel);
     const descendantIds = collectDescendantIds(viewTree, rootId);
     const next = new Set(treeView.collapsedIds);
     // Collapse the row itself plus every descendant that actually has children,

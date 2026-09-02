@@ -1,0 +1,129 @@
+/**
+ * The areas vocabulary, as the client asks about it.
+ *
+ * Areas are the one genuinely per-project vocabulary — statuses, types,
+ * priorities, estimates and the hierarchy rules are generated at build time into
+ * `generated/vocabulary.ts`, and a per-store `areas:` block cannot be. So this
+ * one arrives at runtime, over `Config.areas`.
+ *
+ * A PORT OF QUESTIONS, not a getter over a list. Each method mirrors a decision
+ * the Go side already makes (`config.GetArea`, `config.IsValidArea`,
+ * `config.IsAreaWithin`, `config.AreasDeclared`), so a consumer asks rather than
+ * re-derives — which is what keeps the two sides from drifting.
+ *
+ * Pure: no Svelte, no urql. The production adapter builds one from the config
+ * query; a test builds one from a literal.
+ */
+
+/** One declared area. Mirrors the `Area` type on the wire. */
+export interface AreaNode {
+  /** Full path from a root, segments joined with "/" — the value a nib's `area:` carries. */
+  readonly path: string;
+  /** This node's own segment. */
+  readonly name: string;
+  readonly description: string;
+  /** Display color — hex code or bare color name; empty when unset. */
+  readonly color: string;
+  /** Depth from a root; 0 at the top level. */
+  readonly depth: number;
+}
+
+/**
+ * Whether a value is one the server's `area:` filter will accept.
+ *
+ * THREE-valued on purpose. The server refuses an undeclared `area:` filter
+ * outright — the whole `nibs` query fails, not just that predicate — and a
+ * filter round-trips through localStorage and `?q=`, so it can be held before
+ * the vocabulary has arrived. Reading "not yet loaded" as "undeclared" would
+ * either drop a valid token or send one that fails the query.
+ */
+export type AreaValidity = "declared" | "undeclared" | "unknown";
+
+export interface AreaVocabulary {
+  /**
+   * "none" means the project declares no areas — a normal and permanent state
+   * (`config.AreasDeclared` is the same question), distinct from "loading".
+   * Never conflated with `sections().length`, because those are different
+   * answers to different questions.
+   */
+  readonly status: "loading" | "none" | "ready";
+  /** Every declared area in DECLARATION order. */
+  sections(): readonly AreaNode[];
+  /** What a nib's stored `area:` resolves to, or null when it names no declared
+   *  area (`config.GetArea`). Stored values arrive verbatim. */
+  resolve(stored: string): AreaNode | null;
+  /** `config.IsValidArea`, plus the pre-load third answer. */
+  validity(path: string): AreaValidity;
+  /** The downward closure, `path` included — `config.IsAreaWithin` read forwards.
+   *  Empty when `path` names no declared area. */
+  subtreeOf(path: string): readonly AreaNode[];
+  /** What completes `area:<partial>` — declaration order, case-insensitive substring. */
+  completions(partial: string): readonly string[];
+}
+
+const EMPTY_NODES: readonly AreaNode[] = Object.freeze([]);
+const EMPTY_PATHS: readonly string[] = Object.freeze([]);
+
+/**
+ * Build a vocabulary from the flat list the server sends.
+ *
+ * The list is in DECLARATION order with a parent immediately before the subtree
+ * it heads, and that ordering is the contract `subtreeOf` reads: a node's
+ * subtree is the maximal run of following entries with a greater `depth`. The
+ * client therefore never restates `IsAreaWithin`'s segment descent, and
+ * `webhooks ⊄ web` falls out of the ordering rather than out of a string test
+ * one side could tighten alone.
+ */
+export function createAreaVocabulary(flat: readonly AreaNode[]): AreaVocabulary {
+  const nodes: readonly AreaNode[] = Object.freeze([...flat]);
+  const indexByPath = new Map<string, number>();
+  for (let i = 0; i < nodes.length; i++) indexByPath.set(nodes[i].path, i);
+
+  function subtreeOf(path: string): readonly AreaNode[] {
+    const start = indexByPath.get(path);
+    if (start === undefined) return EMPTY_NODES;
+    const depth = nodes[start].depth;
+    let end = start + 1;
+    while (end < nodes.length && nodes[end].depth > depth) end++;
+    return Object.freeze(nodes.slice(start, end));
+  }
+
+  // Frozen because a vocabulary is routinely a module singleton shared by every
+  // test file in a vitest worker, where one reassigned method would follow the
+  // worker into unrelated suites.
+  return Object.freeze({
+    status: nodes.length === 0 ? "none" : "ready",
+    sections: () => nodes,
+    resolve: (stored: string) => {
+      const i = indexByPath.get(stored);
+      return i === undefined ? null : nodes[i];
+    },
+    validity: (path: string): AreaValidity => (indexByPath.has(path) ? "declared" : "undeclared"),
+    subtreeOf,
+    completions: (partial: string) => {
+      const needle = partial.toLowerCase();
+      return Object.freeze(
+        nodes.flatMap((n) => (n.path.toLowerCase().includes(needle) ? [n.path] : [])),
+      );
+    },
+  } satisfies AreaVocabulary);
+}
+
+/**
+ * The vocabulary before the config query resolves.
+ *
+ * Not `createAreaVocabulary([])`: that answers "undeclared" for every path,
+ * which is the one wrong answer during this window. Everything else is empty
+ * either way.
+ */
+export const LOADING_AREAS: AreaVocabulary = Object.freeze({
+  status: "loading",
+  sections: () => EMPTY_NODES,
+  resolve: () => null,
+  validity: () => "unknown",
+  subtreeOf: () => EMPTY_NODES,
+  completions: () => EMPTY_PATHS,
+} satisfies AreaVocabulary);
+
+/** The vocabulary of a project that declares no areas. */
+export const EMPTY_AREAS: AreaVocabulary = createAreaVocabulary([]);

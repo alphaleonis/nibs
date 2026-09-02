@@ -1,6 +1,6 @@
-import type { TreeTableNib, NibFilter, ViewLevel, TreeNode, TableSort } from "./types";
+import type { TreeTableNib, NibFilter, TreeNode, TableSort } from "./types";
 import type { Region } from "./ordering/region";
-import { buildShapedViewTree, holdsChildrenByDisplay, isSyntheticRowId, viewShapeFor } from "./tree";
+import { buildShapedViewTree, holdsChildrenByDisplay, isSyntheticRowId } from "./tree";
 import type { ViewShape } from "./tree";
 import { makeNibComparator } from "./tableSort";
 import { hasClientFilters, matchesFilter } from "./filter";
@@ -153,15 +153,13 @@ function showsAncestorContext(shape: ViewShape): boolean {
   }
 }
 
-export function buildTableData(
+export function buildShapedTableData(
   allNibs: TreeTableNib[],
   filter: NibFilter,
-  viewLevel: ViewLevel,
+  shape: ViewShape,
   collapsedIds: ReadonlySet<string>,
   sort: TableSort | null = null,
 ): TableData {
-  const shape = viewShapeFor(viewLevel);
-
   // Stage 1: Build nibMap for O(1) parent lookups
   const nibMap = new Map<string, TreeTableNib>();
   for (const nib of allNibs) {
