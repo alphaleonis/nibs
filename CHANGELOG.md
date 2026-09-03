@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **The web table remembers a scroll position per view**, so switching away and back returns you to where you were rather than to wherever the other view's list left the offset.
 - **A drag says which list it will reorder within** — a badge follows the cursor naming the destination by title, a rule marks where an ordering group's run of rows ends, and a drop that cannot happen explains why instead of doing nothing.
 - **The web's filter box speaks the assignment axis** — `milestone:<id>` selects that milestone's queue, and `is:backlog` the work in no milestone's plan, its own or an inherited one.
+- **The web's filter box speaks the ownership axis** — `area:<path>` selects an area's work, including everything declared beneath it.
 
 ### Changed
 - **BREAKING: moving more than one nib at once now requires `--block`** — `nibs mv <a> <b> --first` is refused instead of quietly reordering a nib you did not name, which is what a mistyped single move produced, since `--first` takes no anchor and a trailing id became a second one; the help and cheat grammars that invited it are corrected too.
