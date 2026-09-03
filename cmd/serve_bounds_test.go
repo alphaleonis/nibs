@@ -37,6 +37,9 @@ type graphQLHTTPResponse struct {
 	Errors []struct {
 		Message string `json:"message"`
 	} `json:"errors"`
+	// Response-level extensions, where a mutation reports the queue inversions
+	// it created (see queueInversionAroundOperations).
+	Extensions map[string]json.RawMessage `json:"extensions"`
 }
 
 // relationFixtureApp builds a DELIBERATELY tiny store — one parent with two
@@ -438,7 +441,7 @@ func TestRecursiveTypeNamesSeesCyclesThroughAbstractTypes(t *testing.T) {
 func TestCLIExecutorIsNotBoundByTheServedRecursionLimit(t *testing.T) {
 	app := relationFixtureApp(t)
 
-	data, err := executeQuery(app, alternating(12), nil, "")
+	data, _, err := executeQuery(app, alternating(12), nil, "")
 	if err != nil {
 		t.Fatalf("the in-process executor refused a deep query: %v", err)
 	}

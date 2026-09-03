@@ -9,6 +9,7 @@ import (
 
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
@@ -115,21 +116,13 @@ naming the declared set. --clear area unassigns it.`,
 			input.IfMatch = ifMatch
 		}
 
-		// The writes that can put a NEW pair into a milestone queue are linted
-		// for order-vs-dependency inversions (decision 2.3): an assignment
-		// (the subject enters a queue) and a new dependency edge in either
-		// spelling (a pair already in one queue gains its blocking half). The
-		// lint is a before/after comparison so it fires once, at the creating
-		// write — a reassignment to the same queue re-reports nothing — which
-		// is why the snapshot is taken here, ahead of the mutation. A clear
-		// and the --remove-* forms can only take pairs away; a status change
-		// is not linted either — reopening a released blocker re-arms a pair
-		// whose order and dependency both pre-existed.
-		lintQueue := cmd.Flags().Changed("milestone") || len(setBlockedBy) > 0 || len(setBlocking) > 0
-		var inversionsBefore map[inversionKey]bool
-		if lintQueue {
-			inversionsBefore = queueInversionKeys(resolver.Reader, b.ID)
-		}
+		// Order-vs-dependency inversions (decision 2.3) are reported by the
+		// mutation that creates one; the CLI attaches a collector and renders
+		// what comes back. WHICH writes can create a pair, and the before/after
+		// comparison that makes the report fire once, are the resolver's — so a
+		// queue write through `nibs serve` answers this the same way.
+		inversions := graph.NewQueueInversionCollector()
+		ctx = graph.WithQueueInversions(ctx, inversions)
 
 		// Apply all field/link/clear updates atomically via a single UpdateNib
 		// mutation.
@@ -146,10 +139,7 @@ naming the declared set. --clear area unassigns it.`,
 				"no changes specified (use --status, --type, --priority, --estimate, --title, --parent, --milestone, --area, --blocking, --blocked-by, --tag, --document, --clear, or their --remove-* variants; use `nibs mv` to reposition or reparent)")
 		}
 
-		warning := ""
-		if lintQueue {
-			warning = queueInversionWarning(resolver.Reader, b.ID, inversionsBefore)
-		}
+		warning := queueInversionWarning(inversions.Created())
 
 		// Echo the updated nib as a lean card — the same projection + rendering
 		// path `nibs get` uses (no body/etag unless explicitly asked). Card is a
