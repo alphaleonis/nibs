@@ -306,15 +306,17 @@
   // canonical (field order, casing, whitespace normalized).
   //
   // The box OWNS this slice of NibFilter — the five metadata facets, free text,
-  // the relationship-id scalars + existence/state booleans, and the area path.
-  // Fields outside this set are preserved untouched across box edits.
+  // the relationship-id scalars + existence/state booleans, the milestone axis and
+  // the area path. Fields outside this set are preserved untouched across box edits.
   //
-  // `satisfies` checks that each key IS one the box parses; it cannot check that
-  // every parsed key is listed, and an omission is silent in a particular way: the
-  // token parses, the popover completes it, then `emitFromText` never copies it, so
-  // the filter is unchanged and the next blur re-serializes the box WITHOUT the
-  // token the user typed. `milestone`/`noMilestone` are omitted today and behave
-  // exactly that way (nibs-7bwy).
+  // An omission from this list is silent in a particular way: the token parses, the
+  // popover completes it, then `emitFromText` never copies it, so the filter is
+  // unchanged and the next blur re-serializes the box WITHOUT the token the user
+  // typed. `satisfies` alone cannot catch that — it checks that each LISTED key
+  // exists on QueryFilter, not that each QueryFilter key is listed — so the guard
+  // below closes the other direction, as types.ts does for NibFilter. Equality is
+  // the right relation because QueryFilter IS the box-writable slice by definition
+  // (query/fields.ts): it holds no key the box should decline to copy.
   const BOX_FIELD_KEYS = [
     "type", "excludeType",
     "priority", "excludePriority",
@@ -325,11 +327,17 @@
     // Relationship-id scalars.
     "parentId", "ancestorId", "descendantId", "siblingId",
     "blockingId", "blockedById", "mentionsId", "mentionedById",
-    // Existence/state booleans.
-    "hasParent", "hasBlocking", "hasBlockedBy", "isBlocked",
+    // The scheduling axis.
+    "milestone",
     // The ownership axis.
     "area",
+    // Existence/state booleans.
+    "hasParent", "hasBlocking", "hasBlockedBy", "isBlocked", "noMilestone",
   ] as const satisfies readonly (keyof QueryFilter)[];
+
+  type _BoxKeysCoverQueryFilter = keyof QueryFilter extends (typeof BOX_FIELD_KEYS)[number] ? true : never;
+  const _boxKeysCheck: _BoxKeysCoverQueryFilter = true;
+  void _boxKeysCheck;
 
   // Copy one box field from the parsed slice onto a NibFilter, or delete it when
   // the parse yields nothing for it. QueryFilter[K] === NibFilter[K] for these

@@ -16,10 +16,9 @@ import { createAreaVocabulary } from "../areas";
 // resolved the vocabulary once, outside the `$derived`, passes every test in
 // filter.test.ts and fails the transition test here.
 //
-// The filter arrives as a PROP. Nothing in the app can put `area` into a filter
-// yet — the query box's QueryFilter omits it — so this is the only way to drive
-// the path, and it is the shape a restored or shared value will take once
-// nibs-gdvz gives `area:` a token.
+// The filter arrives as a PROP, which is what lets these cases drive the
+// vocabulary states directly — including the ones the box cannot reach on its
+// own, since it only ever emits a path the vocabulary has not refused.
 
 vi.mock("@urql/svelte", async () => {
   const actual = await vi.importActual<typeof import("@urql/svelte")>("@urql/svelte");

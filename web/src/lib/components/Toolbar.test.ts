@@ -2224,7 +2224,7 @@ describe("Toolbar — the area token", () => {
   // The end-to-end claim the query-module tests cannot make: a token that parses
   // still has to be COPIED onto the filter. `emitFromText` copies BOX_FIELD_KEYS
   // and nothing else, so a key missing from that list parses, completes, and is
-  // then silently dropped — which is what `milestone:` does today.
+  // then silently dropped.
   it("reaches the filter when typed", async () => {
     const prefs = new Preferences();
     render(Toolbar, { prefs, oncreatenew: vi.fn(), areas: READY });
@@ -2386,5 +2386,79 @@ describe("Toolbar — the area token", () => {
     expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe(
       "type:bug area:retired",
     );
+  });
+});
+
+// The scheduling axis, driven through the real component rather than through
+// `parseQuery`. The query-module tests already prove both tokens PARSE; what only
+// the Toolbar can answer is whether the parsed value is then copied onto the live
+// filter — `emitFromText` and `clearKeyword` both walk `BOX_FIELD_KEYS` and touch
+// nothing else, so a key absent from that list parses, completes, highlights, and
+// is dropped on the way to the filter (nibs-7bwy).
+describe("Toolbar — the milestone axis tokens", () => {
+  it("milestone:<id> reaches the filter and survives a blur", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+
+    await user.type(input, "milestone:tnib-1");
+
+    expect(prefs.filter.milestone).toBe("tnib-1");
+    // Recognized as a token, so it does not leak into free text.
+    expect(prefs.filter.search).toBeUndefined();
+    expect(prefs.invalidTokens).toEqual([]);
+
+    // Blur re-serializes the box from the canonical filter: a token the filter
+    // never received disappears here.
+    await fireEvent.blur(input);
+    await tick();
+
+    expect(input.value).toBe("milestone:tnib-1");
+    expect(prefs.filter.milestone).toBe("tnib-1");
+  });
+
+  it("is:backlog reaches the filter and survives a blur", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+
+    await user.type(input, "is:backlog");
+
+    expect(prefs.filter.noMilestone).toBe(true);
+    expect(prefs.filter.search).toBeUndefined();
+    expect(prefs.invalidTokens).toEqual([]);
+
+    await fireEvent.blur(input);
+    await tick();
+
+    expect(input.value).toBe("is:backlog");
+    expect(prefs.filter.noMilestone).toBe(true);
+  });
+
+  it("erasing the text drops both fields (assignBoxField's delete path)", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+
+    await user.type(input, "milestone:tnib-1 is:backlog");
+    expect(prefs.filter.milestone).toBe("tnib-1");
+    expect(prefs.filter.noMilestone).toBe(true);
+
+    await user.clear(input);
+
+    expect(prefs.filter.milestone).toBeUndefined();
+    expect(prefs.filter.noMilestone).toBeUndefined();
+  });
+
+  it("the clear button drops both fields (the box owns those keys)", async () => {
+    const prefs = new Preferences();
+    prefs.filter = { status: ["todo"], milestone: "tnib-1", noMilestone: true };
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    await user.click(screen.getByTestId("filter-keyword-clear"));
+
+    expect(prefs.filter.milestone).toBeUndefined();
+    expect(prefs.filter.noMilestone).toBeUndefined();
+    expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe("");
   });
 });
