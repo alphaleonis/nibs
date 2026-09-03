@@ -624,28 +624,65 @@ const CASES: Case[] = [
     },
   },
   {
-    // The remedy enters at the FRONT, exactly where the accepted in-queue form
-    // of this gesture puts a row — an entry indicator names no neighbor.
-    name: "entering a queue from outside it is an assignment, not a move",
+    // Aiming AT the queue names it, so the assignment is what the gesture asked
+    // for. Entry lands at the FRONT, exactly where the accepted in-queue form of
+    // this gesture puts a row — an entry indicator names no neighbor.
+    name: "the bottom edge of a milestone header assigns into its queue",
     drag: ["B1"],
     target: "M1",
     zone: "after",
     expected: {
-      ok: false,
-      reason: "needs-assignment",
-      actionLabel: "Assign to M1",
-      actionCommand: sequence([
+      ok: true,
+      region: QUEUE_M1,
+      indicator: "into",
+      command: sequence([
         updateNib("B1", { milestone: "M1" }),
         reorderNib("B1", { first: true, scope: "MILESTONE" }),
       ]),
-      region: QUEUE_M1,
     },
   },
   {
-    // Every assignment lands last in the target queue, so the position the drop
-    // pointed at is a second write — and one the anchor can carry, since a
-    // milestone section's own rows ARE that queue's members.
-    name: "moving between two queues is a reassignment",
+    // The same gesture from the middle band: both name the section rather than a
+    // position beside one of its members.
+    name: "the middle of a milestone header assigns into its queue",
+    drag: ["B1"],
+    target: "M1",
+    zone: "reparent",
+    expected: {
+      ok: true,
+      region: QUEUE_M1,
+      indicator: "into",
+      command: sequence([
+        updateNib("B1", { milestone: "M1" }),
+        reorderNib("B1", { first: true, scope: "MILESTONE" }),
+      ]),
+    },
+  },
+  {
+    // A reassignment is the same write: the subject leaves one queue by joining
+    // another, and the header it was dropped on is which one.
+    name: "a header drop from another queue reassigns",
+    drag: ["E3"],
+    target: "M1",
+    zone: "reparent",
+    expected: {
+      ok: true,
+      region: QUEUE_M1,
+      indicator: "into",
+      command: sequence([
+        updateNib("E3", { milestone: "M1" }),
+        reorderNib("E3", { first: true, scope: "MILESTONE" }),
+      ]),
+    },
+  },
+  {
+    // An EDGE beside a member named a position, not the queue, and joining one
+    // is an assignment rather than a move — so this stays a refusal even though
+    // aiming at the header above is accepted. Every assignment lands last in the
+    // target queue, so the position the drop pointed at is a second write, and
+    // one the anchor can carry since a milestone section's own rows ARE that
+    // queue's members.
+    name: "a position beside a queue member is still a refusal, with the assignment as its remedy",
     drag: ["E3"],
     target: "E1",
     zone: "before",
@@ -682,16 +719,15 @@ const CASES: Case[] = [
     target: "M1",
     zone: "after",
     expected: {
-      ok: false,
-      reason: "needs-assignment",
-      actionLabel: "Assign to M1",
-      actionCommand: sequence([
+      ok: true,
+      region: QUEUE_M1,
+      indicator: "into",
+      command: sequence([
         updateNib("B1", { milestone: "M1" }),
         reorderNib("B1", { first: true, scope: "MILESTONE" }),
         updateNib("B2", { milestone: "M1" }),
         reorderNib("B2", { afterId: "B1", scope: "MILESTONE" }),
       ]),
-      region: QUEUE_M1,
     },
   },
   {
@@ -862,8 +898,11 @@ describe("planDrop refusal messages", () => {
   });
 
   it("points a cross-axis drop at the write that would make it expressible", () => {
-    const into = planFor(["B1"], "M1", "after");
-    if (into.ok) throw new Error("entering a queue from outside should be refused");
+    // A POSITION beside a queue member. Aiming at the header is the same
+    // assignment and is accepted, so the refusal that carries a remedy is the
+    // one where the gesture named a neighbour rather than the queue.
+    const into = planFor(["B1"], "QT", "before");
+    if (into.ok) throw new Error("a position beside a queue member should be refused");
     expect(into.refusal.actionLabel).toBe("Assign to M1");
     expect(into.refusal.message).toContain("the M1 queue");
 
@@ -895,8 +934,8 @@ describe("planDrop refusal messages", () => {
   // field, never a parent link. Read off the command itself, since that is what
   // the dispatcher turns into variables.
   it("offers an assignment, never a parent write", () => {
-    const plan = planFor(["B1", "B2"], "M1", "after");
-    if (plan.ok) throw new Error("entering a queue from outside should be refused");
+    const plan = planFor(["B1", "B2"], "QT", "before");
+    if (plan.ok) throw new Error("a position beside a queue member should be refused");
     const remedy = refusalAction(plan.refusal);
     if (remedy === null) throw new Error("the assignment refusal should offer a remedy");
     const command = resolveSteps(remedy.command);
@@ -1003,8 +1042,8 @@ describe("planDrop with a namer", () => {
   });
 
   it("carries titles into the refusals and their remedies", () => {
-    const into = namedPlan(["B1"], "M1", "after");
-    if (into.ok) throw new Error("entering a queue from outside should be refused");
+    const into = namedPlan(["B1"], "QT", "before");
+    if (into.ok) throw new Error("a position beside a queue member should be refused");
     expect(into.refusal.message).toContain("the v1.0 queue");
     expect(into.refusal.actionLabel).toBe("Assign to v1.0");
     // The region still travels as DATA, in ids: a caller acting on the remedy
@@ -1042,8 +1081,8 @@ describe("planDrop with a namer", () => {
     {
       reason: "needs-assignment",
       drag: ["B1"],
-      target: "M1",
-      zone: "after" as DropZone,
+      target: "QT",
+      zone: "before" as DropZone,
       message: "Backlog one is not in the v1.0 queue, and joining one is an assignment rather than a move.",
     },
     {

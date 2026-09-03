@@ -14,10 +14,11 @@ import { test, expect } from "@playwright/test";
 // A milestone header no longer serves as that target, though it reads like the
 // obvious one: the membership lens says entering a milestone section joins that
 // milestone's QUEUE, and `entryRegionOf` returns the section's answer before it
-// ever asks the type hierarchy — so dropping a work item into one is an in-queue move or an
-// assignment refusal, not "holds no children". Only a dragged MILESTONE still
-// reaches that refusal there, since no milestone can join a queue, and this test
-// wants a target that refuses whatever is dragged onto it.
+// ever asks the type hierarchy — so dropping a work item into one is an in-queue
+// move or an assignment that is TAKEN (queue-entry-drop.test.ts), not "holds no
+// children". Only a dragged MILESTONE still reaches that refusal there, since no
+// milestone can join a queue, and this test wants a target that refuses whatever
+// is dragged onto it.
 //
 // Guard proof (nibs-2tkt): re-gating delivery on validity in useTreeDrag's
 // onDragPointerUp (`dropPlan !== null && dropPlan.ok`) fails the first test with

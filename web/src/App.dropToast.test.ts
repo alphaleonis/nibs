@@ -90,9 +90,11 @@ describe("App drop refusal toast", () => {
       expect(container.querySelector(`tr[data-nib-id="${BACKLOG_TASK_ID}"]`)).not.toBeNull(),
     );
 
-    // Into the queue: refused, and the refusal names the assignment that would
-    // express it — so this raise puts a button on the shared toast.
-    dragOnto(container, BACKLOG_TASK_ID, MILESTONE_ID);
+    // A position beside a queue member: refused, and the refusal names the
+    // assignment that would express it — so this raise puts a button on the
+    // shared toast. (Aiming at the header itself is the same assignment and is
+    // accepted, so it raises no toast at all.)
+    dragOnto(container, BACKLOG_TASK_ID, QUEUED_TASK_ID);
     await waitFor(() => expect(remedyButton()).not.toBeNull());
     expect(remedyButton()?.textContent).toContain(`Assign to ${MILESTONE_TITLE}`);
 

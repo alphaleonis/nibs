@@ -102,13 +102,39 @@ describe("App drop refusals", () => {
 
   afterEach(() => localStorage.removeItem(STORAGE_KEY));
 
-  it("offers the refusal's remedy as a toast action", async () => {
+  it("takes a drop onto the queue's header, with no refusal in the way", async () => {
     const { container } = render(App);
     await waitFor(() =>
       expect(container.querySelector(`tr[data-nib-id="${BACKLOG_TASK_ID}"]`)).not.toBeNull(),
     );
 
+    // Aiming AT the queue names it, so the assignment is what the gesture asked
+    // for and the drop performs it — no toast, no second click.
     dragOnto(container, BACKLOG_TASK_ID, MILESTONE_ID);
+    await waitFor(() => expect(mutationCalls).toHaveLength(2));
+
+    expect(mockToastError).not.toHaveBeenCalled();
+    expect(mutationCalls[0]).toEqual({
+      doc: UPDATE_NIB_MUTATION,
+      vars: { id: "nibs-b1", input: { milestone: "nibs-m1" } },
+    });
+    // The front of the queue — where the remedy button used to put it, since an
+    // entry indicator names no neighbour.
+    expect(mutationCalls[1]).toEqual({
+      doc: REORDER_NIB_MUTATION,
+      vars: { id: "nibs-b1", first: true, scope: "MILESTONE" },
+    });
+  });
+
+  it("offers the refusal's remedy as a toast action", async () => {
+    const { container } = render(App);
+    await waitFor(() =>
+      expect(container.querySelector(`tr[data-nib-id="${QUEUED_TASK_ID}"]`)).not.toBeNull(),
+    );
+
+    // A position BESIDE a queue member: the gesture named a neighbour, not the
+    // queue, so joining one is still an assignment rather than a move.
+    dragOnto(container, BACKLOG_TASK_ID, QUEUED_TASK_ID);
 
     expect(mockToastError).toHaveBeenCalledTimes(1);
     const [message, options] = mockToastError.mock.calls[0];
@@ -123,10 +149,10 @@ describe("App drop refusals", () => {
   it("dispatches the assignment when the action is taken", async () => {
     const { container } = render(App);
     await waitFor(() =>
-      expect(container.querySelector(`tr[data-nib-id="${BACKLOG_TASK_ID}"]`)).not.toBeNull(),
+      expect(container.querySelector(`tr[data-nib-id="${QUEUED_TASK_ID}"]`)).not.toBeNull(),
     );
 
-    dragOnto(container, BACKLOG_TASK_ID, MILESTONE_ID);
+    dragOnto(container, BACKLOG_TASK_ID, QUEUED_TASK_ID);
     const options = mockToastError.mock.calls[0][1];
 
     options.action.onClick(new MouseEvent("click"));
@@ -139,10 +165,11 @@ describe("App drop refusals", () => {
       vars: { id: "nibs-b1", input: { milestone: "nibs-m1" } },
     });
     // And the position the drop pointed at, which the assignment alone does not
-    // give: the server enters a newly assigned nib last.
+    // give: the server enters a newly assigned nib last. Here that position is
+    // the neighbour the gesture named, not the front.
     expect(mutationCalls[1]).toEqual({
       doc: REORDER_NIB_MUTATION,
-      vars: { id: "nibs-b1", first: true, scope: "MILESTONE" },
+      vars: { id: "nibs-b1", afterId: "nibs-q1", scope: "MILESTONE" },
     });
   });
 
