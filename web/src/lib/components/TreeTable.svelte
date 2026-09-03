@@ -4,11 +4,10 @@
   import type { NibFilter, ViewLevel, RowDensity, BlockedEmphasis, OpenDetailGesture, RowSubtreeActions, TreeTableNib, TableSort, SortField } from "../types";
   import type { ColumnKey } from "../columns";
   import type { Preferences } from "../preferences.svelte";
-  import { buildTableData } from "../tableData";
-  import { isSyntheticRowId, containingSectionRowId, buildViewTree, collectDescendantIds } from "../tree";
+  import { isSyntheticRowId } from "../tree";
   import { applySort, nextTableSort } from "../tableSort";
   import { prepareFilter, matchesFilter } from "../filter";
-  import { adjacencyReflectsOrdering, dragBlockFor, DRAG_BLOCK_TOAST_ID, FLAT_BLOCK_REMEDY_VIEW } from "../dragBlock";
+  import { DRAG_BLOCK_TOAST_ID, FLAT_BLOCK_REMEDY_VIEW } from "../dragBlock";
   import type { DragBlock } from "../dragBlock";
   import { toast } from "svelte-sonner";
   import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnWidths, resolveColumnOrder, resolveTableSort, emitFilter, emitTableSort, emitColumnOrder, switchViewLevel } from "../resolvePrefs";
@@ -21,7 +20,7 @@
   import type { DropPlan } from "../ordering/dropPlan";
   import { regionBandAt, type BandAxis } from "../ordering/regionBand";
   import type { PanelPolicy } from "../selection.svelte";
-  import { useSelection, useDrag, useActiveView, useTreeView, useConnection } from "../contexts";
+  import { useSelection, useDrag, useActiveView, useTreeView, useConnection, useViewSpine } from "../contexts";
   import { useColumnResize } from "../composables/useColumnResize.svelte";
   import { useColumnDrag } from "../composables/useColumnDrag.svelte";
   import { useTreeDrag } from "../composables/useTreeDrag.svelte";
@@ -102,6 +101,10 @@
   // {#key position} block) so it survives a TreeTable remount on a dock-position
   // toggle — see treeView.svelte.ts.
   const treeView = useTreeView();
+  // A getter, never the spine itself: its identity changes once, when the areas
+  // vocabulary arrives, and the `$derived`s below have to see that. Capturing the
+  // value here would pin them to the pre-load spine.
+  const viewSpine = useViewSpine();
 
   // Resolve values: prefs takes precedence over individual props
   let resolvedFilter = $derived(resolveFilter(prefs, filter));
@@ -145,7 +148,7 @@
   // dragBlockFor is the single source of truth for BOTH the gate and the
   // explanation raised on a blocked drag attempt, so the row's affordance and the
   // toast can never disagree about which gate is shut.
-  let dragBlock = $derived(dragBlockFor(resolvedFilter, resolvedViewLevel, activeSort));
+  let dragBlock = $derived(viewSpine().dragBlockFor(resolvedFilter, resolvedViewLevel, activeSort));
   let dragAllowed = $derived(dragBlock === null);
   let showColumn = $derived((key: ColumnKey) => resolvedVisibleColumns.includes(key));
 
@@ -165,7 +168,11 @@
   // Split filter into server-side (sent to GraphQL) and client-side (applied locally).
   // This ensures we fetch ancestor nibs from the server so the tree stays intact,
   // while still filtering by type/priority/estimate/tags/status on the client.
-  let prepared = $derived(prepareFilter(resolvedFilter));
+  //
+  // The spine's vocabulary decides one more thing: whether an `area` value may be
+  // sent at all (see withSendableArea in filter.ts). Read INSIDE the derived, so
+  // an area withheld before the config answered is re-applied when it lands.
+  let prepared = $derived(prepareFilter(resolvedFilter, viewSpine().areas));
 
   const client = getContextClient();
 
@@ -253,12 +260,15 @@
 
   // The client-side filter is the original filter (not the server-stripped version).
   // buildTableData uses hasClientFilters/matchesFilter from filter.ts directly.
-  let tableData = $derived(buildTableData(orderedNibs, resolvedFilter, resolvedViewLevel, treeView.collapsedIds, activeSort));
+  let tableData = $derived(viewSpine().buildTableData(orderedNibs, resolvedFilter, resolvedViewLevel, treeView.collapsedIds, activeSort));
   let rows = $derived(tableData.rows);
   // Which ids the CURRENT lens has a row for — collapse- and filter-independent
   // (see TableData.viewMemberIds). The view-transition applier reconciles against
   // this; nothing else reads it.
   let viewMemberIds = $derived(tableData.viewMemberIds);
+  // What this view draws inside what. Collapse-independent, so it answers for a
+  // nib whose section is shut — which is exactly reveal's subject.
+  let containment = $derived(tableData.containment);
   let parentIds = $derived(tableData.parentIds);
   let visibleRowIds = $derived(rows.map(r => r.nib.id));
 
@@ -273,7 +283,7 @@
   // gate `dragBlockFor` shuts today, so the two predicates agree; they are asked
   // separately so a gate added for another reason cannot delete the bands.
   let regionBands: (BandAxis | null)[] = $derived(
-    adjacencyReflectsOrdering(resolvedFilter, resolvedViewLevel, activeSort)
+    viewSpine().adjacencyReflectsOrdering(resolvedFilter, resolvedViewLevel, activeSort)
       ? rows.map((row, i) => regionBandAt(row, i === 0 ? null : rows[i - 1]))
       : [],
   );
@@ -421,11 +431,9 @@
     const nibId = selection.pendingEnsureVisibleId;
     if (!nibId) return;
 
-    // Build a lookup for all nibs (needed to walk parent chain)
-    const nibMap = new Map<string, (typeof allNibs)[number]>();
-    for (const nib of allNibs) {
-      nibMap.set(nib.id, nib);
-    }
+    // Whether the RESPONSE holds it, which is a different question from whether
+    // the current lens gives it a row.
+    const inDataset = allNibs.some((nib) => nib.id === nibId);
 
     // The nib isn't in the dataset. Two distinct cases must NOT be conflated:
     //   - Query still loading (cold deep-link fires syncFromUrl before the
@@ -434,48 +442,35 @@
     //     dataSource.fetching also subscribes the effect to re-run on settle.
     //   - Query settled and the nib is genuinely absent (archived/bad URL):
     //     clear and bail — there is nothing to scroll to.
-    if (!nibMap.has(nibId)) {
+    if (!inDataset) {
       if (!dataSource.fetching) {
         selection.clearEnsureVisible();
       }
       return;
     }
 
-    // The nib is in the dataset but not currently visible. Try to expand its
-    // collapsed ancestors so it becomes reachable.
+    // The nib is in the dataset but not currently visible. Open every container
+    // drawn around it so it becomes reachable.
     if (!visibleRowIds.includes(nibId)) {
+      // The WHOLE chain, not the nearest container: sections nest, and opening
+      // only the innermost one leaves the row inside a section still shut. One
+      // chain covers both kinds of container — a real parent and one holding its
+      // rows by arrangement — which is why no ancestor walk sits beside it.
       const next = new Set(treeView.collapsedIds);
-      let current = nibMap.get(nibId);
-      // Guard against a parentId cycle (A->B->A) — only possible via corrupt
-      // .nibs data, but an unguarded walk here would spin forever inside this
-      // reactive $effect and hang the tab. Mirrors the visited guard in
-      // tableData.ts's ancestor walk.
-      const visited = new Set<string>();
-      while (current?.parentId && !visited.has(current.parentId)) {
-        visited.add(current.parentId);
-        next.delete(current.parentId);
-        current = nibMap.get(current.parentId);
-      }
-      // The target may sit inside a container that holds it by ARRANGEMENT
-      // rather than by parentage — a fabricated "No X" section, or a header that
-      // is not the target's ancestor — which no real nib names as its parentId,
-      // so the chain walk above cannot reach it. Un-collapse the section the
-      // current lens puts this nib in too.
-      const containerId = containingSectionRowId(nibMap, nibId, resolvedViewLevel);
-      if (containerId) next.delete(containerId);
-      // If expansion changes nothing yet the nib is still not visible, it is in
-      // the dataset but has no row, regardless of collapse state — either an
-      // active client filter excludes it, or the current lens has no row for it
-      // (a grouping lens is lossless in WORK ITEMS but not in ROWS: it hides a
-      // container ranked above its tier while descending into it).
-      // Ancestor-expansion can reveal neither, so clear and bail — otherwise
-      // reassigning `collapsedIds` to a new Set every pass would loop forever
-      // (effect_update_depth_exceeded).
+      for (const id of containment.chainOf(nibId)) next.delete(id);
+      // Expansion changes nothing yet the nib is still not visible: it is in the
+      // dataset but has no row whatever the collapse set says. Either a client
+      // filter excludes it, or this lens has no node for it at all — a grouping
+      // lens is lossless in WORK ITEMS but not in ROWS, hiding a container
+      // ranked above its tier while descending into it, and `chainOf` names no
+      // container for an id it has no node for. Neither is reachable by
+      // expanding, so clear and bail — otherwise reassigning `collapsedIds` to a
+      // new Set every pass would loop forever (effect_update_depth_exceeded).
       if (sameSet(next, treeView.collapsedIds)) {
         selection.clearEnsureVisible();
         return;
       }
-      // Ancestors were collapsed — expand them and let the effect re-run once
+      // Containers were collapsed — expand them and let the effect re-run once
       // visibleRowIds updates (either the nib appears, or the next pass hits
       // the filtered-out guard above and clears).
       treeView.setCollapsed(next);
@@ -523,18 +518,12 @@
   }
 
   // --- Subtree expand/collapse (row context menu) ---
-  // Descendants are resolved against the DISPLAYED view tree (buildViewTree), not
-  // raw parentId, so the grouping lens (headers, hidden containers, "No X"
-  // buckets) is honored. TreeViewState owns the collapse set; these compute the
-  // next set and hand it to setCollapsed.
-  //
-  // Both calls intentionally omit the active-sort comparator that buildTableData
-  // threads in: collectDescendantIds returns an order-INDEPENDENT Set, so
-  // re-sorting the top-level headers / bucket items can't change which ids are a
-  // node's descendants. Building the tree unsorted here is cheaper and equivalent.
+  // Descendants are resolved against the DISPLAYED view tree, not raw parentId,
+  // so the grouping lens (headers, hidden containers, "No X" buckets) is
+  // honored. TreeViewState owns the collapse set; these compute the next set and
+  // hand it to setCollapsed.
   function expandSubtree(rootId: string) {
-    const viewTree = buildViewTree<TreeTableNib>(allNibs, resolvedViewLevel);
-    const descendantIds = collectDescendantIds(viewTree, rootId);
+    const descendantIds = containment.descendantsOf(rootId);
     const next = new Set(treeView.collapsedIds);
     next.delete(rootId);
     for (const id of descendantIds) next.delete(id);
@@ -542,8 +531,7 @@
   }
 
   function collapseSubtree(rootId: string) {
-    const viewTree = buildViewTree<TreeTableNib>(allNibs, resolvedViewLevel);
-    const descendantIds = collectDescendantIds(viewTree, rootId);
+    const descendantIds = containment.descendantsOf(rootId);
     const next = new Set(treeView.collapsedIds);
     // Collapse the row itself plus every descendant that actually has children,
     // so re-expanding the row reveals exactly one level at a time. parentIds
@@ -628,6 +616,7 @@
     drag,
     getRows: () => rows,
     getScrollContainer: () => scrollContainerEl ?? null,
+    getContainment: () => containment,
     getDragBlock: () => dragBlock,
     ondrop: (plan) => ondrop?.(plan),
     onblockeddrag: (block) => {
@@ -665,6 +654,7 @@
     getRows: () => rows,
     getVisibleRowIds: () => visibleRowIds,
     getCollapsedIds: () => treeView.collapsedIds,
+    getContainment: () => containment,
     toggleNode,
     getScrollContainer: () => scrollContainerEl ?? null,
     onDragKeyDown: treeDrag.onDragKeyDown,
@@ -948,6 +938,7 @@
           dimmed={row.dimmed}
           collapsed={treeView.isCollapsed(row.nib.id)}
           parentNib={row.parentNib}
+          drawsSection={row.drawsSection}
           visibleColumns={resolvedVisibleColumns}
           columnOrder={resolvedColumnOrder}
           draggable={!isSyntheticRowId(row.nib.id) && dragAllowed}

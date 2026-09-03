@@ -1,3 +1,4 @@
+import type { ContainmentIndex } from "../containment";
 import type { PanelPolicy, SelectionState } from "../selection.svelte";
 import type { RowData } from "../tableData";
 import type { OpenDetailGesture } from "../types";
@@ -8,6 +9,8 @@ export function useKeyboardNav(opts: {
   getRows: () => RowData[];
   getVisibleRowIds: () => string[];
   getCollapsedIds: () => ReadonlySet<string>;
+  /** What the current view draws inside what — ArrowLeft's step out of a row. */
+  getContainment: () => ContainmentIndex;
   toggleNode: (id: string) => void;
   getScrollContainer: () => HTMLElement | null;
   onDragKeyDown: (e: KeyboardEvent) => void;
@@ -121,21 +124,23 @@ export function useKeyboardNav(opts: {
           const collapsedIds = opts.getCollapsedIds();
           if (row.hasChildren && !collapsedIds.has(row.nib.id)) {
             opts.toggleNode(row.nib.id);
-          } else if (row.displayParentId) {
-            // Walk the DISPLAY container, not `nib.parentId` — the same
-            // structural authority drag reorder uses. `buildTableData`
-            // guarantees a non-null displayParentId names a RENDERED row
-            // (`flatten` skips a hidden node together with its whole subtree),
-            // so no presence lookup is needed before focusing it.
+          } else {
+            // Walk the row that DRAWS this one, which is neither `nib.parentId`
+            // nor `displayParentId`: the first is the logical parent, which a
+            // grouped view need not draw around the row at all, and the second
+            // elides the display containers, so it is null for every row inside
+            // a section.
             //
-            // The two disagree only one way: a row at the display root (null)
-            // whose real parent is rendered elsewhere — every parented nib in
-            // the flat lens, which nests nothing. There is no container to walk
-            // out of there, so ArrowLeft must stay put instead of jumping to a
-            // structurally unrelated row.
-            const nibId = row.displayParentId;
-            selection.focus(nibId);
-            requestAnimationFrame(() => scrollFocusedRowIntoView(nibId));
+            // A rendered row's container is itself rendered (`flatten` reaches a
+            // child only from inside its container's own render), so no presence
+            // lookup is needed before focusing it. Null is a row at the display
+            // root, which has no container to walk out of — every row of the
+            // flat lens, which nests nothing.
+            const nibId = opts.getContainment().containerOf(row.nib.id);
+            if (nibId !== null) {
+              selection.focus(nibId);
+              requestAnimationFrame(() => scrollFocusedRowIntoView(nibId));
+            }
           }
         }
         break;

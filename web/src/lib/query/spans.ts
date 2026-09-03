@@ -2,6 +2,9 @@ import { fieldSpec, isValidValue } from "./fields";
 import { FIELD_TOKEN } from "./parse";
 import { recognizeRelationship } from "./relations";
 import type { RelMatch } from "./relations";
+import { isRefusedArea, recognizeArea } from "./area";
+import type { AreaMatch } from "./area";
+import type { AreaVocabulary } from "../areas";
 
 // The kind of each highlight span. A single-line query is tiled by contiguous
 // spans so the backdrop layer can color every character in its exact position:
@@ -10,11 +13,13 @@ import type { RelMatch } from "./relations";
 //                  or existence token (`parent`, `blocked-by`, `has`, `is`).
 // - `operator`   — token punctuation: the `:` after a field and the `,` between values.
 // - `value`      — a value segment that is legal for its field (enum member / tag pattern /
-//                  existence dimension / relationship id).
+//                  existence dimension / relationship id / an area path the vocabulary
+//                  does not refuse).
 // - `invalid`    — a token the parser recognized but REJECTED, drawn with a red underline.
 //                  The same rule `parseQuery` uses to fill `invalidTokens`: a known
-//                  field's failed value (the span covers just that value), or a negated
-//                  rel/existence token (the span covers the whole token).
+//                  field's failed value or an undeclared area path (the span covers just
+//                  that value), or a negated rel/existence/area token (the span covers
+//                  the whole token).
 // - `freetext`   — bare words, unknown `field:value` tokens, and empty-value field tokens
 //                  (`type:`, `type:,`) — i.e. everything `parseQuery` routes to `search`.
 // - `whitespace` — the runs of spaces between tokens (and any leading/trailing run).
@@ -41,8 +46,13 @@ export interface Span {
  * non-overlapping, so `spans.map(s => text.slice(s.start, s.end)).join("") === text`.
  * That contiguity is what lets the backdrop stay pixel-aligned with the input — every
  * character is emitted exactly once, in order, in a same-metrics `<span>`.
+ *
+ * `areas` is the runtime vocabulary an `area:` value is checked against, and is
+ * the one input here that is not a constant. Absent, or answering "unknown", it
+ * colors an area value like any other accepted value — the same withholding
+ * `parseQuery` performs, so a token the parser kept is never drawn as an error.
  */
-export function tokenizeSpans(text: string): Span[] {
+export function tokenizeSpans(text: string, areas?: AreaVocabulary): Span[] {
   const spans: Span[] = [];
   // Alternating runs of whitespace / non-whitespace cover the whole string with
   // correct offsets — the same split boundary `parseQuery` uses (`/\s+/`), but
@@ -55,7 +65,7 @@ export function tokenizeSpans(text: string): Span[] {
     if (/\s/.test(chunk[0])) {
       spans.push({ start, end: start + chunk.length, kind: "whitespace" });
     } else {
-      classifyToken(chunk, start, spans);
+      classifyToken(chunk, start, spans, areas);
     }
   }
   return spans;
@@ -63,22 +73,27 @@ export function tokenizeSpans(text: string): Span[] {
 
 // Emit the spans for one non-whitespace token starting at `base`, appending to `out`.
 // Mirrors `parseQuery`'s per-token routing so the coloring matches the parse result.
-function classifyToken(token: string, base: number, out: Span[]): void {
+function classifyToken(token: string, base: number, out: Span[], areas?: AreaVocabulary): void {
   const match = FIELD_TOKEN.exec(token);
   const spec = match ? fieldSpec(match[2]) : undefined;
   if (!match || !spec) {
-    // Not a metadata token. Try the relationship/existence grammar next, in the
-    // same order `parseQuery` does, and only fall through to free text when that
-    // also declines. Routing through `recognizeRelationship` (rather than reading
-    // the lookup tables here) is what keeps the coloring from drifting: one
-    // recognizer answers "did this token do anything?" for both layers.
+    // Not a metadata token. Try the relationship/existence grammar next, then the
+    // area token, in the same order `parseQuery` does, and only fall through to
+    // free text when both decline. Routing through the recognizers (rather than
+    // reading the lookup tables here) is what keeps the coloring from drifting:
+    // one recognizer answers "did this token do anything?" for both layers.
     const rel = recognizeRelationship(token);
-    if (!rel) {
-      // Bare word or unknown field → free text (same as parseQuery).
-      out.push({ start: base, end: base + token.length, kind: "freetext" });
+    if (rel) {
+      classifyRelToken(token, rel.kind, base, out);
       return;
     }
-    classifyRelToken(token, rel.kind, base, out);
+    const areaToken = recognizeArea(token);
+    if (areaToken) {
+      classifyAreaToken(token, areaToken, base, out, areas);
+      return;
+    }
+    // Bare word or unknown field → free text (same as parseQuery).
+    out.push({ start: base, end: base + token.length, kind: "freetext" });
     return;
   }
 
@@ -121,31 +136,15 @@ function classifyToken(token: string, base: number, out: Span[]): void {
 // overlay contradict a warning that was on screen at the same moment. The whole
 // token is marked because the whole token is what gets parked, and because the
 // fault is the negation itself rather than the value: underlining only the value
-// would aim the red at the wrong glyphs. This is the one token shape that gains a
-// red underline here; every non-negated rel/existence spelling gains only positive
-// color, never an error mark.
+// would aim the red at the wrong glyphs. Every non-negated rel/existence spelling
+// gains only positive color, never an error mark — there is nothing here to check
+// a nib id against.
 function classifyRelToken(token: string, kind: RelMatch["kind"], base: number, out: Span[]): void {
   if (kind === "invalid") {
     out.push({ start: base, end: base + token.length, kind: "invalid" });
     return;
   }
 
-  // Both accepted shapes split at the FIRST colon: the name (hyphens included —
-  // `blocked-by`, which FIELD_TOKEN's `[A-Za-z]+` group cannot match) then the
-  // value, taken whole. A rel id is SCALAR, so an embedded comma or second colon
-  // belongs to the value and is not an operator — exactly what `parseQuery` stores.
-  const colon = token.indexOf(":");
-  if (colon <= 0 || colon === token.length - 1) {
-    // Unreachable through `recognizeRelationship`: the id path requires a colon at
-    // index > 0 with a non-empty remainder, and every existence spelling is exactly
-    // `word:value`. Guarded anyway, because an empty name or value would emit a
-    // zero-length span and break the tiling invariant the backdrop depends on.
-    out.push({ start: base, end: base + token.length, kind: "freetext" });
-    return;
-  }
-
-  out.push({ start: base, end: base + colon, kind: "field" });
-  out.push({ start: base + colon, end: base + colon + 1, kind: "operator" });
   // The value is `value`, never a separate "recognized field, unchecked value" kind.
   // For an existence token the value is genuinely validated — the legal set is the
   // closed `EXISTENCE_TOKENS` vocabulary, and anything outside it never reaches
@@ -155,5 +154,51 @@ function classifyRelToken(token: string, kind: RelMatch["kind"], base: number, o
   // design. A third color would therefore report "we did not check" — a distinction
   // the user cannot act on, and one that would drift from the parser, which accepts
   // the value outright and writes it straight to the filter.
-  out.push({ start: base + colon + 1, end: base + token.length, kind: "value" });
+  emitScalarToken(token, base, "value", out);
+}
+
+// Emit the spans for an `area:` token: the whole token as `invalid` when it is
+// the negated form `parseQuery` parks, else name / colon / value — with the value
+// marked `invalid` exactly when the parser refused it.
+//
+// The value's color is decided by `isRefusedArea`, the same call `parseQuery`
+// routes on, so an undeclared path cannot be parked as invalid while rendering as
+// accepted. An area is the one token value this module CAN check, because the
+// vocabulary is data the client holds; a rel id would need the store.
+function classifyAreaToken(
+  token: string,
+  areaToken: AreaMatch,
+  base: number,
+  out: Span[],
+  areas: AreaVocabulary | undefined,
+): void {
+  if (areaToken.kind === "invalid") {
+    out.push({ start: base, end: base + token.length, kind: "invalid" });
+    return;
+  }
+  const kind: SpanKind = isRefusedArea(areaToken.value, areas) ? "invalid" : "value";
+  emitScalarToken(token, base, kind, out);
+}
+
+// Emit the spans for a scalar `name:value` token — the name, its colon, and the
+// whole post-colon run as ONE value span. Shared by the relationship and area
+// tokens, which are the same shape and differ only in what that run may be
+// colored. It splits at the FIRST colon rather than reusing FIELD_TOKEN, whose
+// `[A-Za-z]+` name group cannot match a hyphenated rel name (`blocked-by`), and
+// takes the run whole — which is what makes an embedded comma or second colon part
+// of the value rather than an operator, matching what `parseQuery` stores.
+//
+// The guard is unreachable through either recognizer — both require a colon at
+// index > 0 with a non-empty remainder — but an empty name or value would emit a
+// zero-length span and break the tiling invariant the backdrop depends on, so the
+// token falls back to one free-text span instead.
+function emitScalarToken(token: string, base: number, valueKind: SpanKind, out: Span[]): void {
+  const colon = token.indexOf(":");
+  if (colon <= 0 || colon === token.length - 1) {
+    out.push({ start: base, end: base + token.length, kind: "freetext" });
+    return;
+  }
+  out.push({ start: base, end: base + colon, kind: "field" });
+  out.push({ start: base + colon, end: base + colon + 1, kind: "operator" });
+  out.push({ start: base + colon + 1, end: base + token.length, kind: valueKind });
 }

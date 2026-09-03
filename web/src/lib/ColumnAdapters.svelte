@@ -35,6 +35,7 @@
   import { RELATION_CONFIG } from "./relations";
   import { formatRelative, formatAbsolute } from "./date";
   import { isSyntheticRowId } from "./tree";
+  import { cssColor } from "./areas";
   import { blockedVariantFor } from "./types";
 
   /** The two snippets that render one column: its header content and its cell. */
@@ -157,6 +158,12 @@
 <!-- Title column -->
 {#snippet cellTitle(ctx: RowContext)}
   {@const { nib, depth, hasChildren, collapsed, blockedEmphasis } = ctx}
+  <!-- The section facts are drawn only where the row is one the view
+       FABRICATED. A section a real nib heads renders that nib's own columns,
+       and what a heading should show there is the view's decision, not this
+       one's. `nib.title` is the section's label either way. -->
+  {@const section = ctx.drawsSection !== null && isSyntheticRowId(nib.id) ? ctx.drawsSection : null}
+  {@const sectionColor = section === null ? null : cssColor(section.display.color)}
   {@const priorityIndicator = priorityIndicators[nib.priority] ?? null}
   {@const isBlocked = nib.blockedByIds.length > 0}
   {@const blockedVariant = blockedVariantFor(blockedEmphasis)}
@@ -179,6 +186,15 @@
            no class/style, so the em-based margin lives here (scales with the
            row font-size). Title column only — the Parent column is untouched. -->
       <span class="type-icon-gap"><TypeIcon type={nib.type} /></span>
+      {#if sectionColor}
+        <!-- `cssColor` is the whole of what makes config text safe in a style
+             here — the sink is a declaration list either way. -->
+        <span
+          data-testid="section-color"
+          class="shrink-0 size-2.5 rounded-full border border-border"
+          style:background-color={sectionColor}
+        ></span>
+      {/if}
       {#if priorityIndicator}
         <span
           data-testid="priority-icon"
@@ -194,6 +210,12 @@
         data-action="title"
         class="title-text-btn"
       >{nib.title}</button>
+      {#if section}
+        <span data-testid="section-count" class="shrink-0 text-muted-foreground">({section.count})</span>
+        {#if section.display.description}
+          <span data-testid="section-description" class="section-description">{section.display.description}</span>
+        {/if}
+      {/if}
       {#if isBlocked}
         <RelationBadge kind="blocked" count={nib.blockedByIds.length} variant={blockedVariant} />
       {/if}
@@ -313,6 +335,15 @@
     display: inline-flex;
     flex-shrink: 0;
     margin-inline-end: 0.35em;
+  }
+
+  /* Shrinks far ahead of the title, which is what the column is for. */
+  .section-description {
+    color: var(--muted-foreground);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+    flex-shrink: 1000;
   }
 
   .title-text-btn {

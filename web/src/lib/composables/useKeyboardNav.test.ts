@@ -1,6 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 import { SelectionState } from "../selection.svelte";
-import { buildTableData, rowRegion, type RowData } from "../tableData";
+import { buildContainmentIndex, type ContainmentIndex } from "../containment";
+import { rowRegion, type RowData } from "../tableData";
+import { EMPTY_SPINE } from "../viewSpine";
+
+const { buildTableData } = EMPTY_SPINE;
 import type { TreeTableNib, OpenDetailGesture } from "../types";
 import { DEFAULT_OPEN_DETAIL_ON } from "../types";
 import { useKeyboardNav } from "./useKeyboardNav.svelte";
@@ -19,6 +23,7 @@ function makeNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
     parentId: null,
     milestone: "",
     milestoneOrder: "",
+    area: "",
     blockingIds: [],
     blockedByIds: [],
     etag: "etag-test",
@@ -38,10 +43,13 @@ function makeRow(nib: TreeTableNib, opts: Partial<RowData> = {}): RowData {
     // built through this helper must come out a member of nothing, as it does
     // in a real table.
     region: rowRegion(nib.id, nib.parentId),
-    childRegion: null,
+    drawsSection: null,
+    section: null,
     ...opts,
   };
 }
+
+const EMPTY_CONTAINMENT = buildContainmentIndex([]);
 
 describe("useKeyboardNav", () => {
   function setup(overrides: {
@@ -52,6 +60,10 @@ describe("useKeyboardNav", () => {
     onDragKeyDown?: (e: KeyboardEvent) => void;
     navigateToNib?: (id: string) => void;
     openDetailOn?: OpenDetailGesture;
+    /** Defaults to the index of an EMPTY view, which contains nothing — so a
+     *  case that says nothing about containment cannot walk out of a row by
+     *  accident. The ArrowLeft cases supply a real table's. */
+    containment?: ContainmentIndex;
   } = {}) {
     const selection = overrides.selection ?? new SelectionState();
     const rows = overrides.rows ?? [];
@@ -67,6 +79,7 @@ describe("useKeyboardNav", () => {
       getRows: () => rows,
       getVisibleRowIds: () => visibleRowIds,
       getCollapsedIds: () => collapsedIds,
+      getContainment: () => overrides.containment ?? EMPTY_CONTAINMENT,
       toggleNode,
       getScrollContainer: () => scrollContainer,
       onDragKeyDown,
@@ -366,49 +379,69 @@ describe("useKeyboardNav", () => {
   });
 
   it("ArrowLeft on leaf/collapsed row moves focus to parent", () => {
-    // Not a display-vs-real-parent guard: the ordinary tree view nests a child
-    // under its real parent, so `displayParentId` and `nib.parentId` agree here
-    // and either one would satisfy the assertion. Kept as regression coverage
-    // for the plain case.
+    // The ordinary tree view: the row that draws a child IS its real parent, so
+    // this is the plain case rather than a display-vs-real-parent guard.
     const selection = new SelectionState();
     selection.focus("nibs-002");
-    const nib1 = makeNib({ id: "nibs-001" });
-    const nib2 = makeNib({ id: "nibs-002", parentId: "nibs-001" });
-    const rows = [
-      makeRow(nib1, { hasChildren: true }),
-      makeRow(nib2, { depth: 1, displayParentId: "nibs-001" }),
-    ];
-    const { handleKeydown } = setup({ selection, rows });
+    const table = buildTableData(
+      [makeNib({ id: "nibs-001" }), makeNib({ id: "nibs-002", parentId: "nibs-001" })],
+      {},
+      "none",
+      new Set<string>(),
+    );
+    const { handleKeydown } = setup({ selection, rows: table.rows, containment: table.containment });
 
     handleKeydown(keydown("ArrowLeft"));
 
     expect(selection.focusedNibId).toBe("nibs-001");
   });
 
-  // The one shape where the display container and the real parent disagree in a
-  // way ArrowLeft can observe: a row at the display root whose real parent is
-  // rendered elsewhere. The flat lens emits it for every parented nib — no
-  // nesting, so nothing to walk out of, and focus must stay put rather than jump
-  // across the list. Built through `buildTableData` rather than by hand so the
-  // row shape is the producer's, not this file's idea of it.
+  // A row at the display root whose real parent is rendered elsewhere. The flat
+  // lens emits it for every parented nib — no nesting, so nothing to walk out
+  // of, and focus must stay put rather than jump across the list. Built through
+  // `buildTableData` rather than by hand so the row shape is the producer's, not
+  // this file's idea of it.
   it("ArrowLeft does nothing at the display root even when the real parent is rendered", () => {
     const selection = new SelectionState();
     selection.focus("nibs-002");
-    const { rows } = buildTableData(
+    const table = buildTableData(
       [makeNib({ id: "nibs-001" }), makeNib({ id: "nibs-002", parentId: "nibs-001" })],
       {},
       "flat",
       new Set<string>(),
     );
-    expect(rows.map(r => [r.nib.id, r.displayParentId, r.hasChildren])).toEqual([
+    expect(table.rows.map(r => [r.nib.id, table.containment.containerOf(r.nib.id), r.hasChildren])).toEqual([
       ["nibs-001", null, false],
       ["nibs-002", null, false],
     ]);
-    const { handleKeydown } = setup({ selection, rows });
+    const { handleKeydown } = setup({ selection, rows: table.rows, containment: table.containment });
 
     handleKeydown(keydown("ArrowLeft"));
 
     expect(selection.focusedNibId).toBe("nibs-002");
+  });
+
+  // The row a grouped view draws around a member is the SECTION, which is no
+  // nib's parent — so `displayParentId` is null there and ArrowLeft used to do
+  // nothing at all inside a section. The Backlog is the shipped instance.
+  it("ArrowLeft walks out of a section, which is nobody's parent", () => {
+    const selection = new SelectionState();
+    selection.focus("nibs-002");
+    const table = buildTableData(
+      [makeNib({ id: "nibs-001", type: "milestone" }), makeNib({ id: "nibs-002" })],
+      {},
+      "milestones",
+      new Set<string>(),
+    );
+    const backlogId = table.containment.containerOf("nibs-002");
+    expect(backlogId).not.toBeNull();
+    // Not the real parent, and not reachable by walking display parents.
+    expect(table.rows.find(r => r.nib.id === "nibs-002")!.displayParentId).toBeNull();
+    const { handleKeydown } = setup({ selection, rows: table.rows, containment: table.containment });
+
+    handleKeydown(keydown("ArrowLeft"));
+
+    expect(selection.focusedNibId).toBe(backlogId);
   });
 
   it("ArrowRight on collapsed parent expands it", () => {

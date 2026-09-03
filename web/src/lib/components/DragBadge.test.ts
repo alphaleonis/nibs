@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/svelte";
 import { describe, it, expect } from "vitest";
 import DragBadge from "./DragBadge.svelte";
 import { SelectionState } from "../selection.svelte";
-import { DragState } from "../drag.svelte";
+import { DragState, type AcceptedDrop } from "../drag.svelte";
 import { makeTestContext } from "../contexts";
 import type { Region } from "../ordering/region";
 
@@ -14,7 +14,7 @@ function renderBadge(drag: DragState) {
 }
 
 /** A drag in flight over a target whose plan was accepted. */
-function dragging(ids: string[], accepted?: { label: string; region: Region }): DragState {
+function dragging(ids: string[], accepted?: AcceptedDrop): DragState {
   const drag = new DragState();
   drag.startDrag(ids);
   if (accepted) drag.setDropTarget("target", "before", true, accepted);
@@ -28,7 +28,7 @@ describe("DragBadge", () => {
   });
 
   it("names the destination the release would write to, with no count beside it", () => {
-    renderBadge(dragging(["a"], { label: "Reorder in the top level", region: TOP_LEVEL }));
+    renderBadge(dragging(["a"], { kind: "position", label: "Reorder in the top level", region: TOP_LEVEL }));
     expect(screen.getByTestId("drag-badge-label")).toHaveTextContent("Reorder in the top level");
     // "3 items" is a plural the count element cannot say correctly for one row,
     // so its absence is part of what this case asserts, not an omission.
@@ -39,7 +39,7 @@ describe("DragBadge", () => {
   // than taken from the Milestones view that mints one: a badge reads its region
   // off the plan it is handed, so a lens is not in this path at all.
   it("carries a queue destination and marks the badge with the queue's own color", () => {
-    renderBadge(dragging(["a"], { label: "Reorder in the Q3 Launch queue", region: QUEUE }));
+    renderBadge(dragging(["a"], { kind: "position", label: "Reorder in the Q3 Launch queue", region: QUEUE }));
     expect(screen.getByTestId("drag-badge-label")).toHaveTextContent("Reorder in the Q3 Launch queue");
     // `border-region-queue` resolves to a color only because `--region-queue` is
     // registered in app.css's `@theme inline` block as well as in `:root` — the
@@ -48,14 +48,25 @@ describe("DragBadge", () => {
   });
 
   it("leaves the queue color off a parent-axis destination", () => {
-    renderBadge(dragging(["a"], { label: "Reorder in the top level", region: TOP_LEVEL }));
+    renderBadge(dragging(["a"], { kind: "position", label: "Reorder in the top level", region: TOP_LEVEL }));
     const badge = screen.getByTestId("drag-badge");
     expect(badge).toHaveClass("border-border");
     expect(badge).not.toHaveClass("border-region-queue");
   });
 
+  it("marks an ASSIGNMENT in its own color, distinct from both axes", () => {
+    // The rendered class, not the helper's return: a plan carrying no region
+    // used to answer `false` to the axis question and take the parent axis's
+    // border, which is the one thing this drop must not look like.
+    renderBadge(dragging(["a"], { kind: "assign", label: "Move to the web/dashboard area" }));
+    const badge = screen.getByTestId("drag-badge");
+    expect(badge).toHaveClass("border-region-assign");
+    expect(badge).not.toHaveClass("border-region-queue");
+    expect(badge).not.toHaveClass("border-border");
+  });
+
   it("keeps the multi-select count, beside the destination", () => {
-    renderBadge(dragging(["a", "b", "c"], { label: "Reorder in the top level", region: TOP_LEVEL }));
+    renderBadge(dragging(["a", "b", "c"], { kind: "position", label: "Reorder in the top level", region: TOP_LEVEL }));
     expect(screen.getByTestId("drag-badge-count")).toHaveTextContent("3 items");
     expect(screen.getByTestId("drag-badge-label")).toHaveTextContent("Reorder in the top level");
   });
@@ -89,7 +100,7 @@ describe("DragBadge", () => {
     const styleOf = () => screen.getByTestId("drag-badge").getAttribute("style") ?? "";
 
     it("pulls back from the right and bottom edges", () => {
-      const drag = dragging(["a"], { label: "Reorder in the top level", region: TOP_LEVEL });
+      const drag = dragging(["a"], { kind: "position", label: "Reorder in the top level", region: TOP_LEVEL });
       drag.cursorX = window.innerWidth + 500;
       drag.cursorY = window.innerHeight + 500;
       renderBadge(drag);
@@ -100,7 +111,7 @@ describe("DragBadge", () => {
     it("keeps a margin at the left and top edges", () => {
       // `cursorY - 12` is what puts the badge above the cursor, and it is
       // negative for any cursor within 12px of the top.
-      const drag = dragging(["a"], { label: "Reorder in the top level", region: TOP_LEVEL });
+      const drag = dragging(["a"], { kind: "position", label: "Reorder in the top level", region: TOP_LEVEL });
       drag.cursorX = 0;
       drag.cursorY = 0;
       renderBadge(drag);

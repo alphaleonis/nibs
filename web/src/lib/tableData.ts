@@ -1,7 +1,10 @@
-import type { TreeTableNib, NibFilter, ViewLevel, TreeNode, TableSort } from "./types";
+import type { TreeTableNib, NibFilter, TreeNode, TableSort } from "./types";
 import type { Region } from "./ordering/region";
-import { buildShapedViewTree, holdsChildrenByDisplay, isSyntheticRowId, viewShapeFor } from "./tree";
-import type { ViewShape } from "./tree";
+import type { SectionEntry } from "./ordering/sectionMeaning";
+import { buildShapedViewTree, holdsChildrenByDisplay, isSyntheticRowId, SECTION_RULES } from "./tree";
+import type { SectionDisplay, SectionKey, ViewShape } from "./tree";
+import { buildContainmentIndex } from "./containment";
+import type { ContainmentIndex } from "./containment";
 import { makeNibComparator } from "./tableSort";
 import { hasClientFilters, matchesFilter } from "./filter";
 
@@ -49,21 +52,29 @@ export interface RowData {
   parentNib: TreeTableNib | null;
   /**
    * The id of the nib this row would REORDER AGAINST in the current view tree,
-   * or null when it reorders at the display root. This is the structural
-   * authority for drag reorder: under a grouping lens it differs from
-   * `nib.parentId` (a promoted header's display parent is null though its real
-   * parent is a hidden container). Distinct from `parentNib`, which stays the
-   * real logical parent used by the "Parent" column.
+   * or null when it reorders at the display root. Under a grouping lens it
+   * differs from `nib.parentId` (a promoted header's display parent is null
+   * though its real parent is a hidden container). Distinct from `parentNib`,
+   * which stays the real logical parent used by the "Parent" column, and from
+   * `TableData.containment`, which answers who DRAWS this row — this is that
+   * relation with the display containers elided, which is what keeps the value
+   * a backend-acceptable `parentId`.
    *
    * INVARIANT: always a real nib id that could hold this row as a child, or
    * `null` — so consumers can use it directly as a backend `parentId` /
    * type-lookup key with no guard of their own. That excludes both kinds of
    * display container: a synthetic bucket, whose id names no nib, and a real nib
    * heading a section of rows that are not its children. Rows under either
-   * inherit that container's OWN display parent (`null` for today's single
-   * top-level bucket) rather than naming it. If display containers ever nest,
-   * the recursion in `flatten` must pass the container's own resolved display
-   * parent rather than the value threaded down.
+   * inherit that container's OWN display parent rather than naming it, at any
+   * depth of nesting — the value `flatten` threads down IS the container's own
+   * resolved display parent, computed one level up by this same rule.
+   *
+   * STATUS: produced and tested here, read by nothing in production — so the
+   * threading rule below upholds an invariant no live caller depends on. Kept
+   * deliberately, with its removal tracked separately; what would read it is a
+   * path needing a backend-acceptable parent id for a row, which is the one
+   * thing `TableData.containment` cannot answer because it names the display
+   * containers this elides.
    */
   displayParentId: string | null;
   /**
@@ -87,12 +98,61 @@ export interface RowData {
    */
   region: Region | null;
   /**
-   * The ordering group this row's children are members of, or null when it
-   * declares none — in which case each child falls back to its own resolved
-   * parent group. Read off the view tree, so only a container a lens declared one
-   * for carries anything here.
+   * The section this row DRAWS — null for every row that is not a section's own
+   * row, which is most of them. Read off the view tree, so only a grouped view's
+   * section containers carry anything here.
+   *
+   * The pair of `section` below, and the pair is the point: this answers what
+   * aiming AT this row means, that one which section this row is drawn in. A
+   * MEMBER of a section carries the second and not the first, so a drop into a
+   * member is decided by the row and not by the section around it.
    */
-  childRegion: Region | null;
+  drawsSection: RowSection | null;
+  /**
+   * The section this row is a MEMBER of — transitively, so a row nested under a
+   * member answers the section holding its ancestor. Null when no section
+   * encloses it: every row of an ungrouped view, and a grouped view's outermost
+   * section rows.
+   *
+   * Carries `onEnter` and not `memberRegion`: the enclosing section's member
+   * region is already folded into `region` above by `rowRegion`, and carrying it
+   * again would be two authorities for one question.
+   */
+  section: RowSection | null;
+}
+
+/**
+ * As much of a section as a row consumer needs: which one it is, what it shows,
+ * and what entering it does.
+ *
+ * `SectionMeaning` minus `memberRegion` — see `RowData.section` for why that
+ * member does not travel this far.
+ */
+export interface RowSection {
+  readonly key: SectionKey;
+  /** Label, description and color, as the lens declared or derived them. */
+  readonly display: SectionDisplay;
+  /**
+   * How many NIB rows the section draws — its own members, everything nested
+   * under them, and every declared sub-section's rows. A row the view
+   * FABRICATED does not count, because it names no nib; a real nib heading a
+   * section does, like any other row.
+   *
+   * A ROLLUP, and one that tracks the client filter: it is the number of rows
+   * `flatten` draws inside the section with every container opened, so a reader
+   * who expands the heading counts the same number the heading shows. That is
+   * the whole point of computing it here rather than in `assembleSection`, which
+   * sees neither the descendants (a member arrives as one node with a subtree)
+   * nor the filter. Collapse is deliberately not in it — a collapsed section
+   * reporting 0 would take the summary away exactly when it is the only thing
+   * left.
+   *
+   * A DECLARED section that a filter empties still renders (`SECTION_RULES`),
+   * and this then reads 0 — true of what is there, where the membership count
+   * would assert rows the view is not drawing.
+   */
+  readonly count: number;
+  readonly onEnter: SectionEntry;
 }
 
 export interface TableData {
@@ -113,6 +173,14 @@ export interface TableData {
    * already owns that dimension.
    */
   viewMemberIds: Set<string>;
+  /**
+   * What contains what in this view — the one answer reveal, ArrowLeft, subtree
+   * expand/collapse and the drag's destination check all read.
+   *
+   * Built off the view TREE, so it answers for a nib inside a collapsed section,
+   * which `rows` has no entry for at all.
+   */
+  containment: ContainmentIndex;
 }
 
 /**
@@ -153,15 +221,13 @@ function showsAncestorContext(shape: ViewShape): boolean {
   }
 }
 
-export function buildTableData(
+export function buildShapedTableData(
   allNibs: TreeTableNib[],
   filter: NibFilter,
-  viewLevel: ViewLevel,
+  shape: ViewShape,
   collapsedIds: ReadonlySet<string>,
   sort: TableSort | null = null,
 ): TableData {
-  const shape = viewShapeFor(viewLevel);
-
   // Stage 1: Build nibMap for O(1) parent lookups
   const nibMap = new Map<string, TreeTableNib>();
   for (const nib of allNibs) {
@@ -247,25 +313,58 @@ export function buildTableData(
   // The walk visits every emitted node exactly once, so `viewMemberIds` is
   // collected here rather than in a pass of its own. It takes EVERY node, not
   // just the display containers: it answers which ids the lens has a row for.
+  //
+  // `sectionCounts` rides along for the same reason, and can ride ONLY here:
+  // the number a section heading shows is over the rows `flatten` will draw, so
+  // it needs `visibleIds` — settled just above, and force-added to within this
+  // very walk — which `assembleSection` never sees.
   const viewMemberIds = new Set<string>();
-  (function foldDisplayContainers(nodes: TreeNode<TreeTableNib>[]): boolean {
+  const sectionCounts = new Map<string, number>();
+  (function foldDisplayContainers(nodes: TreeNode<TreeTableNib>[]): { anyVisible: boolean; drawnNibs: number } {
     let anyVisible = false;
+    let drawnNibs = 0;
     for (const node of nodes) {
       viewMemberIds.add(node.nib.id);
-      const childVisible = foldDisplayContainers(node.children);
+      const below = foldDisplayContainers(node.children);
+      const childVisible = below.anyVisible;
       // `some` over the children, so this is false for a childless node and the
       // "has rows under it" half of the collapse question comes for free.
       const byDisplay = holdsChildrenByDisplay(node);
       if (byDisplay) {
         parentIds.add(node.nib.id);
       }
-      const selfVisible = (visibleIds ? visibleIds.has(node.nib.id) : true) || childVisible;
-      if (visibleIds && byDisplay && selfVisible) {
+      // A DECLARED section is a row because the lens said it exists, not because
+      // something landed in it — so a client filter that empties it must leave
+      // it standing, while a discovered one (today's every section, the Backlog
+      // included) still prunes.
+      // Only a FABRICATED row can persist on the declaration alone. A real nib
+      // heading a declared section is still a nib, and a client filter that
+      // excludes it must hide it like any other row — asking `isSyntheticRowId`
+      // here keeps `SectionMeta.persistence` honest about the SECTION rather
+      // than bending it to mean the row.
+      const persists =
+        node.section !== undefined &&
+        isSyntheticRowId(node.nib.id) &&
+        SECTION_RULES[node.section.persistence].rendersWhenEmpty;
+      const selfVisible =
+        persists || (visibleIds ? visibleIds.has(node.nib.id) : true) || childVisible;
+      if (visibleIds && (byDisplay || persists) && selfVisible) {
         visibleIds.add(node.nib.id);
       }
+      // Read AFTER the add above, so this is `flatten`'s own first line rather
+      // than a second rule that could disagree with it: the rows it draws, with
+      // the collapse set left out (a collapsed node still has its row, and its
+      // subtree still belongs to the section around it).
+      const drawn = visibleIds === null || visibleIds.has(node.nib.id);
+      if (node.section !== undefined) sectionCounts.set(node.nib.id, below.drawnNibs);
+      // A synthetic id names no nib, so a section row does not count toward the
+      // section around it; every other row does, a nib heading a section
+      // included. A row `flatten` skips takes its whole subtree with it, so an
+      // undrawn node contributes nothing rather than its children's total.
+      if (drawn) drawnNibs += below.drawnNibs + (isSyntheticRowId(node.nib.id) ? 0 : 1);
       anyVisible = anyVisible || selfVisible;
     }
-    return anyVisible;
+    return { anyVisible, drawnNibs };
   })(tree);
 
   // Stage 6: Flatten tree with collapse gating, visibility filtering, dimming, parent resolution
@@ -274,7 +373,8 @@ export function buildTableData(
   function flatten(
     nodes: TreeNode<TreeTableNib>[],
     displayParentId: string | null,
-    enclosingChildRegion: Region | null,
+    enclosingMemberRegion: Region | null,
+    enclosingSection: RowSection | null,
   ): void {
     for (const node of nodes) {
       // If we have visibility filtering, skip non-visible nodes
@@ -290,8 +390,19 @@ export function buildTableData(
         : node.children;
       const parentNib = node.nib.parentId ? nibMap.get(node.nib.parentId) ?? null : null;
 
-      const childRegion = node.childRegion ?? null;
-      const region = rowRegion(node.nib.id, node.nib.parentId, enclosingChildRegion);
+      const drawsSection: RowSection | null =
+        node.section === undefined
+          ? null
+          : {
+              key: node.section.key,
+              display: node.section.display,
+              // Set by the walk above for every node carrying a `section`, over
+              // the same `tree` this one flattens.
+              count: sectionCounts.get(node.nib.id) ?? 0,
+              onEnter: node.section.meaning.onEnter,
+            };
+      const memberRegion = node.section?.meaning.memberRegion ?? null;
+      const region = rowRegion(node.nib.id, node.nib.parentId, enclosingMemberRegion);
 
       rows.push({
         nib: node.nib,
@@ -305,7 +416,8 @@ export function buildTableData(
         // not its raw nib.parentId.
         displayParentId,
         region,
-        childRegion,
+        drawsSection,
+        section: enclosingSection,
       });
 
       if (!collapsedIds.has(node.nib.id)) {
@@ -314,8 +426,6 @@ export function buildTableData(
         // RowData.displayParentId invariant. Naming it would hand a reorder a
         // parent id the backend rejects: a synthetic bucket resolves to no nib,
         // and a milestone heading a section accepts no children of any type.
-        // (If display containers ever nest, this must resolve the node's own
-        // display parent rather than the value threaded down.)
         // The region declaration passed down is this node's OWN, not the one it
         // received: a declaration covers a container's rows, not everything
         // beneath them. Under a queued epic, a subtask carrying no assignment of
@@ -326,12 +436,30 @@ export function buildTableData(
         // ancestor is already assigned. A hand-authored file can still hold that
         // pair, and the rule is deliberately the same for it — the row is drawn
         // under its parent, so that is the list its position governs.
-        flatten(node.children, holdsChildrenByDisplay(node) ? displayParentId : node.nib.id, childRegion);
+        //
+        // The section identity does NOT stop there — it travels the whole way
+        // down, because both assembly modes put a member's descendants in the
+        // member's own section: a placement lens rebuilds each section's nesting
+        // with `buildTree` over only the nibs that landed in it, and a
+        // structural lens hands a claiming nib its entire subtree. So a row
+        // nested under a member is a member of that section too, and answering
+        // `null` there would say it is in no section at all.
+        flatten(
+          node.children,
+          holdsChildrenByDisplay(node) ? displayParentId : node.nib.id,
+          memberRegion,
+          drawsSection ?? enclosingSection,
+        );
       }
     }
   }
 
-  flatten(tree, null, null);
+  flatten(tree, null, null, null);
 
-  return { rows, allTags, parentIds, viewMemberIds };
+  // Off `tree`, not `rows`: build it from the rows instead and a nib inside a
+  // collapsed section has no chain, so reveal can never open the sections
+  // hiding it.
+  const containment = buildContainmentIndex(tree);
+
+  return { rows, allTags, parentIds, viewMemberIds, containment };
 }

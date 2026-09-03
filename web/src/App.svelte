@@ -19,7 +19,9 @@
   import { DROP_REFUSAL_TOAST_ID, refusalAction, type DropPlan } from "./lib/ordering/dropPlan";
   import type { AnyCommand } from "./lib/mutations/types";
   import { TreeViewState } from "./lib/treeView.svelte";
-  import { provideSelection, provideDrag, provideTreeView, provideConfirmDialog, provideActiveView, provideHistoryNav, provideConnection } from "./lib/contexts";
+  import { provideSelection, provideDrag, provideTreeView, provideConfirmDialog, provideActiveView, provideHistoryNav, provideConnection, provideViewSpine } from "./lib/contexts";
+  import { createAreaVocabulary } from "./lib/areas";
+  import { makeViewSpine, LOADING_SPINE, UNAVAILABLE_SPINE } from "./lib/viewSpine";
   import { useConnectionRecovery } from "./lib/composables/useConnectionRecovery.svelte";
   import type { ConnectionRecovery } from "./lib/connectionRecovery";
   import { createHistoryNav } from "./lib/composables/useHistoryNav.svelte";
@@ -66,6 +68,26 @@
 
   const configResult = queryStore({ client, query: CONFIG_QUERY });
   let projectName = $derived($configResult.data?.config?.projectName ?? "");
+
+  // The areas vocabulary is the one per-project vocabulary codegen cannot
+  // supply, so it arrives here at runtime and binds the view core. First paint
+  // is NOT gated on it: the five shipped view levels need none of it, and the
+  // pre-load spine is a stable singleton whose `validity()` answers "unknown"
+  // rather than "undeclared".
+  //
+  // Three no-vocabulary answers, not one. `Config.areas` is `[Area!]!`, so a
+  // project declaring none sends `[]` and `[] ?? null` is `[]` — the `?? null`
+  // sentinel therefore means "no answer yet", never "declares none". When the
+  // query FAILED there is likewise no answer, but none is coming either: the
+  // exchange chain has no retry, so waiting on LOADING_SPINE would last the
+  // session. That case takes its own spine so a consumer can stop rather than
+  // wait.
+  let declaredAreas = $derived($configResult.data?.config?.areas ?? null);
+  let viewSpine = $derived.by(() => {
+    if (declaredAreas !== null) return makeViewSpine(createAreaVocabulary(declaredAreas));
+    return $configResult.error ? UNAVAILABLE_SPINE : LOADING_SPINE;
+  });
+  provideViewSpine(() => viewSpine);
 
   $effect(() => {
     if (projectName) {
@@ -168,6 +190,26 @@
     // buffer still wins; unsaved edits are never dropped.
     holder.view?.invalidateDetailSeed();
     detailStore.reexecute({ requestPolicy: "network-only" });
+  }));
+
+  // CONFIG_QUERY runs once, so a failure would otherwise cost the areas
+  // vocabulary for the rest of the session: every `area` value is withheld
+  // against an "unknown" answer, which widens the list silently
+  // (withSendableArea, lib/filter.ts). A socket back after a gap is the one
+  // signal that the server is reachable again, so re-ask there.
+  //
+  // Only while there is NO vocabulary in hand — a failure, or a first attempt
+  // still in flight. One already held is never re-fetched, so a re-ask that
+  // fails cannot take one away.
+  //
+  // `declaredAreas === null` rather than `$configResult.error`, because those
+  // are not the same set: a reconnect landing while the FIRST config query is
+  // still open sees no error yet, and gating on the error would skip — spending
+  // the one healing signal on a request that may then fail, leaving the session
+  // on UNAVAILABLE_SPINE. The null read covers failed and not-yet-answered
+  // alike, and needs no assumption that an error implies no data.
+  $effect(() => recovery.onRecovered(() => {
+    if (declaredAreas === null) configResult.reexecute({ requestPolicy: "network-only" });
   }));
 
   // No cast: `$detailStore.data` is typed by NIB_DETAIL_QUERY's generated result,
@@ -625,6 +667,7 @@
     {treeView}
     {projectName}
     {availableTags}
+    areas={viewSpine.areas}
     connectionStatus={recovery.status}
     oncreatenew={(type) => view.startCreate({ type })}
   />

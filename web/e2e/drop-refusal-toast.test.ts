@@ -12,9 +12,9 @@ import { test, expect } from "@playwright/test";
 // plan refuses whatever is being dragged.
 //
 // A milestone header no longer serves as that target, though it reads like the
-// obvious one: the membership lens declares the milestone's QUEUE as that row's
-// childRegion, and `entryRegionOf` returns a declaration before it ever asks the
-// type hierarchy — so dropping a work item into one is an in-queue move or an
+// obvious one: the membership lens says entering a milestone section joins that
+// milestone's QUEUE, and `entryRegionOf` returns the section's answer before it
+// ever asks the type hierarchy — so dropping a work item into one is an in-queue move or an
 // assignment refusal, not "holds no children". Only a dragged MILESTONE still
 // reaches that refusal there, since no milestone can join a queue, and this test
 // wants a target that refuses whatever is dragged onto it.

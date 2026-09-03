@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { parseQuery } from "./index";
 import type { ParsedQuery } from "./index";
+import { createAreaVocabulary, EMPTY_AREAS, LOADING_AREAS, UNAVAILABLE_AREAS } from "../areas";
+import type { AreaVocabulary } from "../areas";
 
 describe("parseQuery — metadata grammar", () => {
   const cases: { name: string; input: string; expected: ParsedQuery }[] = [
@@ -431,5 +433,163 @@ describe("parseQuery — status group shortcuts", () => {
       filter: {},
       invalidTokens: ["status:constructor"],
     });
+  });
+});
+
+// --- The area token ------------------------------------------------------------
+
+describe("parseQuery — the area token", () => {
+  const declared = [
+    { path: "web", name: "web", description: "", color: "", depth: 0 },
+    { path: "web/dashboard", name: "dashboard", description: "", color: "", depth: 1 },
+    { path: "webhooks", name: "webhooks", description: "", color: "", depth: 0 },
+  ];
+  const READY = createAreaVocabulary(declared);
+
+  // The routing table, over both axes at once: what the token looks like × what
+  // the vocabulary answers. `filter.area` is written on "declared" AND "unknown";
+  // only an answered "undeclared" parks.
+  const cases: {
+    name: string;
+    input: string;
+    areas: AreaVocabulary | undefined;
+    expected: ParsedQuery;
+  }[] = [
+    {
+      name: "a declared path reaches the filter",
+      input: "area:web",
+      areas: READY,
+      expected: { filter: { area: "web" }, invalidTokens: [] },
+    },
+    {
+      name: "a declared nested path reaches the filter unwidened",
+      input: "area:web/dashboard",
+      areas: READY,
+      expected: { filter: { area: "web/dashboard" }, invalidTokens: [] },
+    },
+    {
+      name: "an undeclared path is parked, like status:banana",
+      input: "area:retired",
+      areas: READY,
+      expected: { filter: {}, invalidTokens: ["area:retired"] },
+    },
+    {
+      name: "a project declaring no areas parks every path",
+      input: "area:web",
+      areas: EMPTY_AREAS,
+      expected: { filter: {}, invalidTokens: ["area:web"] },
+    },
+    {
+      name: "a pre-load vocabulary keeps the value rather than judging it",
+      input: "area:web",
+      areas: LOADING_AREAS,
+      expected: { filter: { area: "web" }, invalidTokens: [] },
+    },
+    {
+      name: "a failed config query keeps it too",
+      input: "area:retired",
+      areas: UNAVAILABLE_AREAS,
+      expected: { filter: { area: "retired" }, invalidTokens: [] },
+    },
+    {
+      name: "no vocabulary at all keeps it — this is Preferences.setQuery on load",
+      input: "area:retired",
+      areas: undefined,
+      expected: { filter: { area: "retired" }, invalidTokens: [] },
+    },
+    {
+      name: "the value keeps its case, because the server's lookup is case-sensitive",
+      input: "area:Web",
+      areas: undefined,
+      expected: { filter: { area: "Web" }, invalidTokens: [] },
+    },
+    {
+      name: "and a mis-cased path is refused once a vocabulary can say so",
+      input: "area:Web",
+      areas: READY,
+      expected: { filter: {}, invalidTokens: ["area:Web"] },
+    },
+    {
+      name: "the field name is normalized",
+      input: "AREA:web",
+      areas: READY,
+      expected: { filter: { area: "web" }, invalidTokens: [] },
+    },
+    {
+      name: "negation is parked whole — there is no excludeArea",
+      input: "-area:web",
+      areas: READY,
+      expected: { filter: {}, invalidTokens: ["-area:web"] },
+    },
+    {
+      name: "a negated declared path is parked for its negation, not its value",
+      input: "-area:web",
+      areas: undefined,
+      expected: { filter: {}, invalidTokens: ["-area:web"] },
+    },
+    {
+      name: "an empty value is free text, as `type:` is",
+      input: "area:",
+      areas: READY,
+      expected: { filter: { search: "area:" }, invalidTokens: [] },
+    },
+    {
+      name: "a bare `area` is a search word",
+      input: "area",
+      areas: READY,
+      expected: { filter: { search: "area" }, invalidTokens: [] },
+    },
+    {
+      name: "an unknown field that starts with it stays free text",
+      input: "areas:web",
+      areas: READY,
+      expected: { filter: { search: "areas:web" }, invalidTokens: [] },
+    },
+    {
+      name: "the last of two area tokens wins, like a relationship id",
+      input: "area:web area:webhooks",
+      areas: READY,
+      expected: { filter: { area: "webhooks" }, invalidTokens: [] },
+    },
+    {
+      name: "a declared and an undeclared path coexist: one filters, one is flagged",
+      input: "area:web area:retired",
+      areas: READY,
+      expected: { filter: { area: "web" }, invalidTokens: ["area:retired"] },
+    },
+    {
+      name: "it composes with every other token kind",
+      input: "type:bug parent:tnib-1 has:parent area:web login",
+      areas: READY,
+      expected: {
+        filter: {
+          type: ["bug"],
+          parentId: "tnib-1",
+          hasParent: true,
+          area: "web",
+          search: "login",
+        },
+        invalidTokens: [],
+      },
+    },
+  ];
+
+  for (const { name, input, areas, expected } of cases) {
+    it(name, () => {
+      expect(parseQuery(input, areas)).toEqual(expected);
+    });
+  }
+
+  it("takes the value whole — no comma split, unlike a metadata facet", () => {
+    // `type:a,b` is two values; an area path is a scalar, and a comma is a legal
+    // character in an area NAME (config.validateAreaNodes forbids only `/`).
+    expect(parseQuery("area:a,b").filter.area).toBe("a,b");
+  });
+
+  it("does not widen a declared ancestor to its subtree", () => {
+    // Downward closure is filterByAreaWithin's, server-side. The token carries the
+    // one path the user typed, and `webhooks` is not in that subtree at all.
+    expect(parseQuery("area:web", READY).filter.area).toBe("web");
+    expect(READY.subtreeOf("web").map((n) => n.path)).toEqual(["web", "web/dashboard"]);
   });
 });

@@ -23,6 +23,7 @@ function makeNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
     parentId: null,
     milestone: "",
     milestoneOrder: "",
+    area: "",
     blockingIds: [],
     blockedByIds: [],
     etag: "etag-test",
@@ -47,7 +48,8 @@ function makeRow(overrides: Partial<Omit<RowData, "nib">> & { nib?: Partial<Tree
     // built through this helper must come out a member of nothing, as it does
     // in a real table.
     region: rowRegion(nib.id, nib.parentId),
-    childRegion: null,
+    drawsSection: null,
+    section: null,
     ...rowOverrides,
   };
 }

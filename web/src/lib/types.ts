@@ -1,4 +1,6 @@
-import type { Region } from "./ordering/region";
+// Type-only, so it is erased from the emitted JS: tree.ts imports this module's
+// types, and the mutual reference never becomes a runtime import cycle.
+import type { SectionMeta } from "./tree";
 
 export interface NibSummary {
   id: string;
@@ -58,8 +60,11 @@ export interface NibFilter {
   // declared tree: the nibs assigned to that path plus those in every area
   // declared beneath it. Closure is over the tree, not the string — `webhooks`
   // is not within `web` — and an undeclared value is refused rather than
-  // matching nothing. Guard-only: QueryFilter omits it, so nothing the user can
-  // type reaches it.
+  // matching nothing. The query box writes it from an `area:<path>` token
+  // (query/area.ts), which parks a path the vocabulary calls undeclared instead
+  // of storing it; what a list query may carry is `withSendableArea`'s decision,
+  // in filter.ts, which re-asks at query time and so also withholds a value
+  // parsed before the vocabulary arrived.
   area?: string;
 }
 
@@ -89,7 +94,7 @@ type _GeneratedKeysExistOnClient = keyof GeneratedNibFilter extends keyof NibFil
 const _generatedKeysCheck: _GeneratedKeysExistOnClient = true;
 void _generatedKeysCheck;
 
-// The assignment axis lives HERE rather than on TreeTableNib because
+// The assignment axes live HERE rather than on TreeTableNib because
 // `buildViewTree` is generic over `T extends TreeNib`, and a grouping lens
 // cannot read a field the bound does not promise.
 export interface TreeNib extends NibSummary {
@@ -101,6 +106,10 @@ export interface TreeNib extends NibSummary {
   /** Fractional position within the assigned milestone's queue; empty when the
    *  nib has never been placed in one. */
   milestoneOrder: string;
+  /** Area assignment as stored — the ownership axis, empty when unassigned.
+   *  Reported verbatim, so a value the declared vocabulary no longer contains
+   *  arrives here as written. */
+  area: string;
 }
 
 export interface TreeTableNib extends TreeNib {
@@ -119,15 +128,17 @@ export interface TreeNode<T extends TreeNib = TreeNib> {
   children: TreeNode<T>[];
   depth: number;
   /**
-   * The ordering group this node's children are members of, when the node
-   * DECLARES one; absent or null means it declares nothing and each child falls
-   * back to its own resolved parent group.
+   * The section facts, present exactly on the nodes that ARE sections: which
+   * section this is, whether the lens declared it or a placement discovered it,
+   * and what it means — the group its rows order in and what entering it does.
    *
-   * Optional because only a grouped view's section containers can declare one —
-   * `buildTree` and the flat shape emit nodes that never do — so the many nodes
-   * with nothing to say are not made to say it.
+   * Optional because only a grouped view's section containers are sections —
+   * `buildTree` and the flat shape emit nodes that are not — so the many nodes
+   * with nothing to say are not made to say it. ONE optional carrying every
+   * fact, so a node either is a section and answers all of them or is not one at
+   * all.
    */
-  childRegion?: Region | null;
+  section?: SectionMeta;
 }
 
 /**

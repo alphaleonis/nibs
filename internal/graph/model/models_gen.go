@@ -12,6 +12,27 @@ import (
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
+// One node of the per-project areas vocabulary declared in the store's config.yml.
+//
+// Deliberately NOT self-recursive: area nesting is unbounded (validateAreaNodes
+// recurses with no depth limit), while the served endpoint refuses an operation
+// nesting a self-recursive schema type past maxRecursiveSelectionDepth. A
+// `children` field here would enroll Area in that bound and make a deeply nested
+// vocabulary unqueryable. The nesting travels in `depth` and in the order of
+// `Config.areas` instead.
+type Area struct {
+	// Full path from a root, segments joined with '/' — the value a nib's `area:` carries.
+	Path string `json:"path"`
+	// This node's own segment.
+	Name string `json:"name"`
+	// What belongs in this area; empty when the declaration omits it.
+	Description string `json:"description"`
+	// Display color — hex code or bare color name; empty when unset.
+	Color string `json:"color"`
+	// Depth from a root; 0 at the top level.
+	Depth int `json:"depth"`
+}
+
 // Structured body modifications applied atomically.
 // Operations are applied in order: all replacements sequentially, then append.
 // If any operation fails, the entire mutation fails (transactional).
@@ -50,6 +71,13 @@ type Config struct {
 	ProjectName string `json:"projectName"`
 	// Configured nib ID prefix (e.g., 'nibs-', 'myproj-'). Empty if unset.
 	Prefix string `json:"prefix"`
+	// The declared areas, FLATTENED in declaration order — a parent immediately
+	// before the subtree it heads (config.AreaPaths' order). That ordering is the
+	// CONTRACT, not an incidental: a node's subtree is the maximal run of following
+	// entries with a greater `depth`, which is how a client answers the
+	// downward-closed `area:` filter's membership without restating the rule.
+	// Empty when none are declared.
+	Areas []*Area `json:"areas"`
 }
 
 // Input for creating a new nib

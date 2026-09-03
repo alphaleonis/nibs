@@ -21,6 +21,7 @@ function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
     parentId: null,
     milestone: "",
     milestoneOrder: "",
+    area: "",
     blockingIds: [],
     blockedByIds: [],
     etag: "etag-test",
@@ -1153,6 +1154,7 @@ describe("TreeTableRow context-based state", () => {
       const queue = new DragState();
       queue.startDrag(["nibs-other"]);
       queue.setDropTarget("nibs-abc1", zone, true, {
+        kind: "position",
         label: "Reorder in the Q3 Launch queue",
         region: { axis: "milestone", milestoneId: "tnib-m001" },
       });
@@ -1164,6 +1166,7 @@ describe("TreeTableRow context-based state", () => {
       const parent = new DragState();
       parent.startDrag(["nibs-other"]);
       parent.setDropTarget("nibs-abc1", zone, true, {
+        kind: "position",
         label: "Reorder in the top level",
         region: { axis: "parent", parentId: null },
       });
@@ -1171,8 +1174,29 @@ describe("TreeTableRow context-based state", () => {
       const parentedRow = parented.container.querySelector("tr") as HTMLElement;
       expect(parentedRow.classList.contains(`drop-${zone}`)).toBe(true);
       expect(parentedRow.classList.contains("drop-queue")).toBe(false);
+      // The three treatments are exclusive: a positioned drop is never marked
+      // as an assignment, whichever axis it is on.
+      expect(queuedRow.classList.contains("drop-assign")).toBe(false);
+      expect(parentedRow.classList.contains("drop-assign")).toBe(false);
     },
   );
+
+  it("colors an ASSIGNMENT drop in its own class, not the parent axis's", () => {
+    // The class the row renders, not the helper's return. An assignment's
+    // indicator is fixed at "into", so `reparent` is the only zone it reaches.
+    const assign = new DragState();
+    assign.startDrag(["nibs-other"]);
+    assign.setDropTarget("nibs-abc1", "reparent", true, { kind: "assign", label: "Move to the web area" });
+
+    const { container } = renderRowWithContext(
+      { nib: makeTreeTableNib({ id: "nibs-abc1" }) },
+      { drag: assign },
+    );
+    const row = container.querySelector("tr") as HTMLElement;
+    expect(row.classList.contains("drop-reparent")).toBe(true);
+    expect(row.classList.contains("drop-assign")).toBe(true);
+    expect(row.classList.contains("drop-queue")).toBe(false);
+  });
 
   it("does not color a REFUSED drop by axis — a refusal carries no region", () => {
     const drag = new DragState();
@@ -1186,11 +1210,12 @@ describe("TreeTableRow context-based state", () => {
   });
 
   it("does not color a row that is not the drop target", () => {
-    // `dropRegion` is one ambient value read by every row, so the axis class has
-    // to be gated on being the target the way the zone classes are.
+    // `dropAccepted` is one ambient value read by every row, so the treatment
+    // class has to be gated on being the target the way the zone classes are.
     const drag = new DragState();
     drag.startDrag(["nibs-other"]);
     drag.setDropTarget("nibs-elsewhere", "before", true, {
+      kind: "position",
       label: "Reorder in the Q3 Launch queue",
       region: { axis: "milestone", milestoneId: "tnib-m001" },
     });
@@ -1369,4 +1394,88 @@ describe("TreeTableRow single-sourced row opacity precedence", () => {
       expect(row.style.opacity).toBe(expected);
     });
   }
+});
+
+/**
+ * The section metadata channel, at the end of it: what a fabricated section row
+ * draws now that its count is no longer part of its title.
+ */
+describe("TreeTableRow section metadata", () => {
+  const sectionNib = makeTreeTableNib({ id: "/__no_area__", title: "No area", type: "", status: "", priority: "", tags: [] });
+
+  function sectionRow(display: { label: string; description: string; color: string }, count = 3) {
+    return renderRow({
+      nib: sectionNib,
+      depth: 0,
+      drawsSection: { key: "/__no_area__", display, count, onEnter: { kind: "byRow" } },
+    });
+  }
+
+  it("draws the count beside the label rather than inside it", () => {
+    const { container } = sectionRow({ label: "No area", description: "", color: "" });
+
+    expect(container.querySelector("[data-testid='title-text']")!.textContent).toBe("No area");
+    expect(container.querySelector("[data-testid='section-count']")!.textContent).toBe("(3)");
+  });
+
+  it("draws a declared description and color", () => {
+    const { container } = sectionRow({ label: "Web", description: "Everything over HTTP", color: "#3366ff" });
+
+    expect(container.querySelector("[data-testid='section-description']")!.textContent).toBe("Everything over HTTP");
+    const dot = container.querySelector("[data-testid='section-color']") as HTMLElement;
+    expect(dot.style.backgroundColor).not.toBe("");
+  });
+
+  it("omits the description and the color dot where the declaration set neither", () => {
+    const { container } = sectionRow({ label: "Web", description: "", color: "" });
+
+    expect(container.querySelector("[data-testid='section-description']")).toBeNull();
+    expect(container.querySelector("[data-testid='section-color']")).toBeNull();
+  });
+
+  it("takes a bare color name as readily as a hex code — AreaConfig.Color admits either", () => {
+    const { container } = sectionRow({ label: "Docs", description: "", color: "slateblue" });
+
+    const dot = container.querySelector("[data-testid='section-color']") as HTMLElement;
+    expect(dot.style.backgroundColor).not.toBe("");
+  });
+
+  it("draws no dot at all for a color carrying a second declaration", () => {
+    // The color is config text reaching an inline style, and `setProperty` does
+    // not stop this: written straight through, the CSSOM here applies the
+    // background-image too. `cssColor` refusing the value is what does.
+    const { container } = sectionRow({
+      label: "Hostile",
+      description: "",
+      color: "red; background-image: url(https://example.invalid/x.png)",
+    });
+
+    expect(container.querySelector("[data-testid='section-color']")).toBeNull();
+  });
+
+  it("draws no section chrome on a row that draws no section", () => {
+    const { container } = renderRow({ nib: makeTreeTableNib(), depth: 0 });
+
+    expect(container.querySelector("[data-testid='section-count']")).toBeNull();
+    expect(container.querySelector("[data-testid='section-description']")).toBeNull();
+    expect(container.querySelector("[data-testid='section-color']")).toBeNull();
+  });
+
+  it("draws none of it on a section a real nib heads, whose cells are the nib's own", () => {
+    // A milestone heading its queue is a nib: it has an id, a type and a status
+    // to render, and what a heading should add there is the view's decision.
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ id: "nibs-m1", title: "v1.0", type: "milestone" }),
+      depth: 0,
+      drawsSection: {
+        key: "nibs-m1",
+        display: { label: "v1.0", description: "", color: "" },
+        count: 7,
+        onEnter: { kind: "byRow" },
+      },
+    });
+
+    expect(container.querySelector("[data-testid='title-text']")!.textContent).toBe("v1.0");
+    expect(container.querySelector("[data-testid='section-count']")).toBeNull();
+  });
 });

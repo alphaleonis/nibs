@@ -1,13 +1,23 @@
 <script lang="ts">
   import { useDrag } from "../contexts";
-  import { isQueueAxis } from "../ordering/regionBand";
+  import { dropTreatment, type DropTreatment } from "../ordering/regionBand";
 
   const drag = useDrag();
 
   let count = $derived(drag.draggedIds.length);
-  // The queue axis gets the badge's border as well as the row's indicator, so
-  // the two halves of one affordance are recognizably the same event.
-  let queue = $derived(isQueueAxis(drag.dropRegion?.axis));
+  // The badge's border carries the same treatment as the row's indicator, so the
+  // two halves of one affordance are recognizably the same event.
+  //
+  // A Record over the treatments, the `QUEUE_STYLED` discipline: a fourth one is
+  // a compile error here until it says what the badge does with it, rather than
+  // falling through to the neutral border.
+  const BORDER: Record<DropTreatment, string> = {
+    parent: "border-border",
+    queue: "border-region-queue",
+    assign: "border-region-assign",
+  };
+  let treatment = $derived(dropTreatment(drag.dropAccepted));
+  let border = $derived(treatment === null ? "border-border" : BORDER[treatment]);
 
   // The badge's own box, for the clamp below. 0 until the first measurement,
   // which only makes the first frame of a drag unclamped.
@@ -48,9 +58,7 @@
     bind:clientWidth={badgeWidth}
     bind:clientHeight={badgeHeight}
     data-testid="drag-badge"
-    class="fixed pointer-events-none flex items-center gap-2 whitespace-nowrap max-w-[min(28rem,60vw)] rounded-full border px-2 py-0.5 text-label bg-accent text-foreground {queue
-      ? 'border-region-queue'
-      : 'border-border'}"
+    class="fixed pointer-events-none flex items-center gap-2 whitespace-nowrap max-w-[min(28rem,60vw)] rounded-full border px-2 py-0.5 text-label bg-accent text-foreground {border}"
     style="left: {left}px; top: {top}px; z-index: var(--z-modal);"
   >
     {#if count > 1}

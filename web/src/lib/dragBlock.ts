@@ -1,6 +1,5 @@
 import { COLUMNS } from "./columns";
 import { isDragAllowed } from "./filter";
-import { viewShapeFor } from "./tree";
 import type { ViewShape } from "./tree";
 import { TREE_VIEW_LEVEL, VIEW_LEVEL_LABELS } from "./types";
 import type { NibFilter, ViewLevel, TableSort } from "./types";
@@ -10,7 +9,7 @@ import type { NibFilter, ViewLevel, TableSort } from "./types";
  * replace the live toast instead of stacking up copies (svelte-sonner dedupes by
  * id and restarts the dismissed timer on update).
  *
- * ONE id covers all three reasons on purpose: dragBlockFor reports a single gate
+ * ONE id covers all three reasons on purpose: the gate walk reports a single gate
  * at a time by precedence, so switching gates mid-toast should rewrite the
  * message in place rather than leave a stale one behind.
  */
@@ -45,7 +44,7 @@ export interface DragBlock {
 /** What every gate is asked about. */
 interface GateContext {
   filter: NibFilter;
-  viewLevel: ViewLevel;
+  shape: ViewShape;
   activeSort: TableSort | null;
 }
 
@@ -81,8 +80,8 @@ const GATES: readonly DragGate[] = [
   {
     reason: "flat",
     breaksAdjacency: true,
-    check: ({ viewLevel }) =>
-      reorderableShape(viewShapeFor(viewLevel))
+    check: ({ shape }) =>
+      reorderableShape(shape)
         ? null
         : {
             reason: "flat",
@@ -120,16 +119,16 @@ const GATES: readonly DragGate[] = [
  * Whether row adjacency reflects the ordering key, so a rule drawn between two
  * rows is a claim about the data rather than decoration.
  *
- * The region band reads this; `draggable` reads `dragBlockFor(...) === null`.
+ * The region band reads this; `draggable` reads `shapedDragBlockFor(...) === null`.
  * Two questions, one answer today — but asked of every gate, so the answer does
  * not depend on which one happens to win precedence.
  */
-export function adjacencyReflectsOrdering(
+export function shapedAdjacencyReflectsOrdering(
   filter: NibFilter,
-  viewLevel: ViewLevel,
+  shape: ViewShape,
   activeSort: TableSort | null,
 ): boolean {
-  const ctx = { filter, viewLevel, activeSort };
+  const ctx = { filter, shape, activeSort };
   return !GATES.some((gate) => gate.breaksAdjacency && gate.check(ctx) !== null);
 }
 
@@ -167,12 +166,12 @@ function reorderableShape(shape: ViewShape): boolean {
  * Precedence when several gates are active is `GATES` order, so the message and
  * its action always refer to the same gate.
  */
-export function dragBlockFor(
+export function shapedDragBlockFor(
   filter: NibFilter,
-  viewLevel: ViewLevel,
+  shape: ViewShape,
   activeSort: TableSort | null,
 ): DragBlock | null {
-  const ctx = { filter, viewLevel, activeSort };
+  const ctx = { filter, shape, activeSort };
   for (const gate of GATES) {
     const block = gate.check(ctx);
     if (block !== null) return block;

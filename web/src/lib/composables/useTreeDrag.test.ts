@@ -1,10 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { SelectionState } from "../selection.svelte";
+import { buildContainmentIndex, type ContainmentIndex } from "../containment";
 import { DragState } from "../drag.svelte";
 import { batch, reorderNib, reparentAndReorder, setParent } from "../mutations/commands";
 import type { DropPlan } from "../ordering/dropPlan";
 import type { RowData } from "../tableData";
-import { buildTableData, rowRegion } from "../tableData";
+import { rowRegion } from "../tableData";
+import { EMPTY_SPINE } from "../viewSpine";
+
+const { buildTableData } = EMPTY_SPINE;
 import type { TreeTableNib } from "../types";
 import { useTreeDrag } from "./useTreeDrag.svelte";
 
@@ -27,6 +31,7 @@ function makeNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
     parentId: null,
     milestone: "",
     milestoneOrder: "",
+    area: "",
     blockingIds: [],
     blockedByIds: [],
     etag: "etag-test",
@@ -46,7 +51,8 @@ function makeRow(nib: TreeTableNib, opts: Partial<RowData> = {}): RowData {
     // built through this helper must come out a member of nothing, as it does
     // in a real table.
     region: rowRegion(nib.id, nib.parentId),
-    childRegion: null,
+    drawsSection: null,
+    section: null,
     ...opts,
   };
 }
@@ -80,6 +86,9 @@ describe("useTreeDrag", () => {
     scrollContainer?: HTMLElement | null;
     dragBlock?: import("../dragBlock").DragBlock | null;
     onblockeddrag?: (block: import("../dragBlock").DragBlock) => void;
+    /** Defaults to the index of an EMPTY view: these cases are about the
+     *  gesture, and the destination check they would reach is `dropPlan`'s. */
+    containment?: ContainmentIndex;
   } = {}) {
     const selection = overrides.selection ?? new SelectionState();
     const drag = overrides.drag ?? new DragState();
@@ -92,6 +101,7 @@ describe("useTreeDrag", () => {
       drag,
       getRows: () => rows,
       getScrollContainer: () => overrides.scrollContainer ?? null,
+      getContainment: () => overrides.containment ?? buildContainmentIndex([]),
       getDragBlock: () => overrides.dragBlock ?? null,
       ondrop,
       onblockeddrag,
@@ -1069,7 +1079,11 @@ describe("useTreeDrag", () => {
       // The id would read "the children of E1"; the namer is what makes the
       // badge worth showing.
       expect(composable.drag.dropLabel).toBe("Reorder in the children of User Authentication");
-      expect(composable.drag.dropRegion).toEqual({ axis: "parent", parentId: "E1" });
+      expect(composable.drag.dropAccepted).toEqual({
+        kind: "position",
+        label: "Reorder in the children of User Authentication",
+        region: { axis: "parent", parentId: "E1" },
+      });
 
       unhover();
       cleanup?.();
@@ -1106,7 +1120,7 @@ describe("useTreeDrag", () => {
       expect(composable.drag.dropTargetId).toBe("T2");
       expect(composable.drag.dropValid).toBe(false);
       expect(composable.drag.dropLabel).toBeNull();
-      expect(composable.drag.dropRegion).toBeNull();
+      expect(composable.drag.dropAccepted).toBeNull();
 
       unhover();
       cleanup?.();
@@ -1124,7 +1138,7 @@ describe("useTreeDrag", () => {
       window.dispatchEvent(new PointerEvent("pointermove", { clientX: 200, clientY: 500, bubbles: true }));
 
       expect(composable.drag.dropLabel).toBeNull();
-      expect(composable.drag.dropRegion).toBeNull();
+      expect(composable.drag.dropAccepted).toBeNull();
       cleanup?.();
     });
   });

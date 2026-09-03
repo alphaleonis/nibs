@@ -27,9 +27,9 @@ const DEFAULTS: FilterPreferences = {
 //     status include-list. That old include-list rewrite was for the retired
 //     hide-completed toggle; folding it in here would mangle a `-status:X`
 //     negation on reload (see nibs-grvv Phase-2 note).
-// serializeQuery covers EVERY NibFilter field — the box has owned the
-// relationship and existence keys since phase 5 — so a legacy structured blob
-// translates in full, with nothing dropped.
+// serializeQuery covers EVERY NibFilter field — the box owns the relationship and
+// existence keys and the area path — so a legacy structured blob translates in
+// full, with nothing dropped.
 //
 // PERSISTED-FORMAT NOTE — a status group token stores a RULE, not a set.
 // serializeQuery collapses a group wherever all of its members are present, so a

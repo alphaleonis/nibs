@@ -2,10 +2,13 @@ import type { DropZone } from "../drag.svelte";
 import { isValidCrossParentDrop, isValidDropTarget } from "../dropZone";
 import { batch, reorderChain, reorderNib, reparentAndReorder, sequence, setParent, updateNib } from "../mutations/commands";
 import type { AnyCommand, CommandResult, LeafCommand, SequenceStep } from "../mutations/types";
-import { canBeInMilestoneQueue } from "../membership";
+import type { ContainmentIndex } from "../containment";
+import { takesAssignmentAxes } from "../membership";
 import type { RowData } from "../tableData";
+import type { SectionKey } from "../tree";
 import { canHaveChildren } from "../typeHierarchy";
 import { BY_ID, commonRegion, describeRegion, sameRegion, scopeOf, spellId, type Region, type RegionNamer } from "./region";
+import type { AssignableField, SectionEntry } from "./sectionMeaning";
 
 /**
  * What the drop indicator draws, and what the drop means. "into" is the
@@ -41,7 +44,17 @@ export type DropRefusalReason =
   /** Expressible only by joining a milestone queue first. */
   | "needs-assignment"
   /** Expressible only by clearing a milestone assignment first. */
-  | "needs-unassignment";
+  | "needs-unassignment"
+  /** A position or reparent that would land the rows in a section other than
+   *  the one (or ones) they are in, where either side of that boundary decides
+   *  membership by an assignment and not by a position. */
+  | "crosses-section"
+  /** The dragged types take no assignment on either membership axis. */
+  | "unassignable-type"
+  /** The rows are already in the section the drop names, so it writes nothing. */
+  | "already-in-section"
+  /** The section says entering it is meaningless, and carries the sentence. */
+  | "entry-refused";
 
 /**
  * Toast id shared by every drop refusal, so a run of refused releases replaces
@@ -88,8 +101,31 @@ export function refusalAction(refusal: DropRefusal): { label: string; command: A
   return { label: actionLabel, command: actionCommand };
 }
 
+/**
+ * What an accepted drop DOES, as two arms rather than one arm with a nullable
+ * `region`.
+ *
+ * A `position` plan moves rows within an ordering group, so it always names
+ * one. An `assign` plan sets a field: the section it lands in has no ordering
+ * axis of its own, and there is no group to name. A nullable `region` would
+ * assert one by omission, and the styling reads it through `?.`: `isQueueAxis`
+ * answers `false` for a missing axis, so an assignment would render in the
+ * parent axis's colors at both surfaces that color a drop.
+ *
+ * The assign arm's indicator is FIXED at "into" rather than carried as data:
+ * "into" is the only thing an assignment can draw, and carrying it invites a
+ * caller to draw an edge line promising a position it never writes.
+ */
 export type DropPlan =
-  | { ok: true; region: Region; indicator: DropIndicator; label: string; command: AnyCommand }
+  | { ok: true; kind: "position"; region: Region; indicator: DropIndicator; label: string; command: AnyCommand }
+  | {
+      ok: true;
+      kind: "assign";
+      assignment: { field: AssignableField; value: string };
+      indicator: "into";
+      label: string;
+      command: AnyCommand;
+    }
   | { ok: false; refusal: DropRefusal };
 
 export interface DropRequest {
@@ -115,6 +151,15 @@ export interface DropRequest {
    *  function is not O(rows) per pointermove. */
   readonly descendantIds: Set<string>;
   /**
+   * What the current view draws inside what — read for the one question a
+   * position plan cannot answer from `rowsById`: whether the container the rows
+   * would land in is itself drawn inside the row the indicator points at.
+   *
+   * `contains` is O(depth), so a pointermove pays a walk out of one row
+   * rather than a scan.
+   */
+  readonly containment: ContainmentIndex;
+  /**
    * Spells the ids inside this plan's own prose — the queue a move stays in, the
    * container it enters — as titles.
    *
@@ -131,26 +176,35 @@ export interface DropRequest {
 }
 
 /**
- * The ordering group a drop INTO this row lands in, or null when the row is not
- * something a drop can enter.
+ * The ordering group a drop INTO this row lands in, or null when entering it
+ * joins no group.
  *
- * Two questions live here, and they have to be asked separately: "what group are
- * my children in" (`childRegion`, which only a lens declares) and "what does a
- * drop into me mean". Neither predicate answers alone. `childRegion !== null` is
- * true only for a milestone section row — `tableData.test.ts` asserts "only a
- * milestone section declares a childRegion; every other row carries null" across
- * every view level — so it would delete the "drop below an epic to make it a
- * child" affordance the tree views have; `canHaveChildren` is false for a
- * milestone (`VALID_CHILD_TYPES.milestone` is `[]`), so it cannot promote a
- * queue header's edge at all. The declaration wins where there is one, because a
- * container that says where its rows order says what entering it means.
+ * A section says what entering it means, and only the `region` arm of that
+ * answer is an ordering group: the two arms that are not — an assignment, and a
+ * refusal — return null here and are answered by `planDrop` before it asks. A
+ * row that draws no section, and a section answering `byRow`, fall through to
+ * the type hierarchy, which is what leaves "drop below an epic to make it a
+ * child" expressible in every view. `canHaveChildren` is false for a milestone
+ * (`VALID_CHILD_TYPES.milestone` is `[]`), so the fallback cannot promote a
+ * queue header's edge on its own.
  *
  * A property of the ROW, and only that. Whether the rows being dragged could
  * join the group it names is a different question, and `planDrop` asks it there
  * — it is the one that holds the subject.
  */
 export function entryRegionOf(row: RowData): Region | null {
-  if (row.childRegion !== null) return row.childRegion;
+  const entry = row.drawsSection?.onEnter;
+  if (entry !== undefined) {
+    switch (entry.kind) {
+      case "region":
+        return entry.region;
+      case "assign":
+      case "refuse":
+        return null;
+      case "byRow":
+        break;
+    }
+  }
   return canHaveChildren(row.nib.type) ? { axis: "parent", parentId: row.nib.id } : null;
 }
 
@@ -168,7 +222,7 @@ export function entryRegionOf(row: RowData): Region | null {
 export function planDrop(req: DropRequest): DropPlan {
   // Defaulted once, here, so every phrase below takes a REQUIRED namer. The
   // optional parameter is the request's, not the spelling functions'.
-  const { draggedIds, rowsById, draggedRowsById, target, zone, descendantIds, nameOf = BY_ID } = req;
+  const { draggedIds, rowsById, draggedRowsById, target, zone, descendantIds, containment, nameOf = BY_ID } = req;
 
   if (draggedIds.length === 0) {
     return refuse("no-source", "Nothing is being dragged.");
@@ -196,15 +250,53 @@ export function planDrop(req: DropRequest): DropPlan {
     dragged.push(row);
   }
 
+  const draggedTypes = dragged.map((r) => r.nib.type);
+
+  // A dragged row in no ordering group at all is a container the view
+  // fabricated, and it names no nib for any write to take a subject from — so
+  // this one stays ahead of everything below, the section branch included.
+  const unorderable = dragged.find((r) => r.region === null);
+  if (unorderable !== undefined) {
+    return refuse(
+      "unorderable-source",
+      `The ${unorderable.nib.title} section is a container the view drew, not a nib, so it has no position to move.`,
+    );
+  }
+
+  // Aiming AT a section names the section, so what entering it means is the
+  // SECTION's answer rather than the row's type. Only the middle band asks: an
+  // edge names a position beside a row, and "into" is the one indicator that
+  // names entry.
+  //
+  // Asked before the refusal below, which is what a fabricated section row would
+  // otherwise get — right for a Backlog, and the answer a declared, assigning
+  // section must not take.
+  //
+  // And before the shared-ordering-group check below, because neither of these
+  // two answers positions anything: an assignment is one independent `updateNib`
+  // per row, which rows in different groups can take as readily as siblings can,
+  // and a section refusing entry refuses it for every group at once.
+  const drawn = target.drawsSection;
+  if (drawn !== null && zone === "reparent") {
+    switch (drawn.onEnter.kind) {
+      case "assign":
+        return planAssignment(drawn.onEnter, drawn.key, dragged, draggedIds, nameOf);
+      case "refuse":
+        return refuse("entry-refused", drawn.onEnter.message);
+      case "region":
+      case "byRow":
+        // Entering joins an ordering group, or means whatever the row under the
+        // cursor means. Both are the machinery below.
+        break;
+    }
+  }
+
+  // The one ordering group the whole dragged set is in — from here down every
+  // remaining plan positions rows against each other, and that is the question
+  // this answers. `commonRegion` also spells "some row has none" as null, which
+  // the guard above has already ruled out.
   const source = commonRegion(dragged.map((r) => r.region));
   if (source === null) {
-    const unorderable = dragged.find((r) => r.region === null);
-    if (unorderable !== undefined) {
-      return refuse(
-        "unorderable-source",
-        `The ${unorderable.nib.title} section is a container the view drew, not a nib, so it has no position to move.`,
-      );
-    }
     return refuse(
       "mixed-source",
       `These rows are in different ordering groups (${listRegions(dragged, nameOf)}), and one move positions rows within a single group.`,
@@ -218,7 +310,6 @@ export function planDrop(req: DropRequest): DropPlan {
     );
   }
 
-  const draggedTypes = dragged.map((r) => r.nib.type);
   // The zone-independent guards — the dragged set itself, its own subtree, and a
   // target naming no nib — which is exactly what `isValidDropTarget`'s
   // before/after arm is. Its "reparent" arm bundles a type-hierarchy check keyed
@@ -244,8 +335,8 @@ export function planDrop(req: DropRequest): DropPlan {
 
   // A group the dragged rows could never be MEMBERS of is no entry at all, so
   // the row keeps whatever its edges meant without one. Only the milestone axis
-  // can answer no — `canBeInMilestoneQueue` is the client's read of
-  // `nibtypes.ValidateAxes` — and dropping to null there is what leaves a
+  // can answer no — `takesAssignmentAxes` is the client's read of
+  // `nibtypes.RefusedAxes` — and dropping to null there is what leaves a
   // milestone header's own sibling reorder expressible: its bottom edge stays a
   // positioned drop, and its middle refuses as the type question it is rather
   // than offering a reassignment the server refuses. One dragged row is enough
@@ -256,7 +347,7 @@ export function planDrop(req: DropRequest): DropPlan {
   // plan names.
   const declaredEntry = entryRegionOf(target);
   const entry =
-    declaredEntry !== null && declaredEntry.axis === "milestone" && !draggedTypes.every(canBeInMilestoneQueue)
+    declaredEntry !== null && declaredEntry.axis === "milestone" && !draggedTypes.every(takesAssignmentAxes)
       ? null
       : declaredEntry;
   // The bottom edge of a container reads as "enter it" for the same reason its
@@ -309,6 +400,93 @@ export function planDrop(req: DropRequest): DropPlan {
     }
   }
 
+  // A drop that lands the rows in a DIFFERENT section from the one they are in,
+  // where either side decides membership by a field, is one no position write
+  // can express: a reorder moves an order key and a reparent moves a parent
+  // link, and an assigning section goes on reading its field. Accepting it
+  // writes in a list the user never pointed at and leaves the row drawn in the
+  // section it was already in.
+  //
+  // Keyed on the PAIR rather than on the destination alone: the erasure belongs
+  // to the boundary, not to one side of it. A test reading only the section
+  // aimed at misses the OUT direction — a row dragged FROM an assigning section
+  // onto one that answers anything else takes the very same wrong write.
+  //
+  // Every indicator, not the two edges only. The three bands of one row differ
+  // in what they write — an order key or a parent link — and not in which
+  // section the row ends up drawn in, which is what decides whether either write
+  // says something true. Gating on the band made the identical reparent refuse
+  // from the top edge of a container and land from its middle, a refusal a few
+  // pixels of cursor travel walked around.
+  //
+  // Refused rather than performed, so the intent the gesture expressed is not
+  // silently discarded — and so it answers the way the milestone axis already
+  // answers it. Asked AFTER the type check above for that block's own reason: a
+  // destination the hierarchy refuses stays refused once the assignment lands.
+  const crossed = target.section;
+  const crossedKey = crossed?.key ?? null;
+  // The SET of sections the dragged rows sit in, not the one they agree on:
+  // "they are in several" and "they are in none" are different facts about the
+  // subject, and a single shared answer has to spell both `null`. A drag
+  // spanning two sections is crossing this boundary whatever the destination
+  // says, because at most one of those sections can be the destination.
+  const homeKeys = new Set(dragged.map((r) => r.section?.key ?? null));
+  if (homeKeys.size > 1 || !homeKeys.has(crossedKey)) {
+    // Exhaustive over the destination's entry arm, no default: `assign` is the
+    // only one that offers a write, but a `refuse` section must not fall through
+    // to a position write it has just said is meaningless. A fifth arm is a
+    // compile error here rather than silently taking the reorder.
+    // Exhaustive over the destination's entry arm, no default: `assign` is the
+    // only one that offers a write, but a `refuse` section must not fall through
+    // to a position write it has just said is meaningless. A fifth arm is a
+    // compile error here rather than silently taking the reorder.
+    switch (crossed?.onEnter.kind) {
+      case "refuse":
+        return refuse("entry-refused", crossed.onEnter.message);
+      // `undefined` is a destination in no section at all; the other two decline
+      // to speak, so the departure side below is the only thing left to say.
+      case undefined:
+      case "region":
+      case "byRow":
+        break;
+      case "assign": {
+        const joining = crossed.onEnter;
+        // Asked before the sentence below so the FINAL answer wins where both are
+        // true: a subject that can never take the assignment gets the same
+        // refusal here that aiming at the section's own row gives it, rather than
+        // one naming an assignment as the fix and then withholding it.
+        if (!draggedTypes.every(takesAssignmentAxes)) {
+          return refuse("unassignable-type", `Cannot put ${listTypes(draggedTypes)} in ${nameSection(joining)}.`);
+        }
+        // Subject and remedy both come from `assignmentFor`, so the sentence names
+        // exactly the rows the batch writes: the dragged rows need not share a
+        // section, so some of them can already be in the destination, and a
+        // subject phrased over the whole set would be false about those.
+        //
+        // Null means every dragged row is already in the destination section,
+        // which the `homeKeys` guard above cannot reach — and if it ever did, the
+        // fall-through past both arms would be the right answer for it anyway.
+        const write = assignmentFor(joining, crossed.key, dragged);
+        if (write !== null) {
+          return refuse(
+            "crosses-section",
+            `${subjectIs(write.ids, nameOf)} not in ${nameSection(joining)}, and joining one is an assignment rather than a move.`,
+            { region: dest, action: { label: assignLabel(joining), command: write.command } },
+          );
+        }
+        break;
+      }
+    }
+    const leaving = leavingAssigned(dragged, crossedKey);
+    if (leaving.sections.length > 0) {
+      // No remedy on this side: the destination's section answers something
+      // other than `assign`, so it declares no write for entering it — and what
+      // would put a row there is the lens's `place`, which this module never
+      // sees.
+      return refuse("crosses-section", leavingMessage(leaving, dragged.length, nameOf), { region: dest });
+    }
+  }
+
   const anchorId = target.nib.id;
 
   if (!sameRegion(source, dest)) {
@@ -324,7 +502,7 @@ export function planDrop(req: DropRequest): DropPlan {
         `${subjectIs(draggedIds, nameOf)} not in ${describeRegion(dest, nameOf)}, and joining one is an assignment rather than a move.`,
         {
           region: dest,
-          action: draggedTypes.every(canBeInMilestoneQueue)
+          action: draggedTypes.every(takesAssignmentAxes)
             ? {
                 label: `Assign to ${spellId(dest.milestoneId, nameOf)}`,
                 command: assignAndPlace(draggedIds, dest, queueLead(indicator, anchorId)),
@@ -352,6 +530,7 @@ export function planDrop(req: DropRequest): DropPlan {
       // is the reassignment refusal above.
       return {
         ok: true,
+        kind: "position",
         region: dest,
         indicator,
         label:
@@ -364,6 +543,7 @@ export function planDrop(req: DropRequest): DropPlan {
       if (indicator === "into") {
         return {
           ok: true,
+          kind: "position",
           region: dest,
           indicator,
           // The friendly wording only where it is true. An entry region a lens
@@ -403,6 +583,7 @@ export function planDrop(req: DropRequest): DropPlan {
       if (dragParentId === dest.parentId) {
         return {
           ok: true,
+          kind: "position",
           region: dest,
           indicator,
           label: `Reorder in ${describeRegion(dest, nameOf)}`,
@@ -421,14 +602,25 @@ export function planDrop(req: DropRequest): DropPlan {
 
       // The rows come from another container, so the move is a reparent
       // positioned against the target — unless the container they would land in
-      // is itself drawn inside the target's own subtree. `promotedCycleRoots`
-      // makes exactly that shape: a severed cycle member keeps a real parent the
-      // view renders as its own child, the server accepts the write, and the rows
-      // land inside a container drawn BELOW the line they were dropped on. The
-      // promoted HEADER case this module means to unlock is a different
-      // population — there the hidden container has no row at all, so the walk
-      // finds nothing and the drop stands.
-      if (dest.parentId !== null && isRenderedUnder(dest.parentId, target.nib.id, rowsById)) {
+      // is the target row itself, or lies inside its subtree. Two shapes make
+      // that, and in both the server accepts the write while the rows land
+      // inside a container the view draws BELOW the line they were dropped on: a
+      // severed cycle member, which `promotedCycleRoots` leaves with a real
+      // parent the view renders as its own child, and a section header whose own
+      // parent is one of the section's members. The relation is read off the view
+      // TREE, not off the drawn rows, so collapsing the target's section — which
+      // takes the destination's row away while the write still lands there —
+      // refuses too. The promoted HEADER case this module means to unlock is a
+      // different population: there the destination container has no NODE in the
+      // view tree at all, which `contains` answers false for.
+      //
+      // The identity arm is what covers a ONE-member cycle: `promotedCycleRoots`
+      // severs a self-parented nib like any other cycle, so it keeps a real
+      // parent that is itself, and the guard above has pinned `dest.parentId` to
+      // `target.nib.parentId` — so that arm fires on exactly that shape. It has
+      // to be stated here because the index's relations all exclude the
+      // container itself, `contains` included.
+      if (dest.parentId !== null && (dest.parentId === target.nib.id || containment.contains(target.nib.id, dest.parentId))) {
         return refuse(
           "destination-inside-target",
           `${describeRegion(dest, nameOf)} is drawn inside ${target.nib.title}, so the drop would land below the row it points at.`,
@@ -437,6 +629,7 @@ export function planDrop(req: DropRequest): DropPlan {
       }
       return {
         ok: true,
+        kind: "position",
         region: dest,
         indicator,
         label: `Move into ${describeRegion(dest, nameOf)}`,
@@ -541,6 +734,154 @@ function assignAndPlace(
   );
 }
 
+/** The one `SectionEntry` arm that carries a write. */
+type AssignEntry = Extract<SectionEntry, { kind: "assign" }>;
+
+/**
+ * The section as a noun phrase a caller can put after a verb — "the
+ * web/dashboard area". The VALUE names it, not the declared label: the value is
+ * what the write sets, so a sentence built on it cannot describe one section
+ * while the command changes the field to another.
+ */
+function nameSection(entry: AssignEntry): string {
+  return `the ${entry.value} ${entry.noun}`;
+}
+
+/** The one sentence for this write, so the accepted plan and the refusal's
+ *  remedy cannot describe it differently. Both build the batch through
+ *  `assignmentFor` over the same rows and section, so it is the same write under
+ *  the same label. */
+function assignLabel(entry: AssignEntry): string {
+  return `Move to ${nameSection(entry)}`;
+}
+
+/**
+ * The rows an assignment to this section would CHANGE, together with the write
+ * for exactly those rows — or null when it would change nothing.
+ *
+ * The two as one value, and the only way to build either, because both callers
+ * that plan this write also phrase a sentence about its subject: the accepted
+ * drop onto the section, and the `crosses-section` remedy. Handing out the
+ * command alone is what let one of them describe the whole dragged set while
+ * writing a subset of it.
+ *
+ * Rows already in the section are dropped rather than merely tolerated:
+ * assigning a value a row already carries still bumps its etag, pulses it as
+ * changed, for a change that is not one.
+ *
+ * A `batch`, not a `sequence`: the rows join by carrying a value, so no row's
+ * write depends on another's having landed. That is what separates this from
+ * `assignAndPlace`, which interleaves only because a MILESTONE reorder is
+ * refused while its subject is in no queue — an assignment with no position to
+ * follow it has nothing analogous.
+ */
+function assignmentFor(entry: AssignEntry, key: SectionKey, dragged: RowData[]): { ids: string[]; command: AnyCommand } | null {
+  // Decided on the SECTION the rows are members of rather than on the field they
+  // carry: the rows are the table's, and which section holds a row is the
+  // question this module can answer from them.
+  const ids = dragged.filter((r) => r.section?.key !== key).map((r) => r.nib.id);
+  if (ids.length === 0) return null;
+  // A computed key, which TypeScript does not check against the object it lands
+  // in — `AssignableField` is the check, and it is the string-valued keys of
+  // THIS input rather than the generated one, so a section cannot name a field
+  // `updateNib` has no argument for.
+  return { ids, command: batch(ids.map((id) => updateNib(id, { [entry.field]: entry.value }))) };
+}
+
+/**
+ * The plan for a drop ONTO a section that assigns, or the refusal explaining why
+ * there is none.
+ *
+ * The type gate is `takesAssignmentAxes`, the same predicate the milestone axis
+ * asks: `nibtypes.RefusedAxes` refuses BOTH axes for a milestone-typed subject
+ * and neither for anything else, so an area assignment and a milestone
+ * assignment are gated by one rule under one name.
+ */
+function planAssignment(
+  entry: AssignEntry,
+  key: SectionKey,
+  dragged: RowData[],
+  draggedIds: string[],
+  nameOf: RegionNamer,
+): DropPlan {
+  const draggedTypes = dragged.map((r) => r.nib.type);
+  if (!draggedTypes.every(takesAssignmentAxes)) {
+    return refuse("unassignable-type", `Cannot put ${listTypes(draggedTypes)} in ${nameSection(entry)}.`);
+  }
+  const write = assignmentFor(entry, key, dragged);
+  if (write === null) {
+    return refuse("already-in-section", `${subjectIs(draggedIds, nameOf)} already in ${nameSection(entry)}.`);
+  }
+  return {
+    ok: true,
+    kind: "assign",
+    assignment: { field: entry.field, value: entry.value },
+    indicator: "into",
+    label: assignLabel(entry),
+    command: write.command,
+  };
+}
+
+/**
+ * The rows a drop takes OUT of an assigning section, and the sections they
+ * leave: every dragged row whose own section assigns and is not the one the drop
+ * lands in.
+ *
+ * A LIST of sections rather than one, because the dragged rows need not share a
+ * section. Folding "in several" onto "in none" — which one shared answer must,
+ * having only `null` for both — is what let a drag spanning two assigning
+ * sections past this check entirely.
+ */
+function leavingAssigned(rows: RowData[], crossedKey: SectionKey | null): { ids: string[]; sections: AssignEntry[] } {
+  const ids: string[] = [];
+  const sections = new Map<SectionKey, AssignEntry>();
+  for (const r of rows) {
+    const section = r.section;
+    if (section === null || section.key === crossedKey || section.onEnter.kind !== "assign") continue;
+    ids.push(r.nib.id);
+    sections.set(section.key, section.onEnter);
+  }
+  return { ids, sections: [...sections.values()] };
+}
+
+/**
+ * The sentence for a drop leaving assigning sections, in the two shapes its
+ * subject can take.
+ *
+ * Two shapes and not a single list, because "the 2 dragged nibs are in the infra
+ * area and the web area" reads as each of them being in both — asserting of
+ * every row something true of at most one, which is the conflation this whole
+ * refusal exists to stop making.
+ */
+function leavingMessage(
+  leaving: { ids: string[]; sections: AssignEntry[] },
+  draggedCount: number,
+  nameOf: RegionNamer,
+): string {
+  // Only the rows that LEAVE are named, and they can be fewer than the drag.
+  // `subjectIs` spells one id as that id, which stays true however large the
+  // drag is; it is only its plural — "The N dragged nibs" — that would assert
+  // something false about the rows staying put. So the count is spelled out
+  // exactly where that plural would otherwise lie.
+  const who =
+    leaving.ids.length > 1 && leaving.ids.length < draggedCount
+      ? `${leaving.ids.length} of the ${draggedCount} dragged nibs are`
+      : subjectIs(leaving.ids, nameOf);
+  const where =
+    leaving.sections.length === 1
+      ? `${who} in ${nameSection(leaving.sections[0])}`
+      : `${who} spread across ${listSections(leaving.sections)}`;
+  return `${where}, and leaving one is an assignment rather than a move.`;
+}
+
+/** The sections as one noun phrase, capped the way `listRegions` is: a selection
+ *  survives select-all, and this is one line in a message. */
+function listSections(entries: AssignEntry[]): string {
+  const names = entries.map(nameSection);
+  if (names.length <= 3) return names.join(" and ");
+  return `${names.slice(0, 3).join(", ")} and ${names.length - 3} more`;
+}
+
 /**
  * The one real parent every dragged row already sits under, or `undefined` when
  * they disagree. `null` is a real answer — the root group — so the "no shared
@@ -586,25 +927,6 @@ function destContainerType(
   }
   const row = rowsById.get(parentId);
   return row === undefined ? { known: false } : { known: true, type: row.nib.type };
-}
-
-/**
- * Whether `containerId` is DRAWN inside `ancestorId`'s subtree, walking the
- * display parent chain — which is what decides where the user sees a drop land.
- * A container with no row here is drawn nowhere, so the answer for it is false.
- *
- * The visited set is the termination guard. `displayParentId` is acyclic as the
- * view tree builds it; this walk does not need that to stay true.
- */
-function isRenderedUnder(containerId: string, ancestorId: string, rowsById: ReadonlyMap<string, RowData>): boolean {
-  const seen = new Set<string>();
-  let current: string | null = containerId;
-  while (current !== null && !seen.has(current)) {
-    if (current === ancestorId) return true;
-    seen.add(current);
-    current = rowsById.get(current)?.displayParentId ?? null;
-  }
-  return false;
 }
 
 function listRegions(rows: RowData[], nameOf: RegionNamer): string {

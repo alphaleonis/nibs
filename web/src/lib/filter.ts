@@ -1,4 +1,5 @@
 import type { NibSummary, NibFilter } from "./types";
+import type { AreaVocabulary } from "./areas";
 
 /**
  * Fields applied client-side even though the GraphQL server also supports them
@@ -101,13 +102,78 @@ export function hasClientFilters(filter: NibFilter): boolean {
 }
 
 /**
+ * The filter as the server may be asked it: `area` withheld unless the
+ * vocabulary answers "declared" for it.
+ *
+ * A bad `area` fails the WHOLE query instead of narrowing it: the server refuses
+ * a path it does not declare rather than answering with the empty set, which
+ * would read as "no work is in this area" for a path that names no area at all
+ * (`refuseUndeclaredArea`, internal/graph/filters.go). `area` is not alone in
+ * that — most id-valued fields fail the same way, and `milestone:` is typeable
+ * in the query box today with no equivalent guard (nibs-f1sj). What singles it
+ * out is where the refusal LANDS and what this side can do about it.
+ * `FilterAreaError` implements no Unwrap — the only one in
+ * internal/graph/filter_errors.go is `FilterTargetNotFoundError`'s, to
+ * `nib.ErrNotFound` — so cmd/serve.go cannot tag it NOT_FOUND, and it misses the
+ * calm inline branch TreeTable routes that code to, blanking the table with a
+ * red error instead. And an area is the one such value the client can pre-check
+ * at all, because it holds the vocabulary.
+ *
+ * Pre-checking is right rather than merely possible because this client RESTORES
+ * filters: the filter is rebuilt from localStorage and `?q=` on load, so a value
+ * that was declared when it was saved arrives after the area was retired, at a
+ * moment the user did not act. A CLI invocation, where the value was just typed,
+ * has no such moment. The rule sits on the filter rather than on a token, so it
+ * holds for every way a value can arrive — including the `area:` token
+ * (query/area.ts), which refuses an undeclared path at PARSE time but only when a
+ * vocabulary was there to ask, and a restore happens before one is.
+ *
+ * So "declared" is sent, and the other two answers are held back at prices that
+ * differ by which vocabulary gave them:
+ *   - "unknown" from LOADING_AREAS costs a superset until the config query
+ *     answers; re-deriving over the spine then asks again and gets "declared".
+ *   - "unknown" from UNAVAILABLE_AREAS is the config query having FAILED, and
+ *     that superset is not transient. CONFIG_QUERY is executed once, and the
+ *     only thing that re-asks is App's refetch on connection recovery — so
+ *     until a recovery lands, and a session may see none, the table shows every
+ *     nib in the store while the filter says otherwise. Nothing yet reads
+ *     `AreaVocabulary.status`, so nothing says so on screen.
+ *   - "undeclared" is the drop half of the query box's warn-and-drop. The
+ *     warning is the box's to render: it holds the token text, and this sees
+ *     only the value.
+ *
+ * The EMPTY STRING is sent rather than withheld, so the server's refusal of it
+ * stays loud. That refusal is deliberate and separate from an undeclared path:
+ * read as "unset" the branch would be dropped and the query would widen to the
+ * whole store. An empty-valued id field reaches the same verdict
+ * (`FilterTargetEmptyError`), and the query box cannot produce either — a
+ * relationship token with no value is not recognized (query/relations.ts) and a
+ * metadata one becomes free text (query/parse.ts) — so client code is the only
+ * thing that can set one. Withholding it here would perform exactly the widening
+ * the server refuses to perform.
+ */
+function withSendableArea(filter: NibFilter, areas: AreaVocabulary): NibFilter {
+  if (typeof filter.area !== "string") return filter;
+  if (filter.area === "") return filter;
+  if (areas.validity(filter.area) === "declared") return filter;
+  const { area, ...rest } = filter;
+  return rest;
+}
+
+/**
  * Splits a filter into server-side and client-side parts.
  * Returns a fast-path (matchesClient always true) when no client filters are active.
+ *
+ * `areas` has no default because there is no safe one: a caller without a
+ * vocabulary would send whatever `area` it holds, which is the value this
+ * parameter is here to withhold.
  */
-export function prepareFilter(filter: NibFilter): PreparedFilter {
+export function prepareFilter(filter: NibFilter, areas: AreaVocabulary): PreparedFilter {
+  const sendable = withSendableArea(filter, areas);
+
   if (!hasClientFilters(filter)) {
     return {
-      serverFilter: filter,
+      serverFilter: sendable,
       clientFiltersActive: false,
       matchesClient: () => true,
     };
@@ -125,7 +191,7 @@ export function prepareFilter(filter: NibFilter): PreparedFilter {
     excludeTags,
     excludeStatus,
     ...serverFilter
-  } = filter;
+  } = sendable;
 
   return {
     serverFilter,

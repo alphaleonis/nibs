@@ -34,6 +34,38 @@ export function isQueueAxis(axis: BandAxis | null | undefined): boolean {
 }
 
 /**
+ * The two facts a drop's treatment is decided from. Structural rather than
+ * `AcceptedDrop`, so this rule stays independent of the drag state's shape —
+ * `AcceptedDrop` satisfies it without being named here, the way `RowData`
+ * satisfies `BandRow`.
+ */
+export type StyledDrop =
+  | { readonly kind: "position"; readonly region: Region }
+  | { readonly kind: "assign" };
+
+/** How a surface colors an accepted drop. */
+export type DropTreatment = "parent" | "queue" | "assign";
+
+/**
+ * Which treatment an accepted drop takes, or null when nothing is accepted.
+ *
+ * An exhaustive switch on the plan's KIND, not a read of `region?.axis`: a plan
+ * carrying no region answers `false` to `isQueueAxis` and takes the parent
+ * axis's colors, which is exactly the confusion an assignment must not be drawn
+ * in — a sibling reorder is the gesture it sits on the same pixel as. `?.`
+ * swallows an absence; a switch with no default arm cannot.
+ */
+export function dropTreatment(drop: StyledDrop | null | undefined): DropTreatment | null {
+  if (drop == null) return null;
+  switch (drop.kind) {
+    case "position":
+      return isQueueAxis(drop.region.axis) ? "queue" : "parent";
+    case "assign":
+      return "assign";
+  }
+}
+
+/**
  * Which axis wins when the two sides of a seam are on different ones. The queue
  * outranks the parent axis for the reason `regionBandAt` gives: a seam a queue
  * is on either side of is a queue seam.

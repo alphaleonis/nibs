@@ -19,7 +19,7 @@ import type { OrderScope } from "../gql/graphql";
  * nib id a nib's `milestone:` field resolves to — not the field's raw text and
  * not a title. The Milestones view's membership lens is what mints this arm, and
  * keying its sections on `milestoneOf`'s answer rather than on the raw
- * `milestone:` field is what holds it to the resolved id — see `childRegion`'s
+ * `milestone:` field is what holds it to the resolved id — see `meaning`'s
  * invariant in tree.ts, which is where that obligation is written down.
  *
  * Not to be confused with `reorderNib`'s own `parentId` argument, which is a

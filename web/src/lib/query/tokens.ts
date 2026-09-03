@@ -1,5 +1,6 @@
 import { tokenizeSpans } from "./spans";
 import type { Span } from "./spans";
+import type { AreaVocabulary } from "../areas";
 
 // A token/gap segmentation of the query text, derived from `tokenizeSpans`. Where
 // `tokenizeSpans` splits a token into its field/operator/value parts, this coarser
@@ -23,9 +24,14 @@ export interface TokenSegment {
  * non-whitespace spans (field + operator + value + …) merge into one `token`
  * segment; each whitespace span becomes a `gap`. The result tiles the whole string
  * (`segs.map(s => text.slice(s.start, s.end)).join("") === text`).
+ *
+ * `areas` only reaches `tokenizeSpans`, where it decides an area value's COLOR;
+ * no vocabulary changes where a token starts or ends. It is threaded anyway so
+ * both layers are derived from identical input — the property this pair exists
+ * to guarantee.
  */
-export function tokenSegments(text: string): TokenSegment[] {
-  return tokenGroups(text).map(({ kind, start, end }) => ({ kind, start, end }));
+export function tokenSegments(text: string, areas?: AreaVocabulary): TokenSegment[] {
+  return tokenGroups(text, areas).map(({ kind, start, end }) => ({ kind, start, end }));
 }
 
 /** A token/gap segment that also carries the spans it covers, plus whether the
@@ -75,9 +81,9 @@ export interface TokenGroup extends TokenSegment {
  * `tokenSegments` is the same grouping with the spans dropped, so the click layer
  * and the highlight layer can never disagree about where a token starts and ends.
  */
-export function tokenGroups(text: string): TokenGroup[] {
+export function tokenGroups(text: string, areas?: AreaVocabulary): TokenGroup[] {
   const groups: TokenGroup[] = [];
-  for (const span of tokenizeSpans(text)) {
+  for (const span of tokenizeSpans(text, areas)) {
     if (span.kind === "whitespace") {
       groups.push({
         kind: "gap",

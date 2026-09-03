@@ -123,6 +123,7 @@
   --color-tag-border: var(--tag-border);
   --color-row-open: var(--row-open);
   --color-region-queue: var(--region-queue);
+  --color-region-assign: var(--region-assign);
   --color-query-value: var(--query-value);
   --color-query-well: var(--query-well);
   --color-archive: var(--archive);
@@ -264,6 +265,13 @@
      300 / 255) — the queue indicator's whole job is to look unlike the
      parent-axis one. */
   --region-queue: oklch(0.75 0.13 205);
+
+  /* The drop indicator for a drop that ASSIGNS rather than positions. Green, so
+     it is neither the parent axis's --ring (blue or purple in every theme, per
+     the note above) nor the queue's cyan: the three drop treatments have to be
+     told apart at a glance, and an assignment drawn where a sibling reorder
+     would be drawn is the confusion the treatment exists to remove. */
+  --region-assign: oklch(0.75 0.15 150);
 
   /* Filter-box value tokens (the accent half of the query highlight).
      Deliberately an ALIAS of --tag-text, and declared only here: every theme
@@ -414,6 +422,7 @@
   --tag-border: oklch(0.70 0.17 300 / 0.35);
   --row-open: oklch(0.82 0.115 68);         /* #ffb86c, Dracula orange */
   --region-queue: oklch(0.883 0.093 213);   /* #8be9fd, Dracula cyan */
+  --region-assign: oklch(0.87 0.19 145);    /* Green, lifted to this palette's weight */
 }
 
 /* Daylight — the first LIGHT palette. `.dark` is absent for this
@@ -511,6 +520,8 @@
   /* Same reason as the bar above: a 0.75-lightness cyan rule disappears into a
      near-white row. */
   --region-queue: oklch(0.55 0.115 205);
+  /* And the same for the assignment green. */
+  --region-assign: oklch(0.55 0.14 150);
 
   /* Archive/delete action colors */
   --archive: oklch(0.58 0.13 66);

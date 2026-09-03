@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { buildTableData } from "./tableData";
+import { EMPTY_SPINE } from "./viewSpine";
+
+const { buildTableData } = EMPTY_SPINE;
 import { isSyntheticRowId } from "./tree";
 import { applySort } from "./tableSort";
 import { typeRank } from "./typeHierarchy";
@@ -22,6 +24,7 @@ function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
     parentId: null,
     milestone: "",
     milestoneOrder: "",
+    area: "",
     blockingIds: [],
     blockedByIds: [],
     etag: "etag-test",
@@ -306,7 +309,11 @@ describe("buildTableData", () => {
       // The structurally-nested chain is in the Backlog, headed by the epic whose
       // parent (the milestone) is drawn elsewhere.
       const backlog = result.rows.find(r => isSyntheticRowId(r.nib.id))!;
-      expect(backlog.nib.title).toBe("Backlog (1)");
+      expect(backlog.nib.title).toBe("Backlog");
+      // The nib's chain is three deep and arrives as ONE member node, so the
+      // count is over the rows drawn beneath the heading rather than over that
+      // array — 1 was the number the old title carried.
+      expect(backlog.drawsSection?.count).toBe(3);
       expect(result.rows.map(r => r.nib.id)).toEqual([
         "nibs-001", "nibs-005", backlog.nib.id, "nibs-002", "nibs-003", "nibs-004",
       ]);
@@ -450,16 +457,19 @@ describe("buildTableData", () => {
       makeTreeTableNib({ id: "nibs-003", type: "task", title: "Task under loose feature", parentId: "nibs-001" }),
     ];
 
-    it("bucket row passes isSyntheticRowId, includes a count in its title, and is collapsible", () => {
+    it("bucket row passes isSyntheticRowId, counts every row it draws, and is collapsible", () => {
       const expanded = buildTableData(looseNibs, emptyFilter, "epics", noCollapsed);
 
       const bucketRow = expanded.rows.find(r => isSyntheticRowId(r.nib.id))!;
       expect(bucketRow).toBeDefined();
       expect(bucketRow.nib.id).toBe("/__no_epic__");
-      expect(bucketRow.nib.title).toBe("No epic (2)");
+      expect(bucketRow.nib.title).toBe("No epic");
       expect(bucketRow.hasChildren).toBe(true);
       // Expanded: bucket + its 2 direct children + the nested task under the feature
       expect(expanded.rows).toHaveLength(4);
+      // The count is those three nib rows, not the two the bucket holds
+      // directly, and not the four rows including the bucket's own.
+      expect(bucketRow.drawsSection?.count).toBe(3);
 
       // The bucket is a collapsible container, so "Collapse All" (which uses
       // parentIds) must include it — otherwise the bucket stays expanded (#3).
@@ -470,6 +480,9 @@ describe("buildTableData", () => {
       expect(collapsed.rows).toHaveLength(1);
       expect(collapsed.rows[0].nib.id).toBe("/__no_epic__");
       expect(collapsed.rows[0].hasChildren).toBe(true);
+      // Collapsed is when the summary is the only thing left, so it is the one
+      // narrowing the count does not follow.
+      expect(collapsed.rows[0].drawsSection?.count).toBe(3);
     });
   });
 
@@ -713,7 +726,7 @@ describe("buildTableData", () => {
       expect(t1.region).toEqual({ axis: "parent", parentId: "E1" });
     });
 
-    it("only a milestone section declares a childRegion; every other row carries null", () => {
+    it("only a milestone section draws a queue-entering section; every other row carries null", () => {
       const nibs: TreeTableNib[] = [
         makeTreeTableNib({ id: "M1", type: "milestone" }),
         makeTreeTableNib({ id: "E1", type: "epic", parentId: "M1" }),
@@ -725,7 +738,12 @@ describe("buildTableData", () => {
         expect(rows.length, level).toBeGreaterThan(0);
         for (const row of rows) {
           const declares = level === "milestones" && row.nib.id === "M1";
-          expect(row.childRegion, `${level}/${row.nib.id}`).toEqual(
+          // Read through the entry's own arm: a section that governs no ordering
+          // group still DRAWS a section (answering `byRow`), and what this
+          // asserts is that none of them names a group.
+          const entry = row.drawsSection?.onEnter;
+          const named = entry?.kind === "region" ? entry.region : null;
+          expect(named, `${level}/${row.nib.id}`).toEqual(
             declares ? { axis: "milestone", milestoneId: "M1" } : null,
           );
         }

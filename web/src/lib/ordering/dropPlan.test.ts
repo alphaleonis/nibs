@@ -12,13 +12,15 @@ import {
   type DropRefusalReason,
 } from "./dropPlan";
 import type { Region } from "./region";
+import { buildContainmentIndex } from "../containment";
 import { collectDescendantIds } from "../dropZone";
 import type { DropZone } from "../drag.svelte";
 import { batch, reorderChain, reorderNib, reparentAndReorder, sequence, setParent, updateNib } from "../mutations/commands";
 import type { AnyCommand, CommandResult } from "../mutations/types";
-import { rowRegion, type RowData } from "../tableData";
+import { buildShapedTableData, rowRegion, type RowData, type RowSection } from "../tableData";
+import { viewShapeFor } from "../tree";
 import { canHaveChildren } from "../typeHierarchy";
-import type { TreeTableNib } from "../types";
+import type { TreeNode, TreeTableNib } from "../types";
 
 function makeNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
   return {
@@ -34,6 +36,7 @@ function makeNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
     parentId: null,
     milestone: "",
     milestoneOrder: "",
+    area: "",
     blockingIds: [],
     blockedByIds: [],
     etag: "etag-test",
@@ -55,7 +58,8 @@ function makeRow(
   nib: TreeTableNib,
   opts: {
     enclosing?: Region | null;
-    childRegion?: Region | null;
+    drawsSection?: RowSection | null;
+    section?: RowSection | null;
     parentNib?: TreeTableNib | null;
     displayParentId?: string | null;
   } = {},
@@ -68,8 +72,15 @@ function makeRow(
     parentNib: opts.parentNib ?? null,
     displayParentId: opts.displayParentId ?? null,
     region: rowRegion(nib.id, nib.parentId, opts.enclosing ?? null),
-    childRegion: opts.childRegion ?? null,
+    drawsSection: opts.drawsSection ?? null,
+    section: opts.section ?? null,
   };
+}
+
+/** A section whose rows order in one queue, in the shape the milestone lens's
+ *  `meaning` returns: one region answering both halves. */
+function queueSection(key: string, region: Region): RowSection {
+  return { key, display: { label: key, description: "", color: "" }, count: 0, onEnter: { kind: "region", region } };
 }
 
 /**
@@ -99,6 +110,9 @@ function makeRow(
  *                                             as CY1's own child (a severed
  *                                             cycle: the container is INSIDE
  *                                             the target's subtree)
+ *     SC      epic whose real parent is ITSELF — the one-member cycle, severed
+ *             the same way, so its own children group is the row itself and no
+ *             containment hop reaches it
  *   RS (header, declares the ROOT group for its rows)
  *     DR1  task whose real parent is null, so declaration and parent agree
  *     DR2  task whose real parent is B3, so they do NOT — one region, two
@@ -112,18 +126,26 @@ const E1_NIB = makeNib({ id: "E1", type: "epic", title: "Epic one", milestone: "
 const B3_NIB = makeNib({ id: "B3", type: "epic", title: "Backlog epic" });
 const CY1_NIB = makeNib({ id: "CY1", type: "epic", title: "Cycle one", parentId: "CY2" });
 const CY2_NIB = makeNib({ id: "CY2", type: "epic", title: "Cycle two", parentId: "CY1" });
+const SC_NIB = makeNib({ id: "SC", type: "epic", title: "Cycle self", parentId: "SC" });
 const HIDDEN_CHILDREN: Region = { axis: "parent", parentId: "E9" };
 
 const ROWS: RowData[] = [
-  makeRow(makeNib({ id: "M1", type: "milestone", title: "v1.0" }), { childRegion: QUEUE_M1 }),
+  makeRow(makeNib({ id: "M1", type: "milestone", title: "v1.0" }), { drawsSection: queueSection("M1", QUEUE_M1) }),
   makeRow(E1_NIB, { enclosing: QUEUE_M1 }),
   makeRow(makeNib({ id: "T1", type: "task", title: "Task one", parentId: "E1" }), { parentNib: E1_NIB }),
   makeRow(makeNib({ id: "E2", type: "epic", title: "Epic two", milestone: "M1" }), { enclosing: QUEUE_M1 }),
   makeRow(makeNib({ id: "E4", type: "epic", title: "Epic four", milestone: "M1" }), { enclosing: QUEUE_M1 }),
   makeRow(makeNib({ id: "QT", type: "task", title: "Queued task", milestone: "M1" }), { enclosing: QUEUE_M1 }),
-  makeRow(makeNib({ id: "M2", type: "milestone", title: "v2.0" }), { childRegion: QUEUE_M2 }),
+  makeRow(makeNib({ id: "M2", type: "milestone", title: "v2.0" }), { drawsSection: queueSection("M2", QUEUE_M2) }),
   makeRow(makeNib({ id: "E3", type: "epic", title: "Epic three", milestone: "M2" }), { enclosing: QUEUE_M2 }),
-  makeRow(makeNib({ id: BACKLOG_ID, type: "", title: "Backlog" })),
+  makeRow(makeNib({ id: BACKLOG_ID, type: "", title: "Backlog" }), {
+    drawsSection: {
+      key: BACKLOG_ID,
+      display: { label: "Backlog", description: "", color: "" },
+      count: 5,
+      onEnter: { kind: "byRow" },
+    },
+  }),
   makeRow(makeNib({ id: "B1", type: "task", title: "Backlog one" })),
   makeRow(makeNib({ id: "B2", type: "task", title: "Backlog two" })),
   makeRow(B3_NIB),
@@ -134,16 +156,43 @@ const ROWS: RowData[] = [
   makeRow(makeNib({ id: "NP", type: "task", title: "No parent nib", parentId: "H9" })),
   makeRow(CY1_NIB, { parentNib: CY2_NIB }),
   makeRow(CY2_NIB, { parentNib: CY1_NIB, displayParentId: "CY1" }),
-  makeRow(makeNib({ id: "RS", type: "milestone", title: "Root section" }), { childRegion: TOP_LEVEL }),
+  makeRow(SC_NIB, { parentNib: SC_NIB }),
+  makeRow(makeNib({ id: "RS", type: "milestone", title: "Root section" }), { drawsSection: queueSection("RS", TOP_LEVEL) }),
   makeRow(makeNib({ id: "DR1", type: "task", title: "Declared one" }), { enclosing: TOP_LEVEL }),
   makeRow(makeNib({ id: "DR2", type: "task", title: "Declared two", parentId: "B3" }), {
     enclosing: TOP_LEVEL,
     parentNib: B3_NIB,
   }),
-  makeRow(makeNib({ id: "HS", type: "milestone", title: "Hidden section" }), { childRegion: HIDDEN_CHILDREN }),
+  makeRow(makeNib({ id: "HS", type: "milestone", title: "Hidden section" }), { drawsSection: queueSection("HS", HIDDEN_CHILDREN) }),
 ];
 
 const ROWS_BY_ID = new Map(ROWS.map((r) => [r.nib.id, r]));
+
+/**
+ * The same view, as the forest the table was flattened FROM — which the rows
+ * above cannot supply, since a section holds its members by arrangement and no
+ * row records that. Stated once here and asserted total against `ROWS` below, so
+ * a row added to the fixture without a place in it fails rather than quietly
+ * dropping out of the index.
+ */
+const CONTAINS: Record<string, string[]> = {
+  M1: ["E1", "E2", "E4", "QT"],
+  E1: ["T1"],
+  M2: ["E3"],
+  [BACKLOG_ID]: ["B1", "B2", "B3", "FT", "PH", "PT", "NP", "CY1", "SC"],
+  FT: ["B5"],
+  CY1: ["CY2"],
+  RS: ["DR1", "DR2"],
+};
+const ROOT_IDS = ["M1", "M2", BACKLOG_ID, "RS", "HS"];
+
+function fixtureNode(id: string): TreeNode<TreeTableNib> {
+  const row = ROWS_BY_ID.get(id);
+  if (row === undefined) throw new Error(`no fixture row ${id}`);
+  return { nib: row.nib, children: (CONTAINS[id] ?? []).map(fixtureNode), depth: 0 };
+}
+
+const CONTAINMENT = buildContainmentIndex(ROOT_IDS.map(fixtureNode));
 
 function planFor(draggedIds: string[], targetId: string, zone: DropZone): DropPlan {
   const target = ROWS_BY_ID.get(targetId);
@@ -158,6 +207,7 @@ function planFor(draggedIds: string[], targetId: string, zone: DropZone): DropPl
     zone,
     // Production's own collector, over the fixture rows.
     descendantIds: collectDescendantIds(draggedIds, ROWS),
+    containment: CONTAINMENT,
   });
 }
 
@@ -422,6 +472,17 @@ const CASES: Case[] = [
     target: "CY1",
     zone: "before",
     expected: { ok: false, reason: "destination-inside-target", region: { axis: "parent", parentId: "CY2" } },
+  },
+  {
+    // The same shape with the cycle one member long: SC's destination group is
+    // SC itself, so no containment hop reaches it and only the identity arm
+    // refuses. Accepting it reparents the dragged row INTO the row the
+    // indicator drew a line above.
+    name: "a destination that IS the target is refused (one-member cycle)",
+    drag: ["B1"],
+    target: "SC",
+    zone: "before",
+    expected: { ok: false, reason: "destination-inside-target", region: { axis: "parent", parentId: "SC" } },
   },
 
   // --- Milestone axis. ---
@@ -754,6 +815,11 @@ describe("planDrop", () => {
     expect(plan.ok, plan.ok ? "" : plan.refusal.message).toBe(expected.ok);
     if (expected.ok) {
       if (!plan.ok) throw new Error("unreachable: the assertion above already failed");
+      // Every case in this table plans a POSITION. The discriminant is asserted
+      // rather than assumed, because the assign arm carries no `region` at all
+      // and reading one off it would not compile — see sectionEntry.test.ts for
+      // that arm.
+      if (plan.kind !== "position") throw new Error(`expected a position plan, got ${plan.kind}`);
       // The four together: a plan whose indicator and command disagree is the
       // defect this function exists to make unrepresentable.
       expect({
@@ -915,6 +981,7 @@ describe("planDrop with a namer", () => {
       target,
       zone,
       descendantIds: collectDescendantIds(draggedIds, ROWS),
+      containment: CONTAINMENT,
       nameOf,
     });
   }
@@ -1082,10 +1149,13 @@ describe("dropPlan.ts import isolation", () => {
       'import { isValidCrossParentDrop, isValidDropTarget } from "../dropZone";',
       'import { batch, reorderChain, reorderNib, reparentAndReorder, sequence, setParent, updateNib } from "../mutations/commands";',
       'import type { AnyCommand, CommandResult, LeafCommand, SequenceStep } from "../mutations/types";',
-      'import { canBeInMilestoneQueue } from "../membership";',
+      'import type { ContainmentIndex } from "../containment";',
+      'import { takesAssignmentAxes } from "../membership";',
       'import type { RowData } from "../tableData";',
+      'import type { SectionKey } from "../tree";',
       'import { canHaveChildren } from "../typeHierarchy";',
       'import { BY_ID, commonRegion, describeRegion, sameRegion, scopeOf, spellId, type Region, type RegionNamer } from "./region";',
+      'import type { AssignableField, SectionEntry } from "./sectionMeaning";',
     ]);
     // A multi-line import still begins a line with `import`, so the equality
     // above is what catches it — its first line alone would not match. These
@@ -1130,6 +1200,7 @@ describe("the dragged rows are read from the grab, not from the live list", () =
       target: ROWS_BY_ID.get("B1")!,
       zone: "reparent",
       descendantIds: collectDescendantIds(["B1"], ROWS),
+      containment: CONTAINMENT,
     });
 
     expect(plan.ok).toBe(false);
@@ -1145,10 +1216,179 @@ describe("the dragged rows are read from the grab, not from the live list", () =
       target: ROWS_BY_ID.get("B2")!,
       zone: "before",
       descendantIds: collectDescendantIds(["B1", "GHOST"], ROWS),
+      containment: CONTAINMENT,
     });
 
     expect(plan.ok).toBe(false);
     if (plan.ok) return;
     expect(plan.refusal.reason).toBe("hidden-member");
+  });
+});
+
+describe("the fixture's containment forest", () => {
+  // Keeps `CONTAINS` total against `ROWS`: a row with no place in the forest is
+  // absent from the index, and every question asked of it answers as if the view
+  // never drew it — which would make a whole case pass vacuously.
+  it("holds every fixture row exactly once", () => {
+    for (const row of ROWS) {
+      expect(CONTAINMENT.has(row.nib.id), `${row.nib.id} is in no section of the fixture forest`).toBe(true);
+    }
+    const placed = [...ROOT_IDS, ...Object.values(CONTAINS).flat()];
+    expect(new Set(placed).size).toBe(placed.length);
+    expect(new Set(placed)).toEqual(new Set(ROWS.map((r) => r.nib.id)));
+  });
+});
+
+/**
+ * The destination check, on the one shape where reading CONTAINMENT and reading
+ * the display-parent chain give different answers — driven end to end through
+ * the real Milestones lens, because what has to be shown is a drop landing
+ * somewhere the gesture did not point.
+ *
+ * `m1` is a milestone whose own parent `P` is one of its members. Nothing
+ * creates that through the API — `VALID_CHILD_TYPES` lists `milestone` as
+ * nobody's legal child — but `parentId` is reported from the file as it is
+ * stored, and the client renders the shape rather than dropping it, the same way
+ * it renders the severed parent cycle above.
+ */
+describe("a destination drawn inside a section the target heads", () => {
+  const MILESTONE_UNDER_ITS_MEMBER: TreeTableNib[] = [
+    makeNib({ id: "m1", title: "Vee one", type: "milestone", parentId: "P" }),
+    makeNib({ id: "P", title: "Pea", type: "epic", milestone: "m1" }),
+    makeNib({ id: "Y", title: "Why", type: "task" }),
+  ];
+
+  function milestoneView(nibs: TreeTableNib[], collapsed: ReadonlySet<string> = new Set()) {
+    return buildShapedTableData(nibs, {}, viewShapeFor("milestones"), collapsed, null);
+  }
+
+  it("refuses the drop, and the row it would have drawn is inside the target", () => {
+    const data = milestoneView(MILESTONE_UNDER_ITS_MEMBER);
+    const rowsById = new Map(data.rows.map((r) => [r.nib.id, r]));
+
+    // Why the display-parent chain cannot answer here: P is drawn inside m1's
+    // section, and a row inside a section reports no display parent at all, so a
+    // walk up from P stops before it reaches anything.
+    expect(rowsById.get("P")!.displayParentId).toBeNull();
+    expect(data.containment.containerOf("P")).toBe("m1");
+
+    // The gesture: drag Y and point the indicator ABOVE the m1 header row. Its
+    // destination is m1's own parent group, whose container is P.
+    const plan = planDrop({
+      draggedIds: ["Y"],
+      rowsById,
+      draggedRowsById: rowsById,
+      target: rowsById.get("m1")!,
+      zone: "before",
+      descendantIds: collectDescendantIds(["Y"], data.rows),
+      containment: data.containment,
+    });
+
+    expect(plan.ok).toBe(false);
+    if (plan.ok) return;
+    expect(plan.refusal.reason).toBe("destination-inside-target");
+    expect(plan.refusal.region).toEqual({ axis: "parent", parentId: "P" });
+
+    // And what accepting it would have meant, rendered: the write is a reparent
+    // into P, and a row parented to P is drawn inside m1's section — two rows
+    // BELOW the one the "before" indicator drew a line above.
+    const landed = milestoneView(
+      MILESTONE_UNDER_ITS_MEMBER.map((n) => (n.id === "Y" ? { ...n, parentId: "P" } : n)),
+    );
+    expect(landed.rows.map((r) => r.nib.id)).toEqual(["m1", "P", "Y"]);
+    expect(landed.rows.find((r) => r.nib.id === "Y")!.section?.key).toBe("m1");
+  });
+
+  it("refuses it with m1's section COLLAPSED, where the destination has no row", () => {
+    // The same gesture with the section shut. P keeps its node and loses its
+    // row, so a guard reading the drawn rows would let this through — and the
+    // write still lands Y inside the shut section, where the table draws nothing
+    // at all.
+    const data = milestoneView(MILESTONE_UNDER_ITS_MEMBER, new Set(["m1"]));
+    const rowsById = new Map(data.rows.map((r) => [r.nib.id, r]));
+
+    expect(rowsById.has("P")).toBe(false);
+    expect(data.containment.has("P")).toBe(true);
+    expect(data.containment.contains("m1", "P")).toBe(true);
+
+    const plan = planDrop({
+      draggedIds: ["Y"],
+      rowsById,
+      draggedRowsById: rowsById,
+      target: rowsById.get("m1")!,
+      zone: "before",
+      descendantIds: collectDescendantIds(["Y"], data.rows),
+      containment: data.containment,
+    });
+
+    expect(plan.ok).toBe(false);
+    if (plan.ok) return;
+    expect(plan.refusal.reason).toBe("destination-inside-target");
+    expect(plan.refusal.region).toEqual({ axis: "parent", parentId: "P" });
+
+    // And what accepting it would have meant, rendered: Y is written into P,
+    // which is inside the still-shut section, so the dragged row vanishes.
+    const landed = milestoneView(
+      MILESTONE_UNDER_ITS_MEMBER.map((n) => (n.id === "Y" ? { ...n, parentId: "P" } : n)),
+      new Set(["m1"]),
+    );
+    expect(landed.rows.map((r) => r.nib.id)).toEqual(["m1"]);
+  });
+});
+
+/**
+ * The one-member cycle, driven end to end through two real lenses. The hand-built
+ * fixture above states the same refusal, but only a real build shows what
+ * accepting it renders — and shows that `promotedCycleRoots` severs a
+ * self-parented nib rather than dropping it, which is why the row is there to be
+ * dropped on at all.
+ *
+ * Nothing creates this through the API (`internal/graph/resolver.go` refuses a
+ * self-parent), but `parentId` is reported from the file as stored, so a
+ * hand-authored one arrives on the wire verbatim.
+ */
+describe("a target parented to itself", () => {
+  const SELF_PARENT: TreeTableNib[] = [
+    makeNib({ id: "S", title: "Ess", type: "epic", parentId: "S" }),
+    makeNib({ id: "L", title: "Ell", type: "task" }),
+  ];
+
+  it.each(["none", "milestones"] as const)("refuses the drop under the %s lens", (level) => {
+    const data = buildShapedTableData(SELF_PARENT, {}, viewShapeFor(level), new Set(), null);
+    const rowsById = new Map(data.rows.map((r) => [r.nib.id, r]));
+
+    // Severed, so S is drawn as a root rather than under itself — and no
+    // containment hop reaches it, which is why `contains` alone cannot answer.
+    expect(rowsById.get("S")!.nib.parentId).toBe("S");
+    expect(data.containment.contains("S", "S")).toBe(false);
+
+    const plan = planDrop({
+      draggedIds: ["L"],
+      rowsById,
+      draggedRowsById: rowsById,
+      target: rowsById.get("S")!,
+      zone: "before",
+      descendantIds: collectDescendantIds(["L"], data.rows),
+      containment: data.containment,
+    });
+
+    expect(plan.ok).toBe(false);
+    if (plan.ok) return;
+    expect(plan.refusal.reason).toBe("destination-inside-target");
+    expect(plan.refusal.region).toEqual({ axis: "parent", parentId: "S" });
+
+    // And what accepting it would have meant, rendered: L is drawn as S's child,
+    // one row BELOW the line the "before" indicator drew above S.
+    const landed = buildShapedTableData(
+      SELF_PARENT.map((n) => (n.id === "L" ? { ...n, parentId: "S" } : n)),
+      {},
+      viewShapeFor(level),
+      new Set(),
+      null,
+    );
+    const landedL = landed.rows.find((r) => r.nib.id === "L")!;
+    expect(landed.rows.map((r) => r.nib.id).indexOf("L")).toBeGreaterThan(landed.rows.map((r) => r.nib.id).indexOf("S"));
+    expect(landed.containment.containerOf("L")).toBe("S");
+    expect(landedL.depth).toBeGreaterThan(landed.rows.find((r) => r.nib.id === "S")!.depth);
   });
 });

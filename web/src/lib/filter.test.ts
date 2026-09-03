@@ -6,6 +6,13 @@ import {
   isDragAllowed,
 } from "./filter";
 import { OPEN_STATUSES, CLOSED_STATUSES } from "./constants";
+import {
+  createAreaVocabulary,
+  EMPTY_AREAS,
+  LOADING_AREAS,
+  UNAVAILABLE_AREAS,
+} from "./areas";
+import type { AreaNode, AreaVocabulary } from "./areas";
 import type { NibSummary, NibFilter } from "./types";
 
 function makeNib(overrides: Partial<NibSummary> = {}): NibSummary {
@@ -178,7 +185,7 @@ describe("hasClientFilters", () => {
 describe("prepareFilter", () => {
   it("returns original filter as serverFilter when no client filters are active", () => {
     const filter: NibFilter = { search: "hello" };
-    const result = prepareFilter(filter);
+    const result = prepareFilter(filter, EMPTY_AREAS);
 
     expect(result.serverFilter).toBe(filter); // reference equality
     expect(result.clientFiltersActive).toBe(false);
@@ -190,7 +197,7 @@ describe("prepareFilter", () => {
       search: "hello",
       status: [...OPEN_STATUSES],
     };
-    const result = prepareFilter(filter);
+    const result = prepareFilter(filter, EMPTY_AREAS);
 
     // status is filtered client-side (so completed/scrapped ancestors of active
     // children can be fetched and dimmed rather than dropped server-side).
@@ -203,7 +210,7 @@ describe("prepareFilter", () => {
 
   it("strips type from serverFilter when type filter is active", () => {
     const filter: NibFilter = { search: "hello", type: ["bug"], status: ["todo"] };
-    const result = prepareFilter(filter);
+    const result = prepareFilter(filter, EMPTY_AREAS);
 
     expect(result.serverFilter).toEqual({ search: "hello" });
     expect(result.serverFilter).not.toHaveProperty("type");
@@ -220,7 +227,7 @@ describe("prepareFilter", () => {
       estimate: ["m"],
       tags: ["frontend"],
     };
-    const result = prepareFilter(filter);
+    const result = prepareFilter(filter, EMPTY_AREAS);
 
     expect(result.serverFilter).toEqual({ search: "test" });
     expect(result.serverFilter).not.toHaveProperty("type");
@@ -240,7 +247,7 @@ describe("prepareFilter", () => {
       excludeEstimate: ["xl"],
       excludeTags: ["wip"],
     };
-    const result = prepareFilter(filter);
+    const result = prepareFilter(filter, EMPTY_AREAS);
 
     // The exclusions are applied client-side (so an excluded ancestor of active
     // children is fetched and dimmed rather than dropped server-side), so none
@@ -258,7 +265,7 @@ describe("prepareFilter", () => {
 
   it("matchesClient returns true when nib matches the client-side filter", () => {
     const filter: NibFilter = { type: ["bug", "feature"] };
-    const result = prepareFilter(filter);
+    const result = prepareFilter(filter, EMPTY_AREAS);
 
     expect(result.matchesClient(makeNib({ type: "bug" }))).toBe(true);
     expect(result.matchesClient(makeNib({ type: "feature" }))).toBe(true);
@@ -266,7 +273,7 @@ describe("prepareFilter", () => {
 
   it("matchesClient returns false when nib does not match client-side filter", () => {
     const filter: NibFilter = { type: ["bug"], priority: ["high"] };
-    const result = prepareFilter(filter);
+    const result = prepareFilter(filter, EMPTY_AREAS);
 
     // wrong type
     expect(result.matchesClient(makeNib({ type: "task", priority: "high" }))).toBe(false);
@@ -278,7 +285,7 @@ describe("prepareFilter", () => {
 
   it("matchesClient handles tags with OR logic (at least one tag matches)", () => {
     const filter: NibFilter = { tags: ["frontend", "backend"] };
-    const result = prepareFilter(filter);
+    const result = prepareFilter(filter, EMPTY_AREAS);
 
     // has one matching tag
     expect(result.matchesClient(makeNib({ tags: ["frontend", "auth"] }))).toBe(true);
@@ -288,6 +295,138 @@ describe("prepareFilter", () => {
     expect(result.matchesClient(makeNib({ tags: ["auth", "db"] }))).toBe(false);
     // empty tags
     expect(result.matchesClient(makeNib({ tags: [] }))).toBe(false);
+  });
+});
+
+// The `area` rule. A bad `area` fails the WHOLE query on the server
+// (refuseUndeclaredArea, internal/graph/filters.go) instead of narrowing it, and
+// unlike the id-valued fields that fail the same way it cannot be tagged
+// NOT_FOUND — `FilterAreaError` implements no Unwrap — so the refusal blanks the
+// table with a red error rather than reaching TreeTable's calm inline branch.
+// The client holds the vocabulary, so it can pre-check: `prepareFilter` sends
+// the value only on a "declared" answer.
+//
+// Reached DIRECTLY here, because this rule is the filter's rather than the box's:
+// a value arrives from a typed `area:` token, a `?q=` link, a persisted query
+// string, or client code, and all four land in the same field. The box refuses an
+// undeclared path of its own at parse time (query/area.ts), but only when a
+// vocabulary was there to ask — a restore runs before the config query resolves,
+// which is exactly the arrival this describes.
+describe("prepareFilter area rule", () => {
+  const declared: AreaNode[] = [
+    { path: "web", name: "web", description: "", color: "", depth: 0 },
+    { path: "web/dashboard", name: "dashboard", description: "", color: "", depth: 1 },
+  ];
+  const READY_AREAS = createAreaVocabulary(declared);
+
+  // Every vocabulary a session can hold, crossed with every shape an `area`
+  // value can arrive in. `sent` is the whole assertion: a value reaches
+  // serverFilter iff this vocabulary declares it — except the empty string,
+  // which is sent unconditionally so the server's own refusal of it is what the
+  // user sees (see withSendableArea).
+  const ALL_VOCABULARIES = [
+    "pre-load",
+    "config query failed",
+    "project declares none",
+    "declared vocabulary",
+  ];
+  const vocabularies: [string, AreaVocabulary][] = [
+    ["pre-load", LOADING_AREAS],
+    ["config query failed", UNAVAILABLE_AREAS],
+    ["project declares none", EMPTY_AREAS],
+    ["declared vocabulary", READY_AREAS],
+  ];
+  const values: [string, string, string[]][] = [
+    // label, value, the vocabularies (by label) that send it
+    ["a declared path", "web", ["declared vocabulary"]],
+    ["a declared subpath", "web/dashboard", ["declared vocabulary"]],
+    ["a retired path", "retired", []],
+    ["the empty string", "", ALL_VOCABULARIES],
+  ];
+
+  for (const [vocabLabel, areas] of vocabularies) {
+    for (const [valueLabel, value, sendingVocabs] of values) {
+      const sent = sendingVocabs.includes(vocabLabel);
+      it(`${sent ? "sends" : "withholds"} ${valueLabel} with a ${vocabLabel} vocabulary`, () => {
+        const result = prepareFilter({ area: value }, areas);
+        if (sent) {
+          expect(result.serverFilter.area).toBe(value);
+        } else {
+          expect(result.serverFilter).not.toHaveProperty("area");
+        }
+      });
+    }
+  }
+
+  it("leaves a filter carrying no area untouched, whatever the vocabulary answers", () => {
+    for (const [, areas] of vocabularies) {
+      const filter: NibFilter = { search: "hello" };
+      const result = prepareFilter(filter, areas);
+      // Reference equality: the no-client-filters fast path is unchanged for the
+      // filters that carry no area at all, which is every filter today.
+      expect(result.serverFilter).toBe(filter);
+    }
+  });
+
+  it("withholds the area on the client-filter path too, and keeps the rest", () => {
+    // The withheld value must not depend on which return path the filter takes:
+    // an active client filter routes through the destructuring branch instead of
+    // the fast path.
+    const filter: NibFilter = { area: "retired", type: ["bug"], search: "hello" };
+    const result = prepareFilter(filter, READY_AREAS);
+
+    expect(result.serverFilter).toEqual({ search: "hello" });
+    expect(result.clientFiltersActive).toBe(true);
+    expect(result.matchesClient(makeNib({ type: "bug" }))).toBe(true);
+    expect(result.matchesClient(makeNib({ type: "task" }))).toBe(false);
+  });
+
+  it("sends the empty string so the server's refusal of it stays loud", () => {
+    // The server refuses `area: ""` BEFORE it tests membership, because reading
+    // it as "unset" would drop the branch and widen the query to the whole store
+    // (refuseUndeclaredArea). Withholding it here would perform that same
+    // widening. Nothing in the app can produce one — the box does not recognize
+    // an empty-valued token — so it can only arrive from client code, and that
+    // is exactly the arrival that must not be silent.
+    const filter: NibFilter = { area: "" };
+
+    // Reference-identical on the fast path, like every other no-op answer.
+    expect(prepareFilter(filter, READY_AREAS).serverFilter).toBe(filter);
+    // The vocabulary is not consulted at all: an answer that never arrived
+    // cannot make the empty string more or less refusable than it already is.
+    expect(prepareFilter(filter, UNAVAILABLE_AREAS).serverFilter.area).toBe("");
+  });
+
+  it("does not mutate the filter it was handed", () => {
+    // The caller keeps the unstripped filter — it is what the box serializes back
+    // into `?q=` and localStorage, so a shared link must not lose the token to a
+    // vocabulary that had not arrived yet.
+    const filter: NibFilter = { area: "web", search: "hello" };
+    prepareFilter(filter, LOADING_AREAS);
+
+    expect(filter.area).toBe("web");
+  });
+
+  it("re-applies the area when the vocabulary lands", () => {
+    // The "unknown" → "declared" transition, as the app makes it: TreeTable
+    // re-derives `prepareFilter(resolvedFilter, viewSpine().areas)` when the
+    // spine's vocabulary changes, which is the same filter asked twice.
+    const filter: NibFilter = { area: "web" };
+
+    expect(prepareFilter(filter, LOADING_AREAS).serverFilter).not.toHaveProperty("area");
+    expect(prepareFilter(filter, READY_AREAS).serverFilter.area).toBe("web");
+  });
+
+  it("treats a failed config query like a pending one, not like a project with no areas", () => {
+    // Both are empty vocabularies and both withhold — but for different reasons,
+    // and only one of them is answering the question. UNAVAILABLE_AREAS says
+    // "unknown" so the value survives to be sent if a vocabulary ever arrives,
+    // where EMPTY_AREAS has answered: nothing is declared, so nothing is
+    // declarable.
+    expect(UNAVAILABLE_AREAS.validity("web")).toBe("unknown");
+    expect(EMPTY_AREAS.validity("web")).toBe("undeclared");
+    expect(prepareFilter({ area: "web" }, UNAVAILABLE_AREAS).serverFilter).not.toHaveProperty("area");
+    expect(prepareFilter({ area: "web" }, EMPTY_AREAS).serverFilter).not.toHaveProperty("area");
   });
 });
 

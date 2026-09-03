@@ -41,7 +41,16 @@ type DirectiveRoot struct {
 }
 
 type ComplexityRoot struct {
+	Area struct {
+		Color       func(childComplexity int) int
+		Depth       func(childComplexity int) int
+		Description func(childComplexity int) int
+		Name        func(childComplexity int) int
+		Path        func(childComplexity int) int
+	}
+
 	Config struct {
+		Areas       func(childComplexity int) int
 		Prefix      func(childComplexity int) int
 		ProjectName func(childComplexity int) int
 	}
@@ -182,6 +191,43 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 	_ = ec
 	switch typeName + "." + field {
 
+	case "Area.color":
+		if e.ComplexityRoot.Area.Color == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Area.Color(childComplexity), true
+	case "Area.depth":
+		if e.ComplexityRoot.Area.Depth == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Area.Depth(childComplexity), true
+	case "Area.description":
+		if e.ComplexityRoot.Area.Description == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Area.Description(childComplexity), true
+	case "Area.name":
+		if e.ComplexityRoot.Area.Name == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Area.Name(childComplexity), true
+	case "Area.path":
+		if e.ComplexityRoot.Area.Path == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Area.Path(childComplexity), true
+
+	case "Config.areas":
+		if e.ComplexityRoot.Config.Areas == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Config.Areas(childComplexity), true
 	case "Config.prefix":
 		if e.ComplexityRoot.Config.Prefix == nil {
 			break
@@ -752,12 +798,30 @@ var parsedSchema = gqlparser.MustLoadSchema(sources...)
 // Each function is generated once per unique object type, deduplicating the
 // switch statements that were previously inlined in every fieldContext_* function.
 
+func (ec *executionContext) childFields_Area(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "path":
+		return ec.fieldContext_Area_path(ctx, field)
+	case "name":
+		return ec.fieldContext_Area_name(ctx, field)
+	case "description":
+		return ec.fieldContext_Area_description(ctx, field)
+	case "color":
+		return ec.fieldContext_Area_color(ctx, field)
+	case "depth":
+		return ec.fieldContext_Area_depth(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type Area", field.Name)
+}
+
 func (ec *executionContext) childFields_Config(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 	switch field.Name {
 	case "projectName":
 		return ec.fieldContext_Config_projectName(ctx, field)
 	case "prefix":
 		return ec.fieldContext_Config_prefix(ctx, field)
+	case "areas":
+		return ec.fieldContext_Config_areas(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type Config", field.Name)
 }
@@ -1508,6 +1572,121 @@ func (ec *executionContext) field___Type_fields_args(ctx context.Context, rawArg
 
 // region    **************************** field.gotpl *****************************
 
+func (ec *executionContext) _Area_path(ctx context.Context, field graphql.CollectedField, obj *model.Area) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Area_path(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Path, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Area_path(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Area", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _Area_name(ctx context.Context, field graphql.CollectedField, obj *model.Area) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Area_name(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Name, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Area_name(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Area", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _Area_description(ctx context.Context, field graphql.CollectedField, obj *model.Area) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Area_description(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Description, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Area_description(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Area", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _Area_color(ctx context.Context, field graphql.CollectedField, obj *model.Area) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Area_color(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Color, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Area_color(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Area", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _Area_depth(ctx context.Context, field graphql.CollectedField, obj *model.Area) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Area_depth(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Depth, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Area_depth(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Area", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
 func (ec *executionContext) _Config_projectName(ctx context.Context, field graphql.CollectedField, obj *model.Config) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -1552,6 +1731,38 @@ func (ec *executionContext) _Config_prefix(ctx context.Context, field graphql.Co
 }
 func (ec *executionContext) fieldContext_Config_prefix(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("Config", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _Config_areas(ctx context.Context, field graphql.CollectedField, obj *model.Config) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Config_areas(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Areas, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*model.Area) graphql.Marshaler {
+			return ec.marshalNArea2ᚕᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐAreaᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Config_areas(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Config",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Area(ctx, field)
+		},
+	}
+	return fc, nil
 }
 
 func (ec *executionContext) _Mutation_createNib(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
@@ -5057,6 +5268,64 @@ func (ec *executionContext) unmarshalInputUpdateNibInput(ctx context.Context, ob
 
 // region    **************************** object.gotpl ****************************
 
+var areaImplementors = []string{"Area"}
+
+func (ec *executionContext) _Area(ctx context.Context, sel ast.SelectionSet, obj *model.Area) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, areaImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("Area")
+		case "path":
+			out.Values[i] = ec._Area_path(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "name":
+			out.Values[i] = ec._Area_name(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "description":
+			out.Values[i] = ec._Area_description(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "color":
+			out.Values[i] = ec._Area_color(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "depth":
+			out.Values[i] = ec._Area_depth(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
 var configImplementors = []string{"Config"}
 
 func (ec *executionContext) _Config(ctx context.Context, sel ast.SelectionSet, obj *model.Config) graphql.Marshaler {
@@ -5076,6 +5345,11 @@ func (ec *executionContext) _Config(ctx context.Context, sel ast.SelectionSet, o
 			}
 		case "prefix":
 			out.Values[i] = ec._Config_prefix(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "areas":
+			out.Values[i] = ec._Config_areas(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
@@ -6525,6 +6799,32 @@ func (ec *executionContext) ___Type(ctx context.Context, sel ast.SelectionSet, o
 // endregion **************************** object.gotpl ****************************
 
 // region    ***************************** type.gotpl *****************************
+
+func (ec *executionContext) marshalNArea2ᚕᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐAreaᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.Area) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNArea2ᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐArea(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNArea2ᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐArea(ctx context.Context, sel ast.SelectionSet, v *model.Area) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._Area(ctx, sel, v)
+}
 
 func (ec *executionContext) unmarshalNBoolean2bool(ctx context.Context, v any) (bool, error) {
 	res, err := graphql.UnmarshalBoolean(v)

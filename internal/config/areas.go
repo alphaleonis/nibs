@@ -65,6 +65,20 @@ func validateAreaNodes(areas []AreaConfig, parent string) error {
 			return fmt.Errorf("area %q %s has leading or trailing whitespace in its name; an `area:` value would have to carry the same spaces to match it",
 				area.Name, areaLocation(parent))
 		}
+		// INTERIOR whitespace is permitted, and that is a deliberate asymmetry
+		// with the check above rather than an oversight. The same reasoning does
+		// apply — `nibs list --area "Web UI"` works because a shell quotes it,
+		// while the web query box has no quoting and tokenizes on whitespace, so
+		// `area:Web UI` splits and the tail lands in free text. The box therefore
+		// withholds such a path from its completions rather than offering one it
+		// cannot accept.
+		//
+		// Refusing it here would be the tidier rule and is NOT taken: this
+		// function runs on every load, so tightening it would make a config that
+		// is valid today fail outright, and config.yml is a stored file this
+		// project keeps readable across versions. Closing the gap properly means
+		// quoting in the query grammar, which is a grammar-wide change affecting
+		// every field.
 		path := joinAreaPath(parent, name)
 		if strings.Contains(name, AreaPathSeparator) {
 			return fmt.Errorf("area %q %s has a %q in its name; nest the child under its parent instead, which is what makes the path",
