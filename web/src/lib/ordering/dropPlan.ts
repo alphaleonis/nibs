@@ -491,6 +491,39 @@ export function planDrop(req: DropRequest): DropPlan {
 
   if (!sameRegion(source, dest)) {
     if (dest.axis === "milestone") {
+      // Aiming AT the queue is the one gesture that names it, so the assignment
+      // is what it asked for and the drop is taken. The same rule an area
+      // section already follows: entry accepts, and a position drawn across a
+      // section boundary confirms.
+      //
+      // `indicator === "into"` reaches here only from the milestone HEADER row.
+      // A member row draws no section, so `entryRegionOf` falls through to
+      // `canHaveChildren` — false for a task, and a milestone-axis entry it
+      // never returns. A queued EPIC's edge does promote, but to a parent-axis
+      // entry, which is not this branch.
+      //
+      // Every dragged type takes an assignment by the time an entry indicator
+      // exists: the gate above nulls a milestone-axis entry for a subject that
+      // cannot carry one, so the middle band refuses as the type question it is
+      // ("a milestone holds no children"). The edge path below keeps its own
+      // check because it never passes that gate.
+      //
+      // A `position` plan, not an `assign` one: the rows land IN this queue and
+      // it is the group that orders them. Parent-axis entry says the same thing
+      // in the same arm — its command writes a container change and takes the
+      // group's default position; this one writes an assignment and names the
+      // front, because `Orderer.Move` has no default arm.
+      if (indicator === "into") {
+        return {
+          ok: true,
+          kind: "position",
+          region: dest,
+          indicator,
+          label: `Assign to ${describeRegion(dest, nameOf)}`,
+          command: assignAndPlace(draggedIds, dest, queueLead(indicator, anchorId)),
+        };
+      }
+
       // The same membership question the entry gate above asks, asked again on
       // the path that never reaches it: a before/after destination is the
       // TARGET's region, not an entry this plan chose, so a milestone dragged
@@ -526,8 +559,9 @@ export function planDrop(req: DropRequest): DropPlan {
 
   switch (dest.axis) {
     case "milestone":
-      // Reached only when the source is already this queue — every other way in
-      // is the reassignment refusal above.
+      // Reached only when the source is already this queue: entering one from
+      // outside is accepted above, and a position beside a member of one is
+      // refused there.
       return {
         ok: true,
         kind: "position",
