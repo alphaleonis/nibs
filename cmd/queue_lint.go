@@ -1,59 +1,32 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
+	"github.com/99designs/gqlgen/graphql"
 	"github.com/alphaleonis/nibs/internal/graph"
 )
 
-// inversionKey identifies one queue inversion by the ids it is made of, so
-// the set a mutation found can be compared with the set it left without
-// holding the live store pointers graph.QueueInversion carries.
-type inversionKey struct {
-	milestone, ahead, blocker string
-}
-
-// queueInversionKeys is the BEFORE half of the lint decision 2.3 asks for — a
-// warning once, at the mutation that creates the inversion. It snapshots the
-// inversions the subject takes part in, as keys, so queueInversionWarning can
-// report only the pairs the mutation added. A subject in no queue (or one no
-// nib answers to) snapshots as the empty set; a mutation that then refuses
-// never reaches the warning, so the snapshot costs one read and nothing else.
-func queueInversionKeys(reader graph.NibReader, id string) map[inversionKey]bool {
-	inversions := graph.QueueInversionsInvolving(reader, id)
-	keys := make(map[inversionKey]bool, len(inversions))
-	for _, inv := range inversions {
-		keys[inversionKey{inv.Milestone, inv.Ahead.ID, inv.Blocker.ID}] = true
-	}
-	return keys
-}
-
-// queueInversionWarning is the AFTER half: the lint the mutations that can
-// put a new pair into a queue run once their write has landed — `nibs set
-// --milestone`, `--blocked-by` and `--blocking`, and `nibs mv --queue`. It
-// renders graph.QueueInversionsInvolving (the one definition of an inversion;
-// see its doc for the rule) as a single warning line naming the pairs the
-// subject takes part in now and did not before the write, or "" when the
-// write created none. before is the snapshot queueInversionKeys took ahead of
-// the write; an inversion that was already there — a queue move that does not
-// cross the blocker, a reassignment to the same milestone — is not reported
-// again, since it was reported by the mutation that created it.
+// queueInversionWarning renders the pairs a mutation created (decision 2.3) as
+// a single warning line, or "" when it created none.
+//
+// The DEFINITION of an inversion and the before/after diff that makes this fire
+// once — at the creating write — both live behind the resolver now
+// (internal/graph/queue_lint.go), so `nibs serve`, `nibs query` and a direct
+// resolver call answer the same question this does. What stays here is the
+// sentence: the CLI renders a warning on stderr, a GraphQL response carries the
+// same pairs in `extensions.queueInversions`.
 //
 // It is a lint, not a refusal: an inversion is legal — plans state importance,
 // dependencies state feasibility — so the write has already landed by the time
 // this runs, and the warning only names the pairs so the author can decide
-// whether the order was intended. Every pair the write created goes on the
-// one line, so a move that inverts against several blockers is reported once,
-// not once per blocker. Ids come from filenames and front-matter links, so they
-// cross the rendering boundary like every other id on stderr.
-func queueInversionWarning(reader graph.NibReader, id string, before map[inversionKey]bool) string {
-	var created []graph.QueueInversion
-	for _, inv := range graph.QueueInversionsInvolving(reader, id) {
-		if !before[inversionKey{inv.Milestone, inv.Ahead.ID, inv.Blocker.ID}] {
-			created = append(created, inv)
-		}
-	}
+// whether the order was intended. Every pair goes on the one line, so a move
+// that inverts against several blockers is reported once, not once per blocker.
+// Ids come from filenames and front-matter links, so they cross the rendering
+// boundary like every other id on stderr.
+func queueInversionWarning(created []graph.QueueInversion) string {
 	if len(created) == 0 {
 		return ""
 	}
@@ -64,4 +37,54 @@ func queueInversionWarning(reader graph.NibReader, id string, before map[inversi
 	}
 	return fmt.Sprintf("warning: queue order and dependencies disagree in milestone %s: %s (inversions are legal — plans state importance, dependencies state feasibility; reorder with `nibs mv <id> --queue --after|--before <anchor>` if the order was unintended)",
 		stripControlChars(created[0].Milestone), strings.Join(pairs, "; "))
+}
+
+// queueInversionAroundOperations attaches a collector to each GraphQL operation
+// the SERVER runs and lifts whatever that operation's writes created into the
+// response's `extensions.queueInversions`.
+//
+// Once per OPERATION, and never from a resolver, because
+// graphql.RegisterExtension panics twice over: on a second registration of the
+// same key, which a document carrying two queue-shaping mutation fields would
+// reach, and on a missing response context, which every direct resolver call
+// lacks — the CLI drives resolvers directly, not through an executor.
+// Collecting into the context and registering once here avoids both.
+//
+// The in-process executor behind `nibs query` does not use this: it reduces the
+// response to its data, so it attaches its own collector and renders the
+// warning instead (see executeQuery).
+func queueInversionAroundOperations(ctx context.Context, next graphql.OperationHandler) graphql.ResponseHandler {
+	collector := graph.NewQueueInversionCollector()
+	inner := next(graph.WithQueueInversions(ctx, collector))
+	return func(ctx context.Context) *graphql.Response {
+		resp := inner(ctx)
+		if resp == nil {
+			return nil
+		}
+		created := collector.Created()
+		if len(created) == 0 {
+			return resp
+		}
+		if resp.Extensions == nil {
+			resp.Extensions = map[string]any{}
+		}
+		resp.Extensions["queueInversions"] = queueInversionExtension(created)
+		return resp
+	}
+}
+
+// queueInversionExtension is the wire shape of a reported pair: the three ids
+// alone. QueueInversion holds live store pointers, which a response outlives —
+// and unlike the warning line these ids are not being rendered to a terminal,
+// so nothing here strips control characters.
+func queueInversionExtension(created []graph.QueueInversion) []map[string]string {
+	out := make([]map[string]string, len(created))
+	for i, inv := range created {
+		out[i] = map[string]string{
+			"milestone": inv.Milestone,
+			"ahead":     inv.Ahead.ID,
+			"blocker":   inv.Blocker.ID,
+		}
+	}
+	return out
 }

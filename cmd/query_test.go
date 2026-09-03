@@ -66,7 +66,7 @@ func TestExecuteQuery(t *testing.T) {
 
 	t.Run("basic query all nibs", func(t *testing.T) {
 		query := `{ nibs { id title status } }`
-		result, err := executeQuery(app, query, nil, "")
+		result, _, err := executeQuery(app, query, nil, "")
 		if err != nil {
 			t.Fatalf("executeQuery() error = %v", err)
 		}
@@ -90,7 +90,7 @@ func TestExecuteQuery(t *testing.T) {
 
 	t.Run("query single nib by id", func(t *testing.T) {
 		query := `{ nib(id: "test-1") { id title } }`
-		result, err := executeQuery(app, query, nil, "")
+		result, _, err := executeQuery(app, query, nil, "")
 		if err != nil {
 			t.Fatalf("executeQuery() error = %v", err)
 		}
@@ -116,7 +116,7 @@ func TestExecuteQuery(t *testing.T) {
 
 	t.Run("query with filter", func(t *testing.T) {
 		query := `{ nibs(filter: { status: ["todo"] }) { id } }`
-		result, err := executeQuery(app, query, nil, "")
+		result, _, err := executeQuery(app, query, nil, "")
 		if err != nil {
 			t.Fatalf("executeQuery() error = %v", err)
 		}
@@ -144,7 +144,7 @@ func TestExecuteQuery(t *testing.T) {
 		variables := map[string]any{
 			"id": "test-2",
 		}
-		result, err := executeQuery(app, query, variables, "GetNib")
+		result, _, err := executeQuery(app, query, variables, "GetNib")
 		if err != nil {
 			t.Fatalf("executeQuery() error = %v", err)
 		}
@@ -167,7 +167,7 @@ func TestExecuteQuery(t *testing.T) {
 
 	t.Run("query nonexistent nib returns null", func(t *testing.T) {
 		query := `{ nib(id: "nonexistent") { id } }`
-		result, err := executeQuery(app, query, nil, "")
+		result, _, err := executeQuery(app, query, nil, "")
 		if err != nil {
 			t.Fatalf("executeQuery() error = %v", err)
 		}
@@ -189,7 +189,7 @@ func TestExecuteQuery(t *testing.T) {
 
 	t.Run("invalid query returns error", func(t *testing.T) {
 		query := `{ invalid { field } }`
-		_, err := executeQuery(app, query, nil, "")
+		_, _, err := executeQuery(app, query, nil, "")
 		if err == nil {
 			t.Fatal("expected error for invalid query, got nil")
 		}
@@ -243,7 +243,7 @@ func TestExecuteQueryWithRelationships(t *testing.T) {
 
 	t.Run("query parent relationship", func(t *testing.T) {
 		query := `{ nib(id: "child-1") { id parent { id title } } }`
-		result, err := executeQuery(app, query, nil, "")
+		result, _, err := executeQuery(app, query, nil, "")
 		if err != nil {
 			t.Fatalf("executeQuery() error = %v", err)
 		}
@@ -272,7 +272,7 @@ func TestExecuteQueryWithRelationships(t *testing.T) {
 
 	t.Run("query children relationship", func(t *testing.T) {
 		query := `{ nib(id: "parent-1") { id children { id title } } }`
-		result, err := executeQuery(app, query, nil, "")
+		result, _, err := executeQuery(app, query, nil, "")
 		if err != nil {
 			t.Fatalf("executeQuery() error = %v", err)
 		}
@@ -301,7 +301,7 @@ func TestExecuteQueryWithRelationships(t *testing.T) {
 
 	t.Run("query blockedBy relationship", func(t *testing.T) {
 		query := `{ nib(id: "child-1") { id blockedBy { id title } } }`
-		result, err := executeQuery(app, query, nil, "")
+		result, _, err := executeQuery(app, query, nil, "")
 		if err != nil {
 			t.Fatalf("executeQuery() error = %v", err)
 		}
@@ -330,7 +330,7 @@ func TestExecuteQueryWithRelationships(t *testing.T) {
 
 	t.Run("query blocking relationship", func(t *testing.T) {
 		query := `{ nib(id: "blocker-1") { id blocking { id title } } }`
-		result, err := executeQuery(app, query, nil, "")
+		result, _, err := executeQuery(app, query, nil, "")
 		if err != nil {
 			t.Fatalf("executeQuery() error = %v", err)
 		}
@@ -402,7 +402,7 @@ func TestExecuteQueryWithFilters(t *testing.T) {
 
 	t.Run("filter by type", func(t *testing.T) {
 		query := `{ nibs(filter: { type: ["bug"] }) { id type } }`
-		result, err := executeQuery(app, query, nil, "")
+		result, _, err := executeQuery(app, query, nil, "")
 		if err != nil {
 			t.Fatalf("executeQuery() error = %v", err)
 		}
@@ -425,7 +425,7 @@ func TestExecuteQueryWithFilters(t *testing.T) {
 
 	t.Run("filter by priority", func(t *testing.T) {
 		query := `{ nibs(filter: { priority: ["critical", "high"] }) { id priority } }`
-		result, err := executeQuery(app, query, nil, "")
+		result, _, err := executeQuery(app, query, nil, "")
 		if err != nil {
 			t.Fatalf("executeQuery() error = %v", err)
 		}
@@ -448,7 +448,7 @@ func TestExecuteQueryWithFilters(t *testing.T) {
 
 	t.Run("filter by tags", func(t *testing.T) {
 		query := `{ nibs(filter: { tags: ["frontend"] }) { id tags } }`
-		result, err := executeQuery(app, query, nil, "")
+		result, _, err := executeQuery(app, query, nil, "")
 		if err != nil {
 			t.Fatalf("executeQuery() error = %v", err)
 		}
@@ -471,7 +471,7 @@ func TestExecuteQueryWithFilters(t *testing.T) {
 
 	t.Run("exclude by status", func(t *testing.T) {
 		query := `{ nibs(filter: { excludeStatus: ["completed"] }) { id status } }`
-		result, err := executeQuery(app, query, nil, "")
+		result, _, err := executeQuery(app, query, nil, "")
 		if err != nil {
 			t.Fatalf("executeQuery() error = %v", err)
 		}
@@ -499,7 +499,7 @@ func TestExecuteQueryWithFilters(t *testing.T) {
 
 	t.Run("combined filters", func(t *testing.T) {
 		query := `{ nibs(filter: { status: ["todo", "in-progress"], type: ["bug", "feature"] }) { id } }`
-		result, err := executeQuery(app, query, nil, "")
+		result, _, err := executeQuery(app, query, nil, "")
 		if err != nil {
 			t.Fatalf("executeQuery() error = %v", err)
 		}
@@ -844,7 +844,7 @@ func TestExecuteQueryNestedFilterRefusalIsReportedOnce(t *testing.T) {
 		createQueryTestNib(t, app.Core, id, "Nib "+id, "todo")
 	}
 
-	_, err := executeQuery(app, `{ nibs { id children(filter: {parentId: "zz"}) { id } } }`, nil, "")
+	_, _, err := executeQuery(app, `{ nibs { id children(filter: {parentId: "zz"}) { id } } }`, nil, "")
 	if err != nil {
 		msg := err.Error()
 		if got := strings.Count(msg, `no nib with id "zz"`); got != 1 {
@@ -870,7 +870,7 @@ func TestExecuteQueryEmptyFilterTargetIsAValidationError(t *testing.T) {
 	app := setupQueryTestApp(t)
 	createQueryTestNib(t, app.Core, "eft-1", "Nib one", "todo")
 
-	_, err := executeQuery(app, `{ nibs(filter: {ancestorId: ""}) { id } }`, nil, "")
+	_, _, err := executeQuery(app, `{ nibs(filter: {ancestorId: ""}) { id } }`, nil, "")
 	if err == nil {
 		t.Fatal(`an ancestorId of "" returned no error; the branch was dropped instead of refused`)
 	}
@@ -1903,7 +1903,7 @@ func TestExecuteQueryBatchNamesTheMutationsThatCommitted(t *testing.T) {
 		createQueryTestNib(t, app.Core, id, "Nib "+id, "todo")
 	}
 
-	_, err := executeQuery(app,
+	_, _, err := executeQuery(app,
 		`mutation { d1: deleteNib(id:"p-igir") d2: deleteNib(id:"p-zzzz") d3: deleteNib(id:"p-rxbx") }`,
 		nil, "")
 	if err == nil {
@@ -2043,7 +2043,7 @@ func TestExecuteQueryBatchHalfCommitsDurably(t *testing.T) {
 				}
 			}
 
-			_, err := executeQuery(app, tt.query, nil, "")
+			_, _, err := executeQuery(app, tt.query, nil, "")
 			// The premise: the batch was refused as a whole. Without a refusal
 			// there is no half-commit to be durable about.
 			if err == nil {
@@ -2250,7 +2250,7 @@ func TestExecuteQueryCommittedFieldNaming(t *testing.T) {
 				createQueryTestNib(t, app.Core, id, "Nib "+id, "todo")
 			}
 
-			_, err := executeQuery(app, tt.query, nil, "")
+			_, _, err := executeQuery(app, tt.query, nil, "")
 			if tt.check != nil {
 				tt.check(t, app)
 			}

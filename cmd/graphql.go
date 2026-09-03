@@ -107,7 +107,7 @@ More examples:
 			return inputError(queryJSON, err)
 		}
 
-		result, err := executeQuery(app, query, variables, queryOperation)
+		result, warning, err := executeQuery(app, query, variables, queryOperation)
 		if err != nil {
 			// A GraphQL parse/validation/execution failure — route it through
 			// the coded boundary so both modes get a structured, non-zero exit.
@@ -159,6 +159,13 @@ More examples:
 			fmt.Println(string(pretty.Pretty(result)))
 		} else {
 			fmt.Println(string(pretty.Color(pretty.Pretty(result), nil)))
+		}
+
+		if warning != "" {
+			// Stderr, so --json output stays exactly the GraphQL data. A write
+			// error here is not actionable and must not derail a mutation that
+			// has already landed.
+			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), warning)
 		}
 
 		return nil
@@ -243,16 +250,22 @@ func newQueryContext() context.Context {
 }
 
 // executeQuery runs a GraphQL query against the nibs core.
-// On success, it returns just the data portion of the response.
+// On success, it returns the data portion of the response and the queue-inversion
+// warning its writes earned (empty when they earned none).
 // On error, it returns an error so the CLI can handle it appropriately.
-func executeQuery(app *App, query string, variables map[string]any, operationName string) ([]byte, error) {
+func executeQuery(app *App, query string, variables map[string]any, operationName string) ([]byte, string, error) {
 	es := graph.NewExecutableSchema(graph.Config{
 		Resolvers: app.newResolver(),
 	})
 
 	exec := executor.New(es)
 
-	ctx := newQueryContext()
+	// The collector is attached directly rather than through
+	// queueInversionAroundOperations: this path reduces the response to its
+	// DATA, so an extension written onto it would go nowhere, and the warning
+	// is what this command renders.
+	inversions := graph.NewQueueInversionCollector()
+	ctx := graph.WithQueueInversions(newQueryContext(), inversions)
 	params := &graphql.RawParams{
 		Query:         query,
 		Variables:     variables,
@@ -263,7 +276,7 @@ func executeQuery(app *App, query string, variables map[string]any, operationNam
 	if errs != nil {
 		// A parse/validation failure — the document never executed, so nothing
 		// committed and there is nothing to name.
-		return nil, formatGraphQLErrors(errs, rootFieldOutcome{})
+		return nil, "", formatGraphQLErrors(errs, rootFieldOutcome{})
 	}
 
 	ctx = graphql.WithOperationContext(ctx, opCtx)
@@ -271,10 +284,13 @@ func executeQuery(app *App, query string, variables map[string]any, operationNam
 	resp := handler(ctx)
 
 	if len(resp.Errors) > 0 {
-		return nil, formatGraphQLErrors(resp.Errors, classifyRootFields(opCtx, resp.Errors))
+		return nil, "", formatGraphQLErrors(resp.Errors, classifyRootFields(opCtx, resp.Errors))
 	}
 
-	return resp.Data, nil
+	// The response carries the created pairs in extensions.queueInversions;
+	// this command's stdout is the GraphQL DATA and nothing else, in both
+	// modes, so the warning goes to stderr rather than into that contract.
+	return resp.Data, queueInversionWarning(inversions.Created()), nil
 }
 
 // rootFieldOutcome is how a failed response's root MUTATION fields ended, split

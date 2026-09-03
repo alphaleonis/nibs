@@ -465,6 +465,7 @@ func newGraphQLHandler(app *App, wsPingPong time.Duration) http.Handler {
 	srv.SetErrorPresenter(etagErrorPresenter)
 	srv.AroundOperations(recursionBoundAroundOperations(recursiveTypeNames(es.Schema())))
 	srv.AroundOperations(requestCacheAroundOperations)
+	srv.AroundOperations(queueInversionAroundOperations)
 
 	return srv
 }

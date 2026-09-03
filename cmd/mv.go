@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/99designs/gqlgen/graphql"
+	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/projection"
@@ -278,23 +279,16 @@ no --parent (assign with 'nibs set <id> --milestone' instead).`,
 		}
 
 		// A queue move can put a new order-vs-dependency inversion into the
-		// queue, so it is linted (decision 2.3) as a before/after comparison:
-		// the snapshot is taken ahead of the write and only the pairs the move
-		// created are reported, so a move that does not cross a blocker stays
-		// silent about a pair some earlier write already reported. A sibling
-		// move touches no queue and is not linted.
-		var inversionsBefore map[inversionKey]bool
-		if mvQueue {
-			inversionsBefore = queueInversionKeys(resolver.Reader, args[0])
-		}
+		// queue (decision 2.3). The collector is attached for both scopes and
+		// the resolver decides: a sibling reorder moves nothing inside a queue,
+		// so it reports nothing and this renders nothing.
+		inversions := graph.NewQueueInversionCollector()
+		ctx = graph.WithQueueInversions(ctx, inversions)
 		moved, err := resolver.Mutation().ReorderNib(ctx, args[0], afterID, beforeID, first, parentID, ifMatch, scope)
 		if err != nil {
 			return setMutationError(mvJSON, err)
 		}
-		warning := ""
-		if mvQueue {
-			warning = queueInversionWarning(resolver.Reader, moved.ID, inversionsBefore)
-		}
+		warning := queueInversionWarning(inversions.Created())
 		return echoCardWithWarning(cmd, mvJSON, moved, resolver.ProjectionResolver(ctx), card, warning)
 	},
 }

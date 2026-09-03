@@ -251,6 +251,18 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 		b.Milestone = ""
 	}
 
+	// The writes that can put a NEW pair into a milestone queue (decision 2.3):
+	// an assignment, where the subject enters a queue, and a new dependency edge
+	// in either spelling, which gives a pair already sharing a queue its blocking
+	// half. A clear and the remove-forms can only take pairs away, and a status
+	// change is not linted either — reopening a released blocker re-arms a pair
+	// whose order and dependency both pre-existed. Taken here because it must
+	// read the store before Writer.Update lands; nothing above it writes.
+	var lintBefore map[inversionKey]bool
+	if (milestoneSet && newMilestone != "") || len(input.AddBlocking) > 0 || len(input.AddBlockedBy) > 0 {
+		lintBefore = r.beginQueueLint(ctx, b.ID)
+	}
+
 	// The ownership axis reads the same three ways on the wire — omitted leaves
 	// it, null or "" clears it, a path assigns — but unlike the milestone BOTH
 	// directions are applied here. An area names no nib, so an assignment
@@ -530,6 +542,10 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 		}
 	}
 
+	// Reported after every effect of this mutation has landed, auto-activation
+	// included, so the pairs name the store the caller is about to see.
+	r.endQueueLint(ctx, b.ID, lintBefore)
+
 	// Writer.Update installed b AS the shared store entry — return a snapshot.
 	return r.snapshotResult(b.ID)
 }
@@ -647,6 +663,11 @@ func (r *mutationResolver) AddBlocking(ctx context.Context, id string, targetID 
 		return nil, fmt.Errorf("would create cycle: %v", cycle)
 	}
 
+	// The same lint updateNib's addBlocking path runs, for the same reason: this
+	// edge can give a pair already sharing a queue its blocking half. Linted on
+	// the SUBJECT, which the new pair names as the blocker.
+	lintBefore := r.beginQueueLint(ctx, b.ID)
+
 	// Single-side: add blocker ID to target's blockedBy. updateTargetClone mutates
 	// an owned clone (fetched via GetForUpdate), never the shared pointer, so a
 	// refused write leaves the in-memory nib untouched; it keys the
@@ -657,6 +678,7 @@ func (r *mutationResolver) AddBlocking(ctx context.Context, id string, targetID 
 	}); err != nil {
 		return nil, err
 	}
+	r.endQueueLint(ctx, b.ID, lintBefore)
 	// b is the live Reader.Get pointer for id (only the target was mutated) —
 	// return a detached snapshot rather than the shared store pointer.
 	return r.snapshotResult(b.ID)
@@ -720,10 +742,14 @@ func (r *mutationResolver) AddBlockedBy(ctx context.Context, id string, targetID
 		return nil, fmt.Errorf("would create cycle: %v", cycle)
 	}
 
+	lintBefore := r.beginQueueLint(ctx, b.ID)
+
 	b.AddBlockedBy(normalizedTargetID)
 	if err := r.Writer.Update(b, ifMatch); err != nil {
 		return nil, err
 	}
+	r.endQueueLint(ctx, b.ID, lintBefore)
+
 	// Writer.Update installed b AS the shared store entry — return a snapshot.
 	return r.snapshotResult(b.ID)
 }
@@ -765,6 +791,13 @@ func (r *mutationResolver) ReorderNib(ctx context.Context, id string, afterID *s
 		return nil, err
 	}
 
+	// Only a queue move can create an inversion: a sibling reorder changes no
+	// position inside a milestone's queue.
+	var lintBefore map[inversionKey]bool
+	if scope == model.OrderScopeMilestone {
+		lintBefore = r.beginQueueLint(ctx, b.ID)
+	}
+
 	// Optional reparent: change parent before reordering (atomic cross-parent
 	// move). See ContainerChange for the wire reading — note the contrast with
 	// updateNib's omittable parent, where null is the clear. It belongs to the
@@ -792,6 +825,8 @@ func (r *mutationResolver) ReorderNib(ctx context.Context, id string, afterID *s
 	if err := r.Writer.Update(b, ifMatch); err != nil {
 		return nil, err
 	}
+	r.endQueueLint(ctx, b.ID, lintBefore)
+
 	// Writer.Update installed b AS the shared store entry — return a snapshot.
 	return r.snapshotResult(b.ID)
 }
