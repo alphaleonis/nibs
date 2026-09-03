@@ -1,3 +1,5 @@
+import { CLOSED_STATUSES, RELEASING_STATUSES } from "./constants";
+
 /**
  * The client's copy of the server's milestone-membership rules — the mirrors of
  * `membership.ResolvedMilestoneID` and `(*membership.View).MilestoneOf`
@@ -105,6 +107,27 @@ export const MILESTONE_TYPE = "milestone";
  */
 export function takesAssignmentAxes(type: string): boolean {
   return type !== MILESTONE_TYPE;
+}
+
+/**
+ * Whether a milestone in this status still accepts an assignment from a subject
+ * in that one — the mirror of the assignment door in `validateAndSetMilestone`
+ * (internal/graph/resolver.go).
+ *
+ * A milestone whose status RELEASES its dependents has let its queue go, so
+ * planning open work for it is refused; a HOLDING one (`deferred`) is parked and
+ * coming back, so it keeps accepting work. The subject's own closure is the
+ * exemption: retro-assigning finished work to a finished wave writes a record
+ * after the fact and leaves nothing planned for a wave that ended.
+ *
+ * Asked over STATUS NAMES rather than roles because that is what a caller
+ * holds — a nib's `status` field on one side, a milestone row's on the other.
+ * Unlike the exclusivity rule, this one is decidable on the client: both
+ * statuses are on the row, and neither is a question about nibs the page may
+ * not have loaded.
+ */
+export function milestoneAcceptsAssignment(milestoneStatus: string, subjectStatus: string): boolean {
+  return !RELEASING_STATUSES.includes(milestoneStatus) || CLOSED_STATUSES.includes(subjectStatus);
 }
 
 /**

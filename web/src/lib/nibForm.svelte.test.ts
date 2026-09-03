@@ -63,6 +63,7 @@ function seed(overrides: Partial<NibSnapshot> = {}): NibSnapshot {
     type: "task",
     priority: "high",
     estimate: "M",
+    milestone: "",
     tags: ["alpha", "beta"],
     body: "Original body",
     etag: "etag-1",
@@ -908,6 +909,74 @@ describe("createNibForm — template swap by equality", () => {
 
     form.type = "bug";
     expect(form.body).toBe(getBodyTemplate("bug"));
+  });
+});
+
+describe("editNibForm — milestone", () => {
+  it("marks the buffer dirty and sends the new assignment", async () => {
+    const { deps, calls } = makeMutations(updateResponder());
+    const form = editNibForm(deps, seed({ milestone: "" }));
+
+    expect(form.dirty).toBe(false);
+    form.milestone = "nibs-m2";
+    expect(form.dirty).toBe(true);
+
+    await form.save();
+    expect(calls[0].input.milestone).toBe("nibs-m2");
+  });
+
+  it("sends null to clear an assignment, the wire's spelling of 'no queue'", async () => {
+    const { deps, calls } = makeMutations(updateResponder());
+    const form = editNibForm(deps, seed({ milestone: "nibs-m1" }));
+
+    form.milestone = "";
+    await form.save();
+
+    // Null, not "": both clear on the server, and null is what every other
+    // clearable field on this input already sends.
+    expect(calls[0].input.milestone).toBeNull();
+  });
+
+  it("OMITS the field entirely when the assignment did not change", async () => {
+    // The load-bearing one. `validateAndSetMilestone` runs the assignment door
+    // before it compares old to new, so re-asserting an unchanged assignment to
+    // a milestone that has since completed would refuse a save that only
+    // touched the title. Omitting is what "unchanged" means on this input.
+    const { deps, calls } = makeMutations(updateResponder());
+    const form = editNibForm(deps, seed({ milestone: "nibs-m1" }));
+
+    form.title = "A new title";
+    await form.save();
+
+    expect(calls[0].input).not.toHaveProperty("milestone");
+  });
+
+  it("counts a milestone-only difference as an unresolved external change", () => {
+    const { deps } = makeMutations(updateResponder());
+    const form = editNibForm(deps, seed({ milestone: "nibs-m1" }));
+
+    // Someone else moved it to another wave. Nothing else differs, so the
+    // convergence check is the only thing that can notice.
+    form.noteExternalChange(seed({ milestone: "nibs-m2", etag: "etag-remote" }));
+    expect(form.externalChange).not.toBeNull();
+
+    // Converging on their value resolves it, exactly as it does for a title.
+    form.milestone = "nibs-m2";
+    expect(form.externalChange).toBeNull();
+  });
+
+  it("carries the saved assignment on the returned snapshot", async () => {
+    const { deps } = makeMutations(updateResponder());
+    const form = editNibForm(deps, seed({ milestone: "" }));
+
+    form.milestone = "nibs-m2";
+    const outcome = await form.save();
+
+    expect(outcome.kind).toBe("saved");
+    if (outcome.kind === "saved") expect(outcome.snapshot.milestone).toBe("nibs-m2");
+    // And the buffer is clean again: the baseline adopted the new value, so a
+    // second save would omit the field.
+    expect(form.dirty).toBe(false);
   });
 });
 

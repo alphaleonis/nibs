@@ -154,6 +154,24 @@ export function setPriorityBatch(
   return batch(ids.map((id) => updateNib(id, { priority }, etagOf?.(id))));
 }
 
+/**
+ * Assign a run of nibs to one milestone, or clear the assignment with "".
+ *
+ * A batch, not a sequence: the rows join by carrying a value, so no row's write
+ * waits on another's. Unlike the drag path's `assignAndPlace` this carries no
+ * position — nothing here pointed at one, so each row takes the queue's default
+ * placement.
+ */
+export function setMilestoneBatch(
+  ids: string[],
+  milestone: string,
+  etagOf?: EtagResolver,
+): BatchCommand {
+  // "" and null both clear on the server; null is what every other clearable
+  // field on this input sends.
+  return batch(ids.map((id) => updateNib(id, { milestone: milestone || null }, etagOf?.(id))));
+}
+
 export function reparentBatch(ids: string[], parentId: string): BatchCommand {
   return batch(ids.map((id) => setParent(id, parentId)));
 }

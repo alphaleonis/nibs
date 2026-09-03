@@ -669,6 +669,7 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
       type: n.type,
       priority: n.priority ?? "",
       estimate: n.estimate ?? "",
+      milestone: n.milestone ?? "",
       tags: n.tags ? [...n.tags] : [],
       body: n.body ?? "",
       etag: n.etag,

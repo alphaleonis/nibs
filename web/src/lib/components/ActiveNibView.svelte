@@ -36,6 +36,7 @@
 
   import { renderMarkdown, toggleTaskLine } from "../markdown";
   import { getValidChildTypes } from "../typeHierarchy";
+  import { takesAssignmentAxes } from "../membership";
   import { copyToClipboard } from "$lib/clipboard";
   import { getMutationStore } from "$lib/mutations";
   import { useActiveView, useConfirmDialog } from "$lib/contexts";
@@ -53,6 +54,7 @@
   import TypeSelect from "./TypeSelect.svelte";
   import PrioritySelect from "./PrioritySelect.svelte";
   import EstimateSelect from "./EstimateSelect.svelte";
+  import MilestoneSelect from "./MilestoneSelect.svelte";
   import TagEditor from "./TagEditor.svelte";
   import RelationBadge from "./RelationBadge.svelte";
   import MarkdownEditor from "./MarkdownEditor.svelte";
@@ -818,6 +820,22 @@
           <span class="anv-field-label">Estimate</span>
           <EstimateSelect value={form.estimate} onchange={(v) => (form.estimate = v)} testId="anv-estimate" {disabled} />
         </div>
+        <!-- Edit mode only, and never for a milestone itself: CreateNibInput
+             declares no milestone, and `takesAssignmentAxes` is the client's
+             read of the rule that a waypoint carries no assignment. Neither
+             absence is a layout choice — both are writes the server refuses. -->
+        {#if form.mode === "edit" && takesAssignmentAxes(form.type)}
+          <div class="anv-field">
+            <span class="anv-field-label">Milestone</span>
+            <MilestoneSelect
+              value={form.milestone}
+              subjectStatus={form.status}
+              onchange={(v) => (form.milestone = v)}
+              testId="anv-milestone"
+              {disabled}
+            />
+          </div>
+        {/if}
       </div>
       </div>
     </div>

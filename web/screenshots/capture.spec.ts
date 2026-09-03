@@ -257,6 +257,27 @@ test("detail panel", async ({ page }) => {
   await shot(page, "detail-panel");
 });
 
+// The milestone field, which every capture above misses: they all open
+// tnib-m001, a MILESTONE, and a waypoint takes no assignment of its own — so the
+// field is correctly absent there. tnib-e001 is an epic assigned to that
+// milestone, which is the state worth seeing.
+test("detail panel — milestone field", async ({ page }) => {
+  await openApp(page);
+  await page.locator('tr[data-nib-id="tnib-e001"]').locator('[data-action="title"]').click();
+  await expect(page.locator('[data-testid="anv-milestone"]')).toBeVisible({ timeout: 5_000 });
+  await shot(page, "detail-panel-milestone");
+});
+
+test("detail panel — milestone picker open", async ({ page }) => {
+  // Open, so the list and the disabled entries are visible: a released
+  // milestone is listed and refused rather than dropped.
+  await openApp(page);
+  await page.locator('tr[data-nib-id="tnib-e001"]').locator('[data-action="title"]').click();
+  await page.locator('[data-testid="anv-milestone"]').click();
+  await expect(page.getByRole("option").first()).toBeVisible({ timeout: 5_000 });
+  await shot(page, "detail-panel-milestone-open");
+});
+
 // Task-list checkboxes in rendered nib body: clickable + theme-styled.
 // tnib-t005 has a MIXED checked/unchecked checklist; capture it under a
 // dark (graphite) and the light (daylight) palette so the themed checkbox — themed

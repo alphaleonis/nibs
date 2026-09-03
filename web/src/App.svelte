@@ -2,7 +2,7 @@
   import { untrack } from "svelte";
   import { setContextClient, queryStore } from "@urql/svelte";
   import { createClient } from "./lib/graphql";
-  import { CONFIG_QUERY, NIB_DETAIL_QUERY, NIB_CONFLICT_SNAPSHOT_QUERY } from "./lib/queries";
+  import { CONFIG_QUERY, MILESTONES_QUERY, NIB_DETAIL_QUERY, NIB_CONFLICT_SNAPSHOT_QUERY } from "./lib/queries";
   import { Preferences } from "./lib/preferences.svelte";
   import Toolbar from "./lib/components/Toolbar.svelte";
   import UpdateBanner from "./lib/components/UpdateBanner.svelte";
@@ -19,7 +19,7 @@
   import { DROP_REFUSAL_TOAST_ID, refusalAction, type DropPlan } from "./lib/ordering/dropPlan";
   import type { AnyCommand } from "./lib/mutations/types";
   import { TreeViewState } from "./lib/treeView.svelte";
-  import { provideSelection, provideDrag, provideTreeView, provideConfirmDialog, provideActiveView, provideHistoryNav, provideConnection, provideViewSpine } from "./lib/contexts";
+  import { provideSelection, provideDrag, provideTreeView, provideConfirmDialog, provideActiveView, provideHistoryNav, provideConnection, provideViewSpine, provideMilestones } from "./lib/contexts";
   import { createAreaVocabulary } from "./lib/areas";
   import { makeViewSpine, LOADING_SPINE, UNAVAILABLE_SPINE } from "./lib/viewSpine";
   import { useConnectionRecovery } from "./lib/composables/useConnectionRecovery.svelte";
@@ -88,6 +88,22 @@
     return $configResult.error ? UNAVAILABLE_SPINE : LOADING_SPINE;
   });
   provideViewSpine(() => viewSpine);
+
+  // The assignable waypoints, for the detail panel's milestone field and the row
+  // context menu's submenu. A query of its own rather than a read of the table's
+  // rows: those carry the user's filter, so `type:bug` would empty the picker.
+  // Not gated on either: an empty list renders a picker offering only None,
+  // which is also the right answer for a project with no milestones.
+  //
+  // Nothing refreshes it on a local write because the document cache already
+  // does: a mutation invalidates every cached query holding a `__typename` its
+  // response carries, so a `Nib`-returning create or update re-executes this
+  // one. A SUBSCRIPTION event does not — that path invalidates only the
+  // operation's own `additionalTypenames`, which is why the table refetches by
+  // hand and this list can lag another client until the reconnect below.
+  const milestonesResult = queryStore({ client, query: MILESTONES_QUERY });
+  let milestones = $derived($milestonesResult.data?.nibs ?? []);
+  provideMilestones(() => milestones);
 
   $effect(() => {
     if (projectName) {
@@ -210,6 +226,10 @@
   // alike, and needs no assumption that an error implies no data.
   $effect(() => recovery.onRecovered(() => {
     if (declaredAreas === null) configResult.reexecute({ requestPolicy: "network-only" });
+    // Unconditionally, unlike the config above: milestones are nibs, so the list
+    // goes stale while the socket is down in a way a one-shot vocabulary does
+    // not. A reconnect is exactly when it has to be re-read.
+    milestonesResult.reexecute({ requestPolicy: "network-only" });
   }));
 
   // No cast: `$detailStore.data` is typed by NIB_DETAIL_QUERY's generated result,
@@ -229,6 +249,7 @@
       type: n.type,
       priority: n.priority ?? "",
       estimate: n.estimate ?? "",
+      milestone: n.milestone ?? "",
       tags: n.tags ? [...n.tags] : [],
       body: n.body ?? "",
       etag: n.etag,
@@ -254,7 +275,7 @@
       seed ??
       (detailNib && detailNib.id === nibId
         ? snapshotFromDetail(detailNib)
-        : { id: nibId, title: "", status: "", type: "task", priority: "", estimate: "", tags: [], body: "", etag: "" });
+        : { id: nibId, title: "", status: "", type: "task", priority: "", estimate: "", milestone: "", tags: [], body: "", etag: "" });
     return editNibForm({ mutations }, initial);
   };
 

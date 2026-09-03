@@ -10,6 +10,7 @@ import type { ConnectionRecovery } from './connectionRecovery';
 import { COLUMN_ADAPTERS_KEY, columnAdapters } from './ColumnAdapters.svelte';
 import { EMPTY_SPINE } from './viewSpine';
 import type { ViewSpine } from './viewSpine';
+import type { MilestoneOption } from './milestones';
 
 export const SELECTION_KEY = 'nibs:selection';
 export const DRAG_KEY = 'nibs:drag';
@@ -19,6 +20,7 @@ export const HISTORY_NAV_KEY = 'nibs:history-nav';
 export const ACTIVE_VIEW_KEY = 'nibs:active-view';
 export const CONNECTION_KEY = 'nibs:connection';
 export const VIEW_SPINE_KEY = 'nibs:view-spine';
+export const MILESTONES_KEY = 'nibs:milestones';
 
 export function provideSelection(s: SelectionState) { setContext(SELECTION_KEY, s); }
 export function useSelection(): SelectionState {
@@ -46,6 +48,26 @@ export function useViewSpine(): () => ViewSpine {
   const g = getContext<() => ViewSpine>(VIEW_SPINE_KEY);
   if (!g) throw new Error('useViewSpine() called outside provider — call provideViewSpine() in a parent component');
   return g;
+}
+
+/**
+ * The milestones a nib can be assigned to, supplied as a GETTER for the same
+ * reason the view spine is: the list arrives after first paint and grows as
+ * milestones are created, so a component that captured the array at setup would
+ * offer an empty picker for the rest of the session.
+ *
+ * Ambient rather than a prop because two unrelated consumers ask — the detail
+ * panel's field and the row context menu's submenu — and neither sits on a path
+ * that would otherwise carry it.
+ */
+export function provideMilestones(get: () => readonly MilestoneOption[]) { setContext(MILESTONES_KEY, get); }
+export function useMilestones(): () => readonly MilestoneOption[] {
+  const g = getContext<() => readonly MilestoneOption[]>(MILESTONES_KEY);
+  // Optional, like useConnection and unlike its throwing siblings: a component
+  // rendered without a provider still has a correct answer to give — no
+  // milestone can be offered — where a missing selection or drag state is a
+  // programming error with no sensible stand-in.
+  return g ?? (() => []);
 }
 
 export function provideConnection(c: ConnectionRecovery) { setContext(CONNECTION_KEY, c); }
@@ -99,6 +121,7 @@ export function makeTestContext(
     historyNav?: HistoryNav;
     activeView?: ActiveView;
     viewSpine?: ViewSpine;
+    milestones?: readonly MilestoneOption[];
   },
 ): Map<string, unknown> {
   const m = new Map<string, unknown>();
@@ -113,6 +136,11 @@ export function makeTestContext(
   // no `areas:` block gets.
   const spine = opts?.viewSpine ?? EMPTY_SPINE;
   m.set(VIEW_SPINE_KEY, () => spine);
+  // Always provide a milestone list so components carrying an assignment
+  // affordance render in tests without extra setup. The default is empty — the
+  // same answer a project with no milestones gives.
+  const milestones = opts?.milestones ?? [];
+  m.set(MILESTONES_KEY, () => milestones);
   // Always provide a tree-view so components that read collapse state work in
   // tests without extra setup.
   m.set(TREE_VIEW_KEY, opts?.treeView ?? new TreeViewState(DEFAULT_VIEW_LEVEL));
