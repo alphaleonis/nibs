@@ -42,6 +42,15 @@ export interface ViewSpine {
   readonly areas: AreaVocabulary;
   viewShapeFor(level: ViewLevel): ViewShape;
   readonly bucketIds: BucketIds;
+  /**
+   * STATUS: no production caller — `TreeTable`'s two subtree helpers were the
+   * last, and they read `TableData.containment` instead. Kept rather than
+   * removed: the spine IS the level-addressed layer and this is a
+   * level-addressed member, so its callers went away incidentally rather than
+   * the concept dying, and it is a one-line delegation against 60-odd test
+   * call sites. Revisit when the areas view exists; a removal then is informed
+   * rather than speculative.
+   */
   buildViewTree<T extends TreeNib>(
     nibs: T[],
     level: ViewLevel,
