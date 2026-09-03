@@ -22,6 +22,9 @@ export interface NibSnapshot {
   readonly type: string;
   readonly priority: string;
   readonly estimate: string;
+  /** The DIRECT milestone assignment, verbatim: "" for a nib in no queue of its
+   *  own, including one scheduled through an assigned ancestor. */
+  readonly milestone: string;
   readonly tags: readonly string[];
   readonly body: string;
   readonly etag: string;
@@ -44,6 +47,9 @@ export interface NibFormFields {
   type: string; // the type setter swaps the body template in create mode only
   priority: string;
   estimate: string;
+  /** Edit mode only: `CreateNibInput` declares no milestone, so a create form
+   *  carries "" here and never sends it. */
+  milestone: string;
   body: string;
   /** Replace the body wholesale, marking the buffer dirty exactly like typing does.
    *
@@ -92,6 +98,7 @@ interface FieldValues {
   type: string;
   priority: string;
   estimate: string;
+  milestone: string;
   tags: string[];
   body: string;
 }
@@ -103,6 +110,7 @@ function fieldsFromSnapshot(s: NibSnapshot): FieldValues {
     type: s.type,
     priority: s.priority,
     estimate: s.estimate,
+    milestone: s.milestone,
     tags: [...s.tags],
     body: s.body,
   };
@@ -208,6 +216,7 @@ abstract class BaseForm implements NibFormFields {
   #type = $state("");
   priority = $state("");
   estimate = $state("");
+  milestone = $state("");
   body = $state("");
   #tags = $state<string[]>([]);
   #saving = $state(false);
@@ -218,6 +227,7 @@ abstract class BaseForm implements NibFormFields {
     type: "",
     priority: "",
     estimate: "",
+    milestone: "",
     tags: [],
     body: "",
   });
@@ -255,6 +265,7 @@ abstract class BaseForm implements NibFormFields {
       this.#type !== b.type ||
       this.priority !== b.priority ||
       this.estimate !== b.estimate ||
+      this.milestone !== b.milestone ||
       !sameBody(this.body, b.body) ||
       !sameTags(this.#tags, b.tags)
     );
@@ -304,6 +315,7 @@ abstract class BaseForm implements NibFormFields {
     this.#type = v.type;
     this.priority = v.priority;
     this.estimate = v.estimate;
+    this.milestone = v.milestone;
     this.body = v.body;
     this.#tags = [...v.tags];
   }
@@ -316,6 +328,7 @@ abstract class BaseForm implements NibFormFields {
       type: v.type,
       priority: v.priority,
       estimate: v.estimate,
+      milestone: v.milestone,
       tags: [...v.tags],
       body: v.body,
     };
@@ -337,6 +350,7 @@ abstract class BaseForm implements NibFormFields {
       type: this.#type,
       priority: this.priority,
       estimate: this.estimate,
+      milestone: this.milestone,
       tags: [...this.#tags],
       body: this.body,
     };
@@ -374,6 +388,9 @@ export class CreateForm extends BaseForm implements NibFormFields {
       type,
       priority: "",
       estimate: "",
+      // No milestone: `CreateNibInput` declares no such field, so the server
+      // accepts no assignment at create time and the control is not rendered.
+      milestone: "",
       tags: [],
       body: template,
     };
@@ -435,6 +452,7 @@ export class CreateForm extends BaseForm implements NibFormFields {
         type: created?.type ?? this.type,
         priority: created?.priority ?? this.priority,
         estimate: created?.estimate ?? this.estimate,
+        milestone: "",
         tags: created?.tags ?? [...this.tags],
         body: created?.body ?? this.body,
         etag: created?.etag ?? "",
@@ -493,6 +511,7 @@ export class EditForm extends BaseForm implements NibFormFields {
       this.type === remote.type &&
       this.priority === remote.priority &&
       this.estimate === remote.estimate &&
+      this.milestone === remote.milestone &&
       sameBody(this.body, remote.body) &&
       sameTags(this.tags, remote.tags)
     );
@@ -561,6 +580,17 @@ export class EditForm extends BaseForm implements NibFormFields {
       estimate: this.estimate || null,
       body: this.body,
     };
+    // Sent ONLY when it changed, unlike its neighbors in the literal above.
+    // Re-asserting an unchanged assignment is not a no-op on the server:
+    // validateAndSetMilestone runs the assignment door before comparing old to
+    // new, so an open nib assigned to a milestone that has since COMPLETED would
+    // have every later save refused — including one that only touched the title.
+    // Omitting leaves both the assignment and its queue key alone, which is what
+    // an unchanged field means.
+    if (this.milestone !== this.baseline.milestone) {
+      input.milestone = this.milestone || null;
+    }
+
     const addedTags = this.tags.filter((t) => !baselineTags.includes(t));
     const removedTags = baselineTags.filter((t) => !this.tags.includes(t));
     if (addedTags.length > 0) input.addTags = addedTags;
@@ -614,6 +644,7 @@ export class EditForm extends BaseForm implements NibFormFields {
         type: this.type,
         priority: this.priority,
         estimate: this.estimate,
+        milestone: this.milestone,
         tags: [...this.tags],
         body: this.body,
         etag: newEtag,

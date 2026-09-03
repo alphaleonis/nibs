@@ -4,11 +4,14 @@
   import { STATUS_WORKFLOW, PRIORITIES } from "../constants";
   import { canHaveChildren } from "../typeHierarchy";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
-  import { useSelection, useConfirmDialog, useActiveView, useHistoryNav } from "$lib/contexts";
+  import { useSelection, useConfirmDialog, useActiveView, useHistoryNav, useMilestones } from "$lib/contexts";
+  import { takesAssignmentAxes } from "../membership";
+  import { NO_MILESTONE, fromSelectValue, milestoneChoices, toSelectValue } from "../milestones";
   import { getMutationStore } from "$lib/mutations";
   import {
     setStatusBatch,
     setPriorityBatch,
+    setMilestoneBatch,
     deleteBatch,
     archiveBatch,
   } from "$lib/mutations/commands";
@@ -124,6 +127,43 @@
     await mutations.execute(setPriorityBatch(ids, priority, etagOf));
   }
 
+  /**
+   * One row of a metadata submenu. Statuses and priorities ARE their own labels;
+   * a milestone's value is an id and its label a title, which is the whole
+   * reason the snippet takes entries rather than strings.
+   */
+  interface MenuEntry {
+    value: string;
+    label: string;
+    disabled?: boolean;
+    title?: string;
+  }
+  const plain = (v: string): MenuEntry => ({ value: v, label: v });
+
+  const milestones = useMilestones();
+  // The door is applied only with ONE subject: in a bulk selection this
+  // component sees the right-clicked row's status and no other, so a refusal
+  // computed from it would speak for rows it cannot see. The server refuses
+  // those per row, exactly as it does for the other bulk axes here.
+  let milestoneEntries = $derived([
+    { value: NO_MILESTONE, label: "None" },
+    ...milestoneChoices(milestones(), {
+      status: nib?.status ?? "",
+      milestone: nib?.milestone ?? "",
+    }).map((c) => ({
+      value: c.id,
+      label: c.title,
+      disabled: !isBulk && c.refusal !== null,
+      title: !isBulk && c.refusal !== null ? c.refusal : undefined,
+    })),
+  ]);
+
+  async function handleMilestoneChange(value: string) {
+    const ids = getActionTargetIds(selection, nib?.id ?? null);
+    if (ids.length === 0) return;
+    await mutations.execute(setMilestoneBatch(ids, fromSelectValue(value), etagOf));
+  }
+
   function handleCopyId() {
     if (!nib) return;
     copyToClipboard(nib.id);
@@ -178,7 +218,7 @@
   <!-- Declared here (a child of the {#if} block, not of DropdownMenu.Content)
        so it is a local snippet in lexical scope for the {@render} calls below,
        rather than being interpreted as an unknown prop of Content. -->
-  {#snippet metadataSubmenu(label: string, values: readonly string[], currentValue: string,
+  {#snippet metadataSubmenu(label: string, entries: readonly MenuEntry[], currentValue: string,
       onchange: (v: string) => void, testId: string)}
     <DropdownMenu.Sub>
       <DropdownMenu.SubTrigger data-testid="ctx-{testId}-trigger">
@@ -186,12 +226,14 @@
       </DropdownMenu.SubTrigger>
       <DropdownMenu.SubContent>
         {#if isBulk}
-          {#each values as v}
+          {#each entries as e (e.value)}
             <DropdownMenu.Item
-              data-testid="ctx-{testId}-{v}"
-              onclick={() => { open = false; onchange(v); }}
+              data-testid="ctx-{testId}-{e.value}"
+              disabled={e.disabled}
+              title={e.title}
+              onclick={() => { open = false; onchange(e.value); }}
             >
-              {v}
+              {e.label}
             </DropdownMenu.Item>
           {/each}
         {:else}
@@ -199,12 +241,14 @@
             value={currentValue}
             onValueChange={(v) => { if (v) { open = false; onchange(v); } }}
           >
-            {#each values as v}
+            {#each entries as e (e.value)}
               <DropdownMenu.RadioItem
-                data-testid="ctx-{testId}-{v}"
-                value={v}
+                data-testid="ctx-{testId}-{e.value}"
+                value={e.value}
+                disabled={e.disabled}
+                title={e.title}
               >
-                {v}
+                {e.label}
               </DropdownMenu.RadioItem>
             {/each}
           </DropdownMenu.RadioGroup>
@@ -294,9 +338,17 @@
         <DropdownMenu.Separator />
       {/if}
 
-      {@render metadataSubmenu("Status", STATUS_WORKFLOW, nib.status, handleStatusChange, "status")}
+      {@render metadataSubmenu("Status", STATUS_WORKFLOW.map(plain), nib.status, handleStatusChange, "status")}
 
-      {@render metadataSubmenu("Priority", PRIORITIES, nib.priority, handlePriorityChange, "priority")}
+      {@render metadataSubmenu("Priority", PRIORITIES.map(plain), nib.priority, handlePriorityChange, "priority")}
+
+      <!-- Absent for a milestone-typed row: a waypoint takes no assignment
+           (`takesAssignmentAxes`). In a bulk selection only the right-clicked
+           row's type is known here, so a milestone hidden inside the selection
+           is refused by the server rather than by this gate. -->
+      {#if takesAssignmentAxes(nib.type)}
+        {@render metadataSubmenu("Milestone", milestoneEntries, toSelectValue(nib.milestone), handleMilestoneChange, "milestone")}
+      {/if}
 
       <DropdownMenu.Separator />
 

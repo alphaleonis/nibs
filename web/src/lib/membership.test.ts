@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { milestoneOf, resolvedMilestoneId } from "./membership";
+import { milestoneAcceptsAssignment, milestoneOf, resolvedMilestoneId } from "./membership";
 import type { MembershipLookup, MembershipNib } from "./membership";
 import { MEMBERSHIP_CONTRACT } from "./generated/membershipContract";
 import type { ContractCase } from "./generated/membershipContract";
@@ -136,6 +136,38 @@ describe("milestoneOf", () => {
  * If the replay needs restructuring, restructure it — keep the contract driven
  * through both mirrors.
  */
+describe("milestoneAcceptsAssignment", () => {
+  // The pairs the Go door decides, named by what each stands for rather than by
+  // status alone: the rule is about the ROLES behind these names, and reading
+  // the table should say which role is doing the work.
+  const cases: { milestone: string; subject: string; accepts: boolean; why: string }[] = [
+    { milestone: "in-progress", subject: "todo", accepts: true, why: "an open wave takes open work" },
+    { milestone: "deferred", subject: "todo", accepts: true, why: "a parked wave is coming back, so it keeps its queue" },
+    { milestone: "completed", subject: "todo", accepts: false, why: "a finished wave takes no new plans" },
+    { milestone: "scrapped", subject: "in-progress", accepts: false, why: "an abandoned wave takes no new plans either" },
+    { milestone: "completed", subject: "completed", accepts: true, why: "finished work may be recorded against a finished wave" },
+    { milestone: "completed", subject: "deferred", accepts: true, why: "the exemption is the subject being CLOSED, and deferred is closed" },
+    { milestone: "scrapped", subject: "scrapped", accepts: true, why: "same exemption from the other closed side" },
+  ];
+
+  for (const c of cases) {
+    it(`${c.accepts ? "accepts" : "refuses"} ${c.subject} → ${c.milestone}: ${c.why}`, () => {
+      expect(milestoneAcceptsAssignment(c.milestone, c.subject)).toBe(c.accepts);
+    });
+  }
+
+  it("reads an unknown status as neither releasing nor closed", () => {
+    // Both lists are derived from the declared vocabulary, so a status outside
+    // it is absent from each. The conservative reading falls out: an unknown
+    // milestone status keeps its queue open, and an unknown subject status is
+    // treated as open work that a finished wave refuses. Nothing here throws —
+    // a hand-edited nib carrying a status the vocabulary retired must not take
+    // the picker down.
+    expect(milestoneAcceptsAssignment("retired-status", "todo")).toBe(true);
+    expect(milestoneAcceptsAssignment("completed", "retired-status")).toBe(false);
+  });
+});
+
 describe("Go↔TS parity for the milestone-membership rules", () => {
   // Rows are projected to the wire fields the rules read, so the replay cannot
   // reach an expected answer riding along on the same object.

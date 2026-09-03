@@ -16,6 +16,29 @@ export const CONFIG_QUERY = graphql(`
   }
 `);
 
+/**
+ * The milestones a nib can be assigned to.
+ *
+ * A query of its own rather than a read of the table's rows: those are
+ * server-filtered by the active filter, so `type:bug` empties the list and
+ * `status:todo` truncates it — and the picker would then offer a subset of the
+ * store that changes as the user filters. Sorted by ORDER so the list reads in
+ * the sequence the roadmap plans the waves in, not alphabetically.
+ *
+ * `status` is selected because the assignment door reads it
+ * (`milestoneAcceptsAssignment`): a released milestone refuses open work, and
+ * the picker says so rather than letting the save fail.
+ */
+export const MILESTONES_QUERY = graphql(`
+  query Milestones {
+    nibs(filter: { type: ["milestone"] }, sort: { field: ORDER, direction: ASC }) {
+      id
+      title
+      status
+    }
+  }
+`);
+
 export const UPDATE_STATUS_QUERY = graphql(`
   query UpdateStatus {
     updateStatus {
@@ -35,6 +58,7 @@ export const NIB_DETAIL_QUERY = graphql(`
       type
       priority
       estimate
+      milestone
       tags
       body
       documents
@@ -97,6 +121,7 @@ export const NIB_CONFLICT_SNAPSHOT_QUERY = graphql(`
       type
       priority
       estimate
+      milestone
       tags
       body
       etag
@@ -113,6 +138,7 @@ export const UPDATE_NIB_MUTATION = graphql(`
       type
       priority
       estimate
+      milestone
       tags
       etag
     }
@@ -232,6 +258,7 @@ export const NIB_CHANGED_SUBSCRIPTION = graphql(`
         type
         priority
         estimate
+        milestone
         tags
         body
         etag

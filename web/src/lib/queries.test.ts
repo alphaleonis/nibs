@@ -66,6 +66,28 @@ describe("TREE_TABLE_QUERY", () => {
   });
 });
 
+describe("the documents a NibSnapshot is built from", () => {
+  // The panel's milestone field reads the snapshot, and both mappers spell a
+  // missing field as "". So a document that stops selecting `milestone` draws
+  // every nib as unassigned — a panel that LIES about where work is planned,
+  // rather than one that visibly breaks. The subscription's half of this guard
+  // lives in nibChange.test.ts, next to the mapper it protects.
+  //
+  // Line-anchored so `milestone` is not satisfied by a `milestoneOrder` line.
+  const MILESTONE_LINE = /^\s*milestone\s*$/m;
+
+  it("NIB_DETAIL_QUERY selects the milestone assignment", () => {
+    expect(print(NIB_DETAIL_QUERY)).toMatch(MILESTONE_LINE);
+  });
+
+  it("NIB_CONFLICT_SNAPSHOT_QUERY selects it too, so a conflict compares like with like", () => {
+    // This one has a second failure mode: the conflict resolver compares the
+    // buffer against this snapshot, so an omitted field reads as "they cleared
+    // the assignment" on every external change.
+    expect(print(NIB_CONFLICT_SNAPSHOT_QUERY)).toMatch(MILESTONE_LINE);
+  });
+});
+
 describe("CONFIG_QUERY", () => {
   // Dropping this selection does not fail: the vocabulary is simply built from
   // nothing, and `status` then reports "none" — indistinguishable from a project

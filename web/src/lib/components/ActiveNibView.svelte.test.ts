@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/svelte";
 import { userEvent } from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { flushSync } from "svelte";
-import { ACTIVE_VIEW_KEY, CONFIRM_DIALOG_KEY } from "$lib/contexts";
+import { ACTIVE_VIEW_KEY, CONFIRM_DIALOG_KEY, MILESTONES_KEY } from "$lib/contexts";
 import type { ConfirmDialogState, ConfirmDialogOptions } from "$lib/composables/useConfirmDialog.svelte";
 import type { ActiveView, MissingNibOutcome } from "$lib/composables/useActiveView.svelte";
 import type { ViewState } from "$lib/composables/activeView";
@@ -85,6 +85,7 @@ interface FakeForm {
   type: string;
   priority: string;
   estimate: string;
+  milestone: string;
   tags: string[];
   body: string;
   bodyVersion: number;
@@ -109,6 +110,7 @@ function makeEditForm(overrides: Partial<FakeForm> = {}): FakeForm {
     type: "feature",
     priority: "normal",
     estimate: "m",
+    milestone: "",
     tags: ["web-ui", "detail-panel"],
     body: "## Heading\n\nSome **bold** text and see #gx0f for details.",
     bodyVersion: 0,
@@ -141,6 +143,7 @@ function makeCreateForm(overrides: Partial<FakeForm> = {}): FakeForm {
     type: "task",
     priority: "",
     estimate: "",
+    milestone: "",
     tags: [] as string[],
     body: "Template body",
     bodyVersion: 0,
@@ -177,6 +180,7 @@ function makeDetailNib(overrides: Record<string, unknown> = {}) {
     type: "feature",
     priority: "normal",
     estimate: "m",
+    milestone: "",
     tags: ["web-ui", "detail-panel"],
     body: "",
     documents: [],
@@ -265,6 +269,11 @@ function makeView(opts: {
   return view;
 }
 
+const MILESTONES = [
+  { id: "nibs-m1", title: "Foundations", status: "completed" },
+  { id: "nibs-m2", title: "Areas", status: "in-progress" },
+];
+
 function renderView(
   view: FakeView,
   confirmDialog: ConfirmDialogState,
@@ -273,6 +282,7 @@ function renderView(
   const ctx = new Map<string, unknown>();
   ctx.set(ACTIVE_VIEW_KEY, view);
   ctx.set(CONFIRM_DIALOG_KEY, confirmDialog);
+  ctx.set(MILESTONES_KEY, () => MILESTONES);
   return render(ActiveNibView, { context: ctx, props });
 }
 
@@ -537,6 +547,55 @@ describe("ActiveNibView", () => {
     });
   });
 
+  describe("milestone field", () => {
+    it("shows the assigned milestone by title", () => {
+      const form = makeEditForm({ milestone: "nibs-m2" });
+      renderView(makeView({ form }), confirmDialog);
+
+      expect(screen.getByTestId("anv-milestone")).toHaveTextContent("Areas");
+    });
+
+    it("shows None for a nib in no queue of its own", () => {
+      // Including one scheduled through an assigned ancestor: the field is the
+      // nib's OWN assignment, which is what the server stores and what a write
+      // here would change.
+      const form = makeEditForm({ milestone: "" });
+      renderView(makeView({ form }), confirmDialog);
+
+      expect(screen.getByTestId("anv-milestone")).toHaveTextContent("None");
+    });
+
+    it("writes the pick onto the buffer, which Save then persists", async () => {
+      const form = makeEditForm({ milestone: "" });
+      renderView(makeView({ form }), confirmDialog);
+
+      await user.click(screen.getByTestId("anv-milestone"));
+      await user.click(
+        screen.getAllByRole("option").find((o) => o.getAttribute("data-value") === "nibs-m2")!,
+      );
+
+      // The field is buffered like its four neighbors — no write of its own.
+      expect(form.milestone).toBe("nibs-m2");
+      expect(mockExecute).not.toHaveBeenCalled();
+    });
+
+    it("is absent while creating, because the server accepts no assignment at create", () => {
+      const form = makeCreateForm();
+      renderView(makeView({ kind: "creating", form, detail: null }), confirmDialog);
+
+      expect(screen.queryByTestId("anv-milestone")).toBeNull();
+    });
+
+    it("is absent for a milestone, which takes no assignment of its own", () => {
+      const form = makeEditForm({ type: "milestone" });
+      renderView(makeView({ form }), confirmDialog);
+
+      expect(screen.queryByTestId("anv-milestone")).toBeNull();
+      // Its neighbors are still there — this hides one field, not the band.
+      expect(screen.getByTestId("anv-status")).toBeTruthy();
+    });
+  });
+
   describe("task-list checkboxes (click to toggle, persist on save)", () => {
     // Uses a REAL EditForm so `dirty`/`discard`/`body` behave authentically —
     // the checkbox flip must mark the buffer dirty exactly like typing does.
@@ -550,6 +609,7 @@ describe("ActiveNibView", () => {
           type: "task",
           priority: "normal",
           estimate: "m",
+          milestone: "",
           tags: [],
           body,
           etag: "e0",

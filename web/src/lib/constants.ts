@@ -36,6 +36,26 @@ export function roleIsClosed(role: StatusRole): boolean {
   }
 }
 
+// roleReleasesDependents is the sibling classification: whether closing work in
+// this role satisfies what waited on it. Same exhaustive switch and `never`
+// default as roleIsClosed, and deliberately not derived from it — `parked` is
+// closed and still holds, which is the one pair on which the two answers differ.
+export function roleReleasesDependents(role: StatusRole): boolean {
+  switch (role) {
+    case "open":
+    case "startable":
+    case "parked":
+      return false;
+    case "done":
+    case "dropped":
+      return true;
+    default: {
+      const unclassified: never = role;
+      throw new Error(`unclassified status role: ${String(unclassified)}`);
+    }
+  }
+}
+
 // Statuses in rank order — the sequence the Go side sorts by.
 const RANK_ORDER: readonly string[] = STATUS_DEFS.map((s) => s.name);
 
@@ -45,6 +65,15 @@ const RANK_ORDER: readonly string[] = STATUS_DEFS.map((s) => s.name);
 // Derived from the roles, in rank order.
 export const CLOSED_STATUSES: readonly string[] = STATUS_DEFS.filter((s) =>
   roleIsClosed(s.role),
+).map((s) => s.name);
+
+// Statuses that release their dependents — the mirror of Go's
+// config.ReleasingStatusNames, and a strict subset of CLOSED_STATUSES since
+// `deferred` is closed and goes on blocking. A milestone in one of these has
+// let its queue go, which is what closes the assignment door in
+// `milestoneAcceptsAssignment`.
+export const RELEASING_STATUSES: readonly string[] = STATUS_DEFS.filter((s) =>
+  roleReleasesDependents(s.role),
 ).map((s) => s.name);
 
 // The ordering everything but the choosers uses: the status-column sort in

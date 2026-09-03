@@ -141,6 +141,11 @@ function makeNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
   };
 }
 
+const MILESTONES = [
+  { id: "nibs-m1", title: "Foundations", status: "completed" },
+  { id: "nibs-m2", title: "Areas", status: "in-progress" },
+];
+
 describe("RowContextMenu", () => {
   let mockConfirmDialog: ReturnType<typeof makeMockConfirmDialog>;
   let mockView: ReturnType<typeof makeMockActiveView>;
@@ -163,6 +168,7 @@ describe("RowContextMenu", () => {
       oncollapsechildren?: () => void;
       onfilterrelated?: (field: RelIdKey, id: string) => void;
       historyNav?: HistoryNav;
+      milestones?: { id: string; title: string; status: string }[];
     } = {},
   ) {
     const nib = props.nib ?? makeNib();
@@ -181,6 +187,7 @@ describe("RowContextMenu", () => {
         confirmDialog: mockConfirmDialog,
         activeView: mockView,
         historyNav: props.historyNav,
+        milestones: props.milestones ?? MILESTONES,
       }),
     });
   }
@@ -1037,6 +1044,110 @@ describe("RowContextMenu", () => {
       });
 
       expect(screen.queryByTestId("context-menu")).not.toBeInTheDocument();
+    });
+  });
+
+  // ─── Milestone submenu ────────────────────────────────────────
+
+  describe("milestone submenu", () => {
+    it("assigns the picked milestone to the right-clicked row", async () => {
+      renderMenu({ nib: makeNib({ id: "nibs-abc1" }) });
+
+      await openSubmenu(user, screen.getByTestId("ctx-milestone-trigger"));
+      await user.click(await screen.findByTestId("ctx-milestone-nibs-m2"));
+
+      await waitFor(() => {
+        expect(mockExecute).toHaveBeenCalledWith(
+          expect.objectContaining({
+            kind: "batch",
+            commands: expect.arrayContaining([
+              expect.objectContaining({
+                kind: "update-nib",
+                id: "nibs-abc1",
+                input: { milestone: "nibs-m2" },
+              }),
+            ]),
+          }),
+        );
+      });
+    });
+
+    it("clears the assignment through None, sending null rather than the sentinel", async () => {
+      renderMenu({ nib: makeNib({ milestone: "nibs-m2" }) });
+
+      await openSubmenu(user, screen.getByTestId("ctx-milestone-trigger"));
+      await user.click(await screen.findByTestId("ctx-milestone-__none__"));
+
+      await waitFor(() => {
+        expect(mockExecute).toHaveBeenCalledWith(
+          expect.objectContaining({
+            commands: expect.arrayContaining([
+              expect.objectContaining({ kind: "update-nib", input: { milestone: null } }),
+            ]),
+          }),
+        );
+      });
+    });
+
+    it("writes every selected row in bulk", async () => {
+      selection.select("nibs-abc1");
+      selection.toggleSelect("nibs-def2", "follow");
+      renderMenu({ nib: makeNib({ id: "nibs-abc1" }), selectedCount: 2 });
+
+      await openSubmenu(user, screen.getByTestId("ctx-milestone-trigger"));
+      await user.click(await screen.findByTestId("ctx-milestone-nibs-m2"));
+
+      await waitFor(() => {
+        const call = mockExecute.mock.calls[0][0];
+        expect(call.commands).toHaveLength(2);
+        expect(call.commands.map((c: { id: string }) => c.id).sort()).toEqual(["nibs-abc1", "nibs-def2"]);
+      });
+    });
+
+    it("labels each milestone by title, and lists None first", async () => {
+      renderMenu();
+
+      await openSubmenu(user, screen.getByTestId("ctx-milestone-trigger"));
+
+      expect(await screen.findByTestId("ctx-milestone-nibs-m2")).toHaveTextContent("Areas");
+      expect(screen.getByTestId("ctx-milestone-__none__")).toHaveTextContent("None");
+    });
+
+    it("disables a released milestone for an open row", async () => {
+      renderMenu({ nib: makeNib({ status: "todo" }) });
+
+      await openSubmenu(user, screen.getByTestId("ctx-milestone-trigger"));
+
+      expect(await screen.findByTestId("ctx-milestone-nibs-m1")).toHaveAttribute("data-disabled");
+    });
+
+    it("leaves every milestone enabled in bulk, where one row's status speaks for none", async () => {
+      // This component sees the right-clicked row and no other, so a refusal
+      // computed from its status would speak for rows it cannot see. The server
+      // refuses those per row, as it does for the other bulk axes here.
+      selection.select("nibs-abc1");
+      selection.toggleSelect("nibs-def2", "follow");
+      renderMenu({ nib: makeNib({ status: "todo" }), selectedCount: 2 });
+
+      await openSubmenu(user, screen.getByTestId("ctx-milestone-trigger"));
+
+      expect(await screen.findByTestId("ctx-milestone-nibs-m1")).not.toHaveAttribute("data-disabled");
+    });
+
+    it("is absent for a milestone row, which takes no assignment", async () => {
+      renderMenu({ nib: makeNib({ type: "milestone" }) });
+
+      await waitFor(() => expect(screen.getByTestId("ctx-status-trigger")).toBeInTheDocument());
+      expect(screen.queryByTestId("ctx-milestone-trigger")).toBeNull();
+    });
+
+    it("offers only None when the project has no milestones", async () => {
+      renderMenu({ milestones: [] });
+
+      await openSubmenu(user, screen.getByTestId("ctx-milestone-trigger"));
+
+      expect(await screen.findByTestId("ctx-milestone-__none__")).toBeInTheDocument();
+      expect(screen.queryByTestId("ctx-milestone-nibs-m2")).toBeNull();
     });
   });
 });
