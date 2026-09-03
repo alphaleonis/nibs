@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { parseQuery, serializeQuery } from "./index";
 import { REL_TOKEN_ORDER } from "./relations";
+import { createAreaVocabulary } from "../areas";
+import type { AreaVocabulary } from "../areas";
 import type { NibFilter } from "../types";
 
 // Round-trip a canonical string through parse → serialize.
@@ -309,6 +311,18 @@ describe("round-trip identity — serializeQuery(parseQuery(s)) === s", () => {
     "milestone:tnib-1 is:backlog",
     "type:epic milestone:tnib-1 is:backlog login",
     "parent:tnib-1 mentioned-by:tnib-5 milestone:tnib-9 is:backlog",
+    // the ownership axis, emitted after the whole rel/existence block and before
+    // free text. `rt` supplies no vocabulary, so the value is kept unjudged — the
+    // declared and undeclared vocabularies are round-tripped separately below.
+    "area:web",
+    "area:web/dashboard",
+    "type:bug area:web",
+    "area:web login",
+    "type:epic milestone:tnib-1 is:backlog area:web login",
+    "parent:tnib-1 area:web/dashboard words status:banana",
+    // a negated area token is parked, so it round-trips from the sidecar
+    "-area:web",
+    "type:bug -area:web",
     // full monster: every field positive + negative, search, then two invalids
     "type:bug -type:task priority:high -priority:low status:todo -status:completed estimate:m -estimate:xl tags:auth -tags:wip login words status:banana -priority:pink",
   ];
@@ -318,4 +332,55 @@ describe("round-trip identity — serializeQuery(parseQuery(s)) === s", () => {
       expect(rt(s)).toBe(s);
     });
   }
+});
+
+describe("serializeQuery — the area token", () => {
+  const READY: AreaVocabulary = createAreaVocabulary([
+    { path: "web", name: "web", description: "", color: "", depth: 0 },
+    { path: "web/dashboard", name: "dashboard", description: "", color: "", depth: 1 },
+  ]);
+
+  it("emits the path verbatim — no case folding, no escaping", () => {
+    expect(serializeQuery({ filter: { area: "web/dashboard" } })).toBe("area:web/dashboard");
+    expect(serializeQuery({ filter: { area: "Web" } })).toBe("area:Web");
+  });
+
+  it("emits it after the whole rel/existence block and before free text", () => {
+    const filter: NibFilter = {
+      search: "login",
+      area: "web",
+      milestone: "tnib-9",
+      type: ["bug"],
+    };
+    expect(serializeQuery({ filter })).toBe("type:bug milestone:tnib-9 area:web login");
+  });
+
+  // The round-trip identity is per-vocabulary: parse must be asked with the same
+  // one the string was canonicalized under, which is what the box does (it holds
+  // one vocabulary and passes it to both sides).
+  it("round-trips a declared path through a declared vocabulary", () => {
+    for (const s of ["area:web", "type:bug area:web/dashboard login"]) {
+      expect(serializeQuery(parseQuery(s, READY))).toBe(s);
+    }
+  });
+
+  it("round-trips an undeclared path out of the invalid sidecar", () => {
+    // Parked rather than filtered, so it comes back at the END — after free text —
+    // which is that string's canonical form under this vocabulary.
+    expect(serializeQuery(parseQuery("area:retired", READY))).toBe("area:retired");
+    expect(serializeQuery(parseQuery("type:bug area:retired login", READY))).toBe(
+      "type:bug login area:retired",
+    );
+    // And that form is a fixed point: parking it again changes nothing.
+    expect(serializeQuery(parseQuery("type:bug login area:retired", READY))).toBe(
+      "type:bug login area:retired",
+    );
+  });
+
+  it("keeps a stored path through a reload, where no vocabulary has arrived yet", () => {
+    // Preferences.setQuery parses with no vocabulary. Judging the token there
+    // would drop a valid filter at a moment the user did not act.
+    const stored = "type:bug area:web login";
+    expect(serializeQuery(parseQuery(stored))).toBe(stored);
+  });
 });

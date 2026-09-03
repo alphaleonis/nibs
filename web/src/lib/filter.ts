@@ -124,7 +124,9 @@ export function hasClientFilters(filter: NibFilter): boolean {
  * that was declared when it was saved arrives after the area was retired, at a
  * moment the user did not act. A CLI invocation, where the value was just typed,
  * has no such moment. The rule sits on the filter rather than on a token, so it
- * holds for every way a value can arrive.
+ * holds for every way a value can arrive — including the `area:` token
+ * (query/area.ts), which refuses an undeclared path at PARSE time but only when a
+ * vocabulary was there to ask, and a restore happens before one is.
  *
  * So "declared" is sent, and the other two answers are held back at prices that
  * differ by which vocabulary gave them:

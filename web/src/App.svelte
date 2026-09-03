@@ -667,6 +667,7 @@
     {treeView}
     {projectName}
     {availableTags}
+    areas={viewSpine.areas}
     connectionStatus={recovery.status}
     oncreatenew={(type) => view.startCreate({ type })}
   />

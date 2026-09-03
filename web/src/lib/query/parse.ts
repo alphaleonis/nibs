@@ -2,14 +2,17 @@ import { FIELD_SPECS, expandValue, fieldSpec, isValidValue } from "./fields";
 import type { QueryFilter } from "./fields";
 import { recognizeRelationship } from "./relations";
 import type { RelIdKey, ExistenceKey } from "./relations";
+import { AREA_FIELD, isRefusedArea, recognizeArea } from "./area";
+import type { AreaVocabulary } from "../areas";
 
 // The structured result of parsing filter-box text: the box-owned `filter` slice
 // plus an `invalidTokens` sidecar carrying known-field tokens whose value failed
-// validation (e.g. `status:banana`) and negated rel/existence tokens, which the
-// grammar recognizes but cannot express (e.g. `-ancestor:x`). Invalid tokens
-// contribute nothing to the filter but are preserved verbatim (lowercased, minus
-// kept) so the box can flag them and round-trip them through canonicalization and
-// dropdown edits.
+// validation (e.g. `status:banana`, `area:retired`) and negated rel/existence/area
+// tokens, which the grammar recognizes but cannot express (e.g. `-ancestor:x`).
+// Invalid tokens contribute nothing to the filter but are preserved with their
+// field-name normalized and the minus kept — an area PATH keeps its case, as it
+// does everywhere — so the box can flag them and round-trip them through
+// canonicalization and dropdown edits.
 export interface ParsedQuery {
   filter: QueryFilter;
   invalidTokens: string[];
@@ -41,12 +44,20 @@ export const FIELD_TOKEN = /^(-?)([A-Za-z]+):(.+)$/;
  *   the SAME field, so the pair is last-wins too. Neither is negatable — a
  *   leading `-` on an otherwise-recognized rel/existence token parks it in
  *   `invalidTokens` (free text would reach Bleve and match everything).
+ * - `area:<path>` → the scalar `area` field, last-wins on repeat, when the
+ *   supplied `areas` vocabulary does not answer "undeclared" for it; an
+ *   undeclared path is parked in `invalidTokens` like any other rejected value,
+ *   and a negated `-area:` is parked whole (there is no `excludeArea`). With no
+ *   vocabulary the answer is "unknown", which keeps the value — see
+ *   `isRefusedArea`.
  * - unknown `field:value` (including Bleve `title:`/`body:`) and bare words →
  *   free-text `search`.
  *
- * Field names and values are lowercased. Absent keys are omitted from `filter`.
+ * Field names and values are lowercased, except an area PATH, which is
+ * case-sensitive on the server (query/area.ts). Absent keys are omitted from
+ * `filter`.
  */
-export function parseQuery(text: string): ParsedQuery {
+export function parseQuery(text: string, areas?: AreaVocabulary): ParsedQuery {
   // Accumulate include/exclude value lists per field name (encounter order).
   const includes = new Map<string, string[]>();
   const excludes = new Map<string, string[]>();
@@ -56,6 +67,8 @@ export function parseQuery(text: string): ParsedQuery {
   const relIds = new Map<RelIdKey, string>();
   // Map, not Set: an existence token can write false (`no:parent`).
   const existence = new Map<ExistenceKey, boolean>();
+  // The ownership axis: one scalar path, last write wins like a rel id.
+  let area: string | undefined;
 
   const push = (map: Map<string, string[]>, key: string, value: string) => {
     const list = map.get(key);
@@ -70,7 +83,8 @@ export function parseQuery(text: string): ParsedQuery {
     if (!match || !spec) {
       // Not a metadata token. Try a relationship-id / existence token (these may
       // use hyphenated field-names the metadata FIELD_TOKEN regex can't match),
-      // else fall back to free text, preserved verbatim.
+      // then the area token, then fall back to free text, preserved verbatim.
+      // The three blocks are tried in the order `serializeQuery` emits them.
       const rel = recognizeRelationship(token);
       if (rel) {
         if (rel.kind === "id") relIds.set(rel.field, rel.value);
@@ -79,9 +93,20 @@ export function parseQuery(text: string): ParsedQuery {
         // must NOT become free text (that would reach Bleve and silently match
         // everything — see recognizeRelationship); park it so the box flags it.
         else invalidTokens.push(rel.token);
-      } else {
-        words.push(token);
+        continue;
       }
+      const areaToken = recognizeArea(token);
+      if (areaToken) {
+        // A negated `-area:` is parked for the same reason a negated rel token
+        // is; an undeclared path is parked the way `status:banana` is, so the
+        // box flags it and it survives canonicalization instead of vanishing.
+        if (areaToken.kind === "invalid") invalidTokens.push(areaToken.token);
+        else if (isRefusedArea(areaToken.value, areas)) {
+          invalidTokens.push(`${AREA_FIELD}:${areaToken.value}`);
+        } else area = areaToken.value;
+        continue;
+      }
+      words.push(token);
       continue;
     }
 
@@ -127,6 +152,7 @@ export function parseQuery(text: string): ParsedQuery {
   for (const [field, value] of existence) {
     filter[field] = value;
   }
+  if (area !== undefined) filter.area = area;
   const search = words.join(" ");
   if (search !== "") filter.search = search;
 

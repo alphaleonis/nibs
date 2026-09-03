@@ -1,11 +1,12 @@
 import { FIELD_SPECS, completionValues } from "./fields";
 import { REL_TOKEN_ORDER } from "./relations";
+import { AREA_DESCRIPTION, AREA_FIELD } from "./area";
 
 // The in-UI syntax reference for the filter box.
 //
 // The token rows are DERIVED from the same structures the parser reads —
-// `FIELD_SPECS` (plus its group names, via `completionValues`) and
-// `REL_TOKEN_ORDER`. Hand-listing them here would create one more parallel copy of
+// `FIELD_SPECS` (plus its group names, via `completionValues`), `REL_TOKEN_ORDER`,
+// and `area.ts`. Hand-listing them here would create one more parallel copy of
 // the vocabulary, free to document a token the parser rejects or to miss one it
 // accepts; `nibs-l1j3` closed exactly that hole for the vocabulary itself, and
 // re-opening it in the help would be worse, because help is what a user trusts
@@ -66,6 +67,13 @@ export function queryHelpSections(): HelpSection[] {
       })),
     },
     {
+      title: "Areas",
+      // The closure is worth spelling out because the grammar cannot show it: the
+      // token carries one path, and what it sweeps in is decided server-side.
+      note: "Takes a declared area path. Closure is over the declared tree, so webhooks is not within web.",
+      rows: [{ token: `${AREA_FIELD}:<path>`, description: AREA_DESCRIPTION }],
+    },
+    {
       title: "Operators",
       rows: [
         { token: "a b", description: "Space is AND — every condition must hold" },
@@ -83,6 +91,7 @@ export function queryHelpSections(): HelpSection[] {
         { token: "is:blocked priority:high", description: "High-priority work that is stuck" },
         { token: "no:parent type:milestone", description: "Top-level milestones" },
         { token: "is:backlog type:epic", description: "Epics no milestone plan covers" },
+        { token: "area:web status:open", description: "Open work owned by web or anything declared under it" },
       ],
     },
   ];

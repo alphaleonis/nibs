@@ -10,6 +10,7 @@ import type { NibFilter, ViewLevel, ColumnKey } from "../types";
 import type { NibSuggestion } from "../query";
 import { FIELD_SPECS } from "../query/fields";
 import { REL_TOKEN_ORDER } from "../query/relations";
+import { createAreaVocabulary, LOADING_AREAS, UNAVAILABLE_AREAS } from "../areas";
 
 // bits-ui scroll lock sets pointer-events: none on <body>, so disable the check
 const user = userEvent.setup({ pointerEventsCheck: 0 });
@@ -2210,5 +2211,180 @@ describe("Toolbar — query syntax help", () => {
       await screen.findByText("Query syntax help", { selector: '[data-slot="tooltip-content"]' }),
     ).toBeInTheDocument();
     expect(trigger).not.toHaveAttribute("title");
+  });
+});
+
+describe("Toolbar — the area token", () => {
+  const READY = createAreaVocabulary([
+    { path: "web", name: "web", description: "", color: "", depth: 0 },
+    { path: "web/dashboard", name: "dashboard", description: "", color: "", depth: 1 },
+    { path: "webhooks", name: "webhooks", description: "", color: "", depth: 0 },
+  ]);
+
+  // The end-to-end claim the query-module tests cannot make: a token that parses
+  // still has to be COPIED onto the filter. `emitFromText` copies BOX_FIELD_KEYS
+  // and nothing else, so a key missing from that list parses, completes, and is
+  // then silently dropped — which is what `milestone:` does today.
+  it("reaches the filter when typed", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn(), areas: READY });
+
+    await user.type(screen.getByTestId("filter-keyword"), "area:web");
+
+    expect(prefs.filter.area).toBe("web");
+    expect(prefs.filter.search).toBeUndefined();
+    expect(prefs.invalidTokens).toEqual([]);
+  });
+
+  it("survives canonicalization beside another token", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn(), areas: READY });
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+
+    await user.type(input, "area:web/dashboard type:bug");
+    await fireEvent.blur(input);
+    await tick();
+
+    expect(input.value).toBe("type:bug area:web/dashboard");
+    expect(prefs.filter.area).toBe("web/dashboard");
+  });
+
+  it("flags an undeclared path and keeps it out of the filter", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn(), areas: READY });
+
+    await user.type(screen.getByTestId("filter-keyword"), "area:retired");
+
+    expect(prefs.filter.area).toBeUndefined();
+    expect(prefs.invalidTokens).toEqual(["area:retired"]);
+    // Same warning chip an invalid metadata value gets.
+    expect(screen.getByTestId("filter-invalid")).toHaveTextContent("area:retired");
+  });
+
+  it("keeps a path the vocabulary cannot yet judge, and flags nothing", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn(), areas: LOADING_AREAS });
+
+    await user.type(screen.getByTestId("filter-keyword"), "area:web");
+
+    expect(prefs.filter.area).toBe("web");
+    expect(prefs.invalidTokens).toEqual([]);
+    expect(screen.queryByTestId("filter-invalid")).not.toBeInTheDocument();
+  });
+
+  it("completes declared paths from the runtime vocabulary", async () => {
+    render(Toolbar, { ...defaultToolbarProps, areas: READY });
+
+    await user.type(screen.getByTestId("filter-keyword"), "area:we");
+
+    const items = screen.getAllByTestId("filter-suggestion").map((el) => el.textContent);
+    expect(items).toEqual(["web", "web/dashboard", "webhooks"]);
+  });
+
+  it("offers no paths while the vocabulary is loading", async () => {
+    render(Toolbar, { ...defaultToolbarProps, areas: LOADING_AREAS });
+
+    await user.type(screen.getByTestId("filter-keyword"), "area:we");
+
+    expect(screen.queryAllByTestId("filter-suggestion")).toEqual([]);
+  });
+
+  it("clears the area along with the rest of the box", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn(), areas: READY });
+    await user.type(screen.getByTestId("filter-keyword"), "area:web");
+
+    await user.click(screen.getByTestId("filter-keyword-clear"));
+
+    expect(prefs.filter.area).toBeUndefined();
+  });
+
+  // `Preferences.setQuery` parses with NO vocabulary — that is every load, from
+  // localStorage and from a shared `?q=` link alike — so an undeclared path lands
+  // on the filter unjudged rather than parked. `withSendableArea` then withholds it
+  // from the wire once the config refuses it, so the table shows the whole store
+  // while the box still displays an area filter. The chip is what tells the user.
+  it("flags a restored path that the vocabulary refuses once it arrives", async () => {
+    const prefs = new Preferences();
+    prefs.setQuery("area:retired");
+    expect(prefs.filter.area).toBe("retired");
+    expect(prefs.invalidTokens).toEqual([]);
+
+    const { rerender } = render(Toolbar, { prefs, oncreatenew: vi.fn(), areas: LOADING_AREAS });
+    expect(screen.queryByTestId("filter-invalid")).not.toBeInTheDocument();
+
+    await rerender({ prefs, oncreatenew: vi.fn(), areas: READY });
+
+    expect(screen.getByTestId("filter-invalid")).toHaveTextContent("area:retired");
+    // The value stays on the filter: it is restorable if the area comes back, and
+    // the box keeps showing what the user actually stored.
+    expect(prefs.filter.area).toBe("retired");
+    expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe("area:retired");
+  });
+
+  // "unknown" is not a refusal. A failed config query cannot tell a valid path from
+  // an invalid one, so flagging here would call a legitimate token unrecognized.
+  it("flags nothing when the vocabulary arrives unavailable", async () => {
+    const prefs = new Preferences();
+    prefs.setQuery("area:retired");
+
+    const { rerender } = render(Toolbar, { prefs, oncreatenew: vi.fn(), areas: LOADING_AREAS });
+    await rerender({ prefs, oncreatenew: vi.fn(), areas: UNAVAILABLE_AREAS });
+
+    expect(screen.queryByTestId("filter-invalid")).not.toBeInTheDocument();
+  });
+
+  // The other direction on the same axis: a path declared when it was typed, then
+  // retired mid-session by a config refetch. Nothing re-parses, so the flag has to
+  // come from asking the current vocabulary rather than from the stored sidecar.
+  // The popover is deliberately left OPEN across the change: it is a pushed snapshot,
+  // so it has to be re-derived too — a stale one keeps offering the retired path AND
+  // its item count holds the chip suppressed, hiding the refusal that just appeared.
+  it("flags a path retired after it was accepted, and stops offering it", async () => {
+    const prefs = new Preferences();
+    const { rerender } = render(Toolbar, { prefs, oncreatenew: vi.fn(), areas: READY });
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+    await user.type(input, "area:webhooks");
+    expect(screen.getAllByTestId("filter-suggestion").map((el) => el.textContent)).toEqual([
+      "webhooks",
+    ]);
+    expect(screen.queryByTestId("filter-invalid")).not.toBeInTheDocument();
+
+    const RETIRED = createAreaVocabulary([
+      { path: "web", name: "web", description: "", color: "", depth: 0 },
+    ]);
+    await rerender({ prefs, oncreatenew: vi.fn(), areas: RETIRED });
+
+    expect(screen.queryAllByTestId("filter-suggestion")).toEqual([]);
+    expect(screen.getByTestId("filter-invalid")).toHaveTextContent("area:webhooks");
+  });
+
+  // A second `setQuery` after the vocabulary has landed takes the same path as the
+  // first — it still parses without one — so the flag must not depend on the box
+  // having been re-rendered with a changed `areas`.
+  it("flags a path set by a later setQuery against a vocabulary already present", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn(), areas: READY });
+
+    prefs.setQuery("area:retired");
+    await tick();
+
+    expect(screen.getByTestId("filter-invalid")).toHaveTextContent("area:retired");
+  });
+
+  // The chip is a display concern only: adding it must not change what the box
+  // serializes, or the stored query would carry the token twice.
+  it("does not double the token in the canonical query", async () => {
+    const prefs = new Preferences();
+    prefs.setQuery("type:bug area:retired");
+
+    const { rerender } = render(Toolbar, { prefs, oncreatenew: vi.fn(), areas: LOADING_AREAS });
+    await rerender({ prefs, oncreatenew: vi.fn(), areas: READY });
+    await tick();
+
+    expect(prefs.query).toBe("type:bug area:retired");
+    expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe(
+      "type:bug area:retired",
+    );
   });
 });

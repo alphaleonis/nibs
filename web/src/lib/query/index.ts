@@ -1,6 +1,11 @@
-// GitHub-style query language for the web filter box. Pure, dependency-free
-// parse/serialize between filter-box text and the structured NibFilter, plus a
-// static (context-aware) completion helper for the input.
+// GitHub-style query language for the web filter box. Pure parse/serialize
+// between filter-box text and the structured NibFilter, plus a synchronous
+// (context-aware) completion helper for the input.
+//
+// Pure means a function of its arguments: the value pools that are not
+// compile-time constants — the declared area paths and the tag list — are passed
+// in by the caller rather than reached for. The modules here import `../areas`
+// for TYPES only.
 //
 // Grammar (phase 2): the five metadata facets — type, priority, status, estimate,
 // tags — each as `field:v1,v2` (OR within the field) with an optional `-` prefix
@@ -10,6 +15,11 @@
 // on serialize. Known-field tokens with an invalid value are carried in an
 // `invalidTokens` sidecar. Everything else (unknown fields, bare words) is
 // free-text `search`. Serialization is canonical for stable round-trips.
+//
+// Two token kinds joined it since: the relationship/existence block
+// (`relations.ts`) and the ownership token `area:<path>` (`area.ts`), which is
+// scalar like a relationship id but is checked and completed against a vocabulary
+// that arrives at runtime.
 export { parseQuery } from "./parse";
 export type { ParsedQuery } from "./parse";
 export { serializeQuery } from "./serialize";
@@ -44,3 +54,8 @@ export { contradictionTokens } from "./relations";
 // the Toolbar, the search fn in `../searchNibs`.
 export { relTokenValueContext } from "./relComplete";
 export type { RelValueContext, NibSuggestion } from "./relComplete";
+// The ownership token's name and its one refusal question. Exported for the box,
+// which must ask it again whenever the vocabulary changes: `parseQuery` answers it
+// once, with whatever vocabulary the caller had — and `Preferences.setQuery` has
+// none.
+export { AREA_FIELD, isRefusedArea } from "./area";

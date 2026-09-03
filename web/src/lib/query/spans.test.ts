@@ -1,7 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { tokenizeSpans } from "./index";
+import { parseQuery, tokenizeSpans } from "./index";
 import type { Span } from "./index";
 import { REL_TOKEN_ORDER } from "./relations";
+import {
+  createAreaVocabulary,
+  EMPTY_AREAS,
+  LOADING_AREAS,
+  UNAVAILABLE_AREAS,
+} from "../areas";
+import type { AreaVocabulary } from "../areas";
 
 describe("tokenizeSpans — per-token classification", () => {
   const cases: { name: string; input: string; expected: Span[] }[] = [
@@ -466,4 +473,121 @@ describe("tokenizeSpans — full contiguous coverage", () => {
       expect(spans.map((s) => input.slice(s.start, s.end)).join("")).toBe(input);
     });
   }
+});
+
+describe("tokenizeSpans — the area token", () => {
+  const READY = createAreaVocabulary([
+    { path: "web", name: "web", description: "", color: "", depth: 0 },
+    { path: "web/dashboard", name: "dashboard", description: "", color: "", depth: 1 },
+  ]);
+
+  // The coloring axis, cell by cell. The value span's kind is decided by the same
+  // `isRefusedArea` call `parseQuery` routes on, so a token cannot be parked as
+  // invalid while rendering as accepted, or vice versa.
+  const cases: {
+    name: string;
+    input: string;
+    areas: AreaVocabulary | undefined;
+    expected: Span[];
+  }[] = [
+    {
+      name: "a declared path colors like any other value",
+      input: "area:web",
+      areas: READY,
+      expected: [
+        { start: 0, end: 4, kind: "field" },
+        { start: 4, end: 5, kind: "operator" },
+        { start: 5, end: 8, kind: "value" },
+      ],
+    },
+    {
+      name: "the `/` in a nested path is part of the value, not an operator",
+      input: "area:web/dashboard",
+      areas: READY,
+      expected: [
+        { start: 0, end: 4, kind: "field" },
+        { start: 4, end: 5, kind: "operator" },
+        { start: 5, end: 18, kind: "value" },
+      ],
+    },
+    {
+      name: "an undeclared path underlines just the value",
+      input: "area:retired",
+      areas: READY,
+      expected: [
+        { start: 0, end: 4, kind: "field" },
+        { start: 4, end: 5, kind: "operator" },
+        { start: 5, end: 12, kind: "invalid" },
+      ],
+    },
+    {
+      name: "a pre-load vocabulary renders neutral, never invalid-red",
+      input: "area:retired",
+      areas: LOADING_AREAS,
+      expected: [
+        { start: 0, end: 4, kind: "field" },
+        { start: 4, end: 5, kind: "operator" },
+        { start: 5, end: 12, kind: "value" },
+      ],
+    },
+    {
+      name: "a failed config query renders neutral too",
+      input: "area:retired",
+      areas: UNAVAILABLE_AREAS,
+      expected: [
+        { start: 0, end: 4, kind: "field" },
+        { start: 4, end: 5, kind: "operator" },
+        { start: 5, end: 12, kind: "value" },
+      ],
+    },
+    {
+      name: "no vocabulary renders neutral, matching what the parser kept",
+      input: "area:retired",
+      areas: undefined,
+      expected: [
+        { start: 0, end: 4, kind: "field" },
+        { start: 4, end: 5, kind: "operator" },
+        { start: 5, end: 12, kind: "value" },
+      ],
+    },
+    {
+      name: "a negated token is invalid across its whole width",
+      input: "-area:web",
+      areas: READY,
+      expected: [{ start: 0, end: 9, kind: "invalid" }],
+    },
+    {
+      name: "an empty value is free text, as the parser treats it",
+      input: "area:",
+      areas: READY,
+      expected: [{ start: 0, end: 5, kind: "freetext" }],
+    },
+  ];
+
+  for (const { name, input, areas, expected } of cases) {
+    it(name, () => {
+      expect(tokenizeSpans(input, areas)).toEqual(expected);
+    });
+  }
+
+  it("keeps the tiling invariant with an area token in the string", () => {
+    const text = "type:bug area:web/dashboard -area:retired login";
+    for (const areas of [READY, LOADING_AREAS, undefined]) {
+      const spans = tokenizeSpans(text, areas);
+      expect(spans.map((s) => text.slice(s.start, s.end)).join("")).toBe(text);
+      for (const s of spans) expect(s.end).toBeGreaterThan(s.start);
+    }
+  });
+
+  it("colors exactly what the parser routed, for every vocabulary", () => {
+    // The anti-drift property, asserted rather than described: a value span iff
+    // the parser wrote the filter, an invalid span iff it parked the token.
+    for (const areas of [READY, EMPTY_AREAS, LOADING_AREAS, UNAVAILABLE_AREAS, undefined]) {
+      for (const text of ["area:web", "area:retired", "area:web/dashboard"]) {
+        const parked = parseQuery(text, areas).invalidTokens.length > 0;
+        const kinds = tokenizeSpans(text, areas).map((s) => s.kind);
+        expect(kinds.includes("invalid"), `${text} / ${areas?.status ?? "none"}`).toBe(parked);
+      }
+    }
+  });
 });

@@ -21,8 +21,9 @@
   import type { TypeIconInfo } from "../icons";
   import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnOrder, emitFilter as emitFilterHelper, switchViewLevel } from "../resolvePrefs";
   import type { TreeViewState } from "../treeView.svelte";
-  import { parseQuery, serializeQuery, getCompletion, tokenGroups, tokenSegments, relTokenValueContext } from "../query";
+  import { parseQuery, serializeQuery, getCompletion, tokenGroups, tokenSegments, relTokenValueContext, AREA_FIELD, isRefusedArea } from "../query";
   import type { Completion, QueryFilter, SpanKind, RelValueContext, NibSuggestion } from "../query";
+  import type { AreaVocabulary } from "../areas";
   import { createNibSearch, type SearchNibsFn } from "../searchNibs";
   import { getContextClient } from "@urql/svelte";
   import { untrack, tick } from "svelte";
@@ -65,6 +66,7 @@
     openDetailOn = undefined as OpenDetailGesture | undefined,
     onopendetailchange = undefined as ((g: OpenDetailGesture) => void) | undefined,
     availableTags = [],
+    areas = undefined,
     projectName = "",
     searchNibs = undefined,
   }: {
@@ -97,6 +99,13 @@
     openDetailOn?: OpenDetailGesture;
     onopendetailchange?: (g: OpenDetailGesture) => void;
     availableTags?: string[];
+    /** The runtime areas vocabulary, for the `area:` token's completion and for
+     *  judging its value. Threaded from App rather than read from context, the
+     *  same way `treeView` is: the toolbar renders standalone in its own tests.
+     *  Absent, every area value is "unknown" — completion offers nothing and no
+     *  value is flagged, which is the answer that withholds judgment rather than
+     *  the one that calls a declared path undeclared. */
+    areas?: AreaVocabulary;
     projectName?: string;
     searchNibs?: SearchNibsFn;
   } = $props();
@@ -255,6 +264,10 @@
     values: readonly string[];
   }
 
+  // The row is include/exclude-paired over a flat, static value set — which is
+  // what `area` is not: it is a single-valued path into a runtime tree, and
+  // NibFilter has no `excludeArea` for EXCLUDE_KEY to name. It is typeable and
+  // completable in the box (query/area.ts) and has no dropdown here.
   let dropdowns = $derived<DropdownConfig[]>([
     { id: "type", label: "Type", field: "type", values: TYPES },
     { id: "priority", label: "Priority", field: "priority", values: PRIORITIES },
@@ -293,8 +306,15 @@
   // canonical (field order, casing, whitespace normalized).
   //
   // The box OWNS this slice of NibFilter — the five metadata facets, free text,
-  // and (phase 5) the relationship-id scalars + existence/state booleans. Fields
-  // outside this set are preserved untouched across box edits.
+  // the relationship-id scalars + existence/state booleans, and the area path.
+  // Fields outside this set are preserved untouched across box edits.
+  //
+  // `satisfies` checks that each key IS one the box parses; it cannot check that
+  // every parsed key is listed, and an omission is silent in a particular way: the
+  // token parses, the popover completes it, then `emitFromText` never copies it, so
+  // the filter is unchanged and the next blur re-serializes the box WITHOUT the
+  // token the user typed. `milestone`/`noMilestone` are omitted today and behave
+  // exactly that way (nibs-7bwy).
   const BOX_FIELD_KEYS = [
     "type", "excludeType",
     "priority", "excludePriority",
@@ -307,6 +327,8 @@
     "blockingId", "blockedById", "mentionsId", "mentionedById",
     // Existence/state booleans.
     "hasParent", "hasBlocking", "hasBlockedBy", "isBlocked",
+    // The ownership axis.
+    "area",
   ] as const satisfies readonly (keyof QueryFilter)[];
 
   // Copy one box field from the parsed slice onto a NibFilter, or delete it when
@@ -330,6 +352,36 @@
     if (prefs) prefs.invalidTokens = tokens;
     else localInvalidTokens = tokens;
   }
+
+  // What the warning chip lists: the parked sidecar, plus an `area:` path the
+  // CURRENT vocabulary refuses. The sidecar is a pushed value — only
+  // `emitFromText` writes it, on a keystroke, a completion accept or a clear —
+  // while `Preferences.setQuery` parses with no vocabulary at all, which is every
+  // load, from localStorage and from a shared `?q=` link alike. An undeclared path
+  // therefore reaches the filter unjudged; `withSendableArea` (filter.ts) drops it
+  // from the wire when it re-asks at query time, so without this the box would show
+  // an area filter over a table listing the whole store, and say nothing. Asking
+  // the vocabulary here is what re-derives that answer when the vocabulary changes.
+  //
+  // Display only. `canonicalQuery` keeps reading the sidecar alone, so the token is
+  // still emitted exactly once — by `serializeQuery`'s `if (filter.area)` — and the
+  // value stays on the filter, restorable if the area is declared again.
+  //
+  // Only "undeclared" is added: "unknown", from a vocabulary still loading or a
+  // failed config query, is not a refusal, and flagging it would call a legitimate
+  // path unrecognized. The empty string is excluded for the reason
+  // `withSendableArea` sends it — `serializeQuery` writes no token for it, so there
+  // would be nothing in the box for the chip to name.
+  let flaggedTokens = $derived.by(() => {
+    const area = resolvedFilter.area;
+    if (typeof area !== "string" || area === "" || !isRefusedArea(area, areas)) {
+      return resolvedInvalidTokens;
+    }
+    const token = `${AREA_FIELD}:${area}`;
+    return resolvedInvalidTokens.includes(token)
+      ? resolvedInvalidTokens
+      : [...resolvedInvalidTokens, token];
+  });
 
   let keywordFocused = $state(false);
   // Seed from the canonical query so the clear button / placeholder state is
@@ -360,9 +412,9 @@
   // to the input's so a long query stays aligned as it scrolls out of view.
   let backdrop = $state<HTMLDivElement | null>(null);
   // Grouped per token so a chip can wrap field + operator + value as one unit. The
-  // flattened spans are identical to `tokenizeSpans(keywordText)`, so the glyph
-  // flow and offsets are unchanged by the grouping.
-  let highlightGroups = $derived(tokenGroups(keywordText));
+  // flattened spans are identical to `tokenizeSpans`'s over the same text and
+  // vocabulary, so the glyph flow and offsets are unchanged by the grouping.
+  let highlightGroups = $derived(tokenGroups(keywordText, areas));
 
   // --- Token-click affordances (Phase 7) ---
   // A thin interaction layer ABOVE the input mirrors the backdrop's token layout
@@ -372,7 +424,7 @@
   // to the input and places the caret normally. `tokenSegs` groups the highlight
   // spans into one segment per filter token (plus the gaps).
   let tokenLayer = $state<HTMLDivElement | null>(null);
-  let tokenSegs = $derived(tokenSegments(keywordText));
+  let tokenSegs = $derived(tokenSegments(keywordText, areas));
 
   // Click a token → select its full range in the input for quick editing, which is
   // also how a token gets removed (select, then Delete). No caret math beyond the
@@ -450,7 +502,7 @@
   // Parse the box text into the canonical filter + invalid sidecar, then emit.
   // Box-owned fields are set from the parse or dropped; everything else is kept.
   function emitFromText(text: string) {
-    const parsed = parseQuery(text);
+    const parsed = parseQuery(text, areas);
     setInvalidTokens(parsed.invalidTokens);
     const updated: NibFilter = { ...resolvedFilter };
     for (const key of BOX_FIELD_KEYS) {
@@ -476,9 +528,11 @@
     keywordInput?.focus();
   }
 
-  // --- Autocomplete: static metadata completion + async relationship typeahead ---
+  // --- Autocomplete: synchronous completion + async relationship typeahead ---
   // `active` unifies the two suggestion sources behind one popover + keyboard nav:
-  //  - "static": the synchronous metadata / enum / tag completion (phases 2–3).
+  //  - "static": the synchronous field / enum / tag / area-path completion. Its
+  //              pools are constants except the area paths, which come from the
+  //              `areas` prop — already resolved, so this branch stays synchronous.
   //  - "rel":    the caret sits in a relationship-id token's VALUE; candidate nibs
   //              are fetched asynchronously (debounced) and held in `relResults`.
   type ActiveCompletion =
@@ -520,7 +574,7 @@
     a.length === b.length && a.every((v, i) => v === b[i]);
 
   // Recompute the caret-token suggestions. A rel-token value context routes to the
-  // async path (debounced fetch); otherwise fall back to static completion.
+  // async path (debounced fetch); otherwise fall back to the synchronous one.
   // `explicit` marks a Ctrl+Space request: only then does an empty token open the
   // full field list. Typing (and focus) must leave an empty box alone.
   function refreshCompletion(explicit = false) {
@@ -543,10 +597,32 @@
     // Left any rel context: drop stale rich rows + any pending fetch.
     cancelRelSearch();
     setRelResults([], "");
-    const c = getCompletion(value, caret, availableTags, { explicit });
+    const c = getCompletion(value, caret, availableTags, { explicit, areas });
     active = c ? { kind: "static", completion: c } : null;
     if (heldItems && c && sameItems(heldItems, c.items)) suggestIndex = heldIndex;
   }
+
+  // `active` is a pushed snapshot: `refreshCompletion` writes it on input, focus and
+  // keydown, and nothing re-derives it. A vocabulary that changes mid-session — App
+  // refetches the config on connection recovery — therefore leaves an open popover
+  // offering `area:` paths the store no longer declares, and that non-empty item list
+  // holds the warning chip's suppression gate shut over exactly the refusal that just
+  // appeared. The gate's premise is that the popover is already offering a valid
+  // value; recomputing here is what keeps that true, since the retired path stops
+  // being offered and the gate opens on its own.
+  //
+  // `explicit` mirrors the popover already open: a static list over an empty token
+  // can only have come from Ctrl+Space, and for a non-empty token the flag is unread
+  // (`complete.ts` consults it once, on the empty prefix). `untrack` holds the
+  // dependency set to `areas` alone — `refreshCompletion` reads and writes `active`,
+  // `suggestIndex` and the rel rows, which would otherwise re-trigger this.
+  $effect(() => {
+    void areas;
+    untrack(() => {
+      // Only a static list can go stale this way; rel rows answer the server.
+      if (active?.kind === "static") refreshCompletion(true);
+    });
+  });
 
   // The rows and the fragment they answer move together — see `relResultsFragment`.
   function setRelResults(results: NibSuggestion[], fragment: string) {
@@ -585,7 +661,7 @@
     setRelResults(results, fragment);
   }
 
-  // Insert a chosen static suggestion (field name / enum value / tag).
+  // Insert a chosen synchronous suggestion (field name / enum value / tag / area path).
   async function applyCompletion(item: string) {
     if (!active || active.kind !== "static" || !keywordInput) return;
     const { text, caret } = active.completion.apply(item);
@@ -1104,15 +1180,18 @@
          status:banana). The token stays in the box and results reflect only the
          valid tokens. Suppressed while the autocomplete dropdown is open: both
          anchor below the input, and offering the valid value already supersedes
-         the "unrecognized" nag (e.g. typing `status:dra` suggests `draft`). -->
-    {#if resolvedInvalidTokens.length > 0 && activeItemCount === 0}
+         the "unrecognized" nag (e.g. typing `status:dra` suggests `draft`). The
+         effect beside `refreshCompletion` re-derives the popover when the areas
+         vocabulary changes, so what it offers is never a path the box has just
+         started refusing. -->
+    {#if flaggedTokens.length > 0 && activeItemCount === 0}
       <div
         data-testid="filter-invalid"
         role="status"
         class="absolute left-0 top-full z-10 mt-1 flex max-w-full items-center gap-1 rounded-md border border-warning/40 bg-popover px-2 py-1 text-caption text-warning shadow-md"
       >
         <TriangleAlert size={12} />
-        <span>Unrecognized: {resolvedInvalidTokens.join(" ")}</span>
+        <span>Unrecognized: {flaggedTokens.join(" ")}</span>
       </div>
     {/if}
   </div>

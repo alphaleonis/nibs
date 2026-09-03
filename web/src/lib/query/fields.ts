@@ -2,10 +2,15 @@ import type { NibFilter } from "../types";
 import { TYPES, STATUSES, PRIORITIES, ESTIMATES, STATUS_GROUPS } from "../constants";
 
 // The box-owned slice of a NibFilter: the five metadata facets, each with its
-// positive include-list and negative exclude-list, the free-text `search`, and
-// (phase 5) the relationship-id scalars + existence/state booleans. A full
+// positive include-list and negative exclude-list, the free-text `search`, the
+// relationship-id scalars + existence/state booleans, and the `area` path. A full
 // NibFilter is assignable to this (it is a superset), so the Toolbar can hand its
 // canonical filter straight to `serializeQuery`.
+//
+// A key here is a key the box can WRITE, so adding one obliges the Toolbar's
+// `BOX_FIELD_KEYS` to carry it: `emitFromText` copies that list and nothing else
+// onto the filter, so a key it omits parses out of the text and is then dropped
+// on the way to the filter.
 export type QueryFilter = Pick<
   NibFilter,
   | "type"
@@ -31,6 +36,10 @@ export type QueryFilter = Pick<
   // The assignment axis: `milestone:<id>` (that milestone's queue) and
   // `is:backlog` (the work no milestone plan covers).
   | "milestone"
+  // The ownership axis: `area:<path>`, the third token kind (query/area.ts).
+  // Scalar like the rel ids, but checked against a vocabulary that arrives at
+  // runtime rather than accepted on non-emptiness.
+  | "area"
   // Existence/state booleans (phase 5). Tri-state: a `has:`/`no:` token pair
   // writes true/false on one field; an `is:` token writes only its one value.
   | "hasParent"

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { queryHelpSections } from "./help";
 import { FIELD_SPECS } from "./fields";
 import { REL_TOKEN_ORDER } from "./relations";
+import { AREA_DESCRIPTION, AREA_FIELD } from "./area";
 
 const sections = () => queryHelpSections();
 const section = (title: string) => sections().find((s) => s.title === title)!;
@@ -31,9 +32,22 @@ describe("queryHelpSections — generated from the parser's own vocabulary", () 
     for (const t of boolSpecs) expect(tokens).toContain(t.token);
   });
 
+  it("documents the area token, spelled the way the parser reads it", () => {
+    const rows = section("Areas").rows;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].token).toBe(`${AREA_FIELD}:<path>`);
+    expect(rows[0].description).toBe(AREA_DESCRIPTION);
+  });
+
+  it("says what the area token does that no other token does", () => {
+    // Downward closure has no expression in the grammar — the token carries one
+    // path — so the panel is the only place it is stated.
+    expect(section("Areas").note).toMatch(/webhooks is not within web/);
+  });
+
   // Coverage counts alone would pass on an array of blanks.
   it("gives every generated row a non-empty description", () => {
-    for (const title of ["Fields", "Relationships", "Presence"]) {
+    for (const title of ["Fields", "Relationships", "Presence", "Areas"]) {
       for (const row of section(title).rows) {
         expect(row.description.trim(), `${title} / ${row.token}`).not.toBe("");
       }

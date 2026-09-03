@@ -1,6 +1,7 @@
 import { FIELD_SPECS, collapseToTokens } from "./fields";
 import type { FieldSpec, QueryFilter } from "./fields";
 import { REL_TOKEN_ORDER } from "./relations";
+import { AREA_FIELD } from "./area";
 
 /**
  * Render the box-owned filter fields plus the invalid-token sidecar to canonical
@@ -16,8 +17,12 @@ import { REL_TOKEN_ORDER } from "./relations";
  *     dimension (hierarchy: parent + ancestor/descendant/sibling, then blocking,
  *     blocked-by + is:blocked, mentions, mentioned-by, and last the assignment
  *     axis: milestone + is:backlog), id token before has/no within each dimension.
- *  3. Free-text `search`.
- *  4. Preserved `invalidTokens`, flagged, at the very end.
+ *  3. The ownership axis, `area:<path>` — the third token block, emitted after
+ *     the second rather than inside it. It lands beside the assignment axis that
+ *     closes REL_TOKEN_ORDER, which is the other token naming where work belongs
+ *     rather than how nibs relate.
+ *  4. Free-text `search`.
+ *  5. Preserved `invalidTokens`, flagged, at the very end.
  *
  * A full NibFilter is accepted. The identity `serializeQuery(parseQuery(s)) === s`
  * holds for any `s` already in canonical form, including relationship + existence
@@ -56,6 +61,12 @@ export function serializeQuery(query: { filter: QueryFilter; invalidTokens?: str
       // of a dimension's two entries can match, so the roundtrip stays canonical.
       parts.push(t.token);
     }
+  }
+
+  // Emitted verbatim: an area path is case-sensitive and carries `/`, and the
+  // parser reads the whole post-colon run back as one scalar value.
+  if (filter.area) {
+    parts.push(`${AREA_FIELD}:${filter.area}`);
   }
 
   if (filter.search) {

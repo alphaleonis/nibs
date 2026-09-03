@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { getCompletion } from "./index";
+import {
+  createAreaVocabulary,
+  EMPTY_AREAS,
+  LOADING_AREAS,
+  UNAVAILABLE_AREAS,
+} from "../areas";
+import type { AreaVocabulary } from "../areas";
 
 // Helper: complete with the caret at the end of the text.
 const at = (text: string, tags: string[] = []) => getCompletion(text, text.length, tags);
@@ -221,6 +228,7 @@ describe("getCompletion — explicit trigger", () => {
     "has",
     "no",
     "is",
+    "area",
   ];
 
   it("lists the whole vocabulary for an empty token", () => {
@@ -266,6 +274,104 @@ describe("getCompletion — explicit trigger", () => {
     expect(getCompletion("ty tags:wip", 2)?.apply("type")).toEqual({
       text: "type: tags:wip",
       caret: 5,
+    });
+  });
+});
+
+describe("getCompletion — area paths", () => {
+  const declared = [
+    { path: "web", name: "web", description: "", color: "", depth: 0 },
+    { path: "web/dashboard", name: "dashboard", description: "", color: "", depth: 1 },
+    { path: "webhooks", name: "webhooks", description: "", color: "", depth: 0 },
+    { path: "docs", name: "docs", description: "", color: "", depth: 0 },
+  ];
+  const READY = createAreaVocabulary(declared);
+  const complete = (text: string, areas?: AreaVocabulary) =>
+    getCompletion(text, text.length, [], { areas });
+
+  it("offers the field name itself", () => {
+    expect(complete("ar", READY)?.items).toEqual(["area"]);
+  });
+
+  it("does not offer it after a minus — negation has no area spelling", () => {
+    expect(complete("-ar", READY)).toBeNull();
+  });
+
+  it("offers every declared path, in declaration order, for a bare `area:`", () => {
+    const c = complete("area:", READY);
+    expect(c?.kind).toBe("value");
+    expect(c?.items).toEqual(["web", "web/dashboard", "webhooks", "docs"]);
+  });
+
+  it("substring-matches the partial, keeping declaration order", () => {
+    expect(complete("area:web", READY)?.items).toEqual(["web", "web/dashboard", "webhooks"]);
+    expect(complete("area:dash", READY)?.items).toEqual(["web/dashboard"]);
+  });
+
+  it("matches case-insensitively while inserting the declared spelling", () => {
+    const c = complete("area:WEB", READY);
+    expect(c?.items).toEqual(["web", "web/dashboard", "webhooks"]);
+    expect(c?.apply("web/dashboard")).toEqual({ text: "area:web/dashboard", caret: 18 });
+  });
+
+  it("replaces only the typed run, leaving the rest of the query alone", () => {
+    const text = "type:bug area:da tags:wip";
+    const c = getCompletion(text, 16, [], { areas: READY });
+    expect(c?.apply("web/dashboard")).toEqual({
+      text: "type:bug area:web/dashboard tags:wip",
+      caret: 27,
+    });
+  });
+
+  it("offers nothing when no path matches", () => {
+    expect(complete("area:zzz", READY)).toBeNull();
+  });
+
+  // The three vocabularies that cannot answer. Offering nothing is the whole
+  // behavior: a menu built from a vocabulary that has not arrived would either be
+  // empty anyway or, worse, assert the project declares none.
+  it("offers nothing while the vocabulary is loading, unavailable, or absent", () => {
+    for (const areas of [LOADING_AREAS, UNAVAILABLE_AREAS, undefined]) {
+      expect(complete("area:", areas)).toBeNull();
+      expect(complete("area:web", areas)).toBeNull();
+    }
+  });
+
+  it("offers nothing for a project that declares none", () => {
+    expect(complete("area:", EMPTY_AREAS)).toBeNull();
+  });
+
+  it("still offers the field name when the vocabulary cannot answer", () => {
+    // The token is part of the language whether or not this project uses it; what
+    // the vocabulary gates is the VALUE list.
+    expect(complete("ar", LOADING_AREAS)?.items).toEqual(["area"]);
+    expect(complete("ar")?.items).toEqual(["area"]);
+  });
+
+  // `validateAreaNodes` (internal/config/areas.go) rejects only an empty name, one
+  // with padding, and one containing "/" — so a declared path may carry interior
+  // whitespace, and the grammar splits on it with no quoting to escape it.
+  // Accepting `Web UI` would produce `area:Web` plus a bare `UI` in free text: the
+  // area filter lost, drag reorder disabled, and the chip naming the wrong token.
+  describe("paths the grammar cannot express", () => {
+    const SPACEY = createAreaVocabulary([
+      { path: "web", name: "web", description: "", color: "", depth: 0 },
+      { path: "Web UI", name: "Web UI", description: "", color: "", depth: 0 },
+      { path: "Web UI/panel", name: "panel", description: "", color: "", depth: 1 },
+      { path: "docs", name: "docs", description: "", color: "", depth: 0 },
+    ]);
+
+    it("does not offer a path containing whitespace", () => {
+      expect(complete("area:", SPACEY)?.items).toEqual(["web", "docs"]);
+    });
+
+    it("offers nothing at all when every match carries whitespace", () => {
+      expect(complete("area:panel", SPACEY)).toBeNull();
+      expect(complete("area:Web U", SPACEY)).toBeNull();
+    });
+
+    it("still offers the typeable siblings of an untypeable match", () => {
+      expect(complete("area:we", SPACEY)?.items).toEqual(["web"]);
     });
   });
 });

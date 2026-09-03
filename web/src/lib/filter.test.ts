@@ -306,12 +306,12 @@ describe("prepareFilter", () => {
 // The client holds the vocabulary, so it can pre-check: `prepareFilter` sends
 // the value only on a "declared" answer.
 //
-// Reached DIRECTLY here, and only here, because nothing in the app can set
-// `filter.area` yet: `QueryFilter` omits it, so neither a typed token, a `?q=`
-// link, nor a persisted query string can produce one (storage.ts re-parses the
-// stored string, and serializeQuery has no `area:` to write). The path is the
-// filter's, not the box's, and this is what a restored or shared value will
-// travel once nibs-gdvz gives it a token.
+// Reached DIRECTLY here, because this rule is the filter's rather than the box's:
+// a value arrives from a typed `area:` token, a `?q=` link, a persisted query
+// string, or client code, and all four land in the same field. The box refuses an
+// undeclared path of its own at parse time (query/area.ts), but only when a
+// vocabulary was there to ask — a restore runs before the config query resolves,
+// which is exactly the arrival this describes.
 describe("prepareFilter area rule", () => {
   const declared: AreaNode[] = [
     { path: "web", name: "web", description: "", color: "", depth: 0 },
