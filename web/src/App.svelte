@@ -192,6 +192,26 @@
     detailStore.reexecute({ requestPolicy: "network-only" });
   }));
 
+  // CONFIG_QUERY runs once, so a failure would otherwise cost the areas
+  // vocabulary for the rest of the session: every `area` value is withheld
+  // against an "unknown" answer, which widens the list silently
+  // (withSendableArea, lib/filter.ts). A socket back after a gap is the one
+  // signal that the server is reachable again, so re-ask there.
+  //
+  // Only while there is NO vocabulary in hand — a failure, or a first attempt
+  // still in flight. One already held is never re-fetched, so a re-ask that
+  // fails cannot take one away.
+  //
+  // `declaredAreas === null` rather than `$configResult.error`, because those
+  // are not the same set: a reconnect landing while the FIRST config query is
+  // still open sees no error yet, and gating on the error would skip — spending
+  // the one healing signal on a request that may then fail, leaving the session
+  // on UNAVAILABLE_SPINE. The null read covers failed and not-yet-answered
+  // alike, and needs no assumption that an error implies no data.
+  $effect(() => recovery.onRecovered(() => {
+    if (declaredAreas === null) configResult.reexecute({ requestPolicy: "network-only" });
+  }));
+
   // No cast: `$detailStore.data` is typed by NIB_DETAIL_QUERY's generated result,
   // and `DetailNib` is derived from that same type, so `?? null` yields exactly
   // `DetailNib | null`. Dropping a selected field from the query therefore breaks

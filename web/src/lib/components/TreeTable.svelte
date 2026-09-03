@@ -168,7 +168,11 @@
   // Split filter into server-side (sent to GraphQL) and client-side (applied locally).
   // This ensures we fetch ancestor nibs from the server so the tree stays intact,
   // while still filtering by type/priority/estimate/tags/status on the client.
-  let prepared = $derived(prepareFilter(resolvedFilter));
+  //
+  // The spine's vocabulary decides one more thing: whether an `area` value may be
+  // sent at all (see withSendableArea in filter.ts). Read INSIDE the derived, so
+  // an area withheld before the config answered is re-applied when it lands.
+  let prepared = $derived(prepareFilter(resolvedFilter, viewSpine().areas));
 
   const client = getContextClient();
 

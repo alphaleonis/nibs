@@ -60,8 +60,9 @@ export interface NibFilter {
   // declared tree: the nibs assigned to that path plus those in every area
   // declared beneath it. Closure is over the tree, not the string — `webhooks`
   // is not within `web` — and an undeclared value is refused rather than
-  // matching nothing. Guard-only: QueryFilter omits it, so nothing the user can
-  // type reaches it.
+  // matching nothing. Nothing the user can type reaches it (QueryFilter omits
+  // it); what a list query may carry is `withSendableArea`'s decision, in
+  // filter.ts.
   area?: string;
 }
 
