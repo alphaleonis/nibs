@@ -1,6 +1,6 @@
 # Sample Project Fixture
 
-A curated test dataset of 89 nibs modeling a **TaskFlow** project management SaaS. Covers all nib types, statuses, priorities, estimates, tags, documents, parent/child hierarchies (4 levels deep), and blocking relationships.
+A curated test dataset of 89 nibs modeling a **TaskFlow** project management SaaS. Covers all nib types, statuses, priorities, estimates, tags, documents, areas, milestone assignments, parent/child hierarchies (4 levels deep), and blocking relationships.
 
 ## Contents
 
@@ -14,6 +14,22 @@ A curated test dataset of 89 nibs modeling a **TaskFlow** project management Saa
 | research  | 2     | completed, todo                                         |
 
 All 4 priorities (critical, high, normal, low), all 4 estimates (s, m, l, xl), 9 distinct tags, 4 document references, and 3 blocking relationships. The deferred status is exercised by the Slack integration feature.
+
+## Areas
+
+The store declares its own areas vocabulary in `.nibs/areas.yml` — the one vocabulary a project authors, where statuses, types, priorities and estimates are fixed. Two of the five roots nest a child, so a path is a real path and not just a name:
+
+```
+auth
+api
+api/webhooks
+web
+web/dashboard
+infra
+docs
+```
+
+Nibs are assigned across all of them **except `docs`, which is deliberately empty**. An area nothing is assigned to is a state the vocabulary exists to express, and the web's Areas view renders it as a row reading 0 — so `docs` is what a screenshot, a demo or an e2e run has to look at to see that. Do not tidy it away as unused, and do not assign work to it to make the fixture look complete.
 
 ## The 4 document references are deliberately broken
 
@@ -41,7 +57,7 @@ func copyFixture(t *testing.T) string {
     t.Helper()
     tmp := t.TempDir()
     // Copy testdata/fixtures/sample-project/.nibs/ to tmp/.nibs/ — the store
-    // carries its own config.yml, so nothing else needs copying
+    // carries its own config and areas vocabulary, so nothing else needs copying
     return filepath.Join(tmp, ".nibs")
 }
 ```
@@ -66,6 +82,8 @@ This recreates all `.nibs/` files from scratch. The generator script is the sour
 ## Hierarchy
 
 A bug's only legal parent is an epic, so every bug about a feature's subject matter hangs off that feature's epic instead.
+
+The first edge below is not the same relation as the rest. A milestone ASSIGNS work rather than containing it, so the epics under each milestone carry a `milestone:` key and the milestone itself reports 0 children; everything from the epics down is genuine `parent:` nesting. The tree is drawn as one shape because it reads as one plan, not because the two edges are alike.
 
 ```
 v1.0 MVP Launch (milestone)
