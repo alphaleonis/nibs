@@ -17,6 +17,8 @@ const defaultProps = () => ({
   onfontsizechange: vi.fn(),
   blockedEmphasis: "pill" as const,
   onemphasischange: vi.fn(),
+  regionBands: "on-drag" as const,
+  onregionbandschange: vi.fn(),
   theme: "graphite" as const,
   onthemechange: vi.fn(),
   detailPanelPosition: "right" as const,
@@ -536,4 +538,20 @@ describe("SettingsSheet", () => {
     await tick();
     expect(screen.getByText("Appearance")).toBeInTheDocument();
   });
+});
+
+// nibs-ke8o: the ordering rules became a preference with two modes. "Always" is
+// deliberately not offered — it is the behaviour that shipped first and the one
+// the measurement argues against — so the control must show exactly two.
+it("offers the two ordering-rule modes and reports a change", async () => {
+  const props = defaultProps();
+  render(SettingsSheet, { ...props });
+  await user.click(screen.getByRole("button", { name: /settings/i }));
+
+  const control = await screen.findByRole("radiogroup", { name: "Ordering rules" });
+  const options = within(control).getAllByRole("radio");
+  expect(options.map((o) => o.textContent?.trim())).toEqual(["While dragging", "Never"]);
+
+  await user.click(within(control).getByRole("radio", { name: "Never" }));
+  expect(props.onregionbandschange).toHaveBeenCalledWith("never");
 });
