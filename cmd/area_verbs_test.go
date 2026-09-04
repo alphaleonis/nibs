@@ -19,9 +19,10 @@ import (
 )
 
 // setupAreaVerbTest copies the sample fixture — whose config declares auth, api,
-// api/webhooks, web, web/dashboard and infra, with seven nibs assigned across
-// them — and returns the store path. The whole command tree is reset rather than
-// a named list of verbs: these rows run several commands per test.
+// api/webhooks, web, web/dashboard, infra and docs, with seven nibs assigned
+// across all of those but docs — and returns the store path. The whole command
+// tree is reset rather than a named list of verbs: these rows run several
+// commands per test.
 func setupAreaVerbTest(t *testing.T) string {
 	t.Helper()
 	resetCommandTreeFlags(rootCmd)
@@ -92,7 +93,7 @@ func TestAreaListPrintsTheDeclaredTree(t *testing.T) {
 		t.Fatalf("area list: %v\nout: %s", err, out)
 	}
 	for _, want := range []string{
-		"auth", "api", "api/webhooks", "web", "web/dashboard", "infra",
+		"auth", "api", "api/webhooks", "web", "web/dashboard", "infra", "docs",
 		"Sign-in, sessions, tokens and account security",
 		"Outbound webhook delivery and subscriptions",
 		"The project dashboard and its charts",
@@ -115,7 +116,7 @@ func TestAreaListPrintsTheDeclaredTree(t *testing.T) {
 			t.Errorf("the nested area %q is not indented under its parent:\n%s", path, out)
 		}
 	}
-	want := []string{"auth", "api", "api/webhooks", "web", "web/dashboard", "infra"}
+	want := []string{"auth", "api", "api/webhooks", "web", "web/dashboard", "infra", "docs"}
 	if !slices.Equal(order, want) {
 		t.Errorf("area list printed %v, want the declaration order %v", order, want)
 	}
@@ -143,8 +144,8 @@ func TestAreaListJSONCarriesTheTree(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &payload); err != nil {
 		t.Fatalf("unmarshal: %v\nraw: %s", err, out)
 	}
-	if len(payload.Areas) != 4 {
-		t.Fatalf("got %d roots, want 4: %s", len(payload.Areas), out)
+	if len(payload.Areas) != 5 {
+		t.Fatalf("got %d roots, want 5: %s", len(payload.Areas), out)
 	}
 	if payload.Areas[2].Path != "web" || len(payload.Areas[2].Children) != 1 ||
 		payload.Areas[2].Children[0].Path != "web/dashboard" {
@@ -185,7 +186,7 @@ func TestAreaRenameCascadesTheWholeSubtree(t *testing.T) {
 	}
 
 	if got, want := areaVocabulary(t, nibsPath),
-		[]string{"auth", "api", "api/webhooks", "frontend", "frontend/dashboard", "infra"}; !slices.Equal(got, want) {
+		[]string{"auth", "api", "api/webhooks", "frontend", "frontend/dashboard", "infra", "docs"}; !slices.Equal(got, want) {
 		t.Errorf("vocabulary = %v, want %v", got, want)
 	}
 	after := storedAreas(t, nibsPath)
@@ -442,7 +443,7 @@ func TestAreaRetireMovesMembers(t *testing.T) {
 		t.Fatalf("area rm --move-to: %v\nout: %s", err, out)
 	}
 	if got, want := areaVocabulary(t, nibsPath),
-		[]string{"auth", "api", "api/webhooks", "infra"}; !slices.Equal(got, want) {
+		[]string{"auth", "api", "api/webhooks", "infra", "docs"}; !slices.Equal(got, want) {
 		t.Errorf("vocabulary = %v, want %v", got, want)
 	}
 	// tnib-f008 was assigned to web/dashboard: it lands on api, not api/dashboard.
@@ -679,7 +680,7 @@ func TestAreaRenamePartialCascadeIsRerunnable(t *testing.T) {
 		t.Fatalf("the rerun the message prescribes must finish the job: %v\nout: %s", err, out)
 	}
 	if got, want := areaVocabulary(t, nibsPath),
-		[]string{"auth", "api", "api/webhooks", "frontend", "frontend/dashboard", "infra"}; !slices.Equal(got, want) {
+		[]string{"auth", "api", "api/webhooks", "frontend", "frontend/dashboard", "infra", "docs"}; !slices.Equal(got, want) {
 		t.Errorf("vocabulary = %v, want %v", got, want)
 	}
 	areas = storedAreas(t, nibsPath)
@@ -715,7 +716,7 @@ func TestAreaRenameConfigWriteFailureIsRerunnable(t *testing.T) {
 		t.Fatalf("the rerun the message prescribes must finish the job: %v\nout: %s", err, out)
 	}
 	if got, want := areaVocabulary(t, nibsPath),
-		[]string{"auth", "api", "api/webhooks", "frontend", "frontend/dashboard", "infra"}; !slices.Equal(got, want) {
+		[]string{"auth", "api", "api/webhooks", "frontend", "frontend/dashboard", "infra", "docs"}; !slices.Equal(got, want) {
 		t.Errorf("vocabulary = %v, want %v", got, want)
 	}
 }

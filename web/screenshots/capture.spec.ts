@@ -54,6 +54,39 @@ for (const level of VIEW_LEVELS) {
   });
 }
 
+// The one thing the loop above cannot reach: the `area:` filter is
+// DOWNWARD-CLOSED over the declared tree, so `area:web` keeps the nib assigned
+// to `web/dashboard` alongside `web`'s own member instead of matching the path
+// exactly. Only the Areas view can show that, because only there is the
+// declared tree on screen next to the rows it kept.
+//
+// tnib-b005 (`web`) and tnib-f008 (`web/dashboard`) are those two members, and
+// nothing in this suite writes to them: no capture commits a mutation at all —
+// the drag blocks press Escape instead of releasing, and the status select and
+// the add-child picker are opened and never chosen from — which is what makes
+// any subject stable across a run that shares one fixture copy.
+test("table — areas view under an area: filter", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "nibs-filter-preferences",
+      JSON.stringify({ q: "area:web", viewLevel: "areas" }),
+    );
+  });
+  await page.goto("/");
+  // Pin the pruned SHAPE, which neither of the two wrong frames satisfies: the
+  // table is still empty when `goto` returns (the stored query reaches it a
+  // round trip after first paint), and the unfiltered list holds far more. An
+  // absent-row `toHaveCount(0)` is no wait at all here — it is met on its first
+  // poll while the table is empty. Nine rows = the seven declared sections,
+  // which render whether or not the filter empties them, plus web's two members.
+  await expect(page.locator("tr[data-nib-id]")).toHaveCount(9, { timeout: 10_000 });
+  // Arity alone does not identify the subtree — `area:auth` and `area:api` also
+  // leave nine rows. tnib-f008 is assigned `web/dashboard`, so its presence is
+  // the downward closure this capture exists to show, not merely a row count.
+  await expect(page.locator('tr[data-nib-id="tnib-f008"]')).toBeVisible();
+  await shot(page, "table-areas-filtered");
+});
+
 // Where the grouped list runs out, which every capture above is too short to
 // reach: the rows the lens could place in no queue follow under a section no
 // nib heads.

@@ -20,8 +20,8 @@ import (
 )
 
 // setupAreaCLITest copies the sample fixture — whose config declares auth, api,
-// api/webhooks, web, web/dashboard and infra — and registers the flag resets the
-// commands under test need. Returns the store path.
+// api/webhooks, web, web/dashboard, infra and docs — and registers the flag
+// resets the commands under test need. Returns the store path.
 func setupAreaCLITest(t *testing.T) string {
 	t.Helper()
 	resetSetFlags()
@@ -734,7 +734,7 @@ func TestAreaEditsCascadeThroughAreasDeclaredUnderTheLock(t *testing.T) {
 				return runStaleAreaVerb(t, app, areaRenameCmd, runAreaRename, nil, "api", "platform")
 			},
 			wantAreas:      map[string]string{"tnib-b011": "platform", "tnib-f011": "platform/hooks"},
-			wantVocabulary: []string{"auth", "platform", "platform/hooks", "web", "web/dashboard", "infra"},
+			wantVocabulary: []string{"auth", "platform", "platform/hooks", "web", "web/dashboard", "infra", "docs"},
 		},
 		{
 			name: "rm --unassign",
@@ -742,7 +742,7 @@ func TestAreaEditsCascadeThroughAreasDeclaredUnderTheLock(t *testing.T) {
 				return runStaleAreaVerb(t, app, areaRmCmd, runAreaRm, map[string]string{"unassign": "true"}, "api")
 			},
 			wantAreas:      map[string]string{"tnib-b011": "", "tnib-f011": ""},
-			wantVocabulary: []string{"auth", "web", "web/dashboard", "infra"},
+			wantVocabulary: []string{"auth", "web", "web/dashboard", "infra", "docs"},
 		},
 	}
 

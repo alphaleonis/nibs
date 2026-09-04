@@ -154,6 +154,7 @@ func TestConfigResolverFlattensTheSampleProjectVocabulary(t *testing.T) {
 		{"web", 0},
 		{"web/dashboard", 1},
 		{"infra", 0},
+		{"docs", 0},
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("areas = %v, want %v", got, want)

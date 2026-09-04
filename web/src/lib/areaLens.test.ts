@@ -54,7 +54,10 @@ function area(path: string, depth: number, rest: Partial<AreaNode> = {}): AreaNo
   };
 }
 
-/** The sample project's shape: two roots with a child each, two barren roots. */
+/** Two roots with a child each, two without — the shapes the lens must place and
+ *  declare. Deliberately its own vocabulary, not a transcript of the fixture's:
+ *  `areas.test.ts` diverges from the fixture on purpose too, and a literal that
+ *  claimed to mirror it would drift silently the next time the fixture moves. */
 const VOCABULARY: AreaVocabulary = createAreaVocabulary([
   area("auth", 0, { description: "Sign-in and sessions", color: "#3366ff" }),
   area("api", 0),

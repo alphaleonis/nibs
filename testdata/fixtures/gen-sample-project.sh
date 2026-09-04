@@ -19,7 +19,10 @@ mkdir -p "$DIR"
 # The store holds its own config: prefix, id length, defaults and the declared
 # area vocabulary travel with the data directory, so pointing nibs at this
 # fixture applies the fixture's vocabulary and not the surrounding project's.
-# The areas block declares every path the nibs below assign.
+# The areas block declares every path the nibs below assign, plus `docs`,
+# which nothing assigns: a declared area with no members is a state the
+# vocabulary exists to express, and the web Areas view renders it as a row
+# reading 0.
 cat > "$STORE/config.yml" << 'ENDCONFIG'
 nibs:
     prefix: tnib-
@@ -41,6 +44,8 @@ areas:
           description: The project dashboard and its charts
     - name: infra
       description: Build, deployment and runtime infrastructure
+    - name: docs
+      description: Reference documentation and guides
 ENDCONFIG
 
 # ============================================================

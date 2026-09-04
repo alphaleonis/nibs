@@ -423,9 +423,9 @@ func TestDiagnosticRemediesExecute(t *testing.T) {
 // --- fixtures -------------------------------------------------------------
 
 // remedyStore copies the sample project — whose config declares auth, api,
-// api/webhooks, web, web/dashboard and infra — and adds the hand-authored files
-// a surface needs. The copy is per call, which is what lets each remedy be
-// judged against the untouched state.
+// api/webhooks, web, web/dashboard, infra and docs, the last of which nothing
+// assigns — and adds the hand-authored files a surface needs. The copy is per
+// call, which is what lets each remedy be judged against the untouched state.
 func remedyStore(files map[string]string) func(t *testing.T) string {
 	return func(t *testing.T) string {
 		t.Helper()
@@ -478,31 +478,6 @@ func remedyStoreWithoutAreas(files map[string]string) func(t *testing.T) string 
 		}
 		return nibsDir
 	}
-}
-
-// remedyStoreWithEmptyArea is the sample store with infra's one assignment
-// cleared, so a DECLARED area exists that nothing is assigned to — the state a
-// disposition flag has nothing to act on in. Every area the shipped fixture
-// declares is populated, which is why the row cannot use it as it stands.
-func remedyStoreWithEmptyArea(t *testing.T) string {
-	t.Helper()
-	nibsDir := remedyStore(nil)(t)
-	matches, err := filepath.Glob(filepath.Join(nibsDir, "data", "tnib-t039*.md"))
-	if err != nil || len(matches) != 1 {
-		t.Fatalf("locating tnib-t039: %v (matches %v)", err, matches)
-	}
-	raw, err := os.ReadFile(matches[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	stripped := strings.Replace(string(raw), "area: infra\n", "", 1)
-	if stripped == string(raw) {
-		t.Fatalf("tnib-t039 no longer carries `area: infra`:\n%s", raw)
-	}
-	if err := os.WriteFile(matches[0], []byte(stripped), 0644); err != nil {
-		t.Fatal(err)
-	}
-	return nibsDir
 }
 
 // remedyStoreWithConfigShape is the sample store with its config.yml replaced,
@@ -844,8 +819,8 @@ func remedySurfaces() []remedySurface {
 		},
 		{
 			name:         "a disposition with nothing to dispose of names the bare retire",
-			store:        remedyStoreWithEmptyArea,
-			diagnose:     remedyAreaRetireRefusal([]string{"rm", "infra", "--unassign"}),
+			store:        remedyStore(nil),
+			diagnose:     remedyAreaRetireRefusal([]string{"rm", "docs", "--unassign"}),
 			mustName:     []string{"nothing to unassign"},
 			wantCommands: 1,
 		},
@@ -882,11 +857,11 @@ func remedySurfaces() []remedySurface {
 		},
 		{
 			name:  "a retire whose config write fails with no disposition names the bare rerun",
-			store: remedyStoreWithEmptyArea,
+			store: remedyStore(nil),
 			// The one branch that must NOT report a disposition or name a flag:
 			// nothing was assigned below the area, so nothing was rewritten.
-			diagnose:     remedyAreaConfigWriteFailure([]string{"rm", "infra"}),
-			mustName:     []string{`area "infra" could not be retired`, "nothing is assigned at or below it"},
+			diagnose:     remedyAreaConfigWriteFailure([]string{"rm", "docs"}),
+			mustName:     []string{`area "docs" could not be retired`, "nothing is assigned at or below it"},
 			wantCommands: 1,
 		},
 		{
