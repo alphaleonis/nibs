@@ -132,12 +132,14 @@ export function hasClientFilters(filter: NibFilter): boolean {
  * differ by which vocabulary gave them:
  *   - "unknown" from LOADING_AREAS costs a superset until the config query
  *     answers; re-deriving over the spine then asks again and gets "declared".
- *   - "unknown" from UNAVAILABLE_AREAS is the config query having FAILED, and
- *     that superset is not transient. CONFIG_QUERY is executed once, and the
- *     only thing that re-asks is App's refetch on connection recovery — so
- *     until a recovery lands, and a session may see none, the table shows every
- *     nib in the store while the filter says otherwise. Nothing yet reads
- *     `AreaVocabulary.status`, so nothing says so on screen.
+ *   - "unknown" from UNAVAILABLE_AREAS is the config query having FAILED. The
+ *     superset it costs lasts until a re-ask succeeds: `useLiveConfig` re-asks
+ *     on a growing backoff and again on socket recovery, so an outage that ends
+ *     clears it without the reader doing anything. A failure that outlives the
+ *     backoff does not clear itself, and while it stands the table answers with
+ *     every nib in the store while the filter box still reads `area:…` — the
+ *     Areas view says so and offers a retry, but no other view does, because
+ *     nothing else reads `AreaVocabulary.status`.
  *   - "undeclared" is the drop half of the query box's warn-and-drop. The
  *     warning is the box's to render: it holds the token text, and this sees
  *     only the value.
