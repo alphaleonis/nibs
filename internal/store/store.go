@@ -28,6 +28,19 @@ const (
 	DirName = ".nibs"
 	// ConfigFileName is the project config file, stored INSIDE the store.
 	ConfigFileName = "config.yml"
+	// AreasFileName holds the project's declared areas vocabulary, stored
+	// INSIDE the store beside the config.
+	//
+	// It is a separate file because it has a separate LIFETIME: everything in
+	// config.yml is read once and fixed for the life of a process, while this
+	// vocabulary is reloaded whenever it changes on disk. Keeping the two apart
+	// makes that difference a property of the file rather than a convention a
+	// reader has to know, which is what stops the next field added beside a
+	// live one from being assumed live too.
+	//
+	// It is deliberately NOT evidence that a directory is a store: config.yml
+	// answers that question alone, so a stray areas.yml authorizes nothing.
+	AreasFileName = "areas.yml"
 	// DataDirName holds the active nib files.
 	DataDirName = "data"
 	// ArchiveDirName holds the archived nib files.
@@ -56,6 +69,9 @@ func (l Layout) Root() string { return l.root }
 
 // ConfigPath returns the project config file inside the store.
 func (l Layout) ConfigPath() string { return filepath.Join(l.root, ConfigFileName) }
+
+// AreasPath returns the declared areas vocabulary inside the store.
+func (l Layout) AreasPath() string { return filepath.Join(l.root, AreasFileName) }
 
 // DataDir returns the directory holding active nib files.
 func (l Layout) DataDir() string { return filepath.Join(l.root, DataDirName) }

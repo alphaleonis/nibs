@@ -131,7 +131,7 @@ func RemoveStoredArea(storeDir, path string) (staleLinkTarget string, err error)
 	return edit.Write()
 }
 
-// storedArea is where one declared node sits in the config's node tree: the
+// storedArea is where one declared node sits in the vocabulary's node tree: the
 // node itself, the sequence holding it and its position in that sequence, and
 // the mapping whose `children:` key that sequence is — nil for a top-level node,
 // whose sequence is the `areas:` block itself.
@@ -142,15 +142,15 @@ type storedArea struct {
 	owner *yaml.Node
 }
 
-// planStoredAreaEdit applies edit to the `areas:` sequence of the config inside
-// storeDir and renders the result, without writing anything.
+// planStoredAreaEdit applies edit to the `areas:` sequence of the vocabulary
+// inside storeDir and renders the result, without writing anything.
 //
-// The edit goes through a yaml.Node tree rather than Config.Save for exactly the
-// reason PlanSetStoredPrefix does: Config.Save marshals a whole Config, and the
-// Config a command holds is the MERGED read model, so saving it would write
-// user-config and system-default values into a project's committed config and
-// drop every key this build does not model. That matters more for an `areas:`
-// block than for a scalar, because that block is where a project keeps prose.
+// The edit goes through a yaml.Node tree rather than Areas.Save because Save
+// marshals the struct this build models, and a marshal keeps only what the
+// struct has fields for: every comment goes, and so does any key a project put
+// on a node that AreaConfig does not declare. This file is where a project
+// keeps prose about its own vocabulary, so that loss is the expensive kind —
+// which is why the node tree is edited in place and re-emitted instead.
 //
 // It is a semantic-preserving RE-MARSHAL, not a byte-preserving splice:
 // yaml.Marshal re-emits the whole document from the node tree, so the file comes
@@ -168,17 +168,17 @@ type storedArea struct {
 // rest. nibs never writes such a file, so refusing costs nothing a project did
 // not do on purpose, and the alternative is data loss on an exit-0 success.
 //
-// The edited document is re-read as a Config and re-validated BEFORE it is
-// returned. A config the loader rejects is a store no command can open, so this
+// The edited document is re-read as an Areas and re-validated BEFORE it is
+// returned. A vocabulary the loader rejects is a store no command can open, so this
 // is the difference between a refused edit and a project that has to be repaired
 // by hand — and it is where the vocabulary's uniqueness rule is enforced against
 // whatever reached this function.
 func planStoredAreaEdit(storeDir string, edit func(areas *yaml.Node) error) (*StoredAreaEdit, error) {
-	path := store.NewLayout(storeDir).ConfigPath()
+	path := store.NewLayout(storeDir).AreasPath()
 	data, err := ReadConfigFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, refuseAreaEdit("no config at %s to edit; a store's areas vocabulary is declared in its own config.yml", path)
+			return nil, refuseAreaEdit("no areas vocabulary at %s to edit; a store declares its areas there, beside its config.yml", path)
 		}
 		return nil, err
 	}
@@ -213,11 +213,11 @@ func planStoredAreaEdit(storeDir string, edit func(areas *yaml.Node) error) (*St
 	if err != nil {
 		return nil, err
 	}
-	var edited Config
+	var edited Areas
 	if err := yaml.Unmarshal(out, &edited); err != nil {
 		return nil, refuseAreaEdit("the edit would leave %s unreadable: %v", path, err)
 	}
-	if err := edited.ValidateAreas(); err != nil {
+	if err := edited.Validate(); err != nil {
 		return nil, refuseAreaEdit("the edit would leave %s declaring an unusable vocabulary: %v", path, err)
 	}
 	return &StoredAreaEdit{path: path, out: out}, nil
@@ -296,10 +296,10 @@ func unaddressableShape(item *yaml.Node) string {
 // shape that hid it when one did.
 func missingStoredArea(path, shape string) error {
 	if shape == "" {
-		return refuseAreaEdit("this store's config.yml declares no area %q", RenderAreaPath(path))
+		return refuseAreaEdit("this store's areas.yml declares no area %q", RenderAreaPath(path))
 	}
 	return refuseAreaEdit(
-		"this store's config.yml reaches an area beside %q through %s, so this edit cannot address it — give the node its own `name:` key in the `areas:` block, then rerun",
+		"this store's areas.yml reaches an area beside %q through %s, so this edit cannot address it — give the node its own `name:` key in the `areas:` block, then rerun",
 		RenderAreaPath(path), shape)
 }
 

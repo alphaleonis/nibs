@@ -42,15 +42,15 @@ func runArea(t *testing.T, nibsPath string, args ...string) (string, error) {
 	return runRootWith(t, append([]string{"--nibs-path", nibsPath, "area"}, args...)...)
 }
 
-// areaVocabulary reloads the store's declared vocabulary from its config.yml,
+// areaVocabulary reloads the store's declared vocabulary from its areas.yml,
 // so the assertions read the FILE rather than anything the command held.
 func areaVocabulary(t *testing.T, nibsPath string) []string {
 	t.Helper()
-	cfg, err := config.LoadFromStore(nibsPath)
+	vocab, err := config.LoadAreasFromStore(nibsPath)
 	if err != nil {
-		t.Fatalf("the edited config no longer loads: %v", err)
+		t.Fatalf("the edited vocabulary no longer loads: %v", err)
 	}
-	return cfg.AreaPaths()
+	return vocab.Paths()
 }
 
 // storedAreas returns every nib id in the store paired with the `area:` its file
@@ -168,13 +168,13 @@ func TestAreaListInAStoreDeclaringNoneSaysSo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("area list must not refuse an undeclared vocabulary: %v", err)
 	}
-	if !strings.Contains(out, "declares no areas") || !strings.Contains(out, "config.yml") {
+	if !strings.Contains(out, "declares no areas") || !strings.Contains(out, "areas.yml") {
 		t.Errorf("area list said nothing useful about an empty vocabulary:\n%s", out)
 	}
 }
 
 // TestAreaRenameCascadesTheWholeSubtree is the acceptance criterion: the node
-// moves in config.yml and every nib assigned to it OR to any declared descendant
+// moves in areas.yml and every nib assigned to it OR to any declared descendant
 // follows, because renaming a parent moves the whole subtree's paths.
 func TestAreaRenameCascadesTheWholeSubtree(t *testing.T) {
 	nibsPath := setupAreaVerbTest(t)
@@ -216,18 +216,18 @@ func TestAreaRenameCascadesTheWholeSubtree(t *testing.T) {
 	}
 }
 
-// TestAreaRenameTouchesNothingElseInTheConfig is hazard #1 at the command level:
-// a rename must edit the `name:` scalar and nothing else. Config.Save would
-// write the MERGED read model — user config and system defaults layered onto the
-// project's own values — and drop every key this build does not model, and the
-// diff is the only assertion that catches all of that at once.
-func TestAreaRenameTouchesNothingElseInTheConfig(t *testing.T) {
+// TestAreaRenameTouchesNothingElseInTheVocabulary is hazard #1 at the command
+// level: a rename must edit the `name:` scalar and nothing else. Areas.Save
+// would re-marshal the struct this build models — dropping every comment and
+// every key AreaConfig has no field for — and the diff is the only assertion
+// that catches all of that at once.
+func TestAreaRenameTouchesNothingElseInTheVocabulary(t *testing.T) {
 	nibsPath := setupAreaVerbTest(t)
-	cfgPath := filepath.Join(nibsPath, "config.yml")
-	// The shipped fixture's config is close enough to what Config.Save marshals
-	// that a diff over it alone would not tell the two apart. A comment and a key
-	// this build does not model are what a real project's committed config
-	// carries and what saving the read model destroys, so the row plants both.
+	cfgPath := filepath.Join(nibsPath, "areas.yml")
+	// The shipped fixture's vocabulary is close enough to what Areas.Save
+	// marshals that a diff over it alone would not tell the two apart. A comment
+	// and a key this build does not model are what a real project's committed
+	// file carries and what a re-marshal destroys, so the row plants both.
 	seeded, err := os.ReadFile(cfgPath)
 	if err != nil {
 		t.Fatal(err)
@@ -689,19 +689,19 @@ func TestAreaRenamePartialCascadeIsRerunnable(t *testing.T) {
 	}
 }
 
-// TestAreaRenameConfigWriteFailureIsRerunnable is the other half of the same
+// TestAreaRenameVocabularyWriteFailureIsRerunnable is the other half of the same
 // claim, at the other end of the run: every member is rewritten and the config
 // write is what fails. Rerunning the same command still finishes, because the
 // cascade then finds no members and only the declaration is left to rename.
-func TestAreaRenameConfigWriteFailureIsRerunnable(t *testing.T) {
+func TestAreaRenameVocabularyWriteFailureIsRerunnable(t *testing.T) {
 	nibsPath := setupAreaVerbTest(t)
-	disarm := failRenameOnto(t, "config.yml")
+	disarm := failRenameOnto(t, "areas.yml")
 
 	_, err := runArea(t, nibsPath, "rename", "web", "frontend")
 	if err == nil {
 		t.Fatal("expected the seeded config write failure to surface")
 	}
-	for _, want := range []string{"config.yml", "rerun the same command", "persisted"} {
+	for _, want := range []string{"areas.yml", "rerun the same command", "persisted"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error = %q, want substring %q", err.Error(), want)
 		}
@@ -721,15 +721,15 @@ func TestAreaRenameConfigWriteFailureIsRerunnable(t *testing.T) {
 	}
 }
 
-// TestAreaRetireConfigWriteFailureTellsTheCallerToDropTheFlag executes both
+// TestAreaRetireVocabularyWriteFailureTellsTheCallerToDropTheFlag executes both
 // halves of what that message says. A retire whose disposition completed and
 // whose config write did not is the one state where rerunning the SAME command
 // cannot work — the member set is empty now, and a disposition with nothing to
 // dispose of is refused — so the message prescribes dropping the flag, and that
 // is what has to finish the job.
-func TestAreaRetireConfigWriteFailureTellsTheCallerToDropTheFlag(t *testing.T) {
+func TestAreaRetireVocabularyWriteFailureTellsTheCallerToDropTheFlag(t *testing.T) {
 	nibsPath := setupAreaVerbTest(t)
-	disarm := failRenameOnto(t, "config.yml")
+	disarm := failRenameOnto(t, "areas.yml")
 
 	_, err := runArea(t, nibsPath, "rm", "auth", "--unassign")
 	if err == nil {
@@ -756,7 +756,7 @@ func TestAreaRetireConfigWriteFailureTellsTheCallerToDropTheFlag(t *testing.T) {
 	}
 }
 
-// TestAreaEditsHoldTheStoreLockAcrossTheConfigWrite is finding #1 as a test.
+// TestAreaEditsHoldTheStoreLockAcrossTheVocabularyWrite is finding #1 as a test.
 //
 // The cascade and the `areas:` rewrite are two halves of one edit, and the
 // config half is a read-modify-write of the whole file. If the lock is dropped
@@ -765,7 +765,7 @@ func TestAreaRetireConfigWriteFailureTellsTheCallerToDropTheFlag(t *testing.T) {
 // disk, both processes exiting 0. The probe therefore asks the question at the
 // only moment that settles it: while the config file is being renamed into
 // place, can anything else take the store's write lock?
-func TestAreaEditsHoldTheStoreLockAcrossTheConfigWrite(t *testing.T) {
+func TestAreaEditsHoldTheStoreLockAcrossTheVocabularyWrite(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
@@ -780,7 +780,7 @@ func TestAreaEditsHoldTheStoreLockAcrossTheConfigWrite(t *testing.T) {
 
 			orig := fsutil.RenameFn
 			fsutil.RenameFn = func(oldpath, newpath string) error {
-				if strings.Contains(newpath, "config.yml") && !probed {
+				if strings.Contains(newpath, "areas.yml") && !probed {
 					probed = true
 					acquired = storeLockIsFree(t, nibsPath)
 				}
@@ -795,7 +795,7 @@ func TestAreaEditsHoldTheStoreLockAcrossTheConfigWrite(t *testing.T) {
 				t.Fatal("the config write never happened, so the probe proves nothing")
 			}
 			if acquired {
-				t.Error("the store's write lock was free while config.yml was being written — " +
+				t.Error("the store's write lock was free while areas.yml was being written — " +
 					"a concurrent area edit can read the pre-edit config here and write it back over this one")
 			}
 		})
@@ -910,7 +910,7 @@ extra: true
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			nibsPath := setupAreaVerbTest(t)
-			cfgPath := filepath.Join(nibsPath, "config.yml")
+			cfgPath := filepath.Join(nibsPath, "areas.yml")
 			if err := os.WriteFile(cfgPath, []byte(tt.config), 0644); err != nil {
 				t.Fatal(err)
 			}
@@ -933,7 +933,7 @@ extra: true
 				t.Fatal(readErr)
 			}
 			if string(after) != tt.config {
-				t.Errorf("the refused edit rewrote config.yml:\n%s", after)
+				t.Errorf("the refused edit rewrote areas.yml:\n%s", after)
 			}
 			if got := storedAreas(t, nibsPath); !mapsEqual(got, areasBefore) {
 				t.Errorf("the refused edit rewrote assignments: %v, want %v", got, areasBefore)
@@ -952,7 +952,7 @@ func TestAreaRetireWriteFailureWithNoDispositionSaysWhatHappened(t *testing.T) {
 	if _, err := runRootWith(t, "--nibs-path", nibsPath, "set", "tnib-t039", "--clear", "area"); err != nil {
 		t.Fatalf("clearing infra's member: %v", err)
 	}
-	disarm := failRenameOnto(t, "config.yml")
+	disarm := failRenameOnto(t, "areas.yml")
 	defer disarm()
 
 	_, err := runArea(t, nibsPath, "rm", "infra")
@@ -975,7 +975,7 @@ func TestAreaRetireWriteFailureWithNoDispositionSaysWhatHappened(t *testing.T) {
 
 // TestAreaRmHelpAgreesWithTheRerunItPrescribes keeps finding #4 from coming
 // back: the long help used to promise that rerunning the SAME command finishes
-// a partial run, which TestAreaRetireConfigWriteFailureTellsTheCallerToDropTheFlag
+// a partial run, which TestAreaRetireVocabularyWriteFailureTellsTheCallerToDropTheFlag
 // asserts is false for a run whose disposition completed. Help is what a caller
 // reads first, so it has to carry the same qualification the error does.
 func TestAreaRmHelpAgreesWithTheRerunItPrescribes(t *testing.T) {
@@ -988,41 +988,31 @@ func TestAreaRmHelpAgreesWithTheRerunItPrescribes(t *testing.T) {
 	}
 }
 
-// TestAreaEditNamesALiveServe is finding #6. The verbs write the vocabulary to
-// the file and never into the loaded config, which keeps Core.ValidateArea's
-// off-lock read sound — but a serve that is already running keeps the vocabulary
-// it read at startup while its watcher picks the rewritten nibs up, so every
-// write it makes to one of them is refused until it restarts. The success line
-// has to say so, and must not say so when nothing is holding the store.
-func TestAreaEditNamesALiveServe(t *testing.T) {
-	const note = "restart it"
+// TestAreaEditNamesNoRestart is the decision of nibs-5cuk as a test. The verbs
+// write the vocabulary to the store's areas.yml, and a running `nibs serve`
+// WATCHES that file — so the edit reaches it without a restart, and the note
+// that used to be printed here (finding #6, when the vocabulary lived in
+// config.yml and nothing reloaded it) would now send a user to restart a server
+// that has already caught up.
+//
+// Asserted with a serve actually holding the store, because that is the only
+// state the removed note ever appeared in: a run with nothing holding the store
+// was silent before this change too, and would pass either way.
+func TestAreaEditNamesNoRestart(t *testing.T) {
+	nibsPath := setupAreaVerbTest(t)
+	serving, err := nibcore.AcquireServeLock(nibsPath)
+	if err != nil {
+		t.Fatalf("AcquireServeLock: %v", err)
+	}
+	defer func() { _ = serving.Release() }()
 
-	t.Run("with no other process holding the store", func(t *testing.T) {
-		nibsPath := setupAreaVerbTest(t)
-		out, err := runArea(t, nibsPath, "rename", "web", "frontend")
-		if err != nil {
-			t.Fatalf("area rename: %v", err)
+	out, err := runArea(t, nibsPath, "rename", "web", "frontend")
+	if err != nil {
+		t.Fatalf("area rename: %v", err)
+	}
+	for _, unwanted := range []string{"restart it", "once at startup"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("output tells the caller to restart a serve that reloads the vocabulary on its own:\n%s", out)
 		}
-		if strings.Contains(out, note) {
-			t.Errorf("output claims a process is holding the store when none is:\n%s", out)
-		}
-	})
-
-	t.Run("with a serve holding the store", func(t *testing.T) {
-		nibsPath := setupAreaVerbTest(t)
-		// The shared side is what `nibs serve` holds for its whole lifetime.
-		serving, err := nibcore.AcquireServeLock(nibsPath)
-		if err != nil {
-			t.Fatalf("AcquireServeLock: %v", err)
-		}
-		defer func() { _ = serving.Release() }()
-
-		out, err := runArea(t, nibsPath, "rename", "web", "frontend")
-		if err != nil {
-			t.Fatalf("area rename: %v", err)
-		}
-		if !strings.Contains(out, note) {
-			t.Errorf("output does not name the live serve whose writes this edit just started refusing:\n%s", out)
-		}
-	})
+	}
 }

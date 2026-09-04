@@ -15,7 +15,7 @@ import (
 const AreaPathSeparator = "/"
 
 // AreaConfig is one node of the areas vocabulary declared in a store's
-// config.yml. Areas are the one genuinely per-project vocabulary in that file —
+// areas.yml. Areas are the one genuinely per-project vocabulary a store holds —
 // statuses, types, priorities and estimates are hardcoded — so a node carries
 // its own description: it is what tells an agent which area new work belongs in.
 //
@@ -36,7 +36,7 @@ type AreaConfig struct {
 	Children    []AreaConfig `yaml:"children,omitempty"`
 }
 
-// ValidateAreas checks the declared vocabulary and returns the first fault it
+// Validate checks the declared vocabulary and returns the first fault it
 // finds, naming the offending path.
 //
 // It runs on every load because the vocabulary is AUTHORIZATION data: what may
@@ -48,8 +48,21 @@ type AreaConfig struct {
 //
 // An absent or empty vocabulary is valid: a project that has not declared areas
 // is a normal project, not a broken one.
-func (c *Config) ValidateAreas() error {
-	return validateAreaNodes(c.Areas, "")
+func (a *Areas) Validate() error {
+	return validateAreaNodes(a.Roots(), "")
+}
+
+// Roots returns the declared forest's top-level nodes, each carrying its own
+// children. It is the single nil-safe accessor every reader goes through —
+// inside this package and out — so a nil *Areas, which is the vocabulary a store
+// with no areas.yml has, answers instead of panicking, and the guard exists once
+// rather than at every call site. The Nodes field is the YAML binding; read
+// through this.
+func (a *Areas) Roots() []AreaConfig {
+	if a == nil {
+		return nil
+	}
+	return a.Nodes
 }
 
 // validateAreaNodes validates one level of the tree and recurses. parent is the
@@ -147,12 +160,12 @@ func joinAreaPath(parent, name string) string {
 	return parent + AreaPathSeparator + name
 }
 
-// AreaPaths returns every declared area path in DECLARATION order, a parent
+// Paths returns every declared area path in DECLARATION order, a parent
 // immediately before the subtree it heads. The order is the file's own, which
 // is what lets a project read its vocabulary back the way it wrote it.
-func (c *Config) AreaPaths() []string {
+func (a *Areas) Paths() []string {
 	var paths []string
-	appendAreaPaths(&paths, c.Areas, "")
+	appendAreaPaths(&paths, a.Roots(), "")
 	return paths
 }
 
@@ -180,15 +193,15 @@ const (
 	maxListedAreaRunes = 200
 )
 
-// AreaList RENDERS every declared area path as a comma-separated list, for the
+// List RENDERS every declared area path as a comma-separated list, for the
 // messages that have to say what the vocabulary holds. Each path goes through
 // safetext.Strip, and both the number of paths listed and the length of one are
 // bounded, with the elision stated.
 //
-// It is therefore display text and not data: use AreaPaths where the values
+// It is therefore display text and not data: use Paths where the values
 // themselves are wanted.
-func (c *Config) AreaList() string {
-	paths := c.AreaPaths()
+func (a *Areas) List() string {
+	paths := a.Paths()
 	shown := paths
 	if len(shown) > maxListedAreas {
 		shown = shown[:maxListedAreas]
@@ -206,7 +219,7 @@ func (c *Config) AreaList() string {
 // RenderAreaPath renders one area path for a message: control characters
 // neutralized and the length bounded. Every message that echoes a path goes
 // through it — the declared set AreaList lists, the refused value
-// ValidateAreaAssignment quotes back, and the filter argument internal/graph
+// ValidateAssignment quotes back, and the filter argument internal/graph
 // refuses — because a path reaching one of those slots is file-sourced whenever
 // it is the declared set or a value a nib already carries, and caller-supplied
 // text of unbounded length otherwise. Both hazards want the same treatment, and
@@ -224,15 +237,15 @@ func truncateListedArea(path string) string {
 	return string([]rune(path)[:maxListedAreaRunes]) + "…"
 }
 
-// GetArea returns the declared node at path, or nil when the vocabulary does
+// Get returns the declared node at path, or nil when the vocabulary does
 // not declare it. The path is resolved by descending the tree one segment at a
 // time, so `web/dashboard` finds the child of `web` and never a top-level node
 // that happens to be named that way.
-func (c *Config) GetArea(path string) *AreaConfig {
-	return findArea(c.Areas, path)
+func (a *Areas) Get(path string) *AreaConfig {
+	return findArea(a.Roots(), path)
 }
 
-// AreasDeclared reports whether the store declares an areas vocabulary at all.
+// Declared reports whether the store declares an areas vocabulary at all.
 //
 // It is the one question asked about the AXIS rather than about a value, and it
 // has two callers that must agree: `nibs check` reports no undeclared-area
@@ -241,21 +254,21 @@ func (c *Config) GetArea(path string) *AreaConfig {
 // nibcore.Core.CheckAllLinks), and `nibs close`'s member refusal asks it of a
 // member refused for its AREA, to decide whether the report it offers to point
 // at will name that member. Stated here rather than spelled
-// `len(cfg.Areas) > 0` at each site, because the two would otherwise be free to
-// drift and the second would then name a silent diagnostic.
+// `len(areas.Nodes) > 0` at each site, because the two would otherwise be free
+// to drift and the second would then name a silent diagnostic.
 //
-// The WRITE paths deliberately do not consult it: ValidateStoredArea refuses a
+// The WRITE paths deliberately do not consult it: ValidateStored refuses a
 // stored value whether or not a vocabulary exists, because a write is asked
 // about one nib the caller named, where the refusal is actionable.
-func (c *Config) AreasDeclared() bool {
-	return len(c.Areas) > 0
+func (a *Areas) Declared() bool {
+	return len(a.Roots()) > 0
 }
 
-// IsValidArea reports whether path names a declared area. The empty string is
+// IsValid reports whether path names a declared area. The empty string is
 // NOT valid here: this answers a membership question, and callers that treat an
 // unset `area:` as legal check for that themselves.
-func (c *Config) IsValidArea(path string) bool {
-	return c.GetArea(path) != nil
+func (a *Areas) IsValid(path string) bool {
+	return a.Get(path) != nil
 }
 
 // AreaError is an `area:` value the declared vocabulary refuses.
@@ -294,14 +307,14 @@ type AreaError struct {
 func (e *AreaError) Error() string {
 	switch {
 	case e.NibID == "" && e.Declared == "":
-		return fmt.Sprintf("invalid area %q: this store declares no areas — declare an `areas:` block in the store's config.yml before assigning one", e.Path)
+		return fmt.Sprintf("invalid area %q: this store declares no areas — declare an `areas:` block in the store's areas.yml before assigning one", e.Path)
 	case e.NibID == "":
 		return fmt.Sprintf("invalid area %q: must be one of %s", e.Path, e.Declared)
 	case e.Declared == "":
 		// Only the clear is named. This branch diagnoses a store with no
 		// declared value to put in an `--area`, so prescribing one would name a
 		// command with no satisfiable argument in the very state it reports.
-		return fmt.Sprintf("invalid area %q: this store declares no areas — if the request set no area, the nib already carries it and every write to that nib is refused until `nibs set %s --clear area` replaces it; otherwise declare an `areas:` block in the store's config.yml before assigning one",
+		return fmt.Sprintf("invalid area %q: this store declares no areas — if the request set no area, the nib already carries it and every write to that nib is refused until `nibs set %s --clear area` replaces it; otherwise declare an `areas:` block in the store's areas.yml before assigning one",
 			e.Path, e.NibID)
 	default:
 		return fmt.Sprintf("invalid area %q: must be one of %s — if the request set no area, the nib already carries it and every write to that nib is refused until `nibs set %s --area <declared>` or `nibs set %s --clear area` replaces it",
@@ -309,28 +322,28 @@ func (e *AreaError) Error() string {
 	}
 }
 
-// ValidateAreaAssignment checks one nib's `area:` value against the declared
+// ValidateAssignment checks one nib's `area:` value against the declared
 // vocabulary, for a caller that SUPPLIED the value — a create, or the CLI
 // pre-check on the flag itself. The empty string passes: an unset area is a
-// normal state, and IsValidArea deliberately answers only the membership
+// normal state, and IsValid deliberately answers only the membership
 // question.
-func (c *Config) ValidateAreaAssignment(path string) error {
-	if path == "" || c.IsValidArea(path) {
+func (a *Areas) ValidateAssignment(path string) error {
+	if path == "" || a.IsValid(path) {
 		return nil
 	}
-	return &AreaError{Path: RenderAreaPath(path), Declared: c.declaredList()}
+	return &AreaError{Path: RenderAreaPath(path), Declared: a.declaredList()}
 }
 
 // declaredList renders the vocabulary for a refusal, or the empty string when
 // the store declares none — which is what selects AreaError's no-areas wording.
-func (c *Config) declaredList() string {
-	if len(c.Areas) == 0 {
+func (a *Areas) declaredList() string {
+	if !a.Declared() {
 		return ""
 	}
-	return c.AreaList()
+	return a.List()
 }
 
-// ValidateStoredArea is the same rule for a write to a nib that ALREADY EXISTS,
+// ValidateStored is the same rule for a write to a nib that ALREADY EXISTS,
 // where the value being judged need not have come from the request at all: a
 // write re-checks the `area:` the nib holds, so retiring or renaming an `areas:`
 // entry turns every nib that carried it into a write dead end.
@@ -347,14 +360,14 @@ func (c *Config) declaredList() string {
 // rather than as a shape with `<id>` still in it — for the callers that reach
 // here on behalf of a nib the user never typed (`nibs close`'s member guards,
 // the ordering backfill), the id in the message is the only one there is.
-func (c *Config) ValidateStoredArea(nibID, path string) error {
-	if path == "" || c.IsValidArea(path) {
+func (a *Areas) ValidateStored(nibID, path string) error {
+	if path == "" || a.IsValid(path) {
 		return nil
 	}
-	return &AreaError{Path: RenderAreaPath(path), Declared: c.declaredList(), NibID: safetext.Strip(nibID)}
+	return &AreaError{Path: RenderAreaPath(path), Declared: a.declaredList(), NibID: safetext.Strip(nibID)}
 }
 
-// IsAreaWithin reports whether path is ancestor or sits below it — the
+// IsWithin reports whether path is ancestor or sits below it — the
 // downward-closed primitive an area filter needs.
 //
 // The answer is over the DECLARED TREE, not over the strings: `webhooks` is not
@@ -362,11 +375,11 @@ func (c *Config) ValidateStoredArea(nibID, path string) error {
 // roots. Both ends must be declared; an undeclared path is not within anything,
 // so a value no longer in the vocabulary cannot be swept in by a filter that
 // happens to name one of its former ancestors.
-func (c *Config) IsAreaWithin(path, ancestor string) bool {
+func (a *Areas) IsWithin(path, ancestor string) bool {
 	if path == "" || ancestor == "" {
 		return false
 	}
-	node := c.GetArea(ancestor)
+	node := a.Get(ancestor)
 	if node == nil {
 		return false
 	}

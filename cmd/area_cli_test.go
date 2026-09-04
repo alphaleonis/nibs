@@ -527,7 +527,7 @@ func staleAreaApp(t *testing.T, nibsPath string) *App {
 		t.Fatalf("load store: %v", err)
 	}
 	t.Cleanup(func() { _ = core.Close() })
-	return &App{Core: core, MigrationGatePassed: true}
+	return newApp(core, true)
 }
 
 // countStoreFiles counts the nib files the store holds across data/ and
@@ -608,7 +608,7 @@ func TestAreaCascadeWritesThePathsTheStoreHasNow(t *testing.T) {
 			app := staleAreaApp(t, nibsPath)
 			var members []string
 			for _, b := range app.Core.All() {
-				if app.Config().IsAreaWithin(b.Area, "auth") {
+				if app.Areas().IsWithin(b.Area, "auth") {
 					members = append(members, strings.TrimPrefix(b.ID, "tnib-"))
 				}
 			}
@@ -831,15 +831,15 @@ func TestAreaRenameRefusesABadNameWithoutTakingTheStoreLock(t *testing.T) {
 	}
 }
 
-// A store whose config.yml vanished while a verb waited for the write lock is
-// not a store whose areas were retired. config.loadRaw answers a missing file
-// with an empty config and a NIL error, so absence arrives at the verb looking
+// A store whose areas.yml vanished while a verb waited for the write lock is
+// not a store whose areas were retired. config.LoadAreas answers a missing file
+// with an empty vocabulary and a NIL error, so absence arrives at the verb looking
 // exactly like a concurrent `nibs area rm` — and the refusal then names a
 // process that never ran and prescribes `nibs area list`, which goes on to print
 // "this store declares no areas". `.nibs` is its own git repository here, so a
 // `git -C .nibs checkout` rewriting that file under a running command is the
 // ordinary way in.
-func TestAreaEditRefusesAVanishedConfigRatherThanBlamingAnotherProcess(t *testing.T) {
+func TestAreaEditRefusesAVanishedVocabularyRatherThanBlamingAnotherProcess(t *testing.T) {
 	tests := []struct {
 		name string
 		run  func(t *testing.T, app *App) error
@@ -863,19 +863,19 @@ func TestAreaEditRefusesAVanishedConfigRatherThanBlamingAnotherProcess(t *testin
 			nibsPath := setupAreaCLITest(t)
 			app := staleAreaApp(t, nibsPath)
 
-			if err := os.Remove(filepath.Join(nibsPath, "config.yml")); err != nil {
-				t.Fatalf("removing the store config: %v", err)
+			if err := os.Remove(filepath.Join(nibsPath, "areas.yml")); err != nil {
+				t.Fatalf("removing the store vocabulary: %v", err)
 			}
 
 			err := tt.run(t, app)
 			if err == nil {
-				t.Fatal("expected a refusal over a store with no config, got nil")
+				t.Fatal("expected a refusal over a store with no vocabulary, got nil")
 			}
 			if code := areaErrCode(t, err); code != output.ErrFileError {
 				t.Errorf("code = %q (exit %d), want %q (exit %d)",
 					code, output.ExitCode(code), output.ErrFileError, output.ExitCode(output.ErrFileError))
 			}
-			for _, want := range []string{"config.yml", "does not exist"} {
+			for _, want := range []string{"areas.yml", "does not exist"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("error = %q, want substring %q", err.Error(), want)
 				}
@@ -884,21 +884,21 @@ func TestAreaEditRefusesAVanishedConfigRatherThanBlamingAnotherProcess(t *testin
 			// remedy that answers "this store declares no areas".
 			for _, unwanted := range []string{"another nibs process", "nibs area list"} {
 				if strings.Contains(err.Error(), unwanted) {
-					t.Errorf("error = %q — an absent config is reported as a concurrent retire, and %q sends the reader nowhere", err.Error(), unwanted)
+					t.Errorf("error = %q — an absent vocabulary is reported as a concurrent retire, and %q sends the reader nowhere", err.Error(), unwanted)
 				}
 			}
 		})
 	}
 }
 
-// The other reading of an absent config.yml: a store that never had one. That
+// The other reading of an absent areas.yml: a store that never had one. That
 // is a legitimate shape here — the evidence rule accepts a real directory named
 // `.nibs`, `nibs list` serves it and `nibs area list` prints "this store
-// declares no areas" — so the vanished-config refusal must not reach it. It
+// declares no areas" — so the vanished-vocabulary refusal must not reach it. It
 // names a file to restore that never existed, and reclassifies an undamaged
 // store from VALIDATION to FILE_ERROR, which an agent branching on $? reads as
 // the filesystem being broken.
-func TestAreaEditOnAStoreThatNeverHadAConfigRefusesAsUndeclaredAreas(t *testing.T) {
+func TestAreaEditOnAStoreThatNeverHadAVocabularyRefusesAsUndeclaredAreas(t *testing.T) {
 	tests := []struct {
 		name string
 		verb string
@@ -924,13 +924,13 @@ func TestAreaEditOnAStoreThatNeverHadAConfigRefusesAsUndeclaredAreas(t *testing.
 		t.Run(tt.name, func(t *testing.T) {
 			nibsPath := setupAreaCLITest(t)
 			// Removed BEFORE the App is built, so this process never loaded one
-			// — the difference between this store and the vanished-config one.
-			if err := os.Remove(filepath.Join(nibsPath, "config.yml")); err != nil {
-				t.Fatalf("removing the store config: %v", err)
+			// — the difference between this store and the vanished-vocabulary one.
+			if err := os.Remove(filepath.Join(nibsPath, "areas.yml")); err != nil {
+				t.Fatalf("removing the store vocabulary: %v", err)
 			}
 			app := staleAreaApp(t, nibsPath)
-			if app.Config().LoadedFromFile() {
-				t.Fatal("premise failed: the App loaded a config file from a store that has none")
+			if app.StartupAreas().LoadedFromFile() {
+				t.Fatal("premise failed: the App loaded an areas file from a store that has none")
 			}
 
 			err := tt.run(t, app)
@@ -946,10 +946,10 @@ func TestAreaEditOnAStoreThatNeverHadAConfigRefusesAsUndeclaredAreas(t *testing.
 					t.Errorf("error = %q, want substring %q", err.Error(), want)
 				}
 			}
-			// The vanished-config wording, which names a file to put back that
-			// this store never had.
+			// The vanished-vocabulary wording, which names a file to put back
+			// that this store never had.
 			if strings.Contains(err.Error(), "does not exist") {
-				t.Errorf("error = %q — it prescribes restoring a config.yml this store never had", err.Error())
+				t.Errorf("error = %q — it prescribes restoring an areas.yml this store never had", err.Error())
 			}
 		})
 	}

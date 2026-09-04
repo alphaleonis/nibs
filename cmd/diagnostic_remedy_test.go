@@ -10,6 +10,7 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nibcore"
+	"github.com/alphaleonis/nibs/internal/store"
 	"github.com/alphaleonis/nibs/testdata/fixtures"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -439,42 +440,22 @@ func remedyStore(files map[string]string) func(t *testing.T) string {
 	}
 }
 
-// remedyStoreWithoutAreas is the same store with the `areas:` block removed, so
-// the vocabulary declares nothing while a nib still carries an area.
+// remedyStoreWithoutAreas is the same store with its areas.yml removed, so the
+// vocabulary declares nothing while a nib still carries an area.
 func remedyStoreWithoutAreas(files map[string]string) func(t *testing.T) string {
 	base := remedyStore(files)
 	return func(t *testing.T) string {
 		t.Helper()
 		nibsDir := base(t)
-		cfgPath := filepath.Join(nibsDir, "config.yml")
-		raw, err := os.ReadFile(cfgPath)
+		if err := os.Remove(store.NewLayout(nibsDir).AreasPath()); err != nil {
+			t.Fatal(err)
+		}
+		vocab, err := config.LoadAreasFromStore(nibsDir)
 		if err != nil {
 			t.Fatal(err)
 		}
-		var kept []string
-		inAreas := false
-		for _, line := range strings.Split(string(raw), "\n") {
-			if strings.HasPrefix(line, "areas:") {
-				inAreas = true
-				continue
-			}
-			if inAreas {
-				if line == "" || strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
-					continue
-				}
-				inAreas = false
-			}
-			kept = append(kept, line)
-		}
-		if err := os.WriteFile(cfgPath, []byte(strings.Join(kept, "\n")), 0644); err != nil {
-			t.Fatal(err)
-		}
-		cfg, err := config.LoadFromStore(nibsDir)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(cfg.Areas) != 0 {
-			t.Fatalf("the areas block survived the edit: %v", cfg.AreaPaths())
+		if vocab.Declared() {
+			t.Fatalf("the vocabulary survived the removal: %v", vocab.Paths())
 		}
 		return nibsDir
 	}
@@ -484,12 +465,12 @@ func remedyStoreWithoutAreas(files map[string]string) func(t *testing.T) string 
 // so a row can exercise a vocabulary shape the areas editor refuses. The
 // replacement has to keep declaring the same paths the fixture's nibs carry,
 // which is what makes the refusal about the SHAPE rather than about the value.
-func remedyStoreWithConfigShape(cfg string) func(t *testing.T) string {
+func remedyStoreWithAreasShape(vocab string) func(t *testing.T) string {
 	base := remedyStore(nil)
 	return func(t *testing.T) string {
 		t.Helper()
 		nibsDir := base(t)
-		if err := os.WriteFile(filepath.Join(nibsDir, "config.yml"), []byte(cfg), 0644); err != nil {
+		if err := os.WriteFile(store.NewLayout(nibsDir).AreasPath(), []byte(vocab), 0644); err != nil {
 			t.Fatal(err)
 		}
 		return nibsDir
@@ -498,10 +479,7 @@ func remedyStoreWithConfigShape(cfg string) func(t *testing.T) string {
 
 // remedyAliasedAreasConfig declares web/dashboard through a YAML alias: the
 // loader resolves it and the file editor cannot address it.
-const remedyAliasedAreasConfig = `nibs:
-    prefix: tnib-
-    id_length: 4
-shared:
+const remedyAliasedAreasConfig = `shared:
     dashboard: &dashboard
         name: dashboard
         description: The project dashboard and its charts
@@ -524,10 +502,7 @@ areas:
 // remedyMultiDocumentAreasConfig is a config the loader accepts and the areas
 // editor refuses, because rewriting it from the first document alone would
 // delete the second.
-const remedyMultiDocumentAreasConfig = `nibs:
-    prefix: tnib-
-    id_length: 4
-areas:
+const remedyMultiDocumentAreasConfig = `areas:
     - name: auth
       description: Sign-in
     - name: api
@@ -856,27 +831,27 @@ func remedySurfaces() []remedySurface {
 			wantCommands: 0,
 		},
 		{
-			name:  "a retire whose config write fails with no disposition names the bare rerun",
+			name:  "a retire whose vocabulary write fails with no disposition names the bare rerun",
 			store: remedyStore(nil),
 			// The one branch that must NOT report a disposition or name a flag:
 			// nothing was assigned below the area, so nothing was rewritten.
-			diagnose:     remedyAreaConfigWriteFailure([]string{"rm", "docs"}),
+			diagnose:     remedyAreaVocabularyWriteFailure([]string{"rm", "docs"}),
 			mustName:     []string{`area "docs" could not be retired`, "nothing is assigned at or below it"},
 			wantCommands: 1,
 		},
 		{
 			name:     "a vocabulary reached through a YAML alias names no command",
-			store:    remedyStoreWithConfigShape(remedyAliasedAreasConfig),
+			store:    remedyStoreWithAreasShape(remedyAliasedAreasConfig),
 			diagnose: remedyAreaRetireRefusal([]string{"rename", "web/dashboard", "panel"}),
 			mustName: []string{"YAML alias"},
-			// The repair is an edit to config.yml, which no nibs command makes —
+			// The repair is an edit to areas.yml, which no nibs command makes —
 			// so the message names the key to write rather than a command. The
 			// row enrolls the surface: one added later is executed, not trusted.
 			wantCommands: 0,
 		},
 		{
-			name:     "a multi-document config names no command",
-			store:    remedyStoreWithConfigShape(remedyMultiDocumentAreasConfig),
+			name:     "a multi-document vocabulary names no command",
+			store:    remedyStoreWithAreasShape(remedyMultiDocumentAreasConfig),
 			diagnose: remedyAreaRetireRefusal([]string{"rename", "web", "frontend"}),
 			mustName: []string{"more than one YAML document"},
 			// Same shape: the remedy is an edit to the file. The backticked `---`
@@ -1011,10 +986,10 @@ func remedyAreaRetireRefusal(args []string) func(t *testing.T, nibsDir string) s
 // lifted before this returns, so the remedy the gate runs afterwards faces a
 // working filesystem — which is the state the message tells the caller to rerun
 // in.
-func remedyAreaConfigWriteFailure(args []string) func(t *testing.T, nibsDir string) string {
+func remedyAreaVocabularyWriteFailure(args []string) func(t *testing.T, nibsDir string) string {
 	return func(t *testing.T, nibsDir string) string {
 		t.Helper()
-		disarm := failRenameOnto(t, "config.yml")
+		disarm := failRenameOnto(t, "areas.yml")
 		defer disarm()
 		return remedyAreaRetireRefusal(args)(t, nibsDir)
 	}

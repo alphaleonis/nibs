@@ -93,7 +93,7 @@ is used as-is — with --no-edit, with --json, or when stdin/stdout is not a ter
 		// resolver, because create's error fallback below reports FILE_ERROR —
 		// an undeclared area is a malformed argument and must report VALIDATION
 		// like every other vocabulary flag on this command.
-		if err := app.Config().ValidateAreaAssignment(newArea); err != nil {
+		if err := app.Areas().ValidateAssignment(newArea); err != nil {
 			return cmdError(newJSON, output.ErrValidation, "%v", err)
 		}
 

@@ -8,7 +8,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/store"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -175,6 +177,79 @@ func (c *Core) SubscribeSignal() (<-chan struct{}, func()) {
 	return ch, unsubscribe
 }
 
+// SubscribeAreas creates a subscription to VOCABULARY changes: the channel
+// receives a tick whenever the store's areas.yml is reloaded into a vocabulary
+// that differs from the one it replaces.
+//
+// It is a separate stream from Subscribe/SubscribeSignal because it answers a
+// different question. Those two say "the nibs changed" and fire constantly; this
+// one says "what an `area:` may say changed", which happens when someone edits
+// the vocabulary and at no other time. A consumer of the nib stream would have
+// to re-ask for the vocabulary on every nib write to learn the same thing.
+//
+// Delivery, drop-under-backpressure and StopWatching-closes-the-channel
+// semantics match SubscribeSignal.
+func (c *Core) SubscribeAreas() (<-chan struct{}, func()) {
+	c.subMu.Lock()
+	defer c.subMu.Unlock()
+
+	id := atomic.AddUint64(&c.nextSubID, 1)
+	ch := make(chan struct{}, 16)
+	c.areasSubscribers[id] = ch
+
+	unsubscribe := func() {
+		c.subMu.Lock()
+		defer c.subMu.Unlock()
+		if _, ok := c.areasSubscribers[id]; ok {
+			close(ch)
+			delete(c.areasSubscribers, id)
+		}
+	}
+
+	return ch, unsubscribe
+}
+
+// reloadAreas re-reads the store's areas.yml and installs it, ticking every
+// areas subscriber when the vocabulary actually changed.
+//
+// A vocabulary the loader refuses does NOT replace the one in place. Swapping in
+// an empty tree on a malformed file would make every `area:` in the store
+// undeclared at once and refuse every write to every assigned nib — strictly
+// worse than the staleness a reload exists to remove. The last good vocabulary
+// is kept and the fault warned about, and because the reload is driven by file
+// events, repairing the file installs it with no further prompting.
+//
+// An unchanged file ticks nobody: an editor that rewrites areas.yml byte for
+// byte, or a `touch`, must not wake every browser holding the view.
+func (c *Core) reloadAreas() {
+	areas, err := config.LoadAreasFromStore(c.root)
+	if err != nil {
+		c.logWarn("keeping the areas vocabulary already loaded: %v", err)
+		return
+	}
+	if areas.Equal(c.areas.Load()) {
+		return
+	}
+	c.areas.Store(areas)
+
+	c.subMu.RLock()
+	defer c.subMu.RUnlock()
+	for _, ch := range c.areasSubscribers {
+		select {
+		case ch <- struct{}{}:
+		default:
+			// Subscriber is slow, drop the tick.
+		}
+	}
+}
+
+// isAreasFile reports whether an event path is the store's own areas.yml —
+// the store ROOT's, not a file of that name anywhere below it.
+func (c *Core) isAreasFile(path string) bool {
+	rel, err := filepath.Rel(c.root, path)
+	return err == nil && rel == store.AreasFileName
+}
+
 // hasPayloadSubscribers reports whether at least one payload subscriber is
 // currently attached. It is the clone-gating predicate: handleChanges pays for
 // the per-nib payload clone only when this is true. The read is a single atomic
@@ -326,6 +401,10 @@ func (c *Core) unwatchLocked() error {
 		close(sub.ch)
 		delete(c.subscribers, id)
 	}
+	for id, ch := range c.areasSubscribers {
+		close(ch)
+		delete(c.areasSubscribers, id)
+	}
 	for id, ch := range c.signalSubscribers {
 		close(ch)
 		delete(c.signalSubscribers, id)
@@ -347,6 +426,7 @@ func (c *Core) watchLoop(watcher *fsnotify.Watcher, done <-chan struct{}) {
 	defer func() { _ = watcher.Close() }()
 
 	var debounceTimer *time.Timer
+	var areasTimer *time.Timer
 	var pendingMu sync.Mutex
 	pendingChanges := make(map[string]fsnotify.Op)
 
@@ -355,6 +435,9 @@ func (c *Core) watchLoop(watcher *fsnotify.Watcher, done <-chan struct{}) {
 		case <-done:
 			if debounceTimer != nil {
 				debounceTimer.Stop()
+			}
+			if areasTimer != nil {
+				areasTimer.Stop()
 			}
 			return
 
@@ -374,6 +457,26 @@ func (c *Core) watchLoop(watcher *fsnotify.Watcher, done <-chan struct{}) {
 				// Fall through: a directory is never a .md file, so the .md
 				// filter below drops it. Files that landed inside it before
 				// the watch was added are picked up by the next full Load.
+			}
+
+			// The store's areas.yml is the one non-.md file a live process must
+			// not miss: it is the vocabulary every `area:` is judged against, and
+			// an external `nibs area rename` rewrites it. It gets its own
+			// debounce rather than joining pendingChanges because it is not a nib
+			// and handleChanges has nothing to do with it — and its own timer so
+			// a busy nib batch never delays it, nor it them.
+			//
+			// Debounced at all because an editor that writes in place (rather
+			// than through the temp-file-and-rename every nibs writer uses) can
+			// fire a Write event on a half-written file. A reload that reads one
+			// is refused and keeps the vocabulary already loaded, so the cost of
+			// losing that race is a warning and not a wrong vocabulary.
+			if c.isAreasFile(event.Name) {
+				if areasTimer != nil {
+					areasTimer.Stop()
+				}
+				areasTimer = time.AfterFunc(debounceDelay, c.reloadAreas)
+				continue
 			}
 
 			// Only care about .md files within the store's directory tree

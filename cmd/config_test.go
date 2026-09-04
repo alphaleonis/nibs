@@ -965,9 +965,9 @@ func TestSetPrefixRefusesAStoreThatDeclaresNoPrefix(t *testing.T) {
 		name   string
 		config string
 	}{
-		{"a nibs key with no value under it", "nibs:\nareas:\n    - name: auth\n"},
+		{"a nibs key with no value under it", "nibs:\nteams:\n    - name: auth\n"},
 		{"a nibs key written as an explicit null", "nibs: null\n"},
-		{"a config with no nibs section", "areas:\n    - name: auth\n"},
+		{"a config with no nibs section", "teams:\n    - name: auth\n"},
 		{"a config that is only comments", "# everything here is commented out\n"},
 	}
 	for _, tt := range tests {

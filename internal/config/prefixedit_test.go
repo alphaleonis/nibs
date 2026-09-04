@@ -163,12 +163,12 @@ func TestPlanSetStoredPrefixMakesTheFileSayThePrefix(t *testing.T) {
 	}{
 		{
 			name:   "a config with no nibs section",
-			config: "areas:\n    - name: auth\n",
+			config: "teams:\n    - name: auth\n",
 			keep:   "- name: auth",
 		},
 		{
 			name:   "a nibs key written with no value under it",
-			config: "nibs:\nareas:\n    - name: auth\n",
+			config: "nibs:\nteams:\n    - name: auth\n",
 			keep:   "- name: auth",
 		},
 		{
@@ -233,7 +233,7 @@ nibs:
 
 defaults: &defaults
   color: gray
-areas:
+teams:
   - name: auth
     description: >-
       Sign-in, sessions
@@ -273,7 +273,7 @@ future_key:
 	}
 	// Key order is preserved, which a re-marshal from a struct would not do.
 	if strings.Index(got, "nibs:") >= strings.Index(got, "defaults:") ||
-		strings.Index(got, "areas:") >= strings.Index(got, "future_key:") {
+		strings.Index(got, "teams:") >= strings.Index(got, "future_key:") {
 		t.Errorf("key order changed:\n%s", got)
 	}
 	// The merged read model's system defaults are the tell that Config.Save ran:

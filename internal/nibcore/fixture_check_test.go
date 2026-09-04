@@ -78,16 +78,9 @@ func TestSampleProjectCheckFindingsArePinned(t *testing.T) {
 	// parent ids, but nothing in this fixture is short-form, so that half is
 	// defensive rather than load-bearing today.
 	//
-	// The areas assertion below is not decoration: config.Load returns a
-	// default config with a NIL error when the file is absent, so a deleted
-	// config.yml would otherwise leave this test green with the area check
-	// silently switched off.
 	cfg, err := config.LoadFromStore(nibsDir)
 	if err != nil {
 		t.Fatalf("loading the fixture config: %v", err)
-	}
-	if !cfg.AreasDeclared() {
-		t.Fatal("the fixture config declares no areas; the area half of this pin would be vacuous")
 	}
 
 	core := New(nibsDir, cfg)

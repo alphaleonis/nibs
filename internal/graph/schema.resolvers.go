@@ -1202,7 +1202,7 @@ func (r *queryResolver) Config(ctx context.Context) (*model.Config, error) {
 	return &model.Config{
 		ProjectName: cfg.GetProjectName(),
 		Prefix:      cfg.Nibs.Prefix,
-		Areas:       flattenAreas(cfg.Areas),
+		Areas:       flattenAreas(r.Reader.Areas()),
 	}, nil
 }
 
