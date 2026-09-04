@@ -270,12 +270,9 @@
      both classes — which is how the row always carries it — so it outranks the
      rule above rather than depending on following it.
 
-     One row can carry this AND `.drop-before.drop-queue` below, which paints the
-     same hue on the inside of the same edge. Measured in Chromium against the
-     fixture, the seam goes from 2px of cyan to 3px when a queue drop is aimed at
-     it — so on a banded row the indicator is a 1px thickening rather than a new
-     mark, where the parent axis pairs two different tokens (--border band,
-     --ring indicator) and stays legible. nibs-v39j owns that. */
+     One row can carry this AND `.drop-before.drop-queue` below, which paints on
+     the inside of the same edge. The rule that keeps the two apart is the
+     compound selector further down — see it for why the band yields. */
   .tree-row.region-band.region-band-queue {
     border-block-start: 2px solid var(--region-queue);
   }
@@ -304,6 +301,26 @@
 
   .tree-row.drop-after.drop-queue {
     box-shadow: inset 0 -2px 0 0 var(--region-queue);
+  }
+
+  /* A queue band and a queue drop line can want the same edge of the same row,
+     and both wanted the same hue. Measured in Chromium: they do not stack end to
+     end, they OVERLAP — the seam went from 2px of cyan to 3px when a drop was
+     aimed at it, so becoming a target read as the same rule drawn slightly
+     heavier rather than as a new mark (nibs-v39j).
+
+     The band yields for as long as the drop is aimed at it, leaving the edge in
+     the shape the PARENT axis already uses and which the same measurement found
+     legible there: a neutral hairline under a coloured line. The change is one
+     of shape rather than thickness, and the queue's colour stays on the mark
+     that means "the drop lands here".
+
+     `drop-before` only. `drop-after` paints the row's BOTTOM edge and the band
+     is a `border-block-start`, so they never meet; `drop-reparent.drop-queue`
+     draws a ring inside all four edges, which is a different composition this
+     rule would not describe. */
+  .tree-row.region-band.region-band-queue.drop-before.drop-queue {
+    border-block-start: 1px solid var(--border);
   }
 
   /* `color-mix` where the parent-axis rule four lines above writes a literal
