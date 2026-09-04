@@ -486,3 +486,71 @@ test("a queue reorder lands the row where its line pointed", async ({ page }) =>
     )
     .toEqual({ present: true, afterE001: true, beforeE002: true, stillInV1: true });
 });
+
+// nibs-v39j: the queue band and the queue drop line paint the same edge of the
+// same row, and both used `--region-queue` — so aiming a drop at a banded row
+// took the seam from 2px of cyan to 3px of cyan and changed nothing else.
+// Measured, not argued: the two do not stack end to end, they overlap by 1px.
+//
+// The rule chosen is the composition the PARENT axis already uses and which the
+// same measurement found legible there — 1px `--border` band beneath a 2px
+// coloured indicator. On the queue axis the band yields its colour for as long
+// as the drop is aimed at it, so the change is one of SHAPE (one cyan rule
+// becomes a grey hairline under a cyan rule) rather than of thickness.
+//
+// Only a real engine can close this: the band is a `border-block-start` and the
+// indicator an `inset box-shadow`, and whether they compose or overlap is a
+// question about painting that jsdom does not answer.
+test("a queue band yields its color to the drop line aimed at it", async ({ page }) => {
+  await openMilestones(page);
+
+  const queueColor = await resolvedColor(page, "--region-queue");
+  const borderColor = await resolvedColor(page, "--border");
+  expect(queueColor).not.toBe(borderColor);
+
+  const row = page.locator('tr[data-nib-id="tnib-e002"]');
+  await collapse(page, "tnib-e002", "tnib-f004");
+  await centerOn(page, "tnib-e002");
+
+  // The premise: this row really does carry a queue band before anything is
+  // dragged at it. Without this the test could pass on a row that never had one.
+  await expect(row).toHaveClass(/region-band-queue/);
+  const atRest = await row.evaluate((el) => {
+    const cs = getComputedStyle(el);
+    return { width: cs.borderTopWidth, color: cs.borderTopColor };
+  });
+  expect(atRest).toEqual({ width: "2px", color: queueColor });
+
+  const source = await boxOf(page, "tnib-e003");
+  const target = await boxOf(page, "tnib-e002");
+  await page.mouse.move(source.x + 300, source.y + source.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(source.x + 314, source.y + source.height / 2, { steps: 5 });
+  await expect(page.locator("body")).toHaveCSS("cursor", "grabbing");
+  await page.mouse.move(target.x + 300, target.y + 4, { steps: 8 });
+
+  await expect(row).toHaveClass(/drop-before/);
+  await expect(row).toHaveClass(/drop-queue/);
+  const aimed = await row.evaluate((el) => {
+    const cs = getComputedStyle(el);
+    return { width: cs.borderTopWidth, color: cs.borderTopColor, shadow: cs.boxShadow };
+  });
+
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+
+  // The band steps back to the neutral hairline the parent axis uses...
+  expect(aimed.width).toBe("1px");
+  expect(aimed.color).toBe(borderColor);
+  // ...while the indicator keeps the queue's own colour, so the edge carries two
+  // tokens rather than one drawn heavier.
+  expect(aimed.shadow).toBe(`${queueColor} 0px 2px 0px 0px inset`);
+
+  // The band must yield only while aimed at: releasing restores the seam.
+  await expect(row).not.toHaveClass(/drop-before/);
+  const afterwards = await row.evaluate((el) => {
+    const cs = getComputedStyle(el);
+    return { width: cs.borderTopWidth, color: cs.borderTopColor };
+  });
+  expect(afterwards).toEqual({ width: "2px", color: queueColor });
+});
