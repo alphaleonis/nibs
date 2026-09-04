@@ -390,7 +390,7 @@ describe("TreeTable", () => {
       const box = screen.getByTestId("empty-areas-none");
       expect(box).toHaveTextContent(/declares no areas/i);
       expect(box).toHaveTextContent("areas:");
-      expect(box).toHaveTextContent("config.yml");
+      expect(box).toHaveTextContent("areas.yml");
       // Exact: the box's own heading contains the phrase, and what must be
       // absent is the leftover SECTION row the table would otherwise draw.
       expect(screen.queryByText("No area")).not.toBeInTheDocument();

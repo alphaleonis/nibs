@@ -331,7 +331,7 @@ func (e *FilterAreaError) Error() string {
 	case e.Path == "":
 		return fmt.Sprintf("%s filter: empty value; it takes a declared area path", e.Field)
 	case e.Declared == "":
-		return fmt.Sprintf("%s filter: %q is not a declared area: this store declares no areas — declare an `areas:` block in the store's config.yml before filtering by one",
+		return fmt.Sprintf("%s filter: %q is not a declared area: this store declares no areas — declare an `areas:` block in the store's areas.yml before filtering by one",
 			e.Field, e.Path)
 	default:
 		return fmt.Sprintf("%s filter: %q is not a declared area; must be one of %s", e.Field, e.Path, e.Declared)

@@ -17,6 +17,30 @@ export const CONFIG_QUERY = graphql(`
 `);
 
 /**
+ * The store's declared areas vocabulary, pushed when it changes.
+ *
+ * It selects the SAME fields as CONFIG_QUERY, and must keep doing so: the app
+ * renders from whichever of the two answered last, so a field selected in only
+ * one would appear or vanish depending on whether the vocabulary had been
+ * edited during the session.
+ */
+export const CONFIG_CHANGED_SUBSCRIPTION = graphql(`
+  subscription ConfigChanged {
+    configChanged {
+      projectName
+      prefix
+      areas {
+        path
+        name
+        description
+        color
+        depth
+      }
+    }
+  }
+`);
+
+/**
  * The milestones a nib can be assigned to.
  *
  * A query of its own rather than a read of the table's rows: those are

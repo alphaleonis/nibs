@@ -12,7 +12,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
-// One node of the per-project areas vocabulary declared in the store's config.yml.
+// One node of the per-project areas vocabulary declared in the store's areas.yml.
 //
 // Deliberately NOT self-recursive: area nesting is unbounded (validateAreaNodes
 // recurses with no depth limit), while the served endpoint refuses an operation

@@ -1256,6 +1256,46 @@ func (r *subscriptionResolver) NibChanged(ctx context.Context, id *string) (<-ch
 	return out, nil
 }
 
+// ConfigChanged is the resolver for the configChanged field.
+//
+// The tick carries no payload, so the config is READ at delivery time rather
+// than captured when the tick was published: NibReader.Areas is an atomic load
+// of whatever the store declares now, so a client that missed a tick under
+// backpressure still receives the current vocabulary on the next one rather than
+// a stale one held in a queue.
+func (r *subscriptionResolver) ConfigChanged(ctx context.Context) (<-chan *model.Config, error) {
+	ticks, unsub := r.Subscriber.SubscribeAreas()
+	out := make(chan *model.Config)
+
+	go func() {
+		defer unsub()
+		defer close(out)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case _, ok := <-ticks:
+				if !ok {
+					return
+				}
+				cfg := r.Reader.Config()
+				event := &model.Config{
+					ProjectName: cfg.GetProjectName(),
+					Prefix:      cfg.Nibs.Prefix,
+					Areas:       flattenAreas(r.Reader.Areas()),
+				}
+				select {
+				case out <- event:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	return out, nil
+}
+
 // Mutation returns MutationResolver implementation.
 func (r *Resolver) Mutation() MutationResolver { return &mutationResolver{r} }
 

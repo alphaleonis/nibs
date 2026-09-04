@@ -174,6 +174,11 @@ type BlockingChecker interface {
 // NibSubscriber provides access to nib change event streams.
 type NibSubscriber interface {
 	Subscribe() (<-chan []NibEvent, func())
+	// SubscribeAreas ticks whenever the store's declared vocabulary is reloaded
+	// into one that differs from the vocabulary it replaces. It carries no
+	// payload: a consumer reads the new vocabulary from NibReader.Areas, which is
+	// the same snapshot every other reader sees.
+	SubscribeAreas() (<-chan struct{}, func())
 }
 
 // NibEvent represents a change to a nib (re-exported from nibcore).

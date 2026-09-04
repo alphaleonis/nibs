@@ -776,7 +776,7 @@ func remedySurfaces() []remedySurface {
 			name:     "the area filter in a store declaring no areas says that instead",
 			store:    remedyStoreWithoutAreas(nil),
 			diagnose: remedyAreaFilterRefusal,
-			mustName: []string{"declares no areas", "config.yml"},
+			mustName: []string{"declares no areas", "areas.yml"},
 			// No command either, and here for a stronger reason than above: the
 			// repair is a config edit, so any `nibs …` this named would be one
 			// with no satisfiable argument in the very state it reports.

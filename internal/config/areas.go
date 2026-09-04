@@ -88,7 +88,7 @@ func validateAreaNodes(areas []AreaConfig, parent string) error {
 		//
 		// Refusing it here would be the tidier rule and is NOT taken: this
 		// function runs on every load, so tightening it would make a config that
-		// is valid today fail outright, and config.yml is a stored file this
+		// is valid today fail outright, and areas.yml is a stored file this
 		// project keeps readable across versions. Closing the gap properly means
 		// quoting in the query grammar, which is a grammar-wide change affecting
 		// every field.

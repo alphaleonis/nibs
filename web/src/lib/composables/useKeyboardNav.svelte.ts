@@ -36,7 +36,7 @@ export function useKeyboardNav(opts: {
     if (!scrollContainer) return;
     // A row id is not a tame CSS token, by either of the two routes one
     // arrives on: a section row's id is derived from its lens's section key,
-    // which for the areas lens is an area path out of config.yml, and a nib's
+    // which for the areas lens is an area path out of areas.yml, and a nib's
     // id is derived from its file name, which on a POSIX filesystem is
     // arbitrary bytes. So both a quote (which ends the selector's string early)
     // and a backslash (which parses as a CSS escape) reach here.

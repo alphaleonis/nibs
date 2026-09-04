@@ -28,7 +28,7 @@ var areaCmd = &cobra.Command{
 	Short: "Read and edit the project's declared areas vocabulary",
 	Long: `Areas are the one vocabulary a project authors itself — statuses, types,
 priorities and estimates are fixed. They are declared as a nested ` + "`areas:`" + ` block
-in the store's config.yml, and a nib is placed in one with ` + "`nibs new --area`" + ` or
+in the store's areas.yml, and a nib is placed in one with ` + "`nibs new --area`" + ` or
 ` + "`nibs set --area`" + `.
 
 These verbs read that vocabulary and edit it in place. Both mutations rewrite the
@@ -72,7 +72,7 @@ var areaRmCmd = &cobra.Command{
 	Use:   "rm <path>",
 	Short: "Retire a declared area, together with everything declared beneath it",
 	Long: `Removes the node at <path> — and every area declared beneath it — from the
-store's config.yml.
+store's areas.yml.
 
 It is REFUSED while nibs are assigned at or below that node, because retiring it
 would leave them carrying a path the vocabulary no longer declares, which every
