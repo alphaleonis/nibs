@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { planDrop, type DropPlan } from "./dropPlan";
-import { GOVERNS_NOTHING, type SectionMeaning } from "./sectionMeaning";
 import { batch, reorderNib, updateNib } from "../mutations/commands";
 import { collectDescendantIds } from "../dropZone";
 import type { DropZone } from "../drag.svelte";
 import { buildShapedTableData, type RowData } from "../tableData";
-import type { GroupingLens, Placement, ViewShape } from "../tree";
+import type { GroupingLens, ViewShape } from "../tree";
 import type { NibFilter, TreeTableNib } from "../types";
-import type { AssignableField } from "./sectionMeaning";
+import { GOVERNS_NOTHING, type AssignableField, type SectionMeaning } from "./sectionMeaning";
+import { createAreaVocabulary } from "../areas";
+import { makeViewSpine } from "../viewSpine";
 
 /**
  * One fixture driven through the real pipeline — an assigning lens, then
@@ -16,9 +17,7 @@ import type { AssignableField } from "./sectionMeaning";
  * different sections came out of the table carrying one ordering group, and the
  * planner, holding only rows, could not tell them apart.
  *
- * The lens is local. No shipped view level assigns (an areas view is Phase 9),
- * so the assign arm of `SectionEntry` has no production caller yet; what is
- * under test is the mechanism, not that lens.
+ * The lens is the shipped one, reached through a spine — see `areaShape` below.
  */
 
 function nib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
@@ -46,36 +45,32 @@ function nib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
 const NO_AREA = "/__no_area__";
 
 /**
- * A lens shaped like the areas view Phase 9 will ship: sections declared up
- * front, NO ordering axis of its own (there is no `AREA` order scope, and
- * `Region`'s arms are bound two-way to the ones there are), and entering a
- * section is an assignment of the `area` field.
+ * The SHIPPED areas lens, bound to a vocabulary declaring `infra`, `web` and
+ * `web/api`. Reached through a spine because that is the only way to reach it:
+ * `viewShapeFor` and the lens constants are module-private to viewSpine.ts, so
+ * a shape cannot be built against a vocabulary the app is not bound to.
+ *
+ * The real lens rather than a stand-in shaped like it, so this file's cases
+ * cannot pass against behavior the app does not have. What they exercise —
+ * `declares`, `meaning`, `nestHeadersStructurally` and `orderWithinSection` —
+ * is then the app's, not a local copy's.
  */
-const areaLens: GroupingLens = {
-  leftover: { key: NO_AREA, label: "No area" },
-  declares: {
-    kind: "forest",
-    roots: [
-      { key: "infra", label: "infra", description: "", color: "", children: [] },
-      {
-        key: "web",
-        label: "web",
-        description: "",
-        color: "",
-        children: [{ key: "web/api", label: "web/api", description: "", color: "", children: [] }],
-      },
-    ],
-  },
-  nestHeadersStructurally: false,
-  orderWithinSection: () => null,
-  meaning: (section): SectionMeaning =>
-    section === NO_AREA
-      ? GOVERNS_NOTHING
-      : { memberRegion: null, onEnter: { kind: "assign", field: "area", value: section, noun: "area" } },
-  place: (item): Placement => ({ kind: "member", section: item.area === "" ? NO_AREA : item.area }),
-};
+const areaShape: ViewShape = makeViewSpine(
+  createAreaVocabulary([
+    { path: "infra", name: "infra", description: "", color: "", depth: 0 },
+    { path: "web", name: "web", description: "", color: "", depth: 0 },
+    { path: "web/api", name: "api", description: "", color: "", depth: 1 },
+  ]),
+).viewShapeFor("areas");
 
-const areaShape: ViewShape = { kind: "grouped", lens: areaLens };
+/** The shipped lens itself, for the three blocks that derive a variant from it
+ *  — a section that governs nothing, one that refuses entry, and one whose
+ *  leftover assigns. None is a shape any shipped lens produces; each overrides
+ *  exactly one member of the real one rather than restating it. */
+const AREA_LENS: GroupingLens = (() => {
+  if (areaShape.kind !== "grouped") throw new Error(`expected a grouped shape, got ${areaShape.kind}`);
+  return areaShape.lens;
+})();
 
 const INFRA = "/section:infra_";
 const WEB = "/section:web_";
@@ -342,7 +337,7 @@ describe("a drag whose rows are in SEVERAL sections", () => {
     // The refusal is about assignment, not about disagreement: two rows in two
     // sections that decide nothing still take an ordinary reorder, because the
     // write says nothing false about where they end up.
-    const byRowShape: ViewShape = { kind: "grouped", lens: { ...areaLens, meaning: () => GOVERNS_NOTHING } };
+    const byRowShape: ViewShape = { kind: "grouped", lens: { ...AREA_LENS, meaning: () => GOVERNS_NOTHING } };
     const table = buildShapedTableData(FIXTURE, noFilter, byRowShape, new Set());
     const rows = table.rows;
     const byId = new Map(rows.map((r) => [r.nib.id, r]));
@@ -466,11 +461,11 @@ describe("a drop ONTO an assigning section", () => {
     const refusingShape: ViewShape = {
       kind: "grouped",
       lens: {
-        ...areaLens,
+        ...AREA_LENS,
         meaning: (section): SectionMeaning =>
           section === "web"
             ? { memberRegion: null, onEnter: { kind: "refuse", message: "The web area is read-only here." } }
-            : areaLens.meaning(section),
+            : AREA_LENS.meaning(section),
       },
     };
     const table = buildShapedTableData(FIXTURE, noFilter, refusingShape, new Set());
@@ -559,7 +554,7 @@ describe("a section that refuses entry", () => {
   const shape: ViewShape = {
     kind: "grouped",
     lens: {
-      ...areaLens,
+      ...AREA_LENS,
       meaning: (section) =>
         section === NO_AREA
           ? GOVERNS_NOTHING
