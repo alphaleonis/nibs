@@ -1,4 +1,5 @@
 import type { TreeNib, TreeNode, TreeTableNib, ViewLevel } from "./types";
+import type { AreaVocabulary } from "./areas";
 import type { Region } from "./ordering/region";
 import { GOVERNS_NOTHING, type SectionMeaning } from "./ordering/sectionMeaning";
 import { MILESTONE_TYPE, milestoneOf } from "./membership";
@@ -521,8 +522,13 @@ const MILESTONE_MEMBERSHIP_LENS: GroupingLens = {
  * member of ViewLevel fails to compile here until it declares one; a `default`
  * arm here would let it default into some shape instead, which is the whole
  * hole `ViewShape` exists to close.
+ *
+ * No arm below reads `areas`. It is a parameter because this is where a level's
+ * lens is chosen, and a lens whose sections come from the vocabulary has to be
+ * built with the vocabulary in hand. `makeViewSpine` supplies it, so callers
+ * holding a spine never do.
  */
-export function viewShapeFor(viewLevel: ViewLevel): ViewShape {
+export function viewShapeFor(viewLevel: ViewLevel, areas: AreaVocabulary): ViewShape {
   switch (viewLevel) {
     case "none":
       return { kind: "tree" };

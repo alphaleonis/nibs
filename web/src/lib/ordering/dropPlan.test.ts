@@ -18,9 +18,11 @@ import type { DropZone } from "../drag.svelte";
 import { batch, reorderChain, reorderNib, reparentAndReorder, sequence, setParent, updateNib } from "../mutations/commands";
 import type { AnyCommand, CommandResult } from "../mutations/types";
 import { buildShapedTableData, rowRegion, type RowData, type RowSection } from "../tableData";
-import { viewShapeFor } from "../tree";
+import { EMPTY_SPINE } from "../viewSpine";
 import { canHaveChildren } from "../typeHierarchy";
 import type { TreeNode, TreeTableNib } from "../types";
+
+const { viewShapeFor } = EMPTY_SPINE;
 
 function makeNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
   return {

@@ -93,21 +93,25 @@ function bucketIdsFor(shapeOf: (level: ViewLevel) => ViewShape): BucketIds {
 /** Bind the view core to a vocabulary. Two spines can coexist — a test's and the
  *  app's — which a module-level mutable vocabulary could not express. */
 export function makeViewSpine(areas: AreaVocabulary): ViewSpine {
+  // The binding itself. Every member below reaches a shape through this one
+  // closure, which is what lets `ViewSpine.viewShapeFor` stay one-argument.
+  const shapeOf = (level: ViewLevel): ViewShape => viewShapeFor(level, areas);
+
   // Frozen for the reason `createAreaVocabulary` is: `EMPTY_SPINE` and
   // `LOADING_SPINE` are module singletons every test file in a vitest worker
   // shares, so a reassigned method or vocabulary there would follow the worker
   // into unrelated suites.
   return Object.freeze({
     areas,
-    viewShapeFor,
-    bucketIds: bucketIdsFor(viewShapeFor),
+    viewShapeFor: shapeOf,
+    bucketIds: bucketIdsFor(shapeOf),
     buildViewTree: (nibs, level, sortComparator) =>
-      buildShapedViewTree(nibs, viewShapeFor(level), sortComparator),
+      buildShapedViewTree(nibs, shapeOf(level), sortComparator),
     buildTableData: (nibs, filter, level, collapsed, sort = null) =>
-      buildShapedTableData(nibs, filter, viewShapeFor(level), collapsed, sort),
-    dragBlockFor: (filter, level, sort) => shapedDragBlockFor(filter, viewShapeFor(level), sort),
+      buildShapedTableData(nibs, filter, shapeOf(level), collapsed, sort),
+    dragBlockFor: (filter, level, sort) => shapedDragBlockFor(filter, shapeOf(level), sort),
     adjacencyReflectsOrdering: (filter, level, sort) =>
-      shapedAdjacencyReflectsOrdering(filter, viewShapeFor(level), sort),
+      shapedAdjacencyReflectsOrdering(filter, shapeOf(level), sort),
   } satisfies ViewSpine);
 }
 
