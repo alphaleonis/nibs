@@ -38,11 +38,20 @@ jobs:
       # and no amount of quoting at the call site changes that: a value carrying
       # a quote closes the string and the rest parses as code. The steps below
       # therefore take both through `env:` and read them as shell variables.
-      # internal/ciguard fails `task test` when a `run:` body names the
-      # `inputs`, `env`, `github.event` or `github.ref`/`ref_name`/`head_ref`/
-      # `base_ref` contexts. It is a denylist, not a proof: a value laundered
-      # through `$GITHUB_OUTPUT` and read back as `steps.*.outputs.*` is not
-      # covered.
+      # internal/ciguard enforces that, and enforces it as an ALLOWLIST: a `run:`
+      # body may interpolate the paths listed in its `allowedPaths` and naming
+      # anything else fails `task test`. The list is not repeated here on
+      # purpose — this comment stated the rule's contents three times and went
+      # stale three times, which is what the inversion was for. What is durable
+      # is the shape: a context nobody has vetted fails by DEFAULT rather than by
+      # having been thought of, so the rule needs no round of catching up each
+      # time GitHub adds a context.
+      #
+      # One gap survives the inversion and is not closed by it: a value written
+      # to `$GITHUB_OUTPUT` and read back as `steps.*.outputs.*` is laundered
+      # past the check. The only such output here is `version.prerelease`, which
+      # the step above writes as one of the two literals `true` and `false`
+      # rather than as anything derived from the input's text.
       - name: Validate version format
         id: version
         env:
