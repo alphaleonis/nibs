@@ -3,6 +3,7 @@ package config_test
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -87,36 +88,84 @@ func TestSampleProjectDeclaresEveryAssignedArea(t *testing.T) {
 	}
 }
 
-// TestSampleProjectConfigMatchesGenerator pins the shipped config.yml to the
-// heredoc that writes it, so regenerating the fixture cannot produce a diff.
-// The two are edited by hand and nothing else compares them.
-func TestSampleProjectConfigMatchesGenerator(t *testing.T) {
-	dir := fixtures.SampleProjectDir(t)
-
-	shipped, err := os.ReadFile(filepath.Join(dir, ".nibs", "config.yml"))
-	if err != nil {
-		t.Fatalf("reading the fixture config: %v", err)
+// TestSampleProjectStoreFilesMatchGenerator pins every file the fixture's store
+// holds to the heredoc that writes it, so regenerating the fixture cannot
+// produce a diff. The two are edited by hand and nothing else compares them.
+//
+// It covers the whole store rather than one file because it once did not: the
+// vocabulary moved from config.yml into its own areas.yml and the pin stayed on
+// config.yml, leaving the file that actually carries the vocabulary unguarded —
+// which is the state this test exists to prevent, just relocated out from under
+// it (nibs-068o).
+//
+// The rows are checked for COMPLETENESS against the store directory, not trusted
+// as a list. A hardcoded set is the shape that failed the first time: a file
+// added later would be pinned by nobody and nothing would say so. Reading the
+// directory means the fixture itself decides what must be covered, so a third
+// config file fails this test on the day it lands and cannot be dodged by
+// spelling its heredoc differently.
+func TestSampleProjectStoreFilesMatchGenerator(t *testing.T) {
+	// Every file the store holds directly, and the heredoc marker the generator
+	// writes it with. Directories are the store's CONTENT (data/, archive/) and
+	// are written per-nib rather than as one document, so they are not here.
+	pinned := map[string]string{
+		store.ConfigFileName: "ENDCONFIG",
+		store.AreasFileName:  "ENDAREAS",
 	}
+
+	dir := fixtures.SampleProjectDir(t)
+	storeDir := filepath.Join(dir, ".nibs")
+
 	script, err := os.ReadFile(filepath.Join(filepath.Dir(dir), "gen-sample-project.sh"))
 	if err != nil {
 		t.Fatalf("reading the generator: %v", err)
 	}
 
-	const open = "cat > \"$STORE/config.yml\" << 'ENDCONFIG'\n"
-	start := strings.Index(string(script), open)
-	if start < 0 {
-		t.Fatalf("the generator no longer writes config.yml with the %q heredoc", open)
+	entries, err := os.ReadDir(storeDir)
+	if err != nil {
+		t.Fatalf("reading the fixture store: %v", err)
 	}
-	body := string(script)[start+len(open):]
-	end := strings.Index(body, "\nENDCONFIG\n")
-	if end < 0 {
-		t.Fatal("the generator's config heredoc is unterminated")
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if _, ok := pinned[entry.Name()]; !ok {
+			t.Errorf("the fixture store holds %s and no row here pins it to the generator; add one, or this file drifts from the script that claims to write it",
+				entry.Name())
+		}
 	}
-	generated := body[:end+1]
 
-	if generated != string(shipped) {
-		t.Errorf("the generator writes a different config.yml than the one shipped\n--- generator ---\n%s\n--- shipped ---\n%s", generated, shipped)
+	for name, marker := range pinned {
+		t.Run(name, func(t *testing.T) {
+			shipped, err := os.ReadFile(filepath.Join(storeDir, name))
+			if err != nil {
+				t.Fatalf("reading the shipped %s: %v", name, err)
+			}
+			generated := generatorHeredoc(t, string(script), name, marker)
+			if generated != string(shipped) {
+				t.Errorf("the generator writes a different %s than the one shipped\n--- generator ---\n%s\n--- shipped ---\n%s",
+					name, generated, shipped)
+			}
+		})
 	}
+}
+
+// generatorHeredoc returns the body the generator writes into the store's file
+// of the given name, located by the heredoc that opens it.
+func generatorHeredoc(t *testing.T, script, name, marker string) string {
+	t.Helper()
+
+	open := fmt.Sprintf("cat > \"$STORE/%s\" << '%s'\n", name, marker)
+	start := strings.Index(script, open)
+	if start < 0 {
+		t.Fatalf("the generator no longer writes %s with the %q heredoc", name, open)
+	}
+	body := script[start+len(open):]
+	end := strings.Index(body, "\n"+marker+"\n")
+	if end < 0 {
+		t.Fatalf("the generator's %s heredoc is unterminated", name)
+	}
+	return body[:end+1]
 }
 
 // frontMatterArea returns a nib file's `area:` value, or "" when it has none.
