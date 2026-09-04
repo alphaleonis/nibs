@@ -82,11 +82,18 @@ const MESSY_FIXTURE: TreeNib[] = [
 // Expected grouping-tier ranks, derived from the single source of truth
 // (typeRank) rather than frozen literals — so a future TYPE_RANK change that
 // desyncs the lens boundaries would fail these tests instead of passing silently.
-const GROUPING_LENS_RANKS: Record<Exclude<ViewLevel, "none" | "flat">, number> = {
+//
+// TOTAL over the levels it names, so a new member of `ViewLevel` fails to
+// compile here until it says whether it has a tier. "areas" is EXCLUDED rather
+// than merely absent: a tier is a property of a lens whose sections are HEADED
+// BY A NIB, and the Areas level's come from the declared vocabulary instead, so
+// it has no rank to state — and stating that exclusion here is what keeps a
+// seventh level a compile error instead of a silent omission.
+const GROUPING_LENS_RANKS = {
   milestones: typeRank("milestone"),
   epics: typeRank("epic"),
   features: typeRank("feature"),
-};
+} satisfies Record<Exclude<ViewLevel, "none" | "flat" | "areas">, number>;
 
 describe("buildTree", () => {
   it("returns empty array for empty input", () => {

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getContextClient } from "@urql/svelte";
-  import { DEFAULT_BLOCKED_EMPHASIS, DEFAULT_OPEN_DETAIL_ON } from "../types";
+  import { DEFAULT_BLOCKED_EMPHASIS, DEFAULT_OPEN_DETAIL_ON, TREE_VIEW_LEVEL } from "../types";
   import type { NibFilter, ViewLevel, RowDensity, BlockedEmphasis, OpenDetailGesture, RowSubtreeActions, TreeTableNib, TableSort, SortField } from "../types";
   import type { ColumnKey } from "../columns";
   import type { Preferences } from "../preferences.svelte";
@@ -480,7 +480,7 @@
     // Nib is visible — scroll into view and clear
     const scrollContainer = scrollContainerEl;
     if (scrollContainer) {
-      const tr = scrollContainer.querySelector(`tr[data-nib-id="${nibId}"]`);
+      const tr = scrollContainer.querySelector(`tr[data-nib-id="${CSS.escape(nibId)}"]`);
       if (tr) {
         tr.scrollIntoView({ block: "nearest" });
         // Persist the deep-link offset synchronously AND claim the container, so
@@ -840,10 +840,60 @@
   function clearHierarchy() {
     emitFilter(prefs, onfilterchange, clearHierarchyFilters(resolvedFilter));
   }
+
+  // The Areas view groups by the DECLARED vocabulary, so a project with none has
+  // nothing to group by and every row would land in one "No area" section. Which
+  // of the three no-vocabulary states this is decides what to say about it, and
+  // `AreaVocabulary.status` is the only thing that can tell them apart: they are
+  // all "no sections", but one is a wait, one is a healthy project, and one is a
+  // failure.
+  let areasStatus = $derived(viewSpine().areas.status);
+
+  // The way back out, offered on the two states the user cannot resolve from
+  // here. Same write path as the blocked-drag toast's remedy.
+  function leaveAreasView() {
+    switchViewLevel(prefs, onviewlevelchange, treeView, resolvedViewLevel, TREE_VIEW_LEVEL);
+  }
 </script>
 
 <div data-testid="tree-table" class="h-full">
-{#if dataSource.fetching && allNibs.length === 0}
+{#if resolvedViewLevel === "areas" && areasStatus !== "ready"}
+  <!-- Ahead of every other branch, including the nib query's own loading and
+       error states: this view's sections ARE the vocabulary, so with none there
+       is nothing to group by however the nib query answers. -->
+  {#if areasStatus === "loading"}
+    <div data-testid="empty-areas-loading" class="flex items-center justify-center py-12 text-body text-muted-foreground">
+      <span>Loading areas...</span>
+    </div>
+  {:else if areasStatus === "unavailable"}
+    <!-- The only automatic re-ask is App's, and it is gated on the WEBSOCKET
+         recovering. `CONFIG_QUERY` is an ordinary query, which urql routes
+         through `fetchExchange` over HTTP, so a config failure that left the
+         socket healthy — a 502, a resolver error — never reaches that gate. The
+         copy therefore names the remedies the user actually has rather than
+         promising a wait. -->
+    <div data-testid="empty-areas-unavailable" class="flex flex-col items-center gap-3 py-12 text-body text-muted-foreground">
+      <span class="text-foreground">Areas are unavailable</span>
+      <span class="max-w-md text-center">
+        The project configuration could not be read, so there is no area vocabulary to
+        group by. Reload to try again, or switch to another view.
+      </span>
+      <Button variant="outline" size="sm" onclick={leaveAreasView}>Switch to Tree</Button>
+    </div>
+  {:else}
+    <div data-testid="empty-areas-none" class="flex flex-col items-center gap-3 py-12 text-body text-muted-foreground">
+      <span class="text-foreground">This project declares no areas</span>
+      <span class="max-w-md text-center">
+        Areas group work by the part of the project it belongs to. Declare an
+        <code class="whitespace-nowrap rounded bg-muted px-1 py-0.5 text-foreground">areas:</code>
+        block in the store's
+        <code class="whitespace-nowrap rounded bg-muted px-1 py-0.5 text-foreground">config.yml</code>
+        and each nib's area can name one.
+      </span>
+      <Button variant="outline" size="sm" onclick={leaveAreasView}>Switch to Tree</Button>
+    </div>
+  {/if}
+{:else if dataSource.fetching && allNibs.length === 0}
   <!-- Only the INITIAL load (nothing to show yet) swaps in the loading state.
        A background refetch (fetching=true while allNibs is already populated,
        e.g. the NIB_CHANGED_SUBSCRIPTION-driven live refetch) keeps the table

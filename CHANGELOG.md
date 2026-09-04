@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **A drag says which list it will reorder within** — a badge follows the cursor naming the destination by title, a rule marks where an ordering group's run of rows ends, and a drop that cannot happen explains why instead of doing nothing.
 - **The web's filter box speaks the assignment axis** — `milestone:<id>` selects that milestone's queue, and `is:backlog` the work in no milestone's plan, its own or an inherited one.
 - **The web's filter box speaks the ownership axis** — `area:<path>` selects an area's work, including everything declared beneath it.
+- **The web groups work by area** — the Areas view spines on the declared vocabulary, and an area nothing is assigned to is still a row, so the map shows what is empty as well as what is not.
 
 ### Changed
 - **BREAKING: moving more than one nib at once now requires `--block`** — `nibs mv <a> <b> --first` is refused instead of quietly reordering a nib you did not name, which is what a mistyped single move produced, since `--first` takes no anchor and a trailing id became a second one; the help and cheat grammars that invited it are corrected too.
@@ -33,12 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **BREAKING: The store carries its own config and keeps active nibs in `data/`** — `.nibs/config.yml`, `.nibs/data/` and `.nibs/archive/` replace a project-root `.nibs.yml` and nib files at the store root, and the `nibs.path` key is retired. Run `nibs migrate` to convert a project; every command refuses until it has.
 - **Store-format migrations are now explicit** — `nibs migrate` previews and applies them, and every other command refuses an unmigrated (or newer-format) store instead of silently rewriting files at load.
 - **A `.nibs` symlink must lead to a directory that is already a store** — a link at anything else is refused rather than adopted as the project's store, and `nibs init` will not create one through a link. A store reached that way needs the manual steps the refusal prints before `nibs migrate` will run; to keep nibs out of the code repository, initialize the directory with `--nibs-path` (and `--prefix`, since a store outside the project derives its prefix from its own parent) and link `.nibs` at it afterwards.
-- **The web table's view control is labelled "View"**, since two of the five it offers — Tree and Flat — group nothing.
+- **The web table's view control is labelled "View"**, since two of the six it offers — Tree and Flat — group nothing.
 - **A drop beside a row whose real parent the view has hidden now moves the row there**, where it was refused before because the drag read the row's position on screen rather than the group it orders in.
 - **The web opens on the milestone-grouped view** — the Milestones view groups work by its milestone assignment instead of by type, each queue in its own order with a Backlog tail for whatever is in none, a nib's milestone is set from the detail panel or the row context menu, and a drag reorders within a queue or assigns into one; a stored view preference still wins, and the hierarchical view is still there as Tree.
 
 ### Fixed
 - **Switching the web table's view no longer leaves a nib selected that the new view has no row for**, where it stayed focused and a legal target for a bulk action the user could not see.
+- **A nib id containing a quote no longer breaks keyboard navigation and the drag preview in the web table**, where the row lookup built a CSS selector from it unescaped.
 - **A hand-authored nib file no longer conflicts with itself** — a file omitting `created_at` or `updated_at` had the stamps synthesized in memory but not on disk, so its etag disagreed with itself permanently: `nibs set <a> --blocking <b>` was refused as a conflict, and the token `nibs get -f etag` printed was the one the store then rejected.
 - **A named pipe or device named like a nib file no longer hangs every command** — it is skipped at load and reported by `nibs check`, like any other file that cannot be read.
 - **A store full of unreadable or duplicate nib files no longer floods every command — or a running `nibs serve` — with warnings**, printing at most 20 and then a count pointing at `nibs check`, which still reports every one.

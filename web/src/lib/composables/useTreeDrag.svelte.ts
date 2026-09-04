@@ -98,7 +98,7 @@ export function useTreeDrag(opts: {
     const scrollContainer = opts.getScrollContainer();
     if (!scrollContainer) return;
 
-    const tr = scrollContainer.querySelector(`tr[data-nib-id="${nibId}"]`) as HTMLElement | null;
+    const tr = scrollContainer.querySelector(`tr[data-nib-id="${CSS.escape(nibId)}"]`) as HTMLElement | null;
     if (!tr) return;
 
     const table = tr.closest("table");

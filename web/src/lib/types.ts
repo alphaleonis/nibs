@@ -155,7 +155,7 @@ export interface RowSubtreeActions {
   collapseChildren: () => void;
 }
 
-export const VIEW_LEVELS = ["none", "flat", "milestones", "epics", "features"] as const;
+export const VIEW_LEVELS = ["none", "flat", "milestones", "epics", "features", "areas"] as const;
 export type ViewLevel = (typeof VIEW_LEVELS)[number];
 
 /** The view a session starts in when nothing is stored. A picked view is
@@ -180,6 +180,7 @@ export const VIEW_LEVEL_LABELS: Record<ViewLevel, string> = {
   milestones: "Milestones",
   epics: "Epics",
   features: "Features & Bugs",
+  areas: "Areas",
 };
 
 // Client-side table sort. Absent/null means "off" (manual `order` sequence).
