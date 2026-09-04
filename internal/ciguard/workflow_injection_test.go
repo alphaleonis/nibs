@@ -8,51 +8,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 )
-
-// expression matches one `${{ ... }}` substitution. (?s) because a workflow may
-// wrap a long expression across lines inside a block scalar.
-var expression = regexp.MustCompile(`(?s)\$\{\{(.*?)\}\}`)
-
-// root is what a context name must be preceded by to be a context rather than
-// part of a longer word, a property of something else, or text inside a string
-// literal: `${{ hashFiles('web/.env.example') }}` names a file, not the `env`
-// context. `\b` alone cannot tell those apart — it matches after `.`, `/` and
-// a quote alike.
-const root = `(?:^|[^\w.'"/])`
-
-// untrustedContexts are the expression contexts a `run:` body must not name.
-// Naming one puts that text into the script the runner executes, where a quote
-// ends the surrounding string and everything after it parses as code.
-//
-// Most are contexts whose value is chosen by whoever triggers the workflow.
-// `env` is here for the adjacent reason: it re-exports whatever was assigned to
-// it, so it carries a caller-chosen value back into the script text that
-// routing the value through `env:` was meant to keep it out of.
-//
-// Deliberately short: `secrets.*`, `runner.*` and `github.repository` are not
-// caller-chosen and are used throughout these workflows.
-var untrustedContexts = []struct {
-	name    string
-	pattern *regexp.Regexp
-}{
-	// Matches `inputs.version` and `inputs['version']`.
-	{"inputs", regexp.MustCompile(`(?i)` + root + `inputs\s*[.\[]`)},
-	// `github.event` bare is injectable too (toJSON(github.event)), so no
-	// trailing accessor is required.
-	{"github.event", regexp.MustCompile(`(?i)` + root + `github\s*[.\[]\s*['"]?\s*event\b`)},
-	// A workflow_dispatch runs on the ref whoever dispatched it picked, and
-	// `git check-ref-format` accepts `$`, `(` and `)` in a ref name.
-	{"github ref", regexp.MustCompile(`(?i)` + root + `github\s*[.\[]\s*['"]?\s*(ref_name|ref|head_ref|base_ref)\b`)},
-	// `${{ env.X }}` reaches the script the same way X's own source would; the
-	// `env:` assignment only removes the expression if the body reads `$X`.
-	{"env", regexp.MustCompile(`(?i)` + root + `env\s*[.\[]`)},
-}
 
 // TestWorkflowRunStepsDoNotInterpolateUntrustedInput fails when a `run:` body in
 // any workflow embeds a caller-controlled value as program text instead of
@@ -117,8 +77,10 @@ func TestWorkflowRunStepsDoNotInterpolateUntrustedInput(t *testing.T) {
 		t.Errorf("%s: `%s` reaches the shell as program text, not as data — "+
 			"GitHub substitutes the expression into the script before any shell parses it, so a value carrying a quote "+
 			"ends the string and the rest runs as code. Put it in that step's `env:` and read it as a shell variable.\n"+
+			"If %s is genuinely not caller-chosen, add it to allowedPaths with the reason — this guard allows a listed "+
+			"path and refuses everything else, so an unreviewed context fails here by design rather than by omission.\n"+
 			"  file: %s (line %d)\n  step: %s\n  path: %s\n  context: %s",
-			f.file, f.expression, f.file, f.line, f.stepName, f.path, f.context)
+			f.file, f.expression, f.context, f.file, f.line, f.stepName, f.path, f.context)
 	}
 }
 
@@ -244,8 +206,11 @@ jobs:
 		},
 		{
 			// A path inside a string literal is data the expression never
-			// evaluates, so the `env` in it is not the `env` context.
-			name:       "a dotfile in a string literal is not the env context",
+			// evaluates, and `hashFiles` is a function rather than a context —
+			// so this names neither. Under the denylist it needed a
+			// character-class exclusion to avoid reading the `env` out of the
+			// filename; the tokenizer never sees one.
+			name:       "a literal filename and a function name are not contexts",
 			wantBodies: 1,
 			yaml: `
 jobs:
@@ -254,6 +219,37 @@ jobs:
       - name: Cache key
         run: echo "${{ hashFiles('web/.env.example') }}"
 `,
+		},
+		{
+			// The whole point of the inversion. `github.actor` was still absent
+			// from the denylist after three rounds; nobody has to think of it
+			// for an allowlist to refuse it.
+			name:       "a context nobody vetted fails closed",
+			wantBodies: 1,
+			yaml: `
+jobs:
+  build:
+    steps:
+      - name: Greet
+        run: |
+          echo "${{ github.actor }}"
+          echo "${{ github.triggering_actor }}"
+`,
+			want: []string{"${{ github.actor }}", "${{ github.triggering_actor }}"},
+		},
+		{
+			// A `}}` inside a string literal used to end the expression early,
+			// leaving everything after it as text nothing judged.
+			name:       "an expression carrying a literal brace pair is read whole",
+			wantBodies: 1,
+			yaml: `
+jobs:
+  build:
+    steps:
+      - name: Format
+        run: echo "${{ format('}}', github.event.issue.body) }}"
+`,
+			want: []string{"${{ format('}}', github.event.issue.body) }}"},
 		},
 		{
 			name:       "defaults.run is a mapping, not a script",
@@ -334,9 +330,10 @@ func scanWorkflow(file string, data []byte) ([]finding, int, error) {
 
 	var found []finding
 	for _, s := range scripts {
-		for _, match := range expression.FindAllStringSubmatch(s.body, -1) {
-			for _, ctx := range untrustedContexts {
-				if !ctx.pattern.MatchString(match[1]) {
+		bodies, texts := findExpressions(s.body)
+		for i, body := range bodies {
+			for _, path := range expressionPaths(body) {
+				if pathAllowed(path) {
 					continue
 				}
 				found = append(found, finding{
@@ -344,8 +341,8 @@ func scanWorkflow(file string, data []byte) ([]finding, int, error) {
 					path:       s.path,
 					stepName:   s.name,
 					line:       s.line,
-					expression: strings.Join(strings.Fields(match[0]), " "),
-					context:    ctx.name,
+					expression: strings.Join(strings.Fields(texts[i]), " "),
+					context:    path,
 				})
 				break
 			}
@@ -425,4 +422,77 @@ func moduleRoot(t *testing.T) string {
 		}
 		dir = parent
 	}
+}
+
+// TestAllowedPathsAreAllExercised refuses an allowlist entry no `run:` body
+// uses.
+//
+// An allowlist is only as tight as its shortest justification, and a dead entry
+// has none: it is a standing permission nobody is relying on and nobody will
+// notice, which is how a list that began as "exactly what we use" drifts into
+// "whatever anyone once needed". Requiring every entry to be exercised gives the
+// list the same stopping point the inversion gave the rule.
+//
+// It reads the workflows rather than a fixture, so removing the last use of a
+// context fails here and names the entry to drop.
+func TestAllowedPathsAreAllExercised(t *testing.T) {
+	live := liveRunBodyPaths(t)
+	if len(live) == 0 {
+		t.Fatal("no expressions found in any `run:` body; this test is not reading the workflows")
+	}
+
+	for _, pattern := range allowedPaths {
+		used := false
+		for _, path := range live {
+			if patternMatches(pattern, path) {
+				used = true
+				break
+			}
+		}
+		if !used {
+			t.Errorf("allowedPaths has %q and no `run:` body interpolates it — drop it, because an entry nothing uses is a permission nobody reviewed and nothing will catch",
+				pattern)
+		}
+	}
+}
+
+// liveRunBodyPaths returns every property path interpolated by a `run:` body
+// across this repository's workflows, allowed or not.
+func liveRunBodyPaths(t *testing.T) []string {
+	t.Helper()
+	dir := filepath.Join(moduleRoot(t), ".github", "workflows")
+
+	var paths []string
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if ext := filepath.Ext(path); ext != ".yml" && ext != ".yaml" {
+			return nil
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		var doc yaml.Node
+		if unmarshalErr := yaml.Unmarshal(data, &doc); unmarshalErr != nil {
+			return fmt.Errorf("%s: %w", path, unmarshalErr)
+		}
+		var scripts []script
+		collectScripts(&doc, "", "", &scripts)
+		for _, sc := range scripts {
+			bodies, _ := findExpressions(sc.body)
+			for _, body := range bodies {
+				paths = append(paths, expressionPaths(body)...)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking %s: %v", dir, err)
+	}
+	return paths
 }
