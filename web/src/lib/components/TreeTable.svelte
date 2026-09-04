@@ -20,7 +20,7 @@
   import type { DropPlan } from "../ordering/dropPlan";
   import { regionBandAt, type BandAxis } from "../ordering/regionBand";
   import type { PanelPolicy } from "../selection.svelte";
-  import { useSelection, useDrag, useActiveView, useTreeView, useConnection, useViewSpine } from "../contexts";
+  import { useSelection, useDrag, useActiveView, useTreeView, useConnection, useViewSpine, useConfigRetry } from "../contexts";
   import { useColumnResize } from "../composables/useColumnResize.svelte";
   import { useColumnDrag } from "../composables/useColumnDrag.svelte";
   import { useTreeDrag } from "../composables/useTreeDrag.svelte";
@@ -848,6 +848,7 @@
   // all "no sections", but one is a wait, one is a healthy project, and one is a
   // failure.
   let areasStatus = $derived(viewSpine().areas.status);
+  const retryConfig = useConfigRetry();
 
   // The way back out, offered on the two states the user cannot resolve from
   // here. Same write path as the blocked-drag toast's remedy.
@@ -866,19 +867,24 @@
       <span>Loading areas...</span>
     </div>
   {:else if areasStatus === "unavailable"}
-    <!-- The only automatic re-ask is App's, and it is gated on the WEBSOCKET
-         recovering. `CONFIG_QUERY` is an ordinary query, which urql routes
-         through `fetchExchange` over HTTP, so a config failure that left the
-         socket healthy — a 502, a resolver error — never reaches that gate. The
-         copy therefore names the remedies the user actually has rather than
-         promising a wait. -->
+    <!-- The copy may promise a wait, because one now happens: `useLiveConfig`
+         re-asks the config query on a backoff, so a failure that left the socket
+         healthy — a 502, a resolver error — heals without a reload. It said no
+         such thing before that existed (nibs-lk24), when the only re-ask was
+         gated on the WEBSOCKET recovering and queries never travel on it.
+         The button is what a reader has after the backoff gives up. -->
     <div data-testid="empty-areas-unavailable" class="flex flex-col items-center gap-3 py-12 text-body text-muted-foreground">
       <span class="text-foreground">Areas are unavailable</span>
       <span class="max-w-md text-center">
         The project configuration could not be read, so there is no area vocabulary to
-        group by. Reload to try again, or switch to another view.
+        group by. Trying again automatically.
       </span>
-      <Button variant="outline" size="sm" onclick={leaveAreasView}>Switch to Tree</Button>
+      <div class="flex items-center gap-2">
+        {#if retryConfig}
+          <Button variant="outline" size="sm" onclick={retryConfig}>Retry now</Button>
+        {/if}
+        <Button variant="outline" size="sm" onclick={leaveAreasView}>Switch to Tree</Button>
+      </div>
     </div>
   {:else}
     <div data-testid="empty-areas-none" class="flex flex-col items-center gap-3 py-12 text-body text-muted-foreground">

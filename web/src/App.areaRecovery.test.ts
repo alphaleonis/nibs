@@ -9,9 +9,12 @@ import type { ViewSpine } from "./lib/viewSpine";
 // CONFIG_QUERY runs once, so a failed one costs the areas vocabulary for the
 // rest of the session unless something re-asks: `withSendableArea` withholds
 // every `area` against the "unknown" that UNAVAILABLE_AREAS answers, so the list
-// silently widens to the whole store while the filter says otherwise. The
-// re-ask is App's, on connection recovery, and it needs the socket seam — which
-// is why this file mocks `./lib/graphql` and App.test.ts does not.
+// silently widens to the whole store while the filter says otherwise.
+//
+// Two re-asks exist, and this file covers App's wiring of both. The socket one
+// needs the socket seam, which is why this file mocks `./lib/graphql` and
+// App.test.ts does not; the automatic one is `useLiveConfig`'s backoff, whose
+// policy is tested at that unit and whose reaching the store is tested here.
 
 const { socket, configStore } = await vi.hoisted(async () => {
   const { writable } = await import("svelte/store");
@@ -102,6 +105,7 @@ vi.mock("@urql/svelte", async () => {
 });
 
 import { CombinedError } from "@urql/svelte";
+import { CONFIG_RETRY_DELAYS } from "./lib/composables/useLiveConfig.svelte";
 
 /** The spine App provided on the most recent render. */
 const currentSpine = (): ViewSpine => {
@@ -166,9 +170,11 @@ describe("App areas vocabulary recovery", () => {
     expect(prepareFilter({ area: "web" }, currentSpine().areas).serverFilter.area).toBe("web");
   });
 
-  it("leaves a config query that answered alone", async () => {
-    // A vocabulary in hand is never re-fetched, so a re-ask that failed could
-    // not take one away.
+  // The re-ask used to be gated on holding NO vocabulary, because a failed
+  // re-ask took away the one in hand. `useLiveConfig` latches the last good
+  // config, so the gate is gone — and it has to be, or a vocabulary edited while
+  // the socket was down is never picked up (the gap left open by nibs-5cuk).
+  it("re-asks on a reconnect even with a vocabulary already in hand", async () => {
     setConfig({ projectName: "test-project", areas });
     render(App);
     expect(currentSpine().areas.status).toBe("ready");
@@ -176,8 +182,43 @@ describe("App areas vocabulary recovery", () => {
     reconnectAfterGap();
     await tick();
 
-    expect(configStore.reexecute).not.toHaveBeenCalled();
+    expect(configStore.reexecute).toHaveBeenCalledWith({ requestPolicy: "network-only" });
+  });
+
+  // The half that makes the un-gating safe. urql drops `data` on a failed
+  // network-only re-execution, so without the latch this reconnect would end
+  // with the session holding no vocabulary at all — strictly worse than the
+  // staleness the re-ask exists to clear.
+  it("keeps the vocabulary when the reconnect's own re-ask fails", async () => {
+    setConfig({ projectName: "test-project", areas });
+    render(App);
+
+    reconnectAfterGap();
+    failConfig();
+    await tick();
+
     expect(currentSpine().areas.status).toBe("ready");
+    expect(currentSpine().areas.validity("web")).toBe("declared");
+    expect(prepareFilter({ area: "web" }, currentSpine().areas).serverFilter.area).toBe("web");
+  });
+
+  // nibs-zwnm: a config query that fails while the socket stays healthy fires no
+  // `onRecovered` at all — queries travel over HTTP and only subscriptions use
+  // the socket — so before the backoff nothing ever re-asked.
+  it("re-asks a config query that failed with the socket healthy, with no socket event", async () => {
+    vi.useFakeTimers();
+    try {
+      render(App);
+      hooks().onConnected?.(); // healthy, and it stays that way
+      expect(currentSpine().areas.status).toBe("unavailable");
+      configStore.reexecute.mockClear();
+
+      await vi.advanceTimersByTimeAsync(CONFIG_RETRY_DELAYS[0]);
+
+      expect(configStore.reexecute).toHaveBeenCalledWith({ requestPolicy: "network-only" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("re-asks when a reconnect lands while the FIRST config query is still open", () => {

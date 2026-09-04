@@ -21,6 +21,7 @@ export const ACTIVE_VIEW_KEY = 'nibs:active-view';
 export const CONNECTION_KEY = 'nibs:connection';
 export const VIEW_SPINE_KEY = 'nibs:view-spine';
 export const MILESTONES_KEY = 'nibs:milestones';
+export const CONFIG_RETRY_KEY = 'nibs:config-retry';
 
 export function provideSelection(s: SelectionState) { setContext(SELECTION_KEY, s); }
 export function useSelection(): SelectionState {
@@ -83,6 +84,23 @@ export function useConnection(): ConnectionRecovery | undefined {
   return getContext<ConnectionRecovery | undefined>(CONNECTION_KEY);
 }
 
+/**
+ * Re-ask the store's configuration, offered to whatever renders the dead end a
+ * failed config query leaves behind.
+ *
+ * Optional like useConnection and unlike its throwing siblings: a component
+ * rendered without a provider has a correct thing to do — offer no retry — and
+ * requiring one would make every render site supply it to test behavior that has
+ * nothing to do with the config query.
+ *
+ * The ACTION rather than the query store, so the only thing reachable from the
+ * view is the one the view is entitled to do.
+ */
+export function provideConfigRetry(retry: () => void) { setContext(CONFIG_RETRY_KEY, retry); }
+export function useConfigRetry(): (() => void) | undefined {
+  return getContext<(() => void) | undefined>(CONFIG_RETRY_KEY);
+}
+
 export function provideTreeView(t: TreeViewState) { setContext(TREE_VIEW_KEY, t); }
 export function useTreeView(): TreeViewState {
   const t = getContext<TreeViewState>(TREE_VIEW_KEY);
@@ -122,6 +140,7 @@ export function makeTestContext(
     activeView?: ActiveView;
     viewSpine?: ViewSpine;
     milestones?: readonly MilestoneOption[];
+    configRetry?: () => void;
   },
 ): Map<string, unknown> {
   const m = new Map<string, unknown>();
@@ -144,6 +163,10 @@ export function makeTestContext(
   // Always provide a tree-view so components that read collapse state work in
   // tests without extra setup.
   m.set(TREE_VIEW_KEY, opts?.treeView ?? new TreeViewState(DEFAULT_VIEW_LEVEL));
+  // Only when the caller supplies one: the retry affordance is rendered only
+  // where a retry exists, so a test that omits it is testing the no-provider
+  // arm on purpose.
+  if (opts?.configRetry) m.set(CONFIG_RETRY_KEY, opts.configRetry);
   if (opts?.confirmDialog) m.set(CONFIRM_DIALOG_KEY, opts.confirmDialog);
   // Always provide an active-view so components that open/sync the unified nib
   // view (TreeTable rows, RowContextMenu) work in tests without extra setup.

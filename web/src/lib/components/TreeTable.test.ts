@@ -402,11 +402,40 @@ describe("TreeTable", () => {
 
       const box = screen.getByTestId("empty-areas-unavailable");
       expect(box).toHaveTextContent(/unavailable/i);
-      // App's automatic re-ask is gated on websocket recovery and the config
-      // query goes over HTTP, so the copy offers the remedies that always work
-      // rather than a wait that a healthy-socket failure never ends.
-      expect(box).toHaveTextContent(/reload to try again/i);
       expect(screen.queryByTestId("empty-areas-none")).not.toBeInTheDocument();
+    });
+
+    // The copy promises a wait again, which it may now: `useLiveConfig` re-asks
+    // on a backoff, so a config query that failed with a healthy socket recovers
+    // on its own. Before that it promised nothing, deliberately (nibs-lk24),
+    // because the only re-ask was gated on the WEBSOCKET recovering.
+    it("says the retry is automatic, and offers one now", async () => {
+      const user = userEvent.setup();
+      const retry = vi.fn();
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs: [] }, stale: false }) as any,
+      );
+      render(TreeTable, {
+        props: { filter: {}, viewLevel: "areas" as ViewLevel } as any,
+        context: makeTestContext(new SelectionState(), new DragState(), {
+          viewSpine: makeViewSpine(UNAVAILABLE_AREAS),
+          configRetry: retry,
+        }),
+      });
+
+      expect(screen.getByTestId("empty-areas-unavailable")).toHaveTextContent(/trying again/i);
+
+      await user.click(screen.getByRole("button", { name: /retry now/i }));
+      expect(retry).toHaveBeenCalledTimes(1);
+    });
+
+    // The retry is an optional context, so a render without one must still draw
+    // the state rather than throw or offer a button that does nothing.
+    it("offers no retry button where nothing can retry", () => {
+      renderAreas(UNAVAILABLE_AREAS);
+
+      expect(screen.getByTestId("empty-areas-unavailable")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /retry now/i })).not.toBeInTheDocument();
     });
 
     it("offers the way back to a view that works", async () => {

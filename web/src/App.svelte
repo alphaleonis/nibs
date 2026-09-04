@@ -2,6 +2,7 @@
   import { untrack } from "svelte";
   import { setContextClient, queryStore, subscriptionStore } from "@urql/svelte";
   import { createClient } from "./lib/graphql";
+  import { useLiveConfig } from "./lib/composables/useLiveConfig.svelte";
   import {
     CONFIG_QUERY,
     CONFIG_CHANGED_SUBSCRIPTION,
@@ -25,7 +26,7 @@
   import { DROP_REFUSAL_TOAST_ID, refusalAction, type DropPlan } from "./lib/ordering/dropPlan";
   import type { AnyCommand } from "./lib/mutations/types";
   import { TreeViewState } from "./lib/treeView.svelte";
-  import { provideSelection, provideDrag, provideTreeView, provideConfirmDialog, provideActiveView, provideHistoryNav, provideConnection, provideViewSpine, provideMilestones } from "./lib/contexts";
+  import { provideSelection, provideDrag, provideTreeView, provideConfirmDialog, provideActiveView, provideHistoryNav, provideConnection, provideViewSpine, provideMilestones, provideConfigRetry } from "./lib/contexts";
   import { createAreaVocabulary } from "./lib/areas";
   import { makeViewSpine, LOADING_SPINE, UNAVAILABLE_SPINE } from "./lib/viewSpine";
   import { useConnectionRecovery } from "./lib/composables/useConnectionRecovery.svelte";
@@ -90,7 +91,22 @@
   // nobody edits the vocabulary, which is why the query stays the base answer
   // rather than being replaced by it.
   const configChanged = subscriptionStore({ client, query: CONFIG_CHANGED_SUBSCRIPTION });
-  const liveConfig = $derived($configChanged.data?.configChanged ?? $configResult.data?.config);
+
+  // Precedence, the last-good latch and the re-ask backoff are one policy and
+  // live together in `useLiveConfig`. What it buys here: a config query that
+  // failed heals on its own (nibs-zwnm — it used to be re-asked only on socket
+  // recovery, and queries never travel on the socket), and a re-ask that fails
+  // can no longer take away a vocabulary the session already had, which is what
+  // lets the reconnect re-ask below be unconditional.
+  const config = useLiveConfig({
+    queried: () => $configResult.data?.config,
+    pushed: () => $configChanged.data?.configChanged,
+    error: () => $configResult.error,
+    fetching: () => $configResult.fetching,
+    reask: () => configResult.reexecute({ requestPolicy: "network-only" }),
+  });
+  const liveConfig = $derived(config.config);
+  provideConfigRetry(() => config.retry());
 
   let projectName = $derived(liveConfig?.projectName ?? "");
 
@@ -110,7 +126,7 @@
   let declaredAreas = $derived(liveConfig?.areas ?? null);
   let viewSpine = $derived.by(() => {
     if (declaredAreas !== null) return makeViewSpine(createAreaVocabulary(declaredAreas));
-    return $configResult.error ? UNAVAILABLE_SPINE : LOADING_SPINE;
+    return config.unavailable ? UNAVAILABLE_SPINE : LOADING_SPINE;
   });
   provideViewSpine(() => viewSpine);
 
@@ -233,27 +249,21 @@
     detailStore.reexecute({ requestPolicy: "network-only" });
   }));
 
-  // CONFIG_QUERY runs once, so a failure would otherwise cost the areas
-  // vocabulary for the rest of the session: every `area` value is withheld
-  // against an "unknown" answer, which widens the list silently
-  // (withSendableArea, lib/filter.ts). A socket back after a gap is the one
-  // signal that the server is reachable again, so re-ask there.
+  // A socket back after a gap is proof the server is reachable, and everything
+  // read while it was down is stale by an unknown amount. Both queries are
+  // re-asked unconditionally.
   //
-  // Only while there is NO vocabulary in hand — a failure, or a first attempt
-  // still in flight. One already held is never re-fetched, so a re-ask that
-  // fails cannot take one away.
+  // The config one is unconditional only because `useLiveConfig` latches: the
+  // re-ask used to be gated on holding NO vocabulary, since a failure took away
+  // the one in hand. That gate also meant a vocabulary edited while the socket
+  // was down was never picked up — the server's push cannot deliver what the
+  // client was not connected for.
   //
-  // `declaredAreas === null` rather than `$configResult.error`, because those
-  // are not the same set: a reconnect landing while the FIRST config query is
-  // still open sees no error yet, and gating on the error would skip — spending
-  // the one healing signal on a request that may then fail, leaving the session
-  // on UNAVAILABLE_SPINE. The null read covers failed and not-yet-answered
-  // alike, and needs no assumption that an error implies no data.
+  // Through `retry()` rather than the store directly, so the automatic backoff
+  // budget is restored as well: a session that exhausted it while the server was
+  // unreachable gets a fresh one the moment the server proves otherwise.
   $effect(() => recovery.onRecovered(() => {
-    if (declaredAreas === null) configResult.reexecute({ requestPolicy: "network-only" });
-    // Unconditionally, unlike the config above: milestones are nibs, so the list
-    // goes stale while the socket is down in a way a one-shot vocabulary does
-    // not. A reconnect is exactly when it has to be re-read.
+    config.retry();
     milestonesResult.reexecute({ requestPolicy: "network-only" });
   }));
 
