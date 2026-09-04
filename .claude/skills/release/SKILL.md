@@ -37,10 +37,27 @@ with the user** before continuing. A version containing `-` is a pre-release.
 `develop` are not behind their remotes. If dirty or behind, **stop and ask** — do not
 auto-stash, auto-rebase, or build on a stale base.
 
-### 3. Changelog
-Stable releases need a `## <version>` section in `CHANGELOG.md` with real, user-facing
-entries (Keep a Changelog: `### Added` / `### Changed` / `### Fixed`). If the content sits
-under `## [Unreleased]`, move it into a dated `## <version> - <YYYY-MM-DD>` section.
+### 3. Documentation coherence, then the changelog
+
+First run `/decaf-quality:coherence-audit` over the documentation a release
+publishes — `README.md`, `RELEASING.md`, and the agent-facing surfaces `nibs
+cheat`, `nibs prime` and `nibs catalog` render. Fix what it finds now, or record
+why a finding is being shipped as-is; a release is the moment a stale claim first
+reaches someone who cannot check it against the source.
+
+This step is deliberate replacement, not ceremony. `cmd/readme_test.go` used to
+scrape README with regexes and compare the result against `internal/config`; it
+was retired because a guard that matches strings goes green the moment a sentence
+is reworded, and what it protected was a paragraph rather than any behavior
+(nibs-0b8j). The audit reads the sentence instead. Guards whose subject is the
+RUNNING SYSTEM were not retired and still gate every commit —
+`TestDocumentedFlagShapesTakeValues` checks the flag grammars these surfaces
+print against the flag registry, because an agent copies those and runs them.
+
+Then the changelog. Stable releases need a `## <version>` section in `CHANGELOG.md`
+with real, user-facing entries (Keep a Changelog: `### Added` / `### Changed` /
+`### Fixed`). If the content sits under `## [Unreleased]`, move it into a dated
+`## <version> - <YYYY-MM-DD>` section.
 
 Then **scrub private nib references** from the whole file:
 

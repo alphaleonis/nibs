@@ -11,7 +11,20 @@ Releases are built by a GitHub Actions workflow and published as draft GitHub Re
 
 ## Steps
 
-### 1. Update the changelog
+### 1. Audit the documentation
+
+Run `/decaf-quality:coherence-audit` over what a release publishes — `README.md`,
+this file, and the text `nibs cheat`, `nibs prime` and `nibs catalog` print — and
+fix what it finds before cutting the release.
+
+Prose is the one artifact here with no compiler and no test behind it, so a
+release is when a stale claim first reaches someone who cannot check it against
+the source. `cmd/readme_test.go` used to pin part of README mechanically and was
+retired: it matched strings, so it went green the moment a sentence was reworded.
+The tests that check documentation against the RUNNING SYSTEM were kept and still
+gate every commit.
+
+### 2. Update the changelog
 
 Move items from `## Unreleased` into a new version section in `CHANGELOG.md`:
 
@@ -24,7 +37,7 @@ Move items from `## Unreleased` into a new version section in `CHANGELOG.md`:
 
 Commit this to `main` and push.
 
-### 2. Trigger the release workflow
+### 3. Trigger the release workflow
 
 Go to **Actions > Release > Run workflow** on GitHub, keep **Use workflow from**
 set to `main`, and enter the version. Accepted formats:
@@ -44,7 +57,7 @@ The workflow will:
 7. Collect third-party dependency licenses via `go-licenses`
 8. Create a **draft** GitHub Release with the binaries and license notices
 
-### 3. Review and publish
+### 4. Review and publish
 
 The release is created as a draft. Review the release notes and attached archives on the [Releases page](https://github.com/alphaleonis/nibs/releases), then click **Publish**.
 
