@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { tick } from "svelte";
 import Toolbar from "./Toolbar.svelte";
 import { Preferences } from "../preferences.svelte";
-import { ALL_COLUMN_KEYS, DEFAULT_VISIBLE_COLUMNS } from "../types";
+import { ALL_COLUMN_KEYS, DEFAULT_VISIBLE_COLUMNS, VIEW_LEVELS, VIEW_LEVEL_LABELS } from "../types";
 import { OPEN_STATUSES } from "../constants";
 import type { NibFilter, ViewLevel, ColumnKey } from "../types";
 import type { NibSuggestion } from "../query";
@@ -95,19 +95,22 @@ describe("Toolbar", () => {
     expect(screen.getByRole("button", { name: /^View/ })).not.toBeDisabled();
   });
 
-  it("opens dropdown with all five view levels when the control is clicked", async () => {
+  it("opens a dropdown offering every view level, named the way the app names it", async () => {
     render(Toolbar, { ...defaultToolbarProps });
 
     await user.click(screen.getByRole("button", { name: /^View/ }));
 
-    // All five view levels should appear as radio items
-    const radioItems = screen.getAllByRole("menuitemradio");
-    expect(radioItems).toHaveLength(5);
-    expect(screen.getByRole("menuitemradio", { name: /Tree/i })).toBeInTheDocument();
-    expect(screen.getByRole("menuitemradio", { name: /Flat/i })).toBeInTheDocument();
-    expect(screen.getByRole("menuitemradio", { name: /Milestones/i })).toBeInTheDocument();
-    expect(screen.getByRole("menuitemradio", { name: /Epics/i })).toBeInTheDocument();
-    expect(screen.getByRole("menuitemradio", { name: /Features & Bugs/i })).toBeInTheDocument();
+    // Derived from VIEW_LEVELS rather than a frozen count and a hand-kept list:
+    // a level added there enrolls here, instead of leaving the new menu entry
+    // unasserted while the count assertion fails for a reason that reads like a
+    // regression.
+    expect(screen.getAllByRole("menuitemradio")).toHaveLength(VIEW_LEVELS.length);
+    for (const level of VIEW_LEVELS) {
+      expect(
+        screen.getByRole("menuitemradio", { name: VIEW_LEVEL_LABELS[level] }),
+        level,
+      ).toBeInTheDocument();
+    }
     expect(screen.queryByRole("menuitemradio", { name: /Backlog Items/i })).not.toBeInTheDocument();
   });
 

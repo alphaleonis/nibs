@@ -113,7 +113,7 @@ describe("spine identity", () => {
     expect(UNAVAILABLE_SPINE.areas.status).toBe("unavailable");
   });
 
-  it("gives the same view answers whatever vocabulary it is bound to, while no lens reads one", () => {
+  it("gives the same answer at a level whose lens does not read the vocabulary", () => {
     const nibs = [
       makeTreeNib({ id: "m1", type: "milestone", title: "v2.0" }),
       makeTreeNib({ id: "t1", milestone: "m1", milestoneOrder: "a" }),
@@ -122,6 +122,28 @@ describe("spine identity", () => {
     expect(bound.buildViewTree(nibs, "milestones").map((n) => n.nib.id)).toEqual(
       EMPTY_SPINE.buildViewTree(nibs, "milestones").map((n) => n.nib.id),
     );
+  });
+
+  /**
+   * The other half, and the reason a spine binds a vocabulary at all: the Areas
+   * level's sections ARE the vocabulary, so two spines answer differently for
+   * the same nibs. Which is also what makes a shape built against the wrong
+   * vocabulary a real defect rather than a theoretical one — and why
+   * `viewShapeFor` is private to viewSpine.ts, reachable only through a spine.
+   */
+  it("gives DIFFERENT answers at the areas level, one per vocabulary", () => {
+    const nibs = [makeTreeNib({ id: "t1", area: "web" })];
+    const web = makeViewSpine(webAreas).buildViewTree(nibs, "areas");
+    const infra = makeViewSpine(infraAreas).buildViewTree(nibs, "areas");
+
+    // `web/dashboard` is declared INSIDE `web`, so it is that section's row
+    // rather than a root, and it leads the rows `web` holds.
+    expect(web.map((n) => n.nib.id)).toEqual(["/section:web_"]);
+    expect(web[0].children.map((n) => n.nib.id)).toEqual(["/section:web/dashboard_", "t1"]);
+    // The same nib, under a vocabulary that declares no `web`: its assignment
+    // resolves to nothing, so it falls to the leftover.
+    expect(infra.map((n) => n.nib.id)).toEqual(["/section:infra_", "/__no_area__"]);
+    expect(infra[1].children.map((n) => n.nib.id)).toEqual(["t1"]);
   });
 });
 

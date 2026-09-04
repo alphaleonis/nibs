@@ -927,6 +927,32 @@ describe("useTreeDrag", () => {
       cleanup?.();
     });
 
+    // A nib's id is derived from its file name (nib.ParseFilename constrains
+    // only where the name SPLITS), and ValidateIDForFilename refuses "/" and
+    // "\" but not a quote — so a store holding `tnib-a"b--slug.md` loads a nib
+    // whose id is `tnib-a"b`, and that id reaches the selector this preview
+    // locates its row with.
+    it("finds the row of a nib whose id carries a quote", () => {
+      const quotedId = 'tnib-a"b';
+      const rows = [makeRow(makeNib({ id: quotedId }))];
+      const container = buildTableDOM(quotedId);
+
+      const { onRowPointerDown, drag } = setup({ rows, scrollContainer: container });
+      onRowPointerDown(quotedId, new PointerEvent("pointerdown", {
+        clientX: 100, clientY: 60, bubbles: true,
+      }));
+      window.dispatchEvent(new PointerEvent("pointermove", {
+        clientX: 106, clientY: 60, bubbles: true,
+      }));
+      expect(drag.isDragging).toBe(true);
+
+      const preview = document.querySelector("[data-testid='drag-preview']");
+      expect(preview).not.toBeNull();
+      expect(preview!.querySelector("tr")?.dataset.nibId).toBe(quotedId);
+
+      cleanup?.();
+    });
+
     it("drops the region band from the ghost, which has no row above it", () => {
       const nib1 = makeNib({ id: "nibs-001" });
       const rows = [makeRow(nib1)];

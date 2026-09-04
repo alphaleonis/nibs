@@ -87,7 +87,7 @@ describe("useKeyboardNav", () => {
       getOpenDetailOn: () => overrides.openDetailOn ?? DEFAULT_OPEN_DETAIL_ON,
     });
 
-    return { ...result, selection, toggleNode, onDragKeyDown, navigateToNib };
+    return { ...result, selection, toggleNode, onDragKeyDown, navigateToNib, scrollContainer };
   }
 
   function keydown(key: string, opts: KeyboardEventInit = {}): KeyboardEvent {
@@ -459,5 +459,49 @@ describe("useKeyboardNav", () => {
     handleKeydown(keydown("ArrowRight"));
 
     expect(toggleNode).toHaveBeenCalledWith("nibs-001");
+  });
+
+  // A section row's `data-nib-id` is `sectionRowId(key)`, and the areas lens
+  // keys each section on the area PATH — free-form config text. `ValidateAreas`
+  // (internal/config/areas.go) constrains an area name, but admits both
+  // characters below, so each reaches the attribute selector this scroll
+  // builds. A quote ends the selector's string early and throws; a backslash
+  // parses as a CSS escape and silently addresses a different id.
+  describe.each([
+    { what: "a quote", key: 'Web "Next"' },
+    { what: "a backslash", key: "Web\\Next" },
+  ])("a section row whose key carries $what", ({ key }) => {
+    it("is found by the focus scroll", () => {
+      const rowId = `/section:${key}_`;
+      // Run the scroll on the spot: production defers it to the next frame and
+      // the assertions below are synchronous. Without the escape the two cases
+      // fail differently — the quote throws out of the selector, the backslash
+      // merely matches nothing — so the call assertion is what catches both.
+      const raf = vi
+        .spyOn(globalThis, "requestAnimationFrame")
+        .mockImplementation((cb: FrameRequestCallback) => {
+          cb(0);
+          return 0;
+        });
+      try {
+        const selection = new SelectionState();
+        selection.focus("nibs-001");
+        const rows = [makeRow(makeNib({ id: "nibs-001" })), makeRow(makeNib({ id: rowId }))];
+        const { handleKeydown, scrollContainer } = setup({ selection, rows });
+
+        scrollContainer.innerHTML = "<table><tbody></tbody></table>";
+        const tr = document.createElement("tr");
+        tr.dataset.nibId = rowId;
+        scrollContainer.querySelector("tbody")!.appendChild(tr);
+        const scrollIntoView = vi.spyOn(tr, "scrollIntoView");
+
+        handleKeydown(keydown("ArrowDown"));
+
+        expect(selection.focusedNibId).toBe(rowId);
+        expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+      } finally {
+        raf.mockRestore();
+      }
+    });
   });
 });

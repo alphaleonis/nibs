@@ -7,7 +7,9 @@ import TreeTable from "./TreeTable.svelte";
 import type { TreeTableNib, ViewLevel, ColumnKey } from "../types";
 import { DEFAULT_COLUMN_WIDTHS } from "../types";
 import { isSyntheticRowId } from "../tree";
-import { EMPTY_SPINE } from "../viewSpine";
+import { EMPTY_SPINE, makeViewSpine } from "../viewSpine";
+import { createAreaVocabulary, EMPTY_AREAS, LOADING_AREAS, UNAVAILABLE_AREAS } from "../areas";
+import type { AreaVocabulary } from "../areas";
 
 const { buildTableData } = EMPTY_SPINE;
 import { OPEN_STATUSES } from "../constants";
@@ -345,6 +347,95 @@ describe("TreeTable", () => {
       await user.click(screen.getByRole("button", { name: /clear hierarchy filters/i }));
 
       expect(onfilterchange).toHaveBeenCalledWith({ type: ["bug"], search: "login" });
+    });
+  });
+
+  /**
+   * The Areas view groups by the DECLARED vocabulary. With none, every row falls
+   * into a single "No area" section — a screen that looks broken and says
+   * nothing. The three states `AreaVocabulary.status` distinguishes are not one
+   * state: a wait, a healthy project that declares no areas, and a config query
+   * that failed. Each earns its own sentence, and only one of them is a fault.
+   */
+  describe("the areas view with no vocabulary", () => {
+    function renderAreas(areas: AreaVocabulary, nibs: TreeTableNib[] = []) {
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any,
+      );
+      return render(TreeTable, {
+        props: { filter: {}, viewLevel: "areas" as ViewLevel } as any,
+        context: makeTestContext(new SelectionState(), new DragState(), {
+          viewSpine: makeViewSpine(areas),
+        }),
+      });
+    }
+
+    const declared = createAreaVocabulary([
+      { path: "web", name: "web", description: "", color: "", depth: 0 },
+    ]);
+
+    it("says the vocabulary is still on its way while the config query is open", () => {
+      renderAreas(LOADING_AREAS);
+
+      expect(screen.getByTestId("empty-areas-loading")).toBeInTheDocument();
+      expect(screen.queryByTestId("empty-areas-none")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("empty-areas-unavailable")).not.toBeInTheDocument();
+    });
+
+    it("explains that the project declares none, rather than showing a blank table", () => {
+      // A nib is present, so this is not "there is nothing to show": without the
+      // branch it would render as one anonymous "No area" section.
+      renderAreas(EMPTY_AREAS, [makeTreeTableNib({ id: "nibs-001" })]);
+
+      const box = screen.getByTestId("empty-areas-none");
+      expect(box).toHaveTextContent(/declares no areas/i);
+      expect(box).toHaveTextContent("areas:");
+      expect(box).toHaveTextContent("config.yml");
+      // Exact: the box's own heading contains the phrase, and what must be
+      // absent is the leftover SECTION row the table would otherwise draw.
+      expect(screen.queryByText("No area")).not.toBeInTheDocument();
+      expect(screen.queryByText(/no nibs found/i)).not.toBeInTheDocument();
+    });
+
+    it("reports a failed config query as a failure, not as a project with no areas", () => {
+      renderAreas(UNAVAILABLE_AREAS);
+
+      const box = screen.getByTestId("empty-areas-unavailable");
+      expect(box).toHaveTextContent(/unavailable/i);
+      // App's automatic re-ask is gated on websocket recovery and the config
+      // query goes over HTTP, so the copy offers the remedies that always work
+      // rather than a wait that a healthy-socket failure never ends.
+      expect(box).toHaveTextContent(/reload to try again/i);
+      expect(screen.queryByTestId("empty-areas-none")).not.toBeInTheDocument();
+    });
+
+    it("offers the way back to a view that works", async () => {
+      const user = userEvent.setup();
+      const onviewlevelchange = vi.fn();
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs: [] }, stale: false }) as any,
+      );
+      render(TreeTable, {
+        props: { filter: {}, viewLevel: "areas" as ViewLevel, onviewlevelchange } as any,
+        context: makeTestContext(new SelectionState(), new DragState(), {
+          viewSpine: makeViewSpine(EMPTY_AREAS),
+        }),
+      });
+
+      await user.click(screen.getByRole("button", { name: /switch to tree/i }));
+
+      expect(onviewlevelchange).toHaveBeenCalledWith("none");
+    });
+
+    it("renders the table once a vocabulary arrives", () => {
+      // The other side of the branch: with areas declared, the view is the
+      // ordinary grouped table and none of the three boxes is drawn.
+      renderAreas(declared, [makeTreeTableNib({ id: "nibs-001", area: "web" })]);
+
+      expect(screen.queryByTestId("empty-areas-loading")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("empty-areas-none")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("empty-areas-unavailable")).not.toBeInTheDocument();
+      expect(screen.getByText("Fix login bug")).toBeInTheDocument();
     });
   });
 
@@ -3377,6 +3468,32 @@ describe("TreeTable", () => {
       row.scrollIntoView = scrollSpy;
 
       sel.ensureVisible("nibs-t1");
+
+      await waitFor(() => {
+        expect(scrollSpy).toHaveBeenCalledWith({ block: "nearest" });
+      });
+    });
+
+    // Same selector, same hazard as the drag preview's: an id read off a file
+    // name can carry a quote, which ends the attribute selector's string early.
+    it("scrolls a nib whose id carries a quote into view", async () => {
+      const sel = new SelectionState();
+      const quotedId = 'nibs-a"b';
+      const nibs: TreeTableNib[] = [
+        makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+        makeTreeTableNib({ id: quotedId, title: "Quoted Task", type: "task", parentId: "nibs-m1" }),
+      ];
+
+      setupWithNibs(nibs, {}, { selection: sel });
+
+      // Found by walking rather than by a selector, so the test does not depend
+      // on the escaping it is here to check.
+      const row = [...document.querySelectorAll("tr[data-nib-id]")]
+        .find(el => (el as HTMLElement).dataset.nibId === quotedId) as HTMLElement;
+      const scrollSpy = vi.fn();
+      row.scrollIntoView = scrollSpy;
+
+      sel.ensureVisible(quotedId);
 
       await waitFor(() => {
         expect(scrollSpy).toHaveBeenCalledWith({ block: "nearest" });

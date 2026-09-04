@@ -14,6 +14,7 @@
     ListTree,
     List,
     ListFilter,
+    LayoutGrid,
     TriangleAlert,
   } from "@lucide/svelte";
   import { typeIcons } from "../icons";
@@ -192,6 +193,9 @@
     milestones: typeIcons.milestone,
     epics: typeIcons.epic,
     features: typeIcons.feature,
+    // Not a type icon: an area is vocabulary out of the project's config, not a
+    // nib type, so it takes the neutral color the two non-grouping levels use.
+    areas: { icon: LayoutGrid, color: "var(--muted-foreground)" },
   };
 
   // Resolve values: prefs takes precedence over individual props
