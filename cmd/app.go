@@ -26,6 +26,12 @@ type App struct {
 	// False means "not established here", never "something is pending": plain
 	// `nibs check` is exempt from the gate, so it must still probe.
 	MigrationGatePassed bool
+
+	// startupAreas is the vocabulary Core held when this App was built, kept
+	// because Core's own copy is REPLACED by a later reload — the areas edits
+	// re-read the store under its write lock, and the refusal wording needs to
+	// tell an argument that was true when it was typed from one that never was.
+	startupAreas *config.Areas
 }
 
 type appContextKey struct{}
@@ -53,9 +59,36 @@ func getApp(cmd *cobra.Command) *App {
 	return v
 }
 
+// newApp wraps a loaded Core, capturing the vocabulary it opened the store with
+// (see startupAreas). Every route that builds an App for a real command goes
+// through here so that capture cannot be forgotten.
+func newApp(core *nibcore.Core, migrationGatePassed bool) *App {
+	return &App{
+		Core:                core,
+		MigrationGatePassed: migrationGatePassed,
+		startupAreas:        core.Areas(),
+	}
+}
+
 // Config returns the project configuration from Core.
 func (a *App) Config() *config.Config {
 	return a.Core.Config()
+}
+
+// Areas returns the store's declared area vocabulary from Core. It is separate
+// from Config because it is reloaded while the process runs; for a CLI verb that
+// prints and exits, one snapshot is the whole story.
+func (a *App) Areas() *config.Areas {
+	return a.Core.Areas()
+}
+
+// StartupAreas returns the vocabulary this process read when it OPENED the
+// store, which an areas edit re-reads past under the store's write lock. It is
+// consulted for one purpose — wording a refusal about what moved while this
+// command waited — and never as grounds for a write: a snapshot cannot say what
+// the store declares now.
+func (a *App) StartupAreas() *config.Areas {
+	return a.startupAreas
 }
 
 // liveServeNote returns note when another nibs process is holding this store,

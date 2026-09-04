@@ -1,8 +1,14 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { setContextClient, queryStore } from "@urql/svelte";
+  import { setContextClient, queryStore, subscriptionStore } from "@urql/svelte";
   import { createClient } from "./lib/graphql";
-  import { CONFIG_QUERY, MILESTONES_QUERY, NIB_DETAIL_QUERY, NIB_CONFLICT_SNAPSHOT_QUERY } from "./lib/queries";
+  import {
+    CONFIG_QUERY,
+    CONFIG_CHANGED_SUBSCRIPTION,
+    MILESTONES_QUERY,
+    NIB_DETAIL_QUERY,
+    NIB_CONFLICT_SNAPSHOT_QUERY,
+  } from "./lib/queries";
   import { Preferences } from "./lib/preferences.svelte";
   import Toolbar from "./lib/components/Toolbar.svelte";
   import UpdateBanner from "./lib/components/UpdateBanner.svelte";
@@ -67,7 +73,26 @@
   const mutations = initMutationStore(client);
 
   const configResult = queryStore({ client, query: CONFIG_QUERY });
-  let projectName = $derived($configResult.data?.config?.projectName ?? "");
+
+  // The vocabulary is the one part of a store's config that changes under a
+  // running server: `nibs area rename` rewrites the store's areas.yml, the
+  // server reloads it and pushes the whole config here. Without this the page
+  // would keep rendering sections the store no longer declares, and withhold
+  // every `area:` filter naming a path its own nibs had already moved to, until
+  // someone reloaded (nibs-5cuk).
+  //
+  // The push carries the config rather than signalling a refetch, so a rename
+  // costs no round trip and cannot land the session on a FAILED re-ask. It
+  // selects the same fields as CONFIG_QUERY for that reason — see
+  // CONFIG_CHANGED_SUBSCRIPTION.
+  //
+  // It fires only on a CHANGE, so `data` is undefined for every session where
+  // nobody edits the vocabulary, which is why the query stays the base answer
+  // rather than being replaced by it.
+  const configChanged = subscriptionStore({ client, query: CONFIG_CHANGED_SUBSCRIPTION });
+  const liveConfig = $derived($configChanged.data?.configChanged ?? $configResult.data?.config);
+
+  let projectName = $derived(liveConfig?.projectName ?? "");
 
   // The areas vocabulary is the one per-project vocabulary codegen cannot
   // supply, so it arrives here at runtime and binds the view core. First paint
@@ -82,7 +107,7 @@
   // exchange chain has no retry, so waiting on LOADING_SPINE would last the
   // session. That case takes its own spine so a consumer can stop rather than
   // wait.
-  let declaredAreas = $derived($configResult.data?.config?.areas ?? null);
+  let declaredAreas = $derived(liveConfig?.areas ?? null);
   let viewSpine = $derived.by(() => {
     if (declaredAreas !== null) return makeViewSpine(createAreaVocabulary(declaredAreas));
     return $configResult.error ? UNAVAILABLE_SPINE : LOADING_SPINE;

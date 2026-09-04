@@ -101,6 +101,12 @@ type NibReader interface {
 	FindMentions(fromID string) []*nib.Nib
 	FindMentionedBy(targetID string) []*nib.Nib
 	Config() *config.Config
+	// Areas returns the store's declared area vocabulary as it stands NOW. It is
+	// separate from Config because it has a separate lifetime: a running server
+	// reloads it when the store's areas.yml changes, where everything on Config
+	// is fixed at startup. Take one snapshot per decision — two calls may answer
+	// from two vocabularies.
+	Areas() *config.Areas
 	// CurrentETag returns the canonical ETag of the on-disk content of the given
 	// nib (a hash of the parsed file's canonical render, so it agrees with the
 	// in-memory nib.ETag() across benign formatting drift). loadNib keeps Type and
@@ -168,6 +174,11 @@ type BlockingChecker interface {
 // NibSubscriber provides access to nib change event streams.
 type NibSubscriber interface {
 	Subscribe() (<-chan []NibEvent, func())
+	// SubscribeAreas ticks whenever the store's declared vocabulary is reloaded
+	// into one that differs from the vocabulary it replaces. It carries no
+	// payload: a consumer reads the new vocabulary from NibReader.Areas, which is
+	// the same snapshot every other reader sees.
+	SubscribeAreas() (<-chan struct{}, func())
 }
 
 // NibEvent represents a change to a nib (re-exported from nibcore).

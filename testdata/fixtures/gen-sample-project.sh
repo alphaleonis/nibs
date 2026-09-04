@@ -16,19 +16,24 @@ DIR="$STORE/data"
 rm -rf "$STORE"
 mkdir -p "$DIR"
 
-# The store holds its own config: prefix, id length, defaults and the declared
-# area vocabulary travel with the data directory, so pointing nibs at this
-# fixture applies the fixture's vocabulary and not the surrounding project's.
-# The areas block declares every path the nibs below assign, plus `docs`,
-# which nothing assigns: a declared area with no members is a state the
-# vocabulary exists to express, and the web Areas view renders it as a row
-# reading 0.
+# The store holds its own config: prefix, id length and defaults travel with the
+# data directory, so pointing nibs at this fixture applies the fixture's
+# settings and not the surrounding project's.
 cat > "$STORE/config.yml" << 'ENDCONFIG'
 nibs:
     prefix: tnib-
     id_length: 4
     default_status: todo
     default_type: task
+ENDCONFIG
+
+# The areas vocabulary is its own file because it has its own lifetime: a
+# running `nibs serve` reloads it when it changes, where everything in
+# config.yml is fixed at startup. It declares every path the nibs below assign,
+# plus `docs`, which nothing assigns: a declared area with no members is a state
+# the vocabulary exists to express, and the web Areas view renders it as a row
+# reading 0.
+cat > "$STORE/areas.yml" << 'ENDAREAS'
 areas:
     - name: auth
       description: Sign-in, sessions, tokens and account security
@@ -46,7 +51,7 @@ areas:
       description: Build, deployment and runtime infrastructure
     - name: docs
       description: Reference documentation and guides
-ENDCONFIG
+ENDAREAS
 
 # ============================================================
 # MILESTONES (2)

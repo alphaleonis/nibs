@@ -16,6 +16,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/output"
+	"github.com/alphaleonis/nibs/internal/store"
 	"github.com/spf13/pflag"
 )
 
@@ -158,13 +159,13 @@ func resetCheckFlags() {
 // test binary down with it — and every case here is deliberately non-empty.
 func setupCheckTest(t *testing.T, files map[string]string) (*App, string) {
 	t.Helper()
-	return setupCheckTestWithConfig(t, files, config.Default())
+	return setupCheckTestWithAreas(t, files, "")
 }
 
-// setupCheckTestWithConfig is setupCheckTest over a config the caller composes.
-// The areas rows need it: config.Default() declares no vocabulary, which is
-// exactly the state the area finding is deliberately silent in.
-func setupCheckTestWithConfig(t *testing.T, files map[string]string, cfg *config.Config) (*App, string) {
+// setupCheckTestWithAreas is setupCheckTest over a vocabulary the caller
+// composes. The areas rows need it: a store with no areas.yml declares nothing,
+// which is exactly the state the area finding is deliberately silent in.
+func setupCheckTestWithAreas(t *testing.T, files map[string]string, areasYAML string) (*App, string) {
 	t.Helper()
 	t.Cleanup(resetCheckFlags)
 	resetCheckFlags()
@@ -179,7 +180,13 @@ func setupCheckTestWithConfig(t *testing.T, files map[string]string, cfg *config
 		}
 	}
 
-	core := nibcore.New(nibsDir, cfg)
+	if areasYAML != "" {
+		if err := os.WriteFile(store.NewLayout(nibsDir).AreasPath(), []byte(areasYAML), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	core := nibcore.New(nibsDir, config.Default())
 	core.SetWarnWriter(nil) // the point of these tests is the report, not the stderr line
 	if err := core.Load(); err != nil {
 		t.Fatalf("Load() error = %v", err)
@@ -187,15 +194,13 @@ func setupCheckTestWithConfig(t *testing.T, files map[string]string, cfg *config
 	return &App{Core: core}, nibsDir
 }
 
-// checkAreasConfig is the vocabulary the area rows are judged against.
-func checkAreasConfig() *config.Config {
-	cfg := config.Default()
-	cfg.Areas = []config.AreaConfig{
-		{Name: "web", Children: []config.AreaConfig{{Name: "ui"}}},
-		{Name: "auth"},
-	}
-	return cfg
-}
+// checkAreasVocabulary is the vocabulary the area rows are judged against.
+const checkAreasVocabulary = `areas:
+    - name: web
+      children:
+        - name: ui
+    - name: auth
+`
 
 // checkAppPastTheGate runs the root command's pre-run gate for `nibs check`
 // against the store at storeDir and returns the App it built, so a test can
@@ -1057,7 +1062,7 @@ func TestCheckReportsUndeclaredArea(t *testing.T) {
 	}
 
 	t.Run("text report names the nib, the value and the declared set", func(t *testing.T) {
-		app, _ := setupCheckTestWithConfig(t, files, checkAreasConfig())
+		app, _ := setupCheckTestWithAreas(t, files, checkAreasVocabulary)
 		var total int
 		var runErr error
 		out := captureStdout(t, func() { total, runErr = runCheck(app) })
@@ -1086,7 +1091,7 @@ func TestCheckReportsUndeclaredArea(t *testing.T) {
 	})
 
 	t.Run("json envelope carries undeclared_areas", func(t *testing.T) {
-		app, _ := setupCheckTestWithConfig(t, files, checkAreasConfig())
+		app, _ := setupCheckTestWithAreas(t, files, checkAreasVocabulary)
 		checkJSON = true
 		var runErr error
 		out := captureStdout(t, func() { _, runErr = runCheck(app) })
@@ -1121,7 +1126,7 @@ func TestCheckReportsUndeclaredArea(t *testing.T) {
 	})
 
 	t.Run("--fix leaves the value alone and says it cannot fix it", func(t *testing.T) {
-		app, nibsDir := setupCheckTestWithConfig(t, files, checkAreasConfig())
+		app, nibsDir := setupCheckTestWithAreas(t, files, checkAreasVocabulary)
 		checkFix = true
 		var total int
 		var runErr error
@@ -1161,9 +1166,9 @@ func TestCheckReportsUndeclaredArea(t *testing.T) {
 	})
 
 	t.Run("a milestone is reported by the axis rule alone", func(t *testing.T) {
-		app, _ := setupCheckTestWithConfig(t, map[string]string{
+		app, _ := setupCheckTestWithAreas(t, map[string]string{
 			"chk-arms1--waypoint.md": chkMilestoneWithStrandedAreaNib,
-		}, checkAreasConfig())
+		}, checkAreasVocabulary)
 		checkJSON = true
 		var runErr error
 		out := captureStdout(t, func() { _, runErr = runCheck(app) })

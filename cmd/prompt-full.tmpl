@@ -185,7 +185,7 @@ Optional t-shirt size; `-e` on create, `--estimate` on update. Default is Medium
 
 ## Areas
 
-Areas are the one vocabulary a project authors itself: a nested `areas:` block in the store's `config.yml`, addressed by the node's full `/`-separated path (`web/dashboard` is the `dashboard` node declared under `web`). Run `nibs area list` for this project's tree, each node with the description that says what belongs in it; `nibs area rename` rewrites every nib assigned at or below the node; `nibs area rm` refuses while any still are, unless given `--move-to <area>` or `--unassign`. `nibs catalog areas` prints the whole grammar.
+Areas are the one vocabulary a project authors itself: a nested `areas:` block in the store's `areas.yml`, addressed by the node's full `/`-separated path (`web/dashboard` is the `dashboard` node declared under `web`). Run `nibs area list` for this project's tree, each node with the description that says what belongs in it; `nibs area rename` rewrites every nib assigned at or below the node; `nibs area rm` refuses while any still are, unless given `--move-to <area>` or `--unassign`. `nibs catalog areas` prints the whole grammar.
 
 Assign at creation with `nibs new … --area <path>`, later with `nibs set <id> --area <path>`; `nibs set <id> --clear area` unassigns. A path the store does not declare is a validation error naming the declared set — on the filter as much as on the assignment — and a milestone takes no area at all. Read an area's work with `nibs list --area <path>`, which is **downward-closed** over the declared tree: `--area web` returns the nibs in `web` and those in every area declared beneath it. That flag is `nibs list` only; `nibs rel` takes no `--area`.
 

@@ -831,7 +831,7 @@ func (c *Core) CheckAllLinks() *LinkCheckResult {
 	// by design and this report by the exemption — so the dead end is
 	// discoverable only by attempting a write. Revisiting it means a single
 	// summary line, not N findings.
-	if c.config != nil && c.config.AreasDeclared() {
+	if c.config != nil && c.Areas().Declared() {
 		for _, id := range ids {
 			b := c.nibs[id]
 			// A type that refuses `area:` outright is already an InvalidAxis

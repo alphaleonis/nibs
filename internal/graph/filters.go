@@ -413,7 +413,7 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 
 	// The OWNERSHIP axis. area is DOWNWARD-CLOSED over the declared tree: the
 	// path named plus every area declared beneath it, so `area: "web"` selects
-	// web/dashboard too. Closure is Config.IsAreaWithin's, which descends the
+	// web/dashboard too. Closure is Areas.IsWithin's, which descends the
 	// tree rather than testing the strings — `webhooks` is not within `web`, and
 	// a stored value the vocabulary no longer declares is within nothing, so a
 	// retired area is not swept back in by a filter naming its former parent.
@@ -424,11 +424,14 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 	// rejected rather than answered with the empty set, which would read as "no
 	// work is in this area" for a path that names no area at all.
 	if filter.Area != nil {
-		cfg := reader.Config()
-		if err := refuseUndeclaredArea(cfg, "area", *filter.Area); err != nil {
+		// ONE snapshot for both steps. The vocabulary reloads while the server
+		// runs, so asking twice could refuse against one tree and then filter
+		// against another — accepting a path and returning nothing for it.
+		areas := reader.Areas()
+		if err := refuseUndeclaredArea(areas, "area", *filter.Area); err != nil {
 			return nil, err
 		}
-		result = filterByAreaWithin(result, cfg, *filter.Area)
+		result = filterByAreaWithin(result, areas, *filter.Area)
 	}
 
 	// Mention filters (computed via FindMentions/FindMentionedBy on the reader,
@@ -822,20 +825,20 @@ func excludeByField(nibs []*nib.Nib, values []string, getter func(*nib.Nib) stri
 // echoed value would then contradict, and matches cmd/list.go's own `== ""`
 // tests.
 //
-// Every rule it applies belongs to the config: membership is IsValidArea, and
-// the declared set is AreaList's rendering — empty when the store declares
-// none, which is what selects the wording that says so instead of naming an
-// empty allowed set.
-func refuseUndeclaredArea(cfg *config.Config, field, path string) error {
+// Every rule it applies belongs to the vocabulary: membership is IsValid, and
+// the declared set is List's rendering — empty when the store declares none,
+// which is what selects the wording that says so instead of naming an empty
+// allowed set.
+func refuseUndeclaredArea(areas *config.Areas, field, path string) error {
 	if path == "" {
 		return &FilterAreaError{Field: field}
 	}
-	if cfg.IsValidArea(path) {
+	if areas.IsValid(path) {
 		return nil
 	}
 	declared := ""
-	if cfg.AreasDeclared() {
-		declared = cfg.AreaList()
+	if areas.Declared() {
+		declared = areas.List()
 	}
 	return &FilterAreaError{Field: field, Path: config.RenderAreaPath(path), Declared: declared}
 }
@@ -845,10 +848,10 @@ func refuseUndeclaredArea(cfg *config.Config, field, path string) error {
 // candidate is judged only on its own value — and one the vocabulary does not
 // declare is within nothing, which is how a retired area stays out of an answer
 // about the tree that no longer holds it.
-func filterByAreaWithin(nibs []*nib.Nib, cfg *config.Config, ancestor string) []*nib.Nib {
+func filterByAreaWithin(nibs []*nib.Nib, areas *config.Areas, ancestor string) []*nib.Nib {
 	var result []*nib.Nib
 	for _, b := range nibs {
-		if cfg.IsAreaWithin(b.Area, ancestor) {
+		if areas.IsWithin(b.Area, ancestor) {
 			result = append(result, b)
 		}
 	}

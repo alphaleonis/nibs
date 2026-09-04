@@ -150,7 +150,7 @@ func initAppForCommand(cmd *cobra.Command) (*App, error) {
 	// Getting past the gate IS the answer to "does this store need
 	// migration?", so record it rather than making a command re-scan for it
 	// (see App.MigrationGatePassed).
-	return &App{Core: core, MigrationGatePassed: gated}, nil
+	return newApp(core, gated), nil
 }
 
 // isCompletionRequest reports whether cmd is the hidden command a shell runs on

@@ -272,7 +272,7 @@ func closeMoveOpenWork(ctx context.Context, app *App, resolver *graph.Resolver, 
 		return nil, closeEmptyOpenSetError(subject, "move", "--move-open-to", queued)
 	}
 
-	if err := closePreValidateMembers(app.Config(), resolver, subject, open); err != nil {
+	if err := closePreValidateMembers(app.Config(), app.Areas(), resolver, subject, open); err != nil {
 		return nil, err
 	}
 
@@ -299,7 +299,7 @@ func closeUnassignOpenWork(ctx context.Context, app *App, resolver *graph.Resolv
 	if len(open) == 0 {
 		return nil, closeEmptyOpenSetError(subject, "unassign", "--unassign-open", queued)
 	}
-	if err := closePreValidateMembers(app.Config(), resolver, subject, open); err != nil {
+	if err := closePreValidateMembers(app.Config(), app.Areas(), resolver, subject, open); err != nil {
 		return nil, err
 	}
 
@@ -503,7 +503,7 @@ func closePartialQueueWriteError(cfg *config.Config, resolver *graph.Resolver, s
 // exclusivity conflict all stay with the loop: the first two cannot be
 // pre-empted by a read, and the third is not a dead end — --unassign-open
 // clears it.
-func closePreValidateMembers(cfg *config.Config, resolver *graph.Resolver, subject *nib.Nib, open []string) error {
+func closePreValidateMembers(cfg *config.Config, areas *config.Areas, resolver *graph.Resolver, subject *nib.Nib, open []string) error {
 	var blocked, reasons []string
 	checkNamesAll := true
 	for _, id := range open {
@@ -515,7 +515,7 @@ func closePreValidateMembers(cfg *config.Config, resolver *graph.Resolver, subje
 		}
 		if err := closeMemberOwnGuards(resolver, member); err != nil {
 			blocked = append(blocked, id)
-			if !closeCheckNamesCause(cfg, err) {
+			if !closeCheckNamesCause(areas, err) {
 				checkNamesAll = false
 			}
 			if len(reasons) < closeQueueNameLimit {
@@ -576,10 +576,10 @@ func closeCheckPointer(namesEveryBlockedMember bool) string {
 // ValidateAxes with the assignment cleared, which is a strict subset of the
 // reading CheckAllLinks reports on, so a member this refuses is one check
 // reports.
-func closeCheckNamesCause(cfg *config.Config, err error) bool {
+func closeCheckNamesCause(areas *config.Areas, err error) bool {
 	var areaErr *config.AreaError
 	if errors.As(err, &areaErr) {
-		return cfg.AreasDeclared()
+		return areas.Declared()
 	}
 	return true
 }

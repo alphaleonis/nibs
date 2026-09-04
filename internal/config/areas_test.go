@@ -11,23 +11,10 @@ import (
 	"unicode/utf8"
 )
 
-// writeStoreConfig writes body as a store's config.yml and returns the store
-// directory, so a test can reach the file through either Load or LoadFromStore.
-func writeStoreConfig(t *testing.T, body string) string {
-	t.Helper()
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte(body), 0o644); err != nil {
-		t.Fatalf("writing config: %v", err)
-	}
-	return dir
-}
-
 // sampleAreasConfig declares a vocabulary with two roots whose names share a
 // prefix (`web` and `webhooks`), which is what separates tree descent from a
 // string-prefix test.
-const sampleAreasConfig = `nibs:
-    prefix: t-
-areas:
+const sampleAreasConfig = `areas:
     - name: web
       description: The browser client
       color: blue
@@ -110,17 +97,17 @@ func TestLoadRejectsMalformedAreas(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := writeStoreConfig(t, tt.body)
-			cfg, err := LoadFromStore(dir)
+			dir := writeStoreAreas(t, tt.body)
+			areas, err := LoadAreasFromStore(dir)
 			if err == nil {
-				t.Fatalf("LoadFromStore succeeded, want an error; areas = %v", cfg.AreaPaths())
+				t.Fatalf("LoadAreasFromStore succeeded, want an error; areas = %v", areas.Paths())
 			}
 			msg := err.Error()
-			if !strings.Contains(msg, "config.yml") {
-				t.Errorf("error %q does not name the config file", msg)
+			if !strings.Contains(msg, "areas.yml") {
+				t.Errorf("error %q does not name the areas file", msg)
 			}
 			// The fault is asserted on the UNWRAPPED error. The wrapper
-			// interpolates the config path, and t.TempDir() derives that path from
+			// interpolates the file's path, and t.TempDir() derives that path from
 			// the subtest name — so a want entry that also occurs in the name (the
 			// word "name", say) would be satisfied by the path rather than by the
 			// message, and the row would pass however the message read.
@@ -149,15 +136,15 @@ func TestLoadAcceptsAbsentOrEmptyAreas(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := writeStoreConfig(t, tt.body)
-			cfg, err := LoadFromStore(dir)
+			dir := writeStoreAreas(t, tt.body)
+			cfg, err := LoadAreasFromStore(dir)
 			if err != nil {
 				t.Fatalf("LoadFromStore: %v", err)
 			}
-			if got := cfg.AreaPaths(); len(got) != 0 {
+			if got := cfg.Paths(); len(got) != 0 {
 				t.Errorf("AreaPaths() = %v, want none", got)
 			}
-			if cfg.IsValidArea("web") {
+			if cfg.IsValid("web") {
 				t.Error("IsValidArea(\"web\") = true with no declared vocabulary")
 			}
 		})
@@ -165,8 +152,8 @@ func TestLoadAcceptsAbsentOrEmptyAreas(t *testing.T) {
 }
 
 func TestAreaPathsEnumeratesInDeclarationOrder(t *testing.T) {
-	dir := writeStoreConfig(t, sampleAreasConfig)
-	cfg, err := LoadFromStore(dir)
+	dir := writeStoreAreas(t, sampleAreasConfig)
+	cfg, err := LoadAreasFromStore(dir)
 	if err != nil {
 		t.Fatalf("LoadFromStore: %v", err)
 	}
@@ -177,17 +164,17 @@ func TestAreaPathsEnumeratesInDeclarationOrder(t *testing.T) {
 		"auth",
 		"api", "api/v2",
 	}
-	if got := cfg.AreaPaths(); !slices.Equal(got, want) {
+	if got := cfg.Paths(); !slices.Equal(got, want) {
 		t.Errorf("AreaPaths() = %v, want %v", got, want)
 	}
-	if got, want := cfg.AreaList(), strings.Join(want, ", "); got != want {
+	if got, want := cfg.List(), strings.Join(want, ", "); got != want {
 		t.Errorf("AreaList() = %q, want %q", got, want)
 	}
 }
 
 func TestGetAreaResolvesDeclaredPaths(t *testing.T) {
-	dir := writeStoreConfig(t, sampleAreasConfig)
-	cfg, err := LoadFromStore(dir)
+	dir := writeStoreAreas(t, sampleAreasConfig)
+	cfg, err := LoadAreasFromStore(dir)
 	if err != nil {
 		t.Fatalf("LoadFromStore: %v", err)
 	}
@@ -211,11 +198,11 @@ func TestGetAreaResolvesDeclaredPaths(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run("path="+tt.path, func(t *testing.T) {
-			node := cfg.GetArea(tt.path)
+			node := cfg.Get(tt.path)
 			if (node != nil) != tt.wantFound {
 				t.Fatalf("GetArea(%q) found = %v, want %v", tt.path, node != nil, tt.wantFound)
 			}
-			if got := cfg.IsValidArea(tt.path); got != tt.wantFound {
+			if got := cfg.IsValid(tt.path); got != tt.wantFound {
 				t.Errorf("IsValidArea(%q) = %v, want %v", tt.path, got, tt.wantFound)
 			}
 			if tt.wantFound && node.Description != tt.wantDescription {
@@ -224,14 +211,14 @@ func TestGetAreaResolvesDeclaredPaths(t *testing.T) {
 		})
 	}
 
-	if got := cfg.GetArea("web").Color; got != "blue" {
+	if got := cfg.Get("web").Color; got != "blue" {
 		t.Errorf("GetArea(\"web\").Color = %q, want \"blue\"", got)
 	}
 }
 
 func TestIsAreaWithin(t *testing.T) {
-	dir := writeStoreConfig(t, sampleAreasConfig)
-	cfg, err := LoadFromStore(dir)
+	dir := writeStoreAreas(t, sampleAreasConfig)
+	cfg, err := LoadAreasFromStore(dir)
 	if err != nil {
 		t.Fatalf("LoadFromStore: %v", err)
 	}
@@ -258,20 +245,17 @@ func TestIsAreaWithin(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := cfg.IsAreaWithin(tt.path, tt.ancestor); got != tt.want {
+			if got := cfg.IsWithin(tt.path, tt.ancestor); got != tt.want {
 				t.Errorf("IsAreaWithin(%q, %q) = %v, want %v", tt.path, tt.ancestor, got, tt.want)
 			}
 		})
 	}
 }
 
-// TestSaveRoundTripsAreas pins the second top-level block through Save. Config
-// serialized exactly one key until areas arrived, so nothing had ever proved
-// that a whole-config write emits a sibling of `nibs:` and reads it back.
-func TestSaveRoundTripsAreas(t *testing.T) {
-	cfg := Default()
-	cfg.Nibs.Prefix = "t-"
-	cfg.Areas = []AreaConfig{
+// TestAreasSaveRoundTrips pins the vocabulary through its own writer: what
+// Save emits, LoadAreasFromStore must read back node for node.
+func TestAreasSaveRoundTrips(t *testing.T) {
+	areas := &Areas{Nodes: []AreaConfig{
 		{
 			Name:        "web",
 			Description: "The browser client",
@@ -282,65 +266,72 @@ func TestSaveRoundTripsAreas(t *testing.T) {
 			},
 		},
 		{Name: "auth", Description: "Sign-in and sessions"},
-	}
+	}}
 
 	dir := t.TempDir()
-	if _, err := cfg.Save(dir); err != nil {
+	if err := areas.Save(dir); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(dir, "config.yml"))
+	raw, err := os.ReadFile(filepath.Join(dir, "areas.yml"))
 	if err != nil {
-		t.Fatalf("reading saved config: %v", err)
+		t.Fatalf("reading saved areas: %v", err)
 	}
-	if !strings.Contains(string(raw), "\nareas:\n") {
-		t.Errorf("saved config has no top-level areas block:\n%s", raw)
+	if !strings.Contains(string(raw), "areas:\n") {
+		t.Errorf("saved areas file has no top-level areas block:\n%s", raw)
 	}
 
-	got, err := LoadFromStore(dir)
+	got, err := LoadAreasFromStore(dir)
 	if err != nil {
-		t.Fatalf("LoadFromStore: %v", err)
-	}
-	if got.Nibs.Prefix != "t-" {
-		t.Errorf("Prefix = %q, want \"t-\"", got.Nibs.Prefix)
+		t.Fatalf("LoadAreasFromStore: %v", err)
 	}
 	wantPaths := []string{"web", "web/dashboard", "auth"}
-	if paths := got.AreaPaths(); !slices.Equal(paths, wantPaths) {
-		t.Fatalf("AreaPaths() = %v, want %v", paths, wantPaths)
+	if paths := got.Paths(); !slices.Equal(paths, wantPaths) {
+		t.Fatalf("Paths() = %v, want %v", paths, wantPaths)
 	}
-	dashboard := got.GetArea("web/dashboard")
+	dashboard := got.Get("web/dashboard")
 	if dashboard.Description != "The landing dashboard" || dashboard.Order != "a0" {
 		t.Errorf("web/dashboard = %+v, want the description and order that were saved", *dashboard)
 	}
-	if web := got.GetArea("web"); web.Color != "blue" || web.Order != "a" {
-		t.Errorf("web = %+v, want color \"blue\" and order \"a\"", *web)
-	}
 }
 
-// TestSaveOmitsAreasWhenNoneAreDeclared keeps `nibs init` writing a config with
-// no areas block: a project that has not declared a vocabulary is a normal
-// project, and an empty `areas:` key would read as a deliberate one.
-func TestSaveOmitsAreasWhenNoneAreDeclared(t *testing.T) {
-	dir := t.TempDir()
-	if _, err := DefaultWithPrefix("t-").Save(dir); err != nil {
+// A vocabulary that declares nothing REMOVES the file rather than writing an
+// empty `areas:` key, so "declares nothing" has one shape on disk.
+func TestAreasSaveRemovesTheFileWhenNothingIsDeclared(t *testing.T) {
+	dir := writeStoreAreas(t, "areas:\n    - name: web\n")
+
+	if err := (&Areas{}).Save(dir); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, "config.yml"))
-	if err != nil {
-		t.Fatalf("reading saved config: %v", err)
-	}
-	if strings.Contains(string(raw), "areas") {
-		t.Errorf("saved config mentions areas:\n%s", raw)
+
+	if _, err := os.Stat(filepath.Join(dir, "areas.yml")); !os.IsNotExist(err) {
+		t.Errorf("areas.yml still present after saving an empty vocabulary (stat err = %v)", err)
 	}
 }
 
-// TestSetStoredPrefixPreservesAreas guards the in-place key edit against the
-// new block: it rewrites through a yaml.Node tree precisely so unmodeled and
-// untouched keys survive, and areas is the largest thing it has to carry.
-func TestSetStoredPrefixPreservesAreas(t *testing.T) {
-	dir := writeStoreConfig(t, sampleAreasConfig)
+// TestSetStoredPrefixLeavesTheVocabularyAlone pins the independence the split
+// bought: the prefix editor rewrites config.yml, and areas.yml is not its file
+// to touch.
+func TestSetStoredPrefixLeavesTheVocabularyAlone(t *testing.T) {
+	dir := writeStoreAreas(t, sampleAreasConfig)
+	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte("nibs:\n    prefix: t-\n"), 0o644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+	before, err := os.ReadFile(filepath.Join(dir, "areas.yml"))
+	if err != nil {
+		t.Fatalf("reading areas: %v", err)
+	}
+
 	if _, err := SetStoredPrefix(dir, "new-"); err != nil {
 		t.Fatalf("SetStoredPrefix: %v", err)
+	}
+
+	after, err := os.ReadFile(filepath.Join(dir, "areas.yml"))
+	if err != nil {
+		t.Fatalf("reading areas after the edit: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("SetStoredPrefix rewrote areas.yml:\n--- before ---\n%s\n--- after ---\n%s", before, after)
 	}
 
 	cfg, err := LoadFromStore(dir)
@@ -350,19 +341,12 @@ func TestSetStoredPrefixPreservesAreas(t *testing.T) {
 	if cfg.Nibs.Prefix != "new-" {
 		t.Errorf("Prefix = %q, want \"new-\"", cfg.Nibs.Prefix)
 	}
-	want := []string{"web", "web/dashboard", "web/settings", "webhooks", "auth", "api", "api/v2"}
-	if got := cfg.AreaPaths(); !slices.Equal(got, want) {
-		t.Errorf("AreaPaths() = %v, want %v", got, want)
-	}
-	if got := cfg.GetArea("web/dashboard"); got == nil || got.Description != "The landing dashboard" {
-		t.Errorf("web/dashboard lost its description after SetStoredPrefix: %+v", got)
-	}
 }
 
 func TestValidateAreasAcceptsWellFormedColors(t *testing.T) {
 	for _, color := range []string{"", "blue", "lightgray", "#abc", "#AABBCC", "#aabbccdd", "#1234"} {
-		cfg := &Config{Areas: []AreaConfig{{Name: "web", Color: color}}}
-		if err := cfg.ValidateAreas(); err != nil {
+		areas := &Areas{Nodes: []AreaConfig{{Name: "web", Color: color}}}
+		if err := areas.Validate(); err != nil {
 			t.Errorf("ValidateAreas with color %q: %v", color, err)
 		}
 	}
@@ -374,19 +358,19 @@ func TestValidateAreasAcceptsWellFormedColors(t *testing.T) {
 // content — an escape sequence, a backtick that closes the code span a message
 // put around the list, a newline that turns one line into several.
 func TestAreaListRendersFileSourcedNames(t *testing.T) {
-	dir := writeStoreConfig(t, "areas:\n    - name: \"a\\eb\"\n    - name: \"c`d\"\n    - name: \"e\\nf\"\n")
-	cfg, err := LoadFromStore(dir)
+	dir := writeStoreAreas(t, "areas:\n    - name: \"a\\eb\"\n    - name: \"c`d\"\n    - name: \"e\\nf\"\n")
+	areas, err := LoadAreasFromStore(dir)
 	if err != nil {
-		t.Fatalf("LoadFromStore: %v", err)
+		t.Fatalf("LoadAreasFromStore: %v", err)
 	}
 
-	if got, want := cfg.AreaList(), "a b, c d, e f"; got != want {
+	if got, want := areas.List(), "a b, c d, e f"; got != want {
 		t.Errorf("AreaList() = %q, want %q", got, want)
 	}
 	// AreaPaths is the data accessor and must stay verbatim: resolution compares
 	// a nib's `area:` value against it byte for byte.
 	wantPaths := []string{"a\x1bb", "c`d", "e\nf"}
-	if got := cfg.AreaPaths(); !slices.Equal(got, wantPaths) {
+	if got := areas.Paths(); !slices.Equal(got, wantPaths) {
 		t.Errorf("AreaPaths() = %q, want %q", got, wantPaths)
 	}
 }
@@ -401,9 +385,9 @@ func TestAreaListBoundsWhatItRepeats(t *testing.T) {
 		for i := range areas {
 			areas[i] = AreaConfig{Name: fmt.Sprintf("a%03d", i)}
 		}
-		cfg := &Config{Areas: areas}
+		vocab := &Areas{Nodes: areas}
 
-		got := cfg.AreaList()
+		got := vocab.List()
 		if !strings.HasSuffix(got, "…and 5 more") {
 			t.Errorf("AreaList() = %q, want it to end by stating the elided count", got)
 		}
@@ -423,9 +407,9 @@ func TestAreaListBoundsWhatItRepeats(t *testing.T) {
 		for i := range areas {
 			areas[i] = AreaConfig{Name: fmt.Sprintf("a%03d", i)}
 		}
-		cfg := &Config{Areas: areas}
+		vocab := &Areas{Nodes: areas}
 
-		got := cfg.AreaList()
+		got := vocab.List()
 		if strings.Contains(got, "more") {
 			t.Errorf("AreaList() = %q, want no elision claim when every path fits", got)
 		}
@@ -436,18 +420,18 @@ func TestAreaListBoundsWhatItRepeats(t *testing.T) {
 
 	t.Run("one path's length exactly at the bound", func(t *testing.T) {
 		name := strings.Repeat("x", maxListedAreaRunes)
-		cfg := &Config{Areas: []AreaConfig{{Name: name}}}
+		vocab := &Areas{Nodes: []AreaConfig{{Name: name}}}
 
-		got := cfg.AreaList()
+		got := vocab.List()
 		if got != name {
 			t.Errorf("AreaList() = %q, want %q returned whole and unmarked", got, name)
 		}
 	})
 
 	t.Run("one path's length", func(t *testing.T) {
-		cfg := &Config{Areas: []AreaConfig{{Name: strings.Repeat("x", maxListedAreaRunes+50)}}}
+		vocab := &Areas{Nodes: []AreaConfig{{Name: strings.Repeat("x", maxListedAreaRunes+50)}}}
 
-		got := cfg.AreaList()
+		got := vocab.List()
 		if n := utf8.RuneCountInString(got); n != maxListedAreaRunes+1 {
 			t.Errorf("AreaList() is %d runes, want %d plus the truncation marker", n, maxListedAreaRunes)
 		}
@@ -463,16 +447,16 @@ func TestAreaListBoundsWhatItRepeats(t *testing.T) {
 // worth its own row — an empty allowed set reads as a bug in nibs rather than
 // as an undeclared vocabulary, so the refusal has to say which it is.
 func TestValidateAreaAssignment(t *testing.T) {
-	dir := writeStoreConfig(t, sampleAreasConfig)
-	declared, err := LoadFromStore(dir)
+	dir := writeStoreAreas(t, sampleAreasConfig)
+	declared, err := LoadAreasFromStore(dir)
 	if err != nil {
 		t.Fatalf("LoadFromStore: %v", err)
 	}
-	none := &Config{}
+	none := &Areas{}
 
 	tests := []struct {
 		name     string
-		cfg      *Config
+		cfg      *Areas
 		path     string
 		wantErr  bool
 		contains []string
@@ -505,7 +489,7 @@ func TestValidateAreaAssignment(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.cfg.ValidateAreaAssignment(tt.path)
+			err := tt.cfg.ValidateAssignment(tt.path)
 			if !tt.wantErr {
 				if err != nil {
 					t.Fatalf("ValidateAreaAssignment(%q) = %v, want nil", tt.path, err)
@@ -536,19 +520,19 @@ func TestValidateAreaAssignment(t *testing.T) {
 // about it — a caller who passed no area is otherwise told to correct an
 // argument they never wrote.
 func TestValidateStoredArea(t *testing.T) {
-	dir := writeStoreConfig(t, sampleAreasConfig)
-	declared, err := LoadFromStore(dir)
+	dir := writeStoreAreas(t, sampleAreasConfig)
+	declared, err := LoadAreasFromStore(dir)
 	if err != nil {
 		t.Fatalf("LoadFromStore: %v", err)
 	}
-	none := &Config{}
+	none := &Areas{}
 
 	// The verdicts must not diverge, so they are asserted against the sibling
 	// rather than restated: a rule that accepted here and refused there would
 	// make the message depend on which write path reached it.
 	for _, tc := range []struct {
 		vocab string
-		cfg   *Config
+		cfg   *Areas
 		path  string
 	}{
 		{"a declared vocabulary", declared, ""}, {"no declared areas", none, ""},
@@ -557,8 +541,8 @@ func TestValidateStoredArea(t *testing.T) {
 		{"no declared areas", none, "web"},
 	} {
 		t.Run(fmt.Sprintf("agrees with the supplied-value rule on %q under %s", tc.path, tc.vocab), func(t *testing.T) {
-			supplied := tc.cfg.ValidateAreaAssignment(tc.path)
-			stored := tc.cfg.ValidateStoredArea("cfg-n001", tc.path)
+			supplied := tc.cfg.ValidateAssignment(tc.path)
+			stored := tc.cfg.ValidateStored("cfg-n001", tc.path)
 			if (supplied == nil) != (stored == nil) {
 				t.Fatalf("ValidateAreaAssignment(%q) = %v but ValidateStoredArea(%q) = %v", tc.path, supplied, tc.path, stored)
 			}
@@ -567,7 +551,7 @@ func TestValidateStoredArea(t *testing.T) {
 
 	for _, tt := range []struct {
 		name     string
-		cfg      *Config
+		cfg      *Areas
 		path     string
 		contains []string
 		absent   []string
@@ -592,7 +576,7 @@ func TestValidateStoredArea(t *testing.T) {
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.cfg.ValidateStoredArea("cfg-n001", tt.path)
+			err := tt.cfg.ValidateStored("cfg-n001", tt.path)
 			if err == nil {
 				t.Fatalf("ValidateStoredArea(%q) = nil, want an error", tt.path)
 			}
@@ -616,8 +600,8 @@ func TestValidateStoredArea(t *testing.T) {
 	// The refused value is file-sourced on this path by definition, so it stays
 	// on the same rendering boundary the supplied-value refusal applies.
 	t.Run("the refused value is rendered, not echoed raw", func(t *testing.T) {
-		cfg := &Config{Areas: []AreaConfig{{Name: "web"}}}
-		err := cfg.ValidateStoredArea("cfg-n001", "we`b")
+		areas := &Areas{Nodes: []AreaConfig{{Name: "web"}}}
+		err := areas.ValidateStored("cfg-n001", "we`b")
 		if err == nil {
 			t.Fatal("ValidateStoredArea() = nil, want an error")
 		}
@@ -629,8 +613,8 @@ func TestValidateStoredArea(t *testing.T) {
 	// The id is interpolated into a command the reader is invited to run, and
 	// it comes from a filename — so it crosses the same boundary the value does.
 	t.Run("the nib id is rendered, not echoed raw", func(t *testing.T) {
-		cfg := &Config{Areas: []AreaConfig{{Name: "web"}}}
-		err := cfg.ValidateStoredArea("nib\x1b[31m1", "nosuch")
+		areas := &Areas{Nodes: []AreaConfig{{Name: "web"}}}
+		err := areas.ValidateStored("nib\x1b[31m1", "nosuch")
 		if err == nil {
 			t.Fatal("ValidateStoredArea() = nil, want an error")
 		}
@@ -645,7 +629,7 @@ func TestValidateStoredArea(t *testing.T) {
 // reaching this rule is not always a flag: Core.Update re-checks the `area:` a
 // nib already carries, so a hostile FILE reaches the message too.
 func TestValidateAreaAssignmentRendersTheRefusedValue(t *testing.T) {
-	cfg := &Config{Areas: []AreaConfig{{Name: "web"}}}
+	areas := &Areas{Nodes: []AreaConfig{{Name: "web"}}}
 
 	// The backtick is the rune the %q around the value does NOT answer: it is
 	// printable, so strconv.Quote passes it through, and it closes the code span
@@ -653,7 +637,7 @@ func TestValidateAreaAssignmentRendersTheRefusedValue(t *testing.T) {
 	// substitutes it (non-printables are already covered by %q — see
 	// internal/safetext).
 	t.Run("a backtick cannot close the message's code span", func(t *testing.T) {
-		err := cfg.ValidateAreaAssignment("we`b")
+		err := areas.ValidateAssignment("we`b")
 		if err == nil {
 			t.Fatal("ValidateAreaAssignment accepted an undeclared path")
 		}
@@ -663,7 +647,7 @@ func TestValidateAreaAssignmentRendersTheRefusedValue(t *testing.T) {
 	})
 
 	t.Run("an oversized value is bounded", func(t *testing.T) {
-		err := cfg.ValidateAreaAssignment(strings.Repeat("x", maxListedAreaRunes*4))
+		err := areas.ValidateAssignment(strings.Repeat("x", maxListedAreaRunes*4))
 		if err == nil {
 			t.Fatal("ValidateAreaAssignment accepted an undeclared path")
 		}

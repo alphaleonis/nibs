@@ -648,13 +648,15 @@ func areaDepthApp(t *testing.T, depth int) *App {
 	for i := depth - 2; i >= 0; i-- {
 		node = config.AreaConfig{Name: fmt.Sprintf("level%d", i), Children: []config.AreaConfig{node}}
 	}
-	cfg := config.Default()
-	cfg.Areas = []config.AreaConfig{node}
-	if err := cfg.ValidateAreas(); err != nil {
+	vocab := &config.Areas{Nodes: []config.AreaConfig{node}}
+	if err := vocab.Validate(); err != nil {
 		t.Fatalf("the chain fixture is not a valid vocabulary: %v", err)
 	}
+	if err := vocab.Save(nibsDir); err != nil {
+		t.Fatalf("writing the chain fixture: %v", err)
+	}
 
-	testCore := nibcore.New(nibsDir, cfg)
+	testCore := nibcore.New(nibsDir, config.Default())
 	if err := testCore.Load(); err != nil {
 		t.Fatalf("loading the test store: %v", err)
 	}

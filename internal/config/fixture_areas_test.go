@@ -33,12 +33,12 @@ func TestSampleProjectDeclaresEveryAssignedArea(t *testing.T) {
 	dir := fixtures.SampleProjectDir(t)
 	storeDir := filepath.Join(dir, ".nibs")
 
-	cfg, err := config.LoadFromStore(storeDir)
+	areas, err := config.LoadAreasFromStore(storeDir)
 	if err != nil {
-		t.Fatalf("loading the fixture config: %v", err)
+		t.Fatalf("loading the fixture vocabulary: %v", err)
 	}
-	if len(cfg.AreaPaths()) == 0 {
-		t.Fatal("the fixture config declares no areas")
+	if len(areas.Paths()) == 0 {
+		t.Fatal("the fixture declares no areas")
 	}
 
 	assigned := map[string][]string{}
@@ -80,9 +80,9 @@ func TestSampleProjectDeclaresEveryAssignedArea(t *testing.T) {
 		t.Fatal("no fixture nib assigns an area; this guard would pass vacuously")
 	}
 	for area, files := range assigned {
-		if !cfg.IsValidArea(area) {
+		if !areas.IsValid(area) {
 			t.Errorf("nib(s) %v assign area %q, which the fixture config does not declare (declared: %s)",
-				files, area, cfg.AreaList())
+				files, area, areas.List())
 		}
 	}
 }

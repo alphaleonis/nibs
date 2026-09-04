@@ -756,8 +756,8 @@ func TestCatalogAreasStatesTheGrammar(t *testing.T) {
 	if got.PathSeparator != config.AreaPathSeparator {
 		t.Errorf("areas path_separator = %q, want %q", got.PathSeparator, config.AreaPathSeparator)
 	}
-	if got.DeclaredIn != store.ConfigFileName {
-		t.Errorf("areas declared_in = %q, want %q", got.DeclaredIn, store.ConfigFileName)
+	if got.DeclaredIn != store.AreasFileName {
+		t.Errorf("areas declared_in = %q, want %q", got.DeclaredIn, store.AreasFileName)
 	}
 	if !got.DownwardClosed {
 		t.Error("areas downward_closed = false, but --area selects an area and everything declared beneath it")

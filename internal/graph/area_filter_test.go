@@ -12,21 +12,19 @@ import (
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
-// areaFilterConfig declares the vocabulary these tests filter over. Two of its
+// areaFilterAreas declares the vocabulary these tests filter over. Two of its
 // roots — `web` and `webhooks` — share a name prefix, which is what separates a
 // tree descent from a string-prefix test: nothing else in the fixture can tell
 // `strings.HasPrefix(area, ancestor)` apart from genuine closure.
-func areaFilterConfig() *config.Config {
-	cfg := config.DefaultWithPrefix("nibs-")
-	cfg.Areas = []config.AreaConfig{
+func areaFilterAreas() *config.Areas {
+	return &config.Areas{Nodes: []config.AreaConfig{
 		{Name: "web", Children: []config.AreaConfig{
 			{Name: "dashboard"},
 			{Name: "settings", Children: []config.AreaConfig{{Name: "billing"}}},
 		}},
 		{Name: "webhooks"},
 		{Name: "auth"},
-	}
-	return cfg
+	}}
 }
 
 // areaFilterFixture holds one nib per declared path, plus the two shapes the
@@ -47,7 +45,7 @@ func areaFilterFixture() *stubReader {
 	for _, b := range nibs {
 		byID[b.ID] = b
 	}
-	return &stubReader{nibs: byID, allNibs: nibs, prefix: "nibs-", cfg: areaFilterConfig()}
+	return &stubReader{nibs: byID, allNibs: nibs, prefix: "nibs-", areas: areaFilterAreas()}
 }
 
 // TestAreaFilterIsDownwardClosedOverTheDeclaredTree is the whole rule in one
@@ -151,8 +149,8 @@ func TestAreaFilterRefusesAnUndeclaredValue(t *testing.T) {
 // edit and not a different flag value.
 func TestAreaFilterInAStoreDeclaringNoAreasSaysWhy(t *testing.T) {
 	reader := areaFilterFixture()
-	reader.cfg = config.DefaultWithPrefix("nibs-") // no areas: block at all
-	if reader.cfg.AreasDeclared() {
+	reader.areas = &config.Areas{} // no vocabulary at all
+	if reader.areas.Declared() {
 		t.Fatal("the fixture still declares areas, so this row proves nothing")
 	}
 	web := "web"

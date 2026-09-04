@@ -125,6 +125,25 @@ type Core struct {
 	layout store.Layout   // the store's directory structure, derived from root
 	config *config.Config // project configuration
 
+	// areas is the store's declared area vocabulary, and the ONE piece of a
+	// store's configuration that is reloaded while the process runs: an external
+	// `nibs area rename` rewrites it, and a live `nibs serve` that kept the
+	// startup copy would refuse every later write to the nibs that rename
+	// cascaded through. It lives in its own file for that reason (see
+	// config.Areas) and behind an atomic pointer for this one.
+	//
+	// The pointer, not a mutex, because the read that matters happens OFF-LOCK:
+	// the GraphQL updateNib pre-check reaches ValidateArea through NibValidator
+	// without holding c.mu, to refuse a doomed subject before its later steps
+	// write to another nib's file. A plain field read there would race the
+	// watcher's reload. Every reload STORES A NEW VALUE rather than mutating the
+	// old, so a reader that has loaded the pointer holds one coherent vocabulary
+	// for the whole of its decision.
+	//
+	// Nothing else in c.config is reloaded, and the split into two files is what
+	// keeps that statement checkable rather than a convention.
+	areas atomic.Pointer[config.Areas]
+
 	// lockPath is the OS-temp-dir path of the cross-process advisory write lock
 	// guarding this .nibs directory. Every write mutator holds it for the duration
 	// of its read-check-write so two nibs processes (or serve + a CLI) on the same
@@ -194,6 +213,7 @@ type Core struct {
 	// tick ("something changed") and never a payload.
 	subscribers       map[uint64]*subscription
 	signalSubscribers map[uint64]chan struct{}
+	areasSubscribers  map[uint64]chan struct{}
 	subMu             sync.RWMutex
 	nextSubID         uint64
 
@@ -228,6 +248,7 @@ func New(root string, cfg *config.Config) *Core {
 		mentionIdx:        newMentionIndex(),
 		subscribers:       make(map[uint64]*subscription),
 		signalSubscribers: make(map[uint64]chan struct{}),
+		areasSubscribers:  make(map[uint64]chan struct{}),
 		warnWriter:        safetext.NewWriter(os.Stderr),
 	}
 }
@@ -359,6 +380,31 @@ func (c *Core) Config() *config.Config {
 	return c.config
 }
 
+// Areas returns the store's declared area vocabulary as it stands now.
+//
+// The returned value is a SNAPSHOT and is never mutated: a reload swaps the
+// pointer, so a caller that takes one decides against a single coherent
+// vocabulary however long it holds it. Call this once per decision rather than
+// once per question, or two questions in one refusal may answer from two
+// different vocabularies.
+//
+// A store with no areas.yml, and a Core that has not been loaded, both answer
+// with a nil *config.Areas, which every method on that type accepts.
+func (c *Core) Areas() *config.Areas {
+	return c.areas.Load()
+}
+
+// loadAreas reads the store's vocabulary from disk and installs it. It is the
+// only writer of c.areas.
+func (c *Core) loadAreas() error {
+	areas, err := config.LoadAreasFromStore(c.root)
+	if err != nil {
+		return err
+	}
+	c.areas.Store(areas)
+	return nil
+}
+
 // Load reads all nibs from disk into memory. It NEVER writes: every load-time
 // normalization that used to persist (the v0→v1 blocking migration, the
 // `priority: deferred` write-back) is retired in favor of the explicit
@@ -373,6 +419,15 @@ func (c *Core) Config() *config.Config {
 // strength of the startup gate alone. Either way, what Load reports is what
 // disk holds.
 func (c *Core) Load() error {
+	// The vocabulary is read BEFORE the lock and before the nibs, and a
+	// malformed one aborts the load. It is authorization data — what an `area:`
+	// may say, what a filter may close over — so a store whose vocabulary cannot
+	// be honored must refuse on every route in rather than open with an empty
+	// one, which would make every assigned area undeclared at once.
+	if err := c.loadAreas(); err != nil {
+		return err
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -1025,21 +1080,20 @@ func (c *Core) ValidateEnums(b *nib.Nib) error {
 }
 
 // ValidateArea checks the nib's `area:` assignment against the vocabulary the
-// store's config DECLARES: unset is legal, a declared path is legal, and
-// anything else is refused naming the declared set. The config owns the rule and
-// the message, so the CLI, the TUI, the web UI and any MCP client refuse
-// identically.
+// store DECLARES: unset is legal, a declared path is legal, and anything else is
+// refused naming the declared set. The vocabulary owns the rule and the message,
+// so the CLI, the TUI, the web UI and any MCP client refuse identically.
 //
 // Its callers all write a nib that ALREADY EXISTS — Update, the GraphQL
 // pre-check, `nibs close`'s member guards — so the value it judges need not have
 // come from the request: it is whatever `area:` the nib will carry, which for
-// most writes is the one it already carries. That is why it asks
-// ValidateStoredArea rather than ValidateAreaAssignment, and why Create asks the
-// other one: a create has no stored value its argument could be confused with.
+// most writes is the one it already carries. That is why it asks ValidateStored
+// rather than ValidateAssignment, and why Create asks the other one: a create
+// has no stored value its argument could be confused with.
 //
 // It is deliberately SEPARATE from ValidateEnums, for two reasons that point the
-// same way. Areas are the one vocabulary a project authors, held on the live
-// config struct rather than in a package-level table — so folding them in would
+// same way. Areas are the one vocabulary a project authors, held in the store's
+// own areas.yml rather than in a package-level table — so folding them in would
 // falsify the argument ValidateEnums makes for its own off-lock safety, at the
 // place that argument is made. And ValidateEnums has two callers that are not
 // write paths: loadFromDisk, which would warn, and CheckAllLinks, which would
@@ -1047,37 +1101,26 @@ func (c *Core) ValidateEnums(b *nib.Nib) error {
 // carrying an undeclared area loads, lists and renders exactly as written, and
 // only a write refuses it — so this method must not be reachable from either.
 //
-// Like ValidateEnums it takes no lock: Create and Update call it while holding
-// c.mu, and the GraphQL updateNib pre-check calls it off-lock through
-// NibValidator to refuse a doomed subject before its later steps write to
-// another nib's file. Unlike ValidateEnums it genuinely reads per-config state,
-// so the off-lock call rests on a narrower fact: nothing mutates c.config.Areas
-// after construction. The config struct IS writable — `nibs config set-prefix`
-// assigns cfg.Nibs.Prefix in place — and preValidateSubject already reads
-// cfg.Nibs.RequireIfMatch off-lock beside this call on exactly that footing.
+// Like ValidateEnums it takes no lock, and unlike ValidateEnums it genuinely
+// reads mutable state: the vocabulary is RELOADED while the process runs, so
+// c.Areas() is an atomic load rather than a field read. Create and Update call
+// this while holding c.mu, and the GraphQL updateNib pre-check calls it off-lock
+// through NibValidator to refuse a doomed subject before its later steps write
+// to another nib's file. Both are safe for the same reason: a reload publishes a
+// whole new vocabulary and never edits the one a reader is holding.
 //
-// `nibs area rename` and `nibs area rm` edit the vocabulary and keep that fact
-// true rather than trading it away: they rewrite the `areas:` block in the
-// store's config.yml (config.PlanRenameStoredArea / config.PlanRemoveStoredArea,
-// written after the cascade) and never assign into this struct, so no reader
-// here ever observes a torn or changed Areas. What they give up is that the
-// loaded config is stale for the rest of the process, which for a CLI verb that
-// prints its result and exits is nothing — but is NOT nothing for a live
-// `nibs serve`, whose watcher picks the rewritten nibs up while its vocabulary
-// stays the one it read at startup, so every write it makes to one of them is
-// refused here until it restarts. Closing that would be a config RELOAD, not an
-// in-place assign into this struct; until there is one, the verbs name a live
-// serve in their output (cmd.areaLiveServeNote).
+// That reload is what makes `nibs area rename` and `nibs area rm` reach a live
+// `nibs serve` at all. They rewrite the members, then the store's areas.yml
+// (config.PlanRenameStoredArea / config.PlanRemoveStoredArea), and the server's
+// watcher picks BOTH up — where it used to take only the member rewrites and
+// refuse every later write to them against the vocabulary it read at startup.
 //
 // RewriteAreaAssignments, the cascade beside those edits, is
 // deliberately not a caller of this method for the same reason a rename could
 // not go through Update at all: no single vocabulary declares both the value a
 // member is leaving and the one it is arriving at.
 func (c *Core) ValidateArea(b *nib.Nib) error {
-	if c.config == nil {
-		return nil
-	}
-	return c.config.ValidateStoredArea(b.ID, b.Area)
+	return c.Areas().ValidateStored(b.ID, b.Area)
 }
 
 // Create adds a new nib, generating an ID if needed, and writes it to disk.
@@ -1105,10 +1148,8 @@ func (c *Core) Create(b *nib.Nib) error {
 	// The supplied-value refusal, not ValidateArea's: a create has no stored
 	// `area:` its argument could be mistaken for, so the clause disambiguating
 	// the two would be noise here.
-	if c.config != nil {
-		if err := c.config.ValidateAreaAssignment(b.Area); err != nil {
-			return err
-		}
+	if err := c.Areas().ValidateAssignment(b.Area); err != nil {
+		return err
 	}
 
 	// The prefix the nib's file will be READ BACK under, for the round-trip check

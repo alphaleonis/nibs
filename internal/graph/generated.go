@@ -118,7 +118,8 @@ type ComplexityRoot struct {
 	}
 
 	Subscription struct {
-		NibChanged func(childComplexity int, id *string) int
+		ConfigChanged func(childComplexity int) int
+		NibChanged    func(childComplexity int, id *string) int
 	}
 
 	UpdateStatus struct {
@@ -171,6 +172,7 @@ type QueryResolver interface {
 }
 type SubscriptionResolver interface {
 	NibChanged(ctx context.Context, id *string) (<-chan *model.NibChangeEvent, error)
+	ConfigChanged(ctx context.Context) (<-chan *model.Config, error)
 }
 
 // endregion ************************** generated!.gotpl **************************
@@ -641,6 +643,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.Query.UpdateStatus(childComplexity), true
 
+	case "Subscription.configChanged":
+		if e.ComplexityRoot.Subscription.ConfigChanged == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Subscription.ConfigChanged(childComplexity), true
 	case "Subscription.nibChanged":
 		if e.ComplexityRoot.Subscription.NibChanged == nil {
 			break
@@ -3466,6 +3474,38 @@ func (ec *executionContext) fieldContext_Subscription_nibChanged(ctx context.Con
 	if fc.Args, err = ec.field_Subscription_nibChanged_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Subscription_configChanged(ctx context.Context, field graphql.CollectedField) (ret func(ctx context.Context) graphql.Marshaler) {
+	return graphql.ResolveFieldStream(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Subscription_configChanged(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Subscription().ConfigChanged(ctx)
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *model.Config) graphql.Marshaler {
+			return ec.marshalNConfig2ᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐConfig(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Subscription_configChanged(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Subscription",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Config(ctx, field)
+		},
 	}
 	return fc, nil
 }
@@ -6355,6 +6395,8 @@ func (ec *executionContext) _Subscription(ctx context.Context, sel ast.Selection
 	switch fields[0].Name {
 	case "nibChanged":
 		return ec._Subscription_nibChanged(ctx, fields[0])
+	case "configChanged":
+		return ec._Subscription_configChanged(ctx, fields[0])
 	default:
 		panic("unknown field " + strconv.Quote(fields[0].Name))
 	}

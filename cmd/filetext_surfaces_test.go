@@ -190,16 +190,20 @@ func TestFileSourcedTextNeverReachesAnEchoSurfaceRaw(t *testing.T) {
 				storeDir := writeStoreFiles(t, nil)
 				cfg := config.Default()
 				cfg.Nibs.Prefix = "tnib-"
-				cfg.Areas = []config.AreaConfig{{
-					Name:        deceptivePayload,
-					Description: deceptivePayload,
-					Children:    []config.AreaConfig{{Name: deceptivePayload + "-child"}},
-				}}
 				data, err := yaml.Marshal(cfg)
 				if err != nil {
 					t.Fatal(err)
 				}
 				writeFileT(t, filepath.Join(storeDir, "config.yml"), string(data))
+
+				vocab := &config.Areas{Nodes: []config.AreaConfig{{
+					Name:        deceptivePayload,
+					Description: deceptivePayload,
+					Children:    []config.AreaConfig{{Name: deceptivePayload + "-child"}},
+				}}}
+				if err := vocab.Save(storeDir); err != nil {
+					t.Fatal(err)
+				}
 
 				t.Cleanup(func() {
 					resetCommandTreeFlags(rootCmd)

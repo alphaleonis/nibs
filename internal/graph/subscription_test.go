@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
@@ -14,6 +15,9 @@ import (
 // It returns a channel that the test controls directly.
 type stubSubscriber struct {
 	ch chan []nibcore.NibEvent
+	// areasCh carries vocabulary-change ticks, the second stream a subscriber
+	// serves.
+	areasCh chan struct{}
 	// unsubscribed is closed by the returned unsubscribe func. Closing (rather
 	// than setting a bool) gives the test a happens-before to wait on before
 	// asserting that unsubscribe ran, avoiding a data race with the resolver's
@@ -24,12 +28,17 @@ type stubSubscriber struct {
 func newStubSubscriber() *stubSubscriber {
 	return &stubSubscriber{
 		ch:           make(chan []nibcore.NibEvent, 16),
+		areasCh:      make(chan struct{}, 16),
 		unsubscribed: make(chan struct{}),
 	}
 }
 
 func (s *stubSubscriber) Subscribe() (<-chan []NibEvent, func()) {
 	return s.ch, func() { close(s.unsubscribed) }
+}
+
+func (s *stubSubscriber) SubscribeAreas() (<-chan struct{}, func()) {
+	return s.areasCh, func() {}
 }
 
 func TestNibChangedSubscription(t *testing.T) {
@@ -257,4 +266,58 @@ func TestNibChangedSubscription(t *testing.T) {
 			t.Error("unsubscribe was not called")
 		}
 	})
+}
+
+// A vocabulary tick delivers the CURRENT config, read at delivery time. The
+// stream carries no payload of its own — the point is that a client re-renders
+// from the same shape the initial `config` query gave it.
+func TestConfigChangedSubscriptionDeliversTheReloadedVocabulary(t *testing.T) {
+	sub := newStubSubscriber()
+	reader := &stubReader{nibs: map[string]*nib.Nib{}, areas: areaCfg(config.AreaConfig{Name: "web"})}
+	resolver := &Resolver{Reader: reader, Subscriber: sub}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch, err := resolver.Subscription().ConfigChanged(ctx)
+	if err != nil {
+		t.Fatalf("ConfigChanged: %v", err)
+	}
+
+	// The reload: the store now declares `frontend`, and the tick follows it —
+	// the order the watcher publishes in.
+	reader.areas = areaCfg(config.AreaConfig{Name: "frontend"})
+	sub.areasCh <- struct{}{}
+
+	select {
+	case got := <-ch:
+		if len(got.Areas) != 1 || got.Areas[0].Path != "frontend" {
+			t.Errorf("areas = %v, want the reloaded vocabulary [frontend]", pathsOf(got.Areas))
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no config delivered after the vocabulary changed")
+	}
+}
+
+// The stream closes when the client goes away, so a browser that navigated
+// off does not leave a subscription attached to the core for the server's life.
+func TestConfigChangedSubscriptionClosesOnContextCancel(t *testing.T) {
+	sub := newStubSubscriber()
+	resolver := &Resolver{Reader: &stubReader{nibs: map[string]*nib.Nib{}}, Subscriber: sub}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ch, err := resolver.Subscription().ConfigChanged(ctx)
+	if err != nil {
+		t.Fatalf("ConfigChanged: %v", err)
+	}
+	cancel()
+
+	select {
+	case _, open := <-ch:
+		if open {
+			t.Error("channel delivered a value after cancel, want it closed")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the subscription channel stayed open after the context was canceled")
+	}
 }

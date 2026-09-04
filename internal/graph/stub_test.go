@@ -16,6 +16,7 @@ type stubReader struct {
 	nibs    map[string]*nib.Nib
 	allNibs []*nib.Nib
 	cfg     *config.Config
+	areas   *config.Areas
 	// prefix, when set, makes NormalizeID resolve short IDs by prepending the
 	// prefix — mirroring nibcore.Core.NormalizeID's exact-first, then
 	// prefix-prepended behavior.
@@ -144,6 +145,10 @@ func (s *stubReader) Config() *config.Config {
 		return s.cfg
 	}
 	return config.Default()
+}
+
+func (s *stubReader) Areas() *config.Areas {
+	return s.areas
 }
 
 // CurrentETag returns the in-memory etag for the requested nib so resolver

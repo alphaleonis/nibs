@@ -32,9 +32,12 @@ func setupAreaCore(t *testing.T) (*Core, string) {
 	// split, so the id would read back as "nibs" and Create refuses it (see
 	// nib.ValidateIDRoundTrip). A real store always declares one.
 	cfg := config.DefaultWithPrefix("nibs-")
-	cfg.Areas = []config.AreaConfig{
-		{Name: "web", Children: []config.AreaConfig{{Name: "dashboard"}, {Name: "ui"}}},
-		{Name: "auth"},
+	// The vocabulary is a store FILE now, not a config field, so the fixture
+	// writes one — which is also what a store this test's subjects run against
+	// really looks like.
+	if err := os.WriteFile(store.NewLayout(nibsDir).AreasPath(), []byte(
+		"areas:\n    - name: web\n      children:\n        - name: dashboard\n        - name: ui\n    - name: auth\n"), 0644); err != nil {
+		t.Fatalf("writing the areas vocabulary: %v", err)
 	}
 	core := New(nibsDir, cfg)
 	core.SetWarnWriter(nil)
@@ -383,9 +386,9 @@ func storedAreaOf(t *testing.T, core *Core, nibsDir, id string) string {
 
 // renameRewrite is the mapping `nibs area rename` supplies: everything at or
 // below from moves, keeping whatever it carried below from.
-func renameRewrite(cfg *config.Config, from, to string) func(string) (string, bool) {
+func renameRewrite(areas *config.Areas, from, to string) func(string) (string, bool) {
 	return func(area string) (string, bool) {
-		if !cfg.IsAreaWithin(area, from) {
+		if !areas.IsWithin(area, from) {
 			return "", false
 		}
 		return to + strings.TrimPrefix(area, from), true
@@ -405,7 +408,7 @@ func TestRewriteAreaAssignmentsMovesTheWholeSubtree(t *testing.T) {
 		"nibs-aw05": "",
 	})
 
-	written, err := rewriteAreasLocked(t, core, renameRewrite(core.Config(), "web", "frontend"))
+	written, err := rewriteAreasLocked(t, core, renameRewrite(core.Areas(), "web", "frontend"))
 	if err != nil {
 		t.Fatalf("RewriteAreaAssignments: %v", err)
 	}
@@ -438,10 +441,8 @@ func TestRewriteAreaAssignmentsCollapsesOntoOneTarget(t *testing.T) {
 		"nibs-aw12": "web/dashboard",
 		"nibs-aw13": "auth",
 	})
-	cfg := core.Config()
-
 	if _, err := rewriteAreasLocked(t, core, func(area string) (string, bool) {
-		if !cfg.IsAreaWithin(area, "web") {
+		if !core.Areas().IsWithin(area, "web") {
 			return "", false
 		}
 		return "auth", true
@@ -460,10 +461,8 @@ func TestRewriteAreaAssignmentsCollapsesOntoOneTarget(t *testing.T) {
 // as an empty key.
 func TestRewriteAreaAssignmentsClears(t *testing.T) {
 	core, nibsDir := areaCoreWith(t, map[string]string{"nibs-aw21": "web/dashboard"})
-	cfg := core.Config()
-
 	if _, err := rewriteAreasLocked(t, core, func(area string) (string, bool) {
-		return "", cfg.IsAreaWithin(area, "web")
+		return "", core.Areas().IsWithin(area, "web")
 	}); err != nil {
 		t.Fatalf("RewriteAreaAssignments: %v", err)
 	}
@@ -486,12 +485,12 @@ func TestRewriteAreaAssignmentsClears(t *testing.T) {
 // still declares exactly what it declared before.
 func TestRewriteAreaAssignmentsLeavesTheVocabularyAlone(t *testing.T) {
 	core, _ := areaCoreWith(t, map[string]string{"nibs-aw31": "web/dashboard"})
-	before := append([]string(nil), core.Config().AreaPaths()...)
+	before := append([]string(nil), core.Areas().Paths()...)
 
-	if _, err := rewriteAreasLocked(t, core, renameRewrite(core.Config(), "web", "frontend")); err != nil {
+	if _, err := rewriteAreasLocked(t, core, renameRewrite(core.Areas(), "web", "frontend")); err != nil {
 		t.Fatalf("RewriteAreaAssignments: %v", err)
 	}
-	if after := core.Config().AreaPaths(); !slices.Equal(before, after) {
+	if after := core.Areas().Paths(); !slices.Equal(before, after) {
 		t.Errorf("the cascade mutated the live vocabulary: %v -> %v", before, after)
 	}
 }
@@ -516,7 +515,7 @@ func TestRewriteAreaAssignmentsRacesNothingAgainstValidateArea(t *testing.T) {
 			_ = core.ValidateArea(probe)
 		}
 	}()
-	if _, err := rewriteAreasLocked(t, core, renameRewrite(core.Config(), "web", "frontend")); err != nil {
+	if _, err := rewriteAreasLocked(t, core, renameRewrite(core.Areas(), "web", "frontend")); err != nil {
 		t.Fatalf("RewriteAreaAssignments: %v", err)
 	}
 	<-done
@@ -547,7 +546,7 @@ func TestRewriteAreaAssignmentsPartialFailureIsRerunnable(t *testing.T) {
 	}
 	t.Cleanup(func() { fsutil.RenameFn = orig })
 
-	written, err := rewriteAreasLocked(t, core, renameRewrite(core.Config(), "web", "frontend"))
+	written, err := rewriteAreasLocked(t, core, renameRewrite(core.Areas(), "web", "frontend"))
 	if err == nil {
 		t.Fatal("expected the seeded write failure to surface, got nil")
 	}
@@ -565,7 +564,7 @@ func TestRewriteAreaAssignmentsPartialFailureIsRerunnable(t *testing.T) {
 	}
 
 	fail = false
-	written, err = rewriteAreasLocked(t, core, renameRewrite(core.Config(), "web", "frontend"))
+	written, err = rewriteAreasLocked(t, core, renameRewrite(core.Areas(), "web", "frontend"))
 	if err != nil {
 		t.Fatalf("the rerun must finish the job: %v", err)
 	}
@@ -611,7 +610,7 @@ func TestRewriteAreaAssignmentsFlushesEveryDirectoryItTouched(t *testing.T) {
 	}
 	t.Cleanup(func() { fsutil.RenameFn = origRename })
 
-	if _, err := rewriteAreasLocked(t, core, renameRewrite(core.Config(), "web", "frontend")); err == nil {
+	if _, err := rewriteAreasLocked(t, core, renameRewrite(core.Areas(), "web", "frontend")); err == nil {
 		t.Fatal("expected the seeded write failure to surface, got nil")
 	}
 
@@ -686,7 +685,7 @@ func TestRewriteAreaAssignmentsRequiresTheStoreLock(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			written, err := core.RewriteAreaAssignments(tt.lock, renameRewrite(core.Config(), "web", "frontend"))
+			written, err := core.RewriteAreaAssignments(tt.lock, renameRewrite(core.Areas(), "web", "frontend"))
 			if err == nil {
 				t.Fatal("the cascade ran without proof of the store lock")
 			}
@@ -726,7 +725,7 @@ func TestRewriteAreaAssignmentsRefusesAStalePathRatherThanRecreatingIt(t *testin
 		t.Fatalf("simulating the rename another process made: %v", err)
 	}
 
-	written, err := rewriteAreasLocked(t, core, renameRewrite(core.Config(), "web", "frontend"))
+	written, err := rewriteAreasLocked(t, core, renameRewrite(core.Areas(), "web", "frontend"))
 	if err == nil {
 		t.Fatal("the cascade wrote to a path that no longer exists instead of refusing")
 	}

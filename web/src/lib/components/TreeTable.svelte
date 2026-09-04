@@ -887,8 +887,9 @@
         Areas group work by the part of the project it belongs to. Declare an
         <code class="whitespace-nowrap rounded bg-muted px-1 py-0.5 text-foreground">areas:</code>
         block in the store's
-        <code class="whitespace-nowrap rounded bg-muted px-1 py-0.5 text-foreground">config.yml</code>
-        and each nib's area can name one.
+        <code class="whitespace-nowrap rounded bg-muted px-1 py-0.5 text-foreground">areas.yml</code>
+        and each nib's area can name one. A running server picks the file up, so
+        this view fills in without a reload.
       </span>
       <Button variant="outline" size="sm" onclick={leaveAreasView}>Switch to Tree</Button>
     </div>

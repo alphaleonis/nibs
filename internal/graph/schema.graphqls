@@ -3,7 +3,7 @@
 scalar Time
 
 """
-One node of the per-project areas vocabulary declared in the store's config.yml.
+One node of the per-project areas vocabulary declared in the store's areas.yml.
 
 Deliberately NOT self-recursive: area nesting is unbounded (validateAreaNodes
 recurses with no depth limit), while the served endpoint refuses an operation
@@ -938,6 +938,26 @@ type Subscription {
   Subscribe to nib change events. Optionally filter by nib ID.
   """
   nibChanged(id: ID): NibChangeEvent!
+
+  """
+  Subscribe to changes in the store's declared areas vocabulary, delivering the
+  whole `Config` each time it changes.
+
+  The areas vocabulary is the one part of a store's configuration that is
+  reloaded while the server runs: an external `nibs area rename` rewrites the
+  store's areas.yml, and the server picks it up. Without this stream a client
+  would keep rendering sections the store no longer declares, and refuse to
+  filter by the paths its nibs now carry, until the page was reloaded.
+
+  It fires only when the vocabulary actually CHANGES — a file rewritten with the
+  same content, or touched, delivers nothing. Nib writes never fire it; they have
+  `nibChanged`.
+
+  The payload is the whole `Config` rather than the areas alone so a client can
+  bind one query result to one shape, and re-render from an event exactly as it
+  rendered from the initial `config` query.
+  """
+  configChanged: Config!
 }
 
 """

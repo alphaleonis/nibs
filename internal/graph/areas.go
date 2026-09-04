@@ -23,8 +23,9 @@ import (
 // boundary for CLI text, and JSON decoded into a DOM text node is a different
 // one. `path` is also what a client sends back as an `area:` filter argument,
 // which the server matches against the declared vocabulary exactly.
-func flattenAreas(areas []config.AreaConfig) []*model.Area {
-	return appendAreaNodes(make([]*model.Area, 0, len(areas)), areas, "", 0)
+func flattenAreas(areas *config.Areas) []*model.Area {
+	roots := areas.Roots()
+	return appendAreaNodes(make([]*model.Area, 0, len(roots)), roots, "", 0)
 }
 
 func appendAreaNodes(out []*model.Area, areas []config.AreaConfig, parent string, depth int) []*model.Area {

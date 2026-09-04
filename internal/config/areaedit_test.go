@@ -41,15 +41,15 @@ future_key:
     a_newer_nibs_wrote_this: true
 `
 
-// writeAreaEditStore materializes cfg as a store's config.yml and returns the
+// writeAreaEditStore materializes vocab as a store's areas.yml and returns the
 // store directory.
-func writeAreaEditStore(t *testing.T, cfg string) string {
+func writeAreaEditStore(t *testing.T, vocab string) string {
 	t.Helper()
 	storeDir := filepath.Join(t.TempDir(), store.DirName)
 	if err := os.MkdirAll(storeDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(store.NewLayout(storeDir).ConfigPath(), []byte(cfg), 0644); err != nil {
+	if err := os.WriteFile(store.NewLayout(storeDir).AreasPath(), []byte(vocab), 0644); err != nil {
 		t.Fatal(err)
 	}
 	return storeDir
@@ -57,7 +57,7 @@ func writeAreaEditStore(t *testing.T, cfg string) string {
 
 func readAreaEditStore(t *testing.T, storeDir string) string {
 	t.Helper()
-	raw, err := os.ReadFile(store.NewLayout(storeDir).ConfigPath())
+	raw, err := os.ReadFile(store.NewLayout(storeDir).AreasPath())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,8 +125,8 @@ func TestRenameStoredAreaRenamesTheNestedNode(t *testing.T) {
 	}
 
 	cfg := loadAreaEditConfig(t, storeDir)
-	if cfg.GetArea("web/panel") == nil {
-		t.Errorf("web/panel is not declared after the rename: %v", cfg.AreaPaths())
+	if cfg.Get("web/panel") == nil {
+		t.Errorf("web/panel is not declared after the rename: %v", cfg.Paths())
 	}
 }
 
@@ -140,7 +140,7 @@ func TestRemoveStoredAreaTakesTheSubtree(t *testing.T) {
 	}
 	cfg := loadAreaEditConfig(t, storeDir)
 	want := []string{"auth", "web", "web/dashboard"}
-	if got := cfg.AreaPaths(); strings.Join(got, ",") != strings.Join(want, ",") {
+	if got := cfg.Paths(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("AreaPaths() = %v, want %v", got, want)
 	}
 	got := readAreaEditStore(t, storeDir)
@@ -191,8 +191,8 @@ func TestRemoveStoredAreaKeepsTheEmptiedBlock(t *testing.T) {
 	if !strings.Contains(got, "# Where the work happens.") {
 		t.Errorf("deleting the key would have taken the comment with it:\n%s", got)
 	}
-	if cfg := loadAreaEditConfig(t, storeDir); cfg.AreasDeclared() {
-		t.Errorf("an emptied block still reports a declared vocabulary: %v", cfg.AreaPaths())
+	if cfg := loadAreaEditConfig(t, storeDir); cfg.Declared() {
+		t.Errorf("an emptied block still reports a declared vocabulary: %v", cfg.Paths())
 	}
 }
 
@@ -251,7 +251,7 @@ func TestRenameStoredAreaRefusesAResultTheLoaderWouldReject(t *testing.T) {
 func TestStoredAreaEditsPreserveMode(t *testing.T) {
 	testskip.NeedPosixFileModes(t, t.TempDir())
 	storeDir := writeAreaEditStore(t, areaEditFixture)
-	path := store.NewLayout(storeDir).ConfigPath()
+	path := store.NewLayout(storeDir).AreasPath()
 	if err := os.Chmod(path, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -267,13 +267,13 @@ func TestStoredAreaEditsPreserveMode(t *testing.T) {
 	}
 }
 
-func loadAreaEditConfig(t *testing.T, storeDir string) *Config {
+func loadAreaEditConfig(t *testing.T, storeDir string) *Areas {
 	t.Helper()
-	cfg, err := LoadFromStore(storeDir)
+	areas, err := LoadAreasFromStore(storeDir)
 	if err != nil {
-		t.Fatalf("the edited config no longer loads: %v", err)
+		t.Fatalf("the edited vocabulary no longer loads: %v", err)
 	}
-	return cfg
+	return areas
 }
 
 // aliasAreaFixture declares `web/dashboard` through a YAML alias: the loader
@@ -353,8 +353,8 @@ func TestStoredAreaEditsRefuseAVocabularyTheyCannotAddress(t *testing.T) {
 			// The loaded model sees what the file's shape hides, which is the
 			// divergence the refusal exists for.
 			storeDir := writeAreaEditStore(t, tt.config)
-			if cfg := loadAreaEditConfig(t, storeDir); !cfg.IsValidArea(tt.path) {
-				t.Fatalf("the fixture does not reproduce the divergence: %v", cfg.AreaPaths())
+			if cfg := loadAreaEditConfig(t, storeDir); !cfg.IsValid(tt.path) {
+				t.Fatalf("the fixture does not reproduce the divergence: %v", cfg.Paths())
 			}
 			for _, edit := range []struct {
 				verb string
@@ -400,8 +400,8 @@ extra: true
 `
 	storeDir := writeAreaEditStore(t, twoDocs)
 	// The loader accepts it, which is why the editor has to say something.
-	if cfg := loadAreaEditConfig(t, storeDir); !cfg.IsValidArea("web") {
-		t.Fatalf("the fixture must be a config the loader accepts: %v", cfg.AreaPaths())
+	if cfg := loadAreaEditConfig(t, storeDir); !cfg.IsValid("web") {
+		t.Fatalf("the fixture must be a config the loader accepts: %v", cfg.Paths())
 	}
 
 	for _, edit := range []struct {

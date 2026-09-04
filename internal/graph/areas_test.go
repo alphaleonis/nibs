@@ -17,29 +17,27 @@ type areaWire struct {
 	depth int
 }
 
-// areaCfg builds a store config declaring the given vocabulary and nothing else
+// areaCfg builds a vocabulary declaring the given nodes and nothing else
 // unusual.
-func areaCfg(areas ...config.AreaConfig) *config.Config {
-	cfg := config.DefaultWithPrefix("nibs-")
-	cfg.Areas = areas
-	return cfg
+func areaCfg(areas ...config.AreaConfig) *config.Areas {
+	return &config.Areas{Nodes: areas}
 }
 
-// sampleProjectConfig loads the committed fixture's own config, so the tests
+// sampleProjectAreas loads the committed fixture's own vocabulary, so the tests
 // that read it fail when the fixture's declared vocabulary changes shape rather
 // than silently asserting about a copy that has drifted.
-func sampleProjectConfig(t *testing.T) *config.Config {
+func sampleProjectAreas(t *testing.T) *config.Areas {
 	t.Helper()
-	cfg, err := config.LoadFromStore(fixtures.NibsPath(fixtures.SampleProjectDir(t)))
+	areas, err := config.LoadAreasFromStore(fixtures.NibsPath(fixtures.SampleProjectDir(t)))
 	if err != nil {
-		t.Fatalf("loading the sample-project config: %v", err)
+		t.Fatalf("loading the sample-project vocabulary: %v", err)
 	}
-	return cfg
+	return areas
 }
 
-func resolveAreaList(t *testing.T, cfg *config.Config) []*model.Area {
+func resolveAreaList(t *testing.T, areas *config.Areas) []*model.Area {
 	t.Helper()
-	r := &queryResolver{&Resolver{Reader: &stubReader{cfg: cfg}}}
+	r := &queryResolver{&Resolver{Reader: &stubReader{areas: areas}}}
 	got, err := r.Config(context.Background())
 	if err != nil {
 		t.Fatalf("config resolver: %v", err)
@@ -146,7 +144,7 @@ func TestConfigResolverFlattensAreasInDeclarationOrder(t *testing.T) {
 // server read, so the resolver's answer for it is pinned here rather than left
 // to whichever test happens to load it.
 func TestConfigResolverFlattensTheSampleProjectVocabulary(t *testing.T) {
-	got := wireOf(resolveAreaList(t, sampleProjectConfig(t)))
+	got := wireOf(resolveAreaList(t, sampleProjectAreas(t)))
 	want := []areaWire{
 		{"auth", 0},
 		{"api", 0},
@@ -162,7 +160,7 @@ func TestConfigResolverFlattensTheSampleProjectVocabulary(t *testing.T) {
 }
 
 // A store declaring no areas answers with an empty list. Declaring none is a
-// normal, permanent state (config.AreasDeclared), not a failure, so the
+// normal, permanent state (config.Areas.Declared), not a failure, so the
 // resolver must not error and must not omit the field.
 //
 // It says nothing about null-vs-[] on the wire, because that is not this
@@ -187,18 +185,18 @@ func TestConfigResolverEmitsNoAreasAsAnEmptyList(t *testing.T) {
 // order still type-checks and still carries every declared node — it just
 // describes a different tree, silently.
 //
-// The expected sets are computed with config.IsAreaWithin, the same
+// The expected sets are computed with config.Areas.IsWithin, the same
 // downward-closed rule the server's `area:` filter applies, rather than written
 // out: that is what makes this an agreement between the two sides instead of a
 // second transcription of one.
 func TestAreasOrderingCarriesSubtreeMembership(t *testing.T) {
 	tests := []struct {
 		name string
-		cfg  *config.Config
+		cfg  *config.Areas
 	}{
 		{
 			name: "the sample-project vocabulary",
-			cfg:  sampleProjectConfig(t),
+			cfg:  sampleProjectAreas(t),
 		},
 		{
 			// `webhooks` must not fall inside `web`'s run. Nothing else in a
@@ -219,18 +217,18 @@ func TestAreasOrderingCarriesSubtreeMembership(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := resolveAreaList(t, tt.cfg)
 
-			declared := tt.cfg.AreaPaths()
+			declared := tt.cfg.Paths()
 			// Reported rather than fatal, so a run that gets the paths wrong
 			// still shows which subtrees the order then names.
 			if !slices.Equal(pathsOf(got), declared) {
-				t.Errorf("paths = %v, want config.AreaPaths' order %v", pathsOf(got), declared)
+				t.Errorf("paths = %v, want config.Areas.Paths' order %v", pathsOf(got), declared)
 			}
 
 			for i, node := range got {
 				byOrder := subtreeByOrder(got, i)
 				byRule := make([]string, 0, len(declared))
 				for _, path := range declared {
-					if tt.cfg.IsAreaWithin(path, node.Path) {
+					if tt.cfg.IsWithin(path, node.Path) {
 						byRule = append(byRule, path)
 					}
 				}
@@ -281,8 +279,8 @@ func TestConfigResolverEmitsAreaFieldsVerbatim(t *testing.T) {
 	if root.Name != "web" {
 		t.Errorf("name = %q, want %q", root.Name, "web")
 	}
-	if root.Description != cfg.Areas[0].Description {
-		t.Errorf("description = %q, want %q", root.Description, cfg.Areas[0].Description)
+	if root.Description != cfg.Roots()[0].Description {
+		t.Errorf("description = %q, want %q", root.Description, cfg.Roots()[0].Description)
 	}
 	if root.Color != "#0a7cff" {
 		t.Errorf("color = %q, want %q", root.Color, "#0a7cff")

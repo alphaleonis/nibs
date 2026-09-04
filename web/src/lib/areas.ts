@@ -71,7 +71,7 @@ export interface AreaVocabulary {
  * A declared color narrowed to what may be handed to CSS, or null for one that
  * may not.
  *
- * `AreaConfig.Color` is free text out of a store's config.yml and reaches an
+ * `AreaConfig.Color` is free text out of a store's areas.yml and reaches an
  * inline style, so it is narrowed here rather than trusted at the sink: a bare
  * CSS color name or a hex code — the two shapes that field documents — and
  * nothing else. Narrowing loses a color a project wrote some other legal way

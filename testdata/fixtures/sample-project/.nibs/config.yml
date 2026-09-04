@@ -3,20 +3,3 @@ nibs:
     id_length: 4
     default_status: todo
     default_type: task
-areas:
-    - name: auth
-      description: Sign-in, sessions, tokens and account security
-    - name: api
-      description: The public HTTP API and the integrations built on it
-      children:
-        - name: webhooks
-          description: Outbound webhook delivery and subscriptions
-    - name: web
-      description: The browser client
-      children:
-        - name: dashboard
-          description: The project dashboard and its charts
-    - name: infra
-      description: Build, deployment and runtime infrastructure
-    - name: docs
-      description: Reference documentation and guides

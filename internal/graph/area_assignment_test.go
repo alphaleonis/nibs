@@ -26,12 +26,11 @@ func setupTestResolverWithAreas(t *testing.T) (*Resolver, *nibcore.Core) {
 		t.Fatalf("failed to create test .nibs dir: %v", err)
 	}
 
-	cfg := config.Default()
-	cfg.Areas = []config.AreaConfig{
-		{Name: "web", Children: []config.AreaConfig{{Name: "dashboard"}, {Name: "ui"}}},
-		{Name: "auth"},
+	if err := os.WriteFile(store.NewLayout(nibsDir).AreasPath(), []byte(
+		"areas:\n    - name: web\n      children:\n        - name: dashboard\n        - name: ui\n    - name: auth\n"), 0644); err != nil {
+		t.Fatalf("writing the areas vocabulary: %v", err)
 	}
-	core := nibcore.New(nibsDir, cfg)
+	core := nibcore.New(nibsDir, config.Default())
 	core.SetWarnWriter(nil)
 	if err := core.Load(); err != nil {
 		t.Fatalf("failed to load core: %v", err)
