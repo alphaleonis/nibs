@@ -4,7 +4,7 @@
 </script>
 
 <script lang="ts">
-  import type { RowDensity, FontSize, Theme, DetailPanelPosition, OpenDetailGesture, BlockedEmphasis } from "../types";
+  import type { RowDensity, FontSize, Theme, DetailPanelPosition, OpenDetailGesture, BlockedEmphasis, RegionBandMode } from "../types";
   import SegmentedControl from "./SegmentedControl.svelte";
   import ThemeSelect from "./ThemeSelect.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
@@ -22,7 +22,9 @@
     fontSize,
     onfontsizechange,
     blockedEmphasis,
+    regionBands,
     onemphasischange,
+    onregionbandschange,
     theme,
     onthemechange,
     detailPanelPosition,
@@ -36,7 +38,9 @@
     fontSize: FontSize;
     onfontsizechange: (f: FontSize) => void;
     blockedEmphasis: BlockedEmphasis;
+    regionBands: RegionBandMode;
     onemphasischange: (e: BlockedEmphasis) => void;
+    onregionbandschange: (m: RegionBandMode) => void;
     theme: Theme;
     onthemechange: (t: Theme) => void;
     detailPanelPosition: DetailPanelPosition;
@@ -48,6 +52,14 @@
   const densityOptions: { value: RowDensity; label: string }[] = [
     { value: "compact", label: "Compact" },
     { value: "comfortable", label: "Comfortable" },
+  ];
+
+  // "Always" is deliberately absent: it is the behaviour that shipped first and
+  // the one the measurement in nibs-ke8o argues against, so carrying it forward
+  // would preserve a default nobody defended.
+  const regionBandOptions: { value: RegionBandMode; label: string }[] = [
+    { value: "on-drag", label: "While dragging" },
+    { value: "never", label: "Never" },
   ];
 
   const fontSizeOptions: { value: FontSize; label: string }[] = [
@@ -251,6 +263,16 @@
               options={emphasisOptions}
               ariaLabel="Blocked emphasis"
               onchange={(v) => onemphasischange(v as BlockedEmphasis)}
+            />
+          </div>
+
+          <div class="flex items-center justify-between gap-3">
+            <span class="text-sm text-foreground">Ordering rules</span>
+            <SegmentedControl
+              value={regionBands}
+              options={regionBandOptions}
+              ariaLabel="Ordering rules"
+              onchange={(v) => onregionbandschange(v as RegionBandMode)}
             />
           </div>
 

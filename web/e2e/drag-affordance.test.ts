@@ -66,6 +66,25 @@ async function collapse(page: Page, nibId: string, innerRow: string) {
  * assertion names the token it means rather than a literal color a theme retune
  * would invalidate.
  */
+// Begin a drag from `nibId` and leave it held, which is the only state the
+// ordering bands are drawn in (nibs-ke8o). Returns the release.
+//
+// The pointer is moved a few pixels within the source row: enough to pass the
+// drag threshold, not far enough to aim at anything, so a band read afterwards
+// is the row's own and carries no drop treatment.
+async function holdDrag(page: Page, nibId: string): Promise<() => Promise<void>> {
+  await centerOn(page, nibId);
+  const source = await boxOf(page, nibId);
+  await page.mouse.move(source.x + 300, source.y + source.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(source.x + 314, source.y + source.height / 2, { steps: 5 });
+  await expect(page.locator("body")).toHaveCSS("cursor", "grabbing");
+  return async () => {
+    await page.keyboard.press("Escape");
+    await page.mouse.up();
+  };
+}
+
 async function resolvedColor(page: Page, token: string): Promise<string> {
   return page.evaluate((name) => {
     const probe = document.createElement("span");
@@ -271,6 +290,9 @@ test("a refusal names which of the two causes it was", async ({ page }) => {
 test("a region boundary is drawn as a rule the neighboring rows do not carry", async ({ page }) => {
   await openMilestones(page);
 
+  // Held, because the bands are a drag affordance and are drawn only during one.
+  const release = await holdDrag(page, "tnib-f008");
+
   const banded = page.locator("tr.region-band");
   await expect(banded.first()).toBeVisible();
 
@@ -293,6 +315,7 @@ test("a region boundary is drawn as a rule the neighboring rows do not carry", a
   // has been bitten by; assert the rule is actually painted.
   expect(widths.bandColor).not.toBe("rgba(0, 0, 0, 0)");
   expect(widths.bandColor).not.toBe("transparent");
+  await release();
 });
 
 // The same seam on the MILESTONE axis, which the parent-axis test above cannot
@@ -306,6 +329,9 @@ test("a queue boundary is banded in the queue's own weight and color", async ({ 
   const queueColor = await resolvedColor(page, "--region-queue");
   const plainColor = await resolvedColor(page, "--border");
   expect(queueColor).not.toBe(plainColor);
+
+  // Held, because the bands are a drag affordance and are drawn only during one.
+  const release = await holdDrag(page, "tnib-f008");
 
   const bands = await page.evaluate(() => {
     const read = (selector: string) => {
@@ -326,6 +352,7 @@ test("a queue boundary is banded in the queue's own weight and color", async ({ 
   expect(bands.queue.color).toBe(queueColor);
   expect(bands.plain.color).toBe(plainColor);
   expect(bands.queue.width).toBeGreaterThan(bands.plain.width);
+  await release();
 });
 
 // The two ordering semantics, one after the other in ONE view, so the claim that
@@ -512,21 +539,22 @@ test("a queue band yields its color to the drop line aimed at it", async ({ page
   await collapse(page, "tnib-e002", "tnib-f004");
   await centerOn(page, "tnib-e002");
 
-  // The premise: this row really does carry a queue band before anything is
-  // dragged at it. Without this the test could pass on a row that never had one.
+  // Both readings happen inside ONE held drag, because that is the only state
+  // either mark exists in (nibs-ke8o). The comparison is therefore banded-and-
+  // unaimed against banded-and-aimed, which is the pair this rule is about.
+  const release = await holdDrag(page, "tnib-e003");
+  const target = await boxOf(page, "tnib-e002");
+
+  // The premise: this row really does carry a queue band while nothing is aimed
+  // at it. Without this the test could pass on a row that never had one.
   await expect(row).toHaveClass(/region-band-queue/);
-  const atRest = await row.evaluate((el) => {
+  await expect(row).not.toHaveClass(/drop-before/);
+  const unaimed = await row.evaluate((el) => {
     const cs = getComputedStyle(el);
     return { width: cs.borderTopWidth, color: cs.borderTopColor };
   });
-  expect(atRest).toEqual({ width: "2px", color: queueColor });
+  expect(unaimed).toEqual({ width: "2px", color: queueColor });
 
-  const source = await boxOf(page, "tnib-e003");
-  const target = await boxOf(page, "tnib-e002");
-  await page.mouse.move(source.x + 300, source.y + source.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(source.x + 314, source.y + source.height / 2, { steps: 5 });
-  await expect(page.locator("body")).toHaveCSS("cursor", "grabbing");
   await page.mouse.move(target.x + 300, target.y + 4, { steps: 8 });
 
   await expect(row).toHaveClass(/drop-before/);
@@ -536,8 +564,7 @@ test("a queue band yields its color to the drop line aimed at it", async ({ page
     return { width: cs.borderTopWidth, color: cs.borderTopColor, shadow: cs.boxShadow };
   });
 
-  await page.keyboard.press("Escape");
-  await page.mouse.up();
+  await release();
 
   // The band steps back to the neutral hairline the parent axis uses...
   expect(aimed.width).toBe("1px");
@@ -546,11 +573,8 @@ test("a queue band yields its color to the drop line aimed at it", async ({ page
   // tokens rather than one drawn heavier.
   expect(aimed.shadow).toBe(`${queueColor} 0px 2px 0px 0px inset`);
 
-  // The band must yield only while aimed at: releasing restores the seam.
+  // The band yields only while aimed at. After the release the drag is over, so
+  // the band is gone with it — what must not survive is the drop treatment.
   await expect(row).not.toHaveClass(/drop-before/);
-  const afterwards = await row.evaluate((el) => {
-    const cs = getComputedStyle(el);
-    return { width: cs.borderTopWidth, color: cs.borderTopColor };
-  });
-  expect(afterwards).toEqual({ width: "2px", color: queueColor });
+  await expect(row).not.toHaveClass(/region-band/);
 });

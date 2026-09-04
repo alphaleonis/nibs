@@ -284,6 +284,21 @@ export const DEFAULT_PREVIEW_OPEN = true;
 //   subtle   → the bare lock icon
 //   pill     → tinted "Blocked" pill (default)
 //   pill-dim → pill + the whole table row dimmed
+// When the ordering-region bands are drawn.
+//
+// Two modes, not three: "always" is what shipped first and is the one the
+// measurement argues against. Over the 89-nib sample fixture, 62 of 62 bands sat
+// at a depth DECREASE — an outdent the indentation already shows — and in the
+// tree view an equal-depth band cannot occur at all, because `buildTree` nests
+// every nib under its parent and `flatten` is depth-first, so two consecutive
+// rows at equal depth are necessarily siblings in one region. What the rule
+// uniquely carries is its COLOUR, telling a queue seam from a parent seam, and
+// that is information about a DROP. So it is drawn while dragging, or not at
+// all (nibs-ke8o).
+export const REGION_BAND_MODES = ["on-drag", "never"] as const;
+export type RegionBandMode = (typeof REGION_BAND_MODES)[number];
+export const DEFAULT_REGION_BAND_MODE: RegionBandMode = "on-drag";
+
 export const BLOCKED_EMPHASES = ["subtle", "pill", "pill-dim"] as const;
 export type BlockedEmphasis = (typeof BLOCKED_EMPHASES)[number];
 export const DEFAULT_BLOCKED_EMPHASIS: BlockedEmphasis = "pill";
@@ -349,6 +364,7 @@ export interface FilterPreferences {
   rowDensity?: RowDensity;
   fontSize?: FontSize;
   blockedEmphasis?: BlockedEmphasis;
+  regionBands?: RegionBandMode;
   theme?: Theme;
   previewOpen?: boolean;
   tableSort?: TableSort;

@@ -752,6 +752,7 @@
           onaddchild={(parentId, parentType, anchor) => view.startCreateChild(parentId, parentType, anchor)}
           rowDensity={prefs.rowDensity}
           blockedEmphasis={prefs.blockedEmphasis}
+          regionBands={prefs.regionBands}
           ondrop={handleDrop}
         />
       </Resizable.Pane>

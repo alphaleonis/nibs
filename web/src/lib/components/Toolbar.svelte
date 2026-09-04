@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { VIEW_LEVELS, VIEW_LEVEL_LABELS, DEFAULT_THEME, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_OPEN_DETAIL_ON, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE } from "../types";
-  import type { NibFilter, ViewLevel, RowDensity, FontSize, Theme, DetailPanelPosition, OpenDetailGesture, BlockedEmphasis } from "../types";
+  import { VIEW_LEVELS, VIEW_LEVEL_LABELS, DEFAULT_THEME, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_OPEN_DETAIL_ON, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_REGION_BAND_MODE, DEFAULT_FONT_SIZE } from "../types";
+  import type { NibFilter, ViewLevel, RowDensity, FontSize, Theme, DetailPanelPosition, OpenDetailGesture, BlockedEmphasis, RegionBandMode } from "../types";
   import { ALL_COLUMN_KEYS, COLUMNS } from "../columns";
   import type { ColumnKey } from "../columns";
   import type { Preferences } from "../preferences.svelte";
@@ -155,6 +155,12 @@
     } else {
       onemphasischange?.(emphasis);
     }
+  }
+
+  let resolvedRegionBands = $derived(prefs ? prefs.regionBands : DEFAULT_REGION_BAND_MODE);
+
+  function handleSetRegionBands(mode: RegionBandMode) {
+    if (prefs) prefs.regionBands = mode;
   }
 
   let resolvedTheme = $derived(prefs ? prefs.theme : theme);
@@ -993,6 +999,8 @@
       onfontsizechange={handleSetFontSize}
       blockedEmphasis={resolvedBlockedEmphasis}
       onemphasischange={handleSetBlockedEmphasis}
+      regionBands={resolvedRegionBands}
+      onregionbandschange={handleSetRegionBands}
       theme={resolvedTheme}
       onthemechange={handleSetTheme}
       detailPanelPosition={resolvedPosition}

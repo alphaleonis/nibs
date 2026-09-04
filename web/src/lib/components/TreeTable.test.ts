@@ -992,7 +992,58 @@ describe("TreeTable", () => {
   // the synthetic bucket cannot see that off-by-one: the bucket's region is
   // null, and `sameRegion(null, null)` is false, so it bands even compared
   // against itself. Milestone B bands only against the row actually above it.
-  it("bands the row where one ordering region's run ends and another begins", () => {
+  // nibs-ke8o: the bands are a DRAG affordance and are drawn only during one.
+  // Measured over the 89-nib fixture, 62 of 62 bands sat at a depth decrease the
+  // indentation already showed, so at rest the rule answered a question nobody
+  // was asking at one per four rows. What it uniquely carries — the queue-versus-
+  // parent colour — matters when a drop is being aimed, which is when it shows.
+  it("draws no bands until a drag begins", async () => {
+    const drag = new DragState();
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-001", title: "Milestone A", type: "milestone" }),
+      makeTreeTableNib({ id: "nibs-002", title: "Epic in A", type: "epic", milestone: "nibs-001", milestoneOrder: "a" }),
+      makeTreeTableNib({ id: "nibs-004", title: "Milestone B", type: "milestone" }),
+    ];
+    mockQueryStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+    );
+
+    const { container } = renderTreeTable({ filter: {}, viewLevel: "milestones" as ViewLevel }, { drag });
+
+    // Rows are on screen, so an empty band list is not an empty table.
+    expect(container.querySelectorAll("[data-testid='tree-row']").length).toBeGreaterThan(0);
+    expect(container.querySelectorAll("tr.region-band")).toHaveLength(0);
+
+    drag.startDrag(["nibs-002"]);
+    await tick();
+
+    expect(container.querySelectorAll("tr.region-band").length).toBeGreaterThan(0);
+  });
+
+  it("draws no bands even during a drag when the mode is never", async () => {
+    const drag = new DragState();
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-001", title: "Milestone A", type: "milestone" }),
+      makeTreeTableNib({ id: "nibs-002", title: "Epic in A", type: "epic", milestone: "nibs-001", milestoneOrder: "a" }),
+      makeTreeTableNib({ id: "nibs-004", title: "Milestone B", type: "milestone" }),
+    ];
+    mockQueryStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+    );
+
+    const { container } = renderTreeTable(
+      { filter: {}, viewLevel: "milestones" as ViewLevel, regionBands: "never" },
+      { drag },
+    );
+
+    drag.startDrag(["nibs-002"]);
+    await tick();
+
+    expect(container.querySelectorAll("[data-testid='tree-row']").length).toBeGreaterThan(0);
+    expect(container.querySelectorAll("tr.region-band")).toHaveLength(0);
+  });
+
+  it("bands the row where one ordering region's run ends and another begins", async () => {
     const nibs: TreeTableNib[] = [
       makeTreeTableNib({ id: "nibs-001", title: "Milestone A", type: "milestone" }),
       makeTreeTableNib({ id: "nibs-002", title: "Epic in A", type: "epic", milestone: "nibs-001", milestoneOrder: "a" }),
@@ -1004,7 +1055,15 @@ describe("TreeTable", () => {
       readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
     );
 
-    const { container } = renderTreeTable({ filter: {}, viewLevel: "milestones" as ViewLevel });
+    // Inside a drag, because that is when bands are drawn (nibs-ke8o). What this
+    // test is about is WHICH rows get one, which is unchanged.
+    const drag = new DragState();
+    const { container } = renderTreeTable(
+      { filter: {}, viewLevel: "milestones" as ViewLevel },
+      { drag },
+    );
+    drag.startDrag(["nibs-002"]);
+    await tick();
 
     const rowIds = Array.from(container.querySelectorAll("tr[data-testid='tree-row']")).map(
       (tr) => (tr as HTMLElement).dataset.nibId ?? "",
@@ -1020,7 +1079,7 @@ describe("TreeTable", () => {
     expect(banded).toEqual(["nibs-004", bucketId]);
   });
 
-  it("draws no bands in a view whose row order is not the regions' order", () => {
+  it("draws no bands in a view whose row order is not the regions' order", async () => {
     // Flat intermixes real parents, so two neighbors say nothing about where a
     // region's run starts or stops — the same reason drag-reorder is off there.
     const nibs: TreeTableNib[] = [
@@ -1032,7 +1091,12 @@ describe("TreeTable", () => {
       readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
     );
 
-    const { container } = renderTreeTable({ filter: {}, viewLevel: "flat" as ViewLevel });
+    // Dragging, so the empty result is the ADJACENCY gate and not merely the
+    // drag gate — without this the assertion would hold for the wrong reason.
+    const drag = new DragState();
+    const { container } = renderTreeTable({ filter: {}, viewLevel: "flat" as ViewLevel }, { drag });
+    drag.startDrag(["nibs-002"]);
+    await tick();
 
     // Rows really are on screen, so the empty band list is not an empty table.
     expect(container.querySelectorAll("[data-testid='tree-row']").length).toBeGreaterThan(0);

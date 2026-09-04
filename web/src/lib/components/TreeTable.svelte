@@ -1,7 +1,7 @@
 <script lang="ts">
   import { getContextClient } from "@urql/svelte";
-  import { DEFAULT_BLOCKED_EMPHASIS, DEFAULT_OPEN_DETAIL_ON, TREE_VIEW_LEVEL } from "../types";
-  import type { NibFilter, ViewLevel, RowDensity, BlockedEmphasis, OpenDetailGesture, RowSubtreeActions, TreeTableNib, TableSort, SortField } from "../types";
+  import { DEFAULT_BLOCKED_EMPHASIS, DEFAULT_OPEN_DETAIL_ON, DEFAULT_REGION_BAND_MODE, TREE_VIEW_LEVEL } from "../types";
+  import type { NibFilter, ViewLevel, RowDensity, BlockedEmphasis, RegionBandMode, OpenDetailGesture, RowSubtreeActions, TreeTableNib, TableSort, SortField } from "../types";
   import type { ColumnKey } from "../columns";
   import type { Preferences } from "../preferences.svelte";
   import { isSyntheticRowId } from "../tree";
@@ -62,6 +62,7 @@
     onaddchild?: (nibId: string, nibType: string, anchor: DOMRect) => void;
     rowDensity?: RowDensity;
     blockedEmphasis?: BlockedEmphasis;
+    regionBands?: RegionBandMode;
     /** Which row gesture opens the detail panel. Unused when `prefs` is supplied. */
     openDetailOn?: OpenDetailGesture;
     /** The drop a finished drag decided on, refusals included. */
@@ -87,6 +88,7 @@
     onaddchild,
     rowDensity = "compact" as RowDensity,
     blockedEmphasis = DEFAULT_BLOCKED_EMPHASIS as BlockedEmphasis,
+    regionBands = DEFAULT_REGION_BAND_MODE as RegionBandMode,
     openDetailOn = undefined as OpenDetailGesture | undefined,
     ondrop,
   }: Props = $props();
@@ -282,8 +284,15 @@
   // would be decoration at best and a lie at worst. Those three are also every
   // gate `dragBlockFor` shuts today, so the two predicates agree; they are asked
   // separately so a gate added for another reason cannot delete the bands.
-  let regionBands: (BandAxis | null)[] = $derived(
-    viewSpine().adjacencyReflectsOrdering(resolvedFilter, resolvedViewLevel, activeSort)
+  // Gated on the DRAG as well, and on the mode. The band's justification is
+  // drag-specific — it says where the list a row reorders in ends — and at rest
+  // it answered that at one rule per four rows for a reader who was not asking:
+  // measured over the sample fixture, every band sat at an outdent the
+  // indentation already showed (nibs-ke8o). `never` drops it there too.
+  let bandsVisible = $derived(regionBands === "on-drag" && drag.isDragging);
+  let regionBandAxes: (BandAxis | null)[] = $derived(
+    bandsVisible &&
+      viewSpine().adjacencyReflectsOrdering(resolvedFilter, resolvedViewLevel, activeSort)
       ? rows.map((row, i) => regionBandAt(row, i === 0 ? null : rows[i - 1]))
       : [],
   );
@@ -988,7 +997,7 @@
     <tbody>
       {#each rows as row, i (row.nib.id)}
         <TreeTableRow
-          regionBand={regionBands[i] ?? null}
+          regionBand={regionBandAxes[i] ?? null}
           nib={row.nib}
           depth={row.depth}
           hasChildren={row.hasChildren}

@@ -3,8 +3,8 @@ import { loadPreferences, savePreferences } from "./storage";
 import { parseQuery, serializeQuery } from "./query";
 import { persistedPerViewMap } from "./perViewMap.svelte";
 import type { PerViewPersistence } from "./perViewMap.svelte";
-import { ALL_COLUMN_KEYS, DEFAULT_VISIBLE_COLUMNS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_OPEN_DETAIL_ON, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE, DEFAULT_THEME, DEFAULT_PREVIEW_OPEN, DEFAULT_VIEW_LEVEL } from "./types";
-import type { NibFilter, ViewLevel, ColumnKey, RowDensity, Theme, DetailPanelPosition, OpenDetailGesture, BlockedEmphasis, FontSize, TableSort } from "./types";
+import { ALL_COLUMN_KEYS, DEFAULT_VISIBLE_COLUMNS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_OPEN_DETAIL_ON, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_REGION_BAND_MODE, DEFAULT_FONT_SIZE, DEFAULT_THEME, DEFAULT_PREVIEW_OPEN, DEFAULT_VIEW_LEVEL } from "./types";
+import type { NibFilter, ViewLevel, ColumnKey, RowDensity, Theme, DetailPanelPosition, OpenDetailGesture, BlockedEmphasis, RegionBandMode, FontSize, TableSort } from "./types";
 
 export class Preferences {
   // The structured filter and its invalid-token sidecar. Together they ARE the
@@ -61,6 +61,7 @@ export class Preferences {
   // scale via --font-scale; decoupled from rowDensity (spacing).
   fontSize: FontSize = $state(DEFAULT_FONT_SIZE);
   blockedEmphasis: BlockedEmphasis = $state(DEFAULT_BLOCKED_EMPHASIS);
+  regionBands: RegionBandMode = $state(DEFAULT_REGION_BAND_MODE);
   theme: Theme = $state(DEFAULT_THEME);
   // Discrete toggle → auto-saved (like theme/rowDensity/detailPanelPosition).
   previewOpen: boolean = $state(DEFAULT_PREVIEW_OPEN);
@@ -130,6 +131,7 @@ export class Preferences {
     this.rowDensity = initial.rowDensity ?? "compact";
     this.fontSize = initial.fontSize ?? DEFAULT_FONT_SIZE;
     this.blockedEmphasis = initial.blockedEmphasis ?? DEFAULT_BLOCKED_EMPHASIS;
+    this.regionBands = initial.regionBands ?? DEFAULT_REGION_BAND_MODE;
     this.theme = initial.theme ?? DEFAULT_THEME;
     this.previewOpen = initial.previewOpen ?? DEFAULT_PREVIEW_OPEN;
     this.tableSort = initial.tableSort ?? null;
@@ -156,6 +158,7 @@ export class Preferences {
         this.rowDensity;
         this.fontSize;
         this.blockedEmphasis;
+        this.regionBands;
         this.theme;
         this.detailPanelPosition;
         this.openDetailOn;
@@ -222,6 +225,7 @@ export class Preferences {
       rowDensity: this.rowDensity,
       fontSize: this.fontSize,
       blockedEmphasis: this.blockedEmphasis,
+      regionBands: this.regionBands,
       theme: this.theme,
       previewOpen: this.previewOpen,
       tableSort: this.tableSort ?? undefined,

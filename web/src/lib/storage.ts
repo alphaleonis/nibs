@@ -1,5 +1,5 @@
-import { VIEW_LEVELS, DEFAULT_VIEW_LEVEL, MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT, DETAIL_PANEL_POSITIONS, OPEN_DETAIL_GESTURES, BLOCKED_EMPHASES, THEMES, DEFAULT_THEME, FONT_SCALES } from "./types";
-import type { FilterPreferences, RowDensity, ViewLevel, Theme, DetailPanelPosition, OpenDetailGesture, BlockedEmphasis, FontSize, NibFilter, TableSort } from "./types";
+import { VIEW_LEVELS, DEFAULT_VIEW_LEVEL, MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT, DETAIL_PANEL_POSITIONS, OPEN_DETAIL_GESTURES, BLOCKED_EMPHASES, REGION_BAND_MODES, THEMES, DEFAULT_THEME, FONT_SCALES } from "./types";
+import type { FilterPreferences, RowDensity, ViewLevel, Theme, DetailPanelPosition, OpenDetailGesture, BlockedEmphasis, RegionBandMode, FontSize, NibFilter, TableSort } from "./types";
 import { ALL_COLUMN_KEYS, ALWAYS_VISIBLE_KEYS, SORTABLE_COLUMN_KEYS } from "./columns";
 import type { ColumnKey } from "./columns";
 import { serializeQuery } from "./query";
@@ -244,6 +244,16 @@ function parseBlockedEmphasis(raw: unknown): BlockedEmphasis | undefined {
   return raw as BlockedEmphasis;
 }
 
+const VALID_REGION_BAND_MODES = new Set<string>(REGION_BAND_MODES);
+
+// Optional like blockedEmphasis. A stored "always" from a build before the mode
+// existed lands here as garbage and returns undefined, so such a session comes
+// back on the current default rather than on a mode this build cannot draw.
+function parseRegionBands(raw: unknown): RegionBandMode | undefined {
+  if (typeof raw !== "string" || !VALID_REGION_BAND_MODES.has(raw)) return undefined;
+  return raw as RegionBandMode;
+}
+
 // Optional like rowDensity/blockedEmphasis: return undefined for
 // missing/garbage so Preferences supplies the concrete default.
 function parsePreviewOpen(raw: unknown): boolean | undefined {
@@ -305,6 +315,7 @@ export function loadPreferences(): FilterPreferences {
       rowDensity: parseRowDensity(parsed.rowDensity),
       fontSize: parseFontSize(parsed.fontSize),
       blockedEmphasis: parseBlockedEmphasis(parsed.blockedEmphasis),
+      regionBands: parseRegionBands(parsed.regionBands),
       theme: parseTheme(parsed.theme),
       previewOpen: parsePreviewOpen(parsed.previewOpen),
       tableSort: parseTableSort(parsed.tableSort),
