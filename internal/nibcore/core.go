@@ -28,15 +28,18 @@ import (
 // ErrNotFound is an alias for nib.ErrNotFound for backwards compatibility.
 var ErrNotFound = nib.ErrNotFound
 
-// IDExistsError reports a Create refused because the caller-supplied id
-// already belongs to a nib in the store (active or archived). Classified as
-// a conflict by the CLI, like the etag errors below.
+// IDExistsError reports a Create refused because the caller-supplied id is
+// already claimed by a file in the store (active or archived). The claimant is
+// usually a nib, but a file whose content does not parse claims its id too —
+// its NAME is what a load reads the id from — so the message speaks of the file
+// rather than of a nib the caller may not be able to see. Classified as a
+// conflict by the CLI, like the etag errors below.
 type IDExistsError struct {
 	ID string
 }
 
 func (e *IDExistsError) Error() string {
-	return fmt.Sprintf("nib id %q already exists — creating it again would shadow the existing nib", e.ID)
+	return fmt.Sprintf("nib id %q is already claimed by a file in the store — creating it again would leave two files wearing one id", e.ID)
 }
 
 // StoreRePrefixedError reports a Create refused because the store's config
@@ -1123,6 +1126,49 @@ func (c *Core) ValidateArea(b *nib.Nib) error {
 	return c.Areas().ValidateStored(b.ID, b.Area)
 }
 
+// storedIDs is the set of nib ids that have a FILE in the store right now. It
+// reads NAMES only: a nib's id comes from its file name on every load (see
+// loadNib), so nothing has to be opened to learn what a file claims.
+//
+// It exists because c.nibs answers for the store as THIS process last read it,
+// and a create has to decide against the store as it stands. Two Cores that both
+// loaded before either wrote — a running `nibs serve` alongside a `nibs new`, or
+// two concurrent CLIs — each hold a map with no trace of the other's pending nib,
+// and the cross-process write lock serializes the writes without refreshing
+// either map. Without this probe two files claim one id, with nothing refusing
+// at write time and nothing but the next load's duplicate warning and `nibs
+// check` to say so. Callers must hold that write lock, so no cooperating nibs
+// process writes between this read and the decision it feeds.
+//
+// The walk is WalkStoreContent, the same enumeration Load uses, so probe and
+// loader take the same files from the same directories and split their names
+// with the same prefix. They part on ONE class: a file whose CONTENT does not
+// parse is taken here while Load records it as unparseable and leaves it out of
+// c.nibs. Deliberately — the name is what claims the id, and issuing that id
+// again would turn repairing the file into a second nib wearing it. An entry the
+// walk declines to hand over (a FIFO named `*.md`) is skipped, matching Load,
+// which never reaches c.nibs with it either.
+func (c *Core) storedIDs() (map[string]struct{}, error) {
+	prefix := c.configPrefix()
+	ids := make(map[string]struct{})
+	err := WalkStoreContent(c.layout, func(path string, err error) error {
+		if err != nil {
+			if errors.Is(err, ErrNotRegularFile) {
+				return nil
+			}
+			return err
+		}
+		if id, _ := nib.ParseFilename(filepath.Base(path), prefix); id != "" {
+			ids[id] = struct{}{}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
 // Create adds a new nib, generating an ID if needed, and writes it to disk.
 func (c *Core) Create(b *nib.Nib) error {
 	c.mu.Lock()
@@ -1171,18 +1217,29 @@ func (c *Core) Create(b *nib.Nib) error {
 	// combinations, so at hundreds of nibs every create carries real birthday
 	// odds. The bound turns a broken generator into an error instead of a
 	// hang; at any sane density it is never approached.
+	//
+	// Both branches consult the STORE as well as the map, because the map is
+	// only as fresh as this process's last read of the store — see storedIDs.
 	if b.ID == "" {
 		prefix, length, err := c.mintingVocabulary()
 		if err != nil {
 			return err
 		}
 		readBackPrefix = prefix
+		onDisk, err := c.storedIDs()
+		if err != nil {
+			return err
+		}
 		for range 100 {
 			id := newNibID(prefix, length)
-			if _, exists := c.nibs[id]; !exists {
-				b.ID = id
-				break
+			if _, exists := c.nibs[id]; exists {
+				continue
 			}
+			if _, exists := onDisk[id]; exists {
+				continue
+			}
+			b.ID = id
+			break
 		}
 		if b.ID == "" {
 			return fmt.Errorf("could not generate a free nib id in 100 draws — the id space (length %d) is exhausted or the generator is broken; raise nibs.id_length", length)
@@ -1192,6 +1249,15 @@ func (c *Core) Create(b *nib.Nib) error {
 		// silently replaced: c.nibs[b.ID] = b below would shadow the existing
 		// nib in memory and leave two files claiming one id on disk.
 		return &IDExistsError{ID: b.ID}
+	} else {
+		// The map said free; the STORE gets the last word (see storedIDs).
+		onDisk, err := c.storedIDs()
+		if err != nil {
+			return err
+		}
+		if _, exists := onDisk[b.ID]; exists {
+			return &IDExistsError{ID: b.ID}
+		}
 	}
 
 	// The id is about to become a path (nibFilePath joins BuildFilename onto
