@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -23,20 +24,34 @@ func TestBuildNibSort(t *testing.T) {
 		sortFlag  string
 		wantField model.NibSortField
 		wantDesc  bool
+		wantErr   bool
 	}{
-		{"default", "", model.NibSortFieldOrder, false},
-		{"created", "created", model.NibSortFieldCreatedAt, true},
-		{"updated", "updated", model.NibSortFieldUpdatedAt, true},
-		{"status", "status", model.NibSortFieldStatus, false},
-		{"priority", "priority", model.NibSortFieldPriority, false},
-		{"status-priority", "status-priority", model.NibSortFieldStatusPriority, false},
-		{"id", "id", model.NibSortFieldID, false},
-		{"unknown falls back to order", "garbage", model.NibSortFieldOrder, false},
+		{name: "flag absent selects the order key", sortFlag: "", wantField: model.NibSortFieldOrder},
+		{name: "created", sortFlag: "created", wantField: model.NibSortFieldCreatedAt, wantDesc: true},
+		{name: "updated", sortFlag: "updated", wantField: model.NibSortFieldUpdatedAt, wantDesc: true},
+		{name: "status", sortFlag: "status", wantField: model.NibSortFieldStatus},
+		{name: "priority", sortFlag: "priority", wantField: model.NibSortFieldPriority},
+		{name: "status-priority", sortFlag: "status-priority", wantField: model.NibSortFieldStatusPriority},
+		{name: "id", sortFlag: "id", wantField: model.NibSortFieldID},
+		{name: "milestone-order", sortFlag: "milestone-order", wantField: model.NibSortFieldMilestoneOrder},
+		{name: "unknown is refused", sortFlag: "garbage", wantErr: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := buildNibSort(tt.sortFlag)
+			got, err := buildNibSort(tt.sortFlag)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("buildNibSort(%q) = %+v, want an error", tt.sortFlag, got)
+				}
+				if got != nil {
+					t.Errorf("buildNibSort(%q) returned a sort alongside its error: %+v", tt.sortFlag, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("buildNibSort(%q): %v", tt.sortFlag, err)
+			}
 			if got.Field != tt.wantField {
 				t.Errorf("field = %s, want %s", got.Field, tt.wantField)
 			}
@@ -45,6 +60,184 @@ func TestBuildNibSort(t *testing.T) {
 				t.Errorf("desc = %v, want %v", gotDesc, tt.wantDesc)
 			}
 		})
+	}
+}
+
+// TestBuildNibSortCoversEveryOption pins that the option table and the mapper
+// agree in both directions: every key in the table builds a sort, and the table
+// holds exactly the contract's keys in the contract's order. Without this a key
+// could be added to the table — and so to the help and the catalog — with
+// nothing exercising the sort it selects.
+func TestBuildNibSortCoversEveryOption(t *testing.T) {
+	if got := listSortKeys(); !reflect.DeepEqual(got, wantListSortKeys) {
+		t.Fatalf("listSortKeys() = %v, want %v", got, wantListSortKeys)
+	}
+	seen := map[model.NibSortField]bool{}
+	for _, key := range wantListSortKeys {
+		got, err := buildNibSort(key)
+		if err != nil {
+			t.Errorf("buildNibSort(%q): %v", key, err)
+			continue
+		}
+		if seen[got.Field] {
+			t.Errorf("--sort %s selects %s, which another key already selects", key, got.Field)
+		}
+		seen[got.Field] = true
+	}
+}
+
+// wantListSortKeys is the --sort vocabulary as a contract: the keys the command
+// accepts, in the order the refusal and the help name them. It is pinned as a
+// literal rather than read off the production table so the assertions below
+// compare each surface against the contract instead of against the source the
+// surface is built from.
+var wantListSortKeys = []string{"created", "updated", "status", "priority", "status-priority", "id", "milestone-order"}
+
+// wantListSortRefusal is the message an unrecognized --sort must raise, in the
+// house shape every other enum on this surface uses.
+var wantListSortRefusal = `invalid sort "bogus": must be one of ` + strings.Join(wantListSortKeys, ", ")
+
+// TestListSortRefusesUnknownValue pins that --sort is validated like every other
+// enum on this surface. An unrecognized key used to fall through to the order
+// key while also suppressing the --milestone queue-order default, so the caller
+// got a third order at exit 0 — a wrong answer that looked like a right one.
+//
+// Each output mode is driven separately because -c and -q return before the
+// projection and the rendering: a check placed with either would let those two
+// paths through.
+func TestListSortRefusesUnknownValue(t *testing.T) {
+	modes := []struct {
+		name     string
+		args     []string
+		jsonMode bool
+	}{
+		{name: "tsv"},
+		{name: "json", args: []string{"--json"}, jsonMode: true},
+		{name: "quiet", args: []string{"-q"}},
+		{name: "count", args: []string{"-c"}},
+	}
+	for _, m := range modes {
+		t.Run(m.name, func(t *testing.T) {
+			nibsDir := setupListCobraTest(t, isBlockedFixture())
+			args := append(append([]string{}, m.args...), "--sort", "bogus")
+			out, err := runListCmd(t, nibsDir, args...)
+			if err == nil {
+				t.Fatalf("list %v: want a refusal, got nil\nout: %s", args, out)
+			}
+			var ce *output.CodedError
+			if !errors.As(err, &ce) || ce.Code != output.ErrValidation {
+				t.Fatalf("list %v: want a VALIDATION coded error, got: %v", args, err)
+			}
+			if got := output.ExitCode(ce.Code); got != output.ExitValidation {
+				t.Errorf("list %v: exit = %d, want %d (validation)", args, got, output.ExitValidation)
+			}
+			if ce.Msg != wantListSortRefusal {
+				t.Errorf("list %v: message = %q, want %q", args, ce.Msg, wantListSortRefusal)
+			}
+			if !m.jsonMode {
+				// The refusal precedes the query, so nothing is listed on any
+				// text path — including -c, whose bare integer would otherwise
+				// read as a successful count.
+				if strings.TrimSpace(out) != "" {
+					t.Errorf("list %v wrote %q to stdout; a refused sort must list nothing", args, out)
+				}
+				return
+			}
+			var env struct {
+				Error struct {
+					Code    string `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal([]byte(out), &env); err != nil {
+				t.Fatalf("decode error envelope: %v\nraw: %s", err, out)
+			}
+			if env.Error.Code != output.ErrValidation {
+				t.Errorf("envelope code = %q, want %q\nraw: %s", env.Error.Code, output.ErrValidation, out)
+			}
+			if env.Error.Message != wantListSortRefusal {
+				t.Errorf("envelope message = %q, want %q", env.Error.Message, wantListSortRefusal)
+			}
+		})
+	}
+}
+
+// TestListSortAcceptsEveryLegalValue drives the real command with each key the
+// contract names, plus the absent flag, so validating --sort cannot narrow what
+// it used to accept. The whole fixture comes back in every case — this pins
+// acceptance, not the orders themselves (internal/graph/sorting_test.go owns
+// those).
+func TestListSortAcceptsEveryLegalValue(t *testing.T) {
+	for _, key := range append([]string{""}, wantListSortKeys...) {
+		name := key
+		if name == "" {
+			name = "flag absent"
+		}
+		t.Run(name, func(t *testing.T) {
+			nibsDir := setupListCobraTest(t, isBlockedFixture())
+			args := []string{"-q"}
+			if key != "" {
+				args = append(args, "--sort", key)
+			}
+			out, err := runListCmd(t, nibsDir, args...)
+			if err != nil {
+				t.Fatalf("list %v: %v\nout: %s", args, err, out)
+			}
+			if got := len(strings.Fields(out)); got != 4 {
+				t.Errorf("list %v returned %d ids, want the whole fixture (4)\nout: %s", args, got, out)
+			}
+		})
+	}
+}
+
+// TestListSortFlagHelpNamesTheVocabulary pins the flag's own usage string — what
+// `nibs list --help` prints and what the catalog reads — against the same
+// contract the refusal names, so the help cannot advertise a key the command
+// rejects or omit one it accepts.
+func TestListSortFlagHelpNamesTheVocabulary(t *testing.T) {
+	usage := flagUsage("list", "sort")
+	if want := strings.Join(wantListSortKeys, ", "); !strings.Contains(usage, want) {
+		t.Errorf("--sort usage = %q, want it to name %q", usage, want)
+	}
+}
+
+// TestListSortInvalidValueDoesNotReorderTheQueue is the reported defect driven
+// end to end. On a milestone queue deliberately moved out of sibling order, an
+// unrecognized --sort used to disable the queue-order default AND fall back to
+// the order key, returning an order that matched neither the default nor any
+// legal value. The refusal is what keeps that third answer from existing.
+func TestListSortInvalidValueDoesNotReorderTheQueue(t *testing.T) {
+	nibsPath := setupQueueCLITest(t)
+
+	resetMvFlags()
+	if _, err := runRootWith(t, "--nibs-path", nibsPath, "mv", "tnib-e003", "--queue", "--first"); err != nil {
+		t.Fatalf("mv --queue --first: %v", err)
+	}
+	const wantQueue = "tnib-e003 tnib-e001 tnib-e002 tnib-e004"
+	if got := strings.Join(queueIDs(t, nibsPath, "tnib-m001"), " "); got != wantQueue {
+		t.Fatalf("--milestone with no --sort = %s, want the queue %s", got, wantQueue)
+	}
+
+	resetListFlags()
+	out, err := runRootWith(t, "--nibs-path", nibsPath, "list", "--milestone", "tnib-m001", "--sort", "milestone-order", "-q")
+	if err != nil {
+		t.Fatalf("list --sort milestone-order: %v", err)
+	}
+	if got := strings.Join(strings.Fields(out), " "); got != wantQueue {
+		t.Errorf("--sort milestone-order = %s, want %s (the same order the default selects)", got, wantQueue)
+	}
+
+	resetListFlags()
+	out, err = runRootWith(t, "--nibs-path", nibsPath, "list", "--milestone", "tnib-m001", "--sort", "bogus", "-q")
+	if err == nil {
+		t.Fatalf("--sort bogus returned %q at exit 0; want a refusal", strings.Join(strings.Fields(out), " "))
+	}
+	var ce *output.CodedError
+	if !errors.As(err, &ce) || ce.Code != output.ErrValidation {
+		t.Fatalf("--sort bogus: want a VALIDATION coded error, got: %v", err)
+	}
+	if ce.Msg != wantListSortRefusal {
+		t.Errorf("--sort bogus: message = %q, want %q", ce.Msg, wantListSortRefusal)
 	}
 }
 

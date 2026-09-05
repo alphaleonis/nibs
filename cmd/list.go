@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph"
@@ -401,8 +402,13 @@ Search Syntax (--search/-S):
 
 		// Execute the query (filter + sort). A queue listing is in queue order
 		// by default — the order key is the sibling order, which says nothing
-		// about a milestone's plan — and an explicit --sort still wins.
-		nibSort := buildNibSort(listSort)
+		// about a milestone's plan — and an explicit --sort still wins. An
+		// unrecognized --sort is refused here, before the query, so the
+		// count/quiet shortcuts reject it too.
+		nibSort, err := buildNibSort(listSort)
+		if err != nil {
+			return reportErr(listJSON, output.ErrValidation, err)
+		}
 		if listMilestone != "" && listSort == "" {
 			nibSort = &model.NibSort{Field: model.NibSortFieldMilestoneOrder}
 		}
@@ -562,29 +568,70 @@ func countHiddenClosed(ctx context.Context, cfg *config.Config, resolver *graph.
 	return hidden, nil
 }
 
-// buildNibSort maps CLI --sort flag values to a GraphQL NibSort.
-// Time sorts (created, updated) default to DESC (newest first).
-func buildNibSort(sortFlag string) *model.NibSort {
-	desc := model.SortDirectionDesc
+// listSortOption is one accepted `--sort` value and the NibSort it selects.
+type listSortOption struct {
+	Key   string
+	Field model.NibSortField
+	// Desc asks for descending order, which the two time sorts take because
+	// "sort by created" is a request for the most recent work, not the oldest.
+	// Not every field honors it — the composite status-priority sort ignores
+	// direction rather than invert all of its keys at once.
+	Desc bool
+}
 
-	switch sortFlag {
-	case "created":
-		return &model.NibSort{Field: model.NibSortFieldCreatedAt, Direction: &desc}
-	case "updated":
-		return &model.NibSort{Field: model.NibSortFieldUpdatedAt, Direction: &desc}
-	case "status":
-		return &model.NibSort{Field: model.NibSortFieldStatus}
-	case "priority":
-		return &model.NibSort{Field: model.NibSortFieldPriority}
-	case "status-priority":
-		return &model.NibSort{Field: model.NibSortFieldStatusPriority}
-	case "id":
-		return &model.NibSort{Field: model.NibSortFieldID}
-	case "milestone-order":
-		return &model.NibSort{Field: model.NibSortFieldMilestoneOrder}
-	default:
-		return &model.NibSort{Field: model.NibSortFieldOrder}
+// listSortOptions is the single source of truth for `--sort`. buildNibSort maps
+// through it, the flag's own usage string and `nibs catalog filters` publish its
+// keys, and a value outside it is refused naming them — so the accepted set, the
+// documented set and the set the refusal advertises cannot drift apart. The
+// slice order is the order every surface lists them in.
+//
+// The empty string is deliberately not a key here: it is the "no --sort given"
+// signal rather than something a caller types, and it selects the order key
+// while leaving --milestone free to substitute queue order.
+var listSortOptions = []listSortOption{
+	{Key: "created", Field: model.NibSortFieldCreatedAt, Desc: true},
+	{Key: "updated", Field: model.NibSortFieldUpdatedAt, Desc: true},
+	{Key: "status", Field: model.NibSortFieldStatus},
+	{Key: "priority", Field: model.NibSortFieldPriority},
+	{Key: "status-priority", Field: model.NibSortFieldStatusPriority},
+	{Key: "id", Field: model.NibSortFieldID},
+	{Key: "milestone-order", Field: model.NibSortFieldMilestoneOrder},
+}
+
+// listSortKeys returns the accepted --sort values in publication order.
+func listSortKeys() []string {
+	keys := make([]string, len(listSortOptions))
+	for i, o := range listSortOptions {
+		keys[i] = o.Key
 	}
+	return keys
+}
+
+// buildNibSort maps a CLI --sort value to a GraphQL NibSort. The empty value —
+// the flag left off — is the order key.
+//
+// Anything else is a validation error naming the accepted set — the class every
+// other enum on this surface gives a bad value. A silent fallback would be worse
+// here than an ordinary wrong default: the caller's queue-order substitution
+// below keys on an EMPTY --sort, so an unrecognized key would both sort by the
+// order key AND suppress the --milestone queue order, producing an order that
+// matches neither the default nor any legal key, at exit 0.
+func buildNibSort(sortFlag string) (*model.NibSort, error) {
+	if sortFlag == "" {
+		return &model.NibSort{Field: model.NibSortFieldOrder}, nil
+	}
+	for _, o := range listSortOptions {
+		if o.Key != sortFlag {
+			continue
+		}
+		sort := &model.NibSort{Field: o.Field}
+		if o.Desc {
+			desc := model.SortDirectionDesc
+			sort.Direction = &desc
+		}
+		return sort, nil
+	}
+	return nil, fmt.Errorf("invalid sort %q: must be one of %s", sortFlag, strings.Join(listSortKeys(), ", "))
 }
 
 func init() {
@@ -617,7 +664,7 @@ func init() {
 	listCmd.Flags().BoolVar(&listAll, "all", false, "Include every status (disable the open-by-default filter)")
 	listCmd.Flags().BoolVar(&listOpen, "open", false, "Show only open nibs — shorthand for -s open; slightly narrower than the open-by-default rule, which excludes the closed statuses and so keeps a nib with no status")
 	listCmd.Flags().BoolVarP(&listQuiet, "quiet", "q", false, "Only output IDs, one per line (honors the open default; add --all to include closed nibs)")
-	listCmd.Flags().StringVar(&listSort, "sort", "", "Sort by: created, updated, status, priority, status-priority, id, milestone-order (default: order key; queue order with --milestone)")
+	listCmd.Flags().StringVar(&listSort, "sort", "", "Sort by: "+strings.Join(listSortKeys(), ", ")+" (default: order key; queue order with --milestone)")
 	listCmd.Flags().StringVar(&listView, "view", "", "View tier: id, ref, card, or full (default: ref)")
 	listCmd.Flags().StringVarP(&listFields, "fields", "f", "", "Field selection (additive over --view), e.g. \"status,priority\" or \"id,blocked-by(id,status)\"")
 	listCmd.Flags().BoolVar(&listNoHeader, "no-header", false, "Drop the \"# <n> nibs\" header from TSV output")
