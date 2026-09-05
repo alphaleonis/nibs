@@ -40,6 +40,8 @@ var (
 	relNoEstimate []string
 	relOpen       bool
 	relAll        bool
+	relQuiet      bool
+	relCount      bool
 )
 
 // relKind is the closed set of relationship names accepted by --rel.
@@ -683,6 +685,13 @@ Output modes:
                             — byte-identical to 'nibs list --json'. Carries
                             "hidden_closed":N when the open default suppressed that
                             many closed related nibs.
+  -q, --quiet               Ids only, one per line (the 'id' view, unwrapped).
+                            Honors the open default (closed statuses hidden);
+                            add --all to include them. Never annotated.
+  -c, --count               The true size of the related set as a bare integer
+                            (pre-limit; ignores --view/-f/--json). Honors the
+                            open default, so it counts open nibs only; use --all
+                            for the total across every status.
   --limit N                 Project only the first N related nibs and set
                             "truncated":true in the envelope. N<=0 is unlimited.
 
@@ -850,12 +859,29 @@ filter-on-singular validation error does not fire here.`,
 			}
 		}
 
+		// -c/--count: the true size of the related set (pre-limit) as a bare
+		// integer. Independent of --json and the projection selection.
+		if relCount {
+			fmt.Println(projection.Count(results))
+			return nil
+		}
+
+		// -q/--quiet: ids only, one per line (equivalent to the id view,
+		// unwrapped). Independent of --limit and the projection selection.
+		if relQuiet {
+			for _, n := range results {
+				fmt.Println(n.ID)
+			}
+			return nil
+		}
+
 		// hidden_closed: when the open default silently dropped closed
 		// related nibs, disclose how many matched every OTHER filter so the caller
 		// can see the related set is partial. Re-run the same traversal with the
 		// closed-status exclusion dropped (every other filter identical) and
 		// subtract the displayed union size. Both counts are pre-limit, so the
-		// result is the full hidden set independent of --limit.
+		// result is the full hidden set independent of --limit. Skipped after the
+		// -c/-q early returns, so the terse outputs stay bare.
 		hiddenClosed := 0
 		if openDefaultApplied {
 			hiddenClosed, err = relCountHiddenClosed(ctx, resolver, b, fetched, filterFlags, app.Config(), depthVal, len(results))
@@ -909,5 +935,7 @@ func init() {
 	relCmd.Flags().StringArrayVar(&relNoEstimate, "no-estimate", nil, "Exclude by estimate (repeatable)")
 	relCmd.Flags().BoolVar(&relOpen, "open", false, "Show only open related nibs — shorthand for -s open")
 	relCmd.Flags().BoolVar(&relAll, "all", false, "Include every status (disable the open-by-default filter)")
+	relCmd.Flags().BoolVarP(&relQuiet, "quiet", "q", false, "Only output the related IDs, one per line (honors the open default; add --all to include closed nibs)")
+	relCmd.Flags().BoolVarP(&relCount, "count", "c", false, "Output the size of the related set as a bare integer (honors the open default; use --all for the total across every status)")
 	rootCmd.AddCommand(relCmd)
 }
