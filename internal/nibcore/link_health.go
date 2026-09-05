@@ -567,6 +567,36 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 	// Go hands out the keys. Sorting is what makes the report and the --json
 	// envelope stable run to run, the same reason the per-nib pass below walks
 	// sorted ids.
+	//
+	// A nib id alone orders the milestone findings because a nib carries
+	// exactly one milestone. The other three need a compound key: one nib can
+	// hold a broken parent, a broken milestone and several broken blockers at
+	// once, and can name several missing documents, so an id-only key would
+	// leave those entries tied, and nothing would then pin their order.
+	sort.Slice(result.BrokenLinks, func(i, j int) bool {
+		x, y := result.BrokenLinks[i], result.BrokenLinks[j]
+		if x.NibID != y.NibID {
+			return x.NibID < y.NibID
+		}
+		if x.LinkType != y.LinkType {
+			return x.LinkType < y.LinkType
+		}
+		return x.Target < y.Target
+	})
+	sort.Slice(result.SelfLinks, func(i, j int) bool {
+		x, y := result.SelfLinks[i], result.SelfLinks[j]
+		if x.NibID != y.NibID {
+			return x.NibID < y.NibID
+		}
+		return x.LinkType < y.LinkType
+	})
+	sort.Slice(result.BrokenDocuments, func(i, j int) bool {
+		x, y := result.BrokenDocuments[i], result.BrokenDocuments[j]
+		if x.NibID != y.NibID {
+			return x.NibID < y.NibID
+		}
+		return x.Path < y.Path
+	})
 	sort.Slice(result.InvalidMilestoneTargets, func(i, j int) bool {
 		return result.InvalidMilestoneTargets[i].NibID < result.InvalidMilestoneTargets[j].NibID
 	})
