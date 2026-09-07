@@ -924,7 +924,11 @@ func FindCyclesInMap(nibs map[string]*nib.Nib, linkType string) []Cycle {
 				}
 			}
 			if cycleStart >= 0 {
-				cyclePath := append(path[cycleStart:], id)
+				// Canonicalize before STORING, not just before keying: this
+				// Path is what `nibs check` renders and --json serializes, and
+				// the rotation the walk arrived at is an artifact of which id
+				// the map handed out first.
+				cyclePath := canonicalCyclePath(append(path[cycleStart:], id))
 				// Create a canonical key to avoid duplicate cycles
 				key := canonicalCycleKey(cyclePath)
 				if !seenCycles[key] {
@@ -976,17 +980,43 @@ func FindCyclesInMap(nibs map[string]*nib.Nib, linkType string) []Cycle {
 		}
 	}
 
+	// The walk above enters at whatever id the map hands out first, which
+	// decides each cycle's rotation (canonicalCyclePath answers that) and which
+	// cycle is discovered first. Sorting settles the second — the same reason
+	// CheckAllLinksInMap sorts its map-walk collections.
+	//
+	// It does NOT make the report identical run to run, and the two answered
+	// here are not the only entry-order-dependent quantity. `visited` spans the
+	// whole walk, so a back edge closing through an already-finished node is
+	// never recorded at all, and which node finishes first is decided by that
+	// same map order: over 80 runs against one store, `nibs check` reported two
+	// cycles 73 times and one cycle 7 times. Only `blocked_by` is exposed —
+	// `parent` names at most one target, so its walk is functional and reaches
+	// every edge whatever the entry.
+	//
+	// No two entries share a Path: the dedup key above is derived from that
+	// same path, so a repeat would already have been dropped. Comparing whole
+	// paths is therefore a total order, and sort.Slice's instability cannot
+	// show through the way a partial key would let it.
+	sort.Slice(cycles, func(i, j int) bool {
+		return slices.Compare(cycles[i].Path, cycles[j].Path) < 0
+	})
+
 	return cycles
 }
 
-// canonicalCycleKey creates a unique key for a cycle to detect duplicates.
-// It normalizes the cycle by starting from the smallest ID.
-func canonicalCycleKey(path []string) string {
+// canonicalCyclePath rotates a cycle to start at its smallest id, so one loop
+// has one rendering no matter which of its nodes a walk entered at.
+//
+// The input closes back on its start (the last element repeats the first) and
+// so does the result: that closure is what lets `nibs check` render the loop as
+// "a → b → a" instead of leaving the reader to infer the last hop.
+func canonicalCyclePath(path []string) []string {
 	if len(path) <= 1 {
-		return ""
+		return path
 	}
 
-	// Remove the duplicate end element (cycle closes back)
+	// Drop the duplicate end element; it is re-appended after the rotation.
 	cycle := path[:len(path)-1]
 
 	// Find the minimum element to use as start
@@ -998,16 +1028,22 @@ func canonicalCycleKey(path []string) string {
 	}
 
 	// Rotate to start from minimum
-	key := ""
-	for i := 0; i < len(cycle); i++ {
-		idx := (minIdx + i) % len(cycle)
-		if i > 0 {
-			key += "->"
-		}
-		key += cycle[idx]
+	rotated := make([]string, 0, len(cycle)+1)
+	for i := range cycle {
+		rotated = append(rotated, cycle[(minIdx+i)%len(cycle)])
+	}
+	return append(rotated, rotated[0])
+}
+
+// canonicalCycleKey creates a unique key for a cycle to detect duplicates.
+// It normalizes the cycle by starting from the smallest ID.
+func canonicalCycleKey(path []string) string {
+	if len(path) <= 1 {
+		return ""
 	}
 
-	return key
+	rotated := canonicalCyclePath(path)
+	return strings.Join(rotated[:len(rotated)-1], "->")
 }
 
 // RemoveLinksTo removes every parent, milestone and blockedBy link that
