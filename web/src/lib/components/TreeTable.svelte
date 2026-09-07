@@ -802,6 +802,20 @@
     const nibId = getNibIdFromEvent(e);
     if (!nibId) return;
 
+    // A fabricated section-container row names no nib, so the entries that
+    // resolve one have nothing to act on: Open and Edit route the row id through
+    // view.open, which refuses it. Withholding the menu is the affordance half of
+    // that refusal — the same answer selection, actionTarget and dropZone already
+    // give a synthetic id.
+    //
+    // preventDefault first: returning without it hands the gesture to the
+    // browser, whose own menu is what would then appear over a row the app
+    // declines to offer one for.
+    if (isSyntheticRowId(nibId)) {
+      e.preventDefault();
+      return;
+    }
+
     const row = rows.find(r => r.nib.id === nibId);
     if (!row) return;
 

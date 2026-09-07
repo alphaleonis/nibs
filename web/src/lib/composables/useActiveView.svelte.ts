@@ -19,6 +19,7 @@
  */
 
 import { untrack } from "svelte";
+import { isSyntheticRowId } from "../tree";
 import { getValidChildTypes } from "../typeHierarchy";
 import {
   reduce,
@@ -736,6 +737,13 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
     },
 
     async open(nibId) {
+      // A fabricated section-container row id names no nib, so seating the view
+      // on one leaves a detail query that can only ever resolve empty — which
+      // App reads as the nib having gone away. Refused in the one implementation
+      // every `view.open` caller shares rather than at each of them, and BEFORE
+      // the guard: a navigation that is not happening must not ask the user to
+      // discard edits.
+      if (isSyntheticRowId(nibId)) return;
       if (await guarded({ type: "OPEN", nibId })) deps.nav.navigateToNib(nibId);
     },
     expand() {

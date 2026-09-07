@@ -4746,3 +4746,118 @@ describe("view transition reconcile", () => {
     });
   });
 });
+
+/**
+ * A section row no nib heads carries a `data-nib-id` so delegation reaches it,
+ * but names no nib for the menu's entries to resolve: Open and Edit both route
+ * that id through `view.open`, which then reported it as a nib that had gone
+ * away ("Nib /section:web/dashboard_ no longer exists"). The menu is not offered
+ * on such a row at all — the same answer selection, actionTarget and dropZone
+ * already give a synthetic id.
+ */
+describe("TreeTable — the row context menu on a section header", () => {
+  beforeEach(() => {
+    mockQueryStore.mockReset();
+    mockSubscriptionStore.mockReset();
+    mockSubscriptionStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: undefined, stale: false }) as any,
+    );
+  });
+
+  const areaVocabulary = createAreaVocabulary([
+    { path: "web", name: "web", description: "", color: "", depth: 0 },
+    { path: "web/dashboard", name: "dashboard", description: "", color: "", depth: 1 },
+  ]);
+
+  function renderView(
+    viewLevel: ViewLevel,
+    nibs: TreeTableNib[],
+    onrowcontextmenu: ReturnType<typeof vi.fn>,
+  ) {
+    mockQueryStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any,
+    );
+    return render(TreeTable, {
+      props: { filter: {}, viewLevel, onrowcontextmenu } as any,
+      context: makeTestContext(new SelectionState(), new DragState(), {
+        viewSpine: makeViewSpine(areaVocabulary),
+      }),
+    });
+  }
+
+  /** The row for `id`, asserted present so a query typo cannot pass as a refusal. */
+  function rowFor(container: HTMLElement, id: string): HTMLElement {
+    const row = container.querySelector(`tr[data-nib-id="${id}"]`) as HTMLElement | null;
+    expect(row).toBeInTheDocument();
+    return row!;
+  }
+
+  // The exact row and id the reported error named.
+  it("stays shut on an area header", async () => {
+    const user = userEvent.setup();
+    const onrowcontextmenu = vi.fn();
+    const { container } = renderView(
+      "areas",
+      [makeTreeTableNib({ id: "nibs-001", title: "Dashboard task", area: "web/dashboard" })],
+      onrowcontextmenu,
+    );
+
+    const header = rowFor(container, "/section:web/dashboard_");
+    expect(isSyntheticRowId(header.dataset.nibId!)).toBe(true);
+    await user.pointer({ target: header, keys: "[MouseRight]" });
+
+    expect(onrowcontextmenu).not.toHaveBeenCalled();
+  });
+
+  // The leftover key, which `sectionRowId` uses verbatim rather than escaping —
+  // the other shape a fabricated row id takes.
+  it("stays shut on the leftover header", async () => {
+    const user = userEvent.setup();
+    const onrowcontextmenu = vi.fn();
+    const { container } = renderView(
+      "areas",
+      [makeTreeTableNib({ id: "nibs-001", title: "Unfiled task", area: "" })],
+      onrowcontextmenu,
+    );
+
+    const header = rowFor(container, "/__no_area__");
+    expect(isSyntheticRowId(header.dataset.nibId!)).toBe(true);
+    await user.pointer({ target: header, keys: "[MouseRight]" });
+
+    expect(onrowcontextmenu).not.toHaveBeenCalled();
+  });
+
+  // The other direction, and the reason the test is on identity rather than on
+  // "is this row a header": a milestone HEADS its section and is a real nib, so
+  // its menu — Open and Edit included — must keep working.
+  it("opens as usual on a milestone header, which is a real nib heading a section", async () => {
+    const user = userEvent.setup();
+    const onrowcontextmenu = vi.fn();
+    const nibs = [
+      makeTreeTableNib({ id: "nibs-m1", title: "Milestone A", type: "milestone" }),
+      makeTreeTableNib({
+        id: "nibs-001", title: "Assigned task", type: "task",
+        milestone: "nibs-m1", milestoneOrder: "a",
+      }),
+    ];
+    const { container } = renderView("milestones", nibs, onrowcontextmenu);
+
+    // Not an assumption: the milestone must actually be drawing a section here,
+    // or this asserts nothing about headers.
+    const rows = EMPTY_SPINE.buildTableData(nibs, {}, "milestones", new Set()).rows;
+    // `!` and not `?.`: an optional chain resolves a missed lookup to undefined,
+    // which passes not.toBeNull() and would make this meta-guard assert nothing.
+    expect(rows.find((r) => r.nib.id === "nibs-m1")!.drawsSection).not.toBeNull();
+    expect(isSyntheticRowId("nibs-m1")).toBe(false);
+
+    await user.pointer({ target: rowFor(container, "nibs-m1"), keys: "[MouseRight]" });
+
+    expect(onrowcontextmenu).toHaveBeenCalledWith(
+      "nibs-m1",
+      expect.any(MouseEvent),
+      expect.objectContaining({ id: "nibs-m1" }),
+      expect.objectContaining({ hasChildren: true }),
+      expect.any(Function),
+    );
+  });
+});
