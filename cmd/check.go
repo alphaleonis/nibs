@@ -618,14 +618,15 @@ func loadWasPartial(migration *migrationStatus) *bool {
 func renderFieldDiagnostics(app *App, result *nibcore.LinkCheckResult) {
 	for _, ie := range result.InvalidEnums {
 		remedy := fieldRemediation(app, ie)
-		// ie.Reason embeds a raw front-matter VALUE, so it crosses the boundary
-		// like every other file-sourced field printed to stdout.
+		// The id comes from the filename, so it crosses the rendering boundary;
+		// flattenReason strips the reason. remedy is fieldRemediation's own
+		// wording, whose one interpolated operand is an int.
 		if checkFix {
 			ui.Printf("  %s Cannot auto-fix %s: %s (%s)\n",
-				ui.Warning.Render("!"), ie.NibID, flattenReason(ie.Reason), remedy)
+				ui.Warning.Render("!"), stripControlChars(ie.NibID), flattenReason(ie.Reason), remedy)
 		} else {
 			ui.Printf("  %s %s: %s (loads as written; %s)\n",
-				ui.Danger.Render("✗"), ie.NibID, flattenReason(ie.Reason), remedy)
+				ui.Danger.Render("✗"), stripControlChars(ie.NibID), flattenReason(ie.Reason), remedy)
 		}
 	}
 	for _, ia := range result.InvalidAxes {

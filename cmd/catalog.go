@@ -206,6 +206,17 @@ func statusGroupCatalogEntries(cfg *config.Config) []statusGroupCatalog {
 	}
 }
 
+// sortKeyCatalogEntries returns the values `nibs list --sort` accepts, sourced
+// from listSortOptions — the same table buildNibSort maps through and the
+// refusal names — so the catalog cannot advertise a key the command rejects.
+// The sort keys ride along with the filters topic because they are the other
+// half of one question ("how do I ask for the rows I want, in the order I
+// want?"), and they answer to neither of the tables above: a sort key is not a
+// value of a filter flag, and it selects an ORDER rather than a population.
+func sortKeyCatalogEntries() []string {
+	return listSortKeys()
+}
+
 // catalogFilters renders the enum-valued filter flags and their values,
 // generated from config (the single source of truth for the enums). The status
 // groups (open/closed) are documented alongside the concrete statuses because
@@ -223,11 +234,13 @@ func catalogFilters() error {
 	}
 	statusGroups := statusGroupCatalogEntries(cfg)
 	scopeFilters := scopeFilterCatalogEntries()
+	sortKeys := sortKeyCatalogEntries()
 	if catalogJSON {
 		return output.JSONRaw(map[string]any{
 			"filters":         filters,
 			"scope_filters":   scopeFilters,
 			"status_groups":   statusGroups,
+			"sort_keys":       sortKeys,
 			"open_by_default": true,
 		})
 	}
@@ -276,6 +289,14 @@ func catalogFilters() error {
 	b.WriteString("default keeps it, but -s open and -s closed both drop it.\n")
 	b.WriteString("\nNote that deferred is closed but still blocks its dependents (unlike\n")
 	b.WriteString("completed and scrapped), because the work is coming back.\n")
+
+	b.WriteString("\nSort — 'nibs list --sort <key>' takes one of:\n\n  ")
+	b.WriteString(strings.Join(sortKeys, ", "))
+	b.WriteString("\n\nA key outside that set is refused (exit 2) rather than defaulted. With no\n")
+	b.WriteString("--sort, rows come back in the order key (the sibling order), or in queue\n")
+	b.WriteString("order when --milestone selects a milestone's queue. created and updated are\n")
+	b.WriteString("newest first; the rest ascend. 'nibs rel' takes no --sort — it orders with\n")
+	b.WriteString("--order topo instead.\n")
 	fmt.Print(b.String())
 	return nil
 }

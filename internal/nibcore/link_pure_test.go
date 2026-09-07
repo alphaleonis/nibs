@@ -3,6 +3,7 @@ package nibcore
 import (
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/config"
@@ -808,5 +809,128 @@ func TestCheckAllLinksInMapNearMissCleanStore(t *testing.T) {
 	}
 	if result.TotalIssues() != 0 {
 		t.Errorf("TotalIssues() = %d, want 0", result.TotalIssues())
+	}
+}
+
+// orderKeys renders each finding as a NUL-joined key, so comparing two of these
+// strings compares their fields in order — the same answer a field-by-field
+// comparison gives. Nothing validates a document path or a broken-link target,
+// so either can hold a NUL and defeat that; the fixture below uses none.
+func orderKeys[T any](items []T, fields func(T) []string) []string {
+	keys := make([]string, len(items))
+	for i, item := range items {
+		keys[i] = strings.Join(fields(item), "\x00")
+	}
+	return keys
+}
+
+// TestCheckAllLinksInMapFindingOrderIsStable pins the report order of the three
+// collections the map walk fills: broken links, self links and broken
+// documents. Go randomizes map iteration per call, so an order inherited from
+// that walk differs run to run and `nibs check --json` answers one unchanged
+// store several different ways.
+//
+// The sort keys have to be compound. One nib can hold a broken parent, a broken
+// milestone and several broken blockers at once, so a NibID-only key leaves
+// those entries tied and nothing pins their order. Every fixture nib below
+// appends its own entries in DESCENDING key order, so a key too weak to be a
+// total order leaves a collection out of ascending order.
+//
+// That the ascending check catches it on the FIRST assertion depends on the
+// fixture staying small: sort.Slice is not stable in general, and at these
+// sizes it happens to keep arrival order. Grow a collection past a dozen
+// entries and a weak key can slip past the ascending check onto the repeat
+// loop below, which alone does not reliably catch one.
+func TestCheckAllLinksInMapFindingOrderIsStable(t *testing.T) {
+	// Nothing is created under projectRoot, so every document link below is
+	// broken.
+	projectRoot := t.TempDir()
+
+	nibs := map[string]*nib.Nib{
+		// Four broken links and two broken documents on a single nib: the ties
+		// a NibID-only sort cannot break.
+		"nibs-a1": {ID: "nibs-a1", Status: "todo", Parent: "ghost-p", Milestone: "ghost-m",
+			BlockedBy: []string{"ghost-b2", "ghost-b1"},
+			Documents: []string{"docs/a1-two.md", "docs/a1-one.md"}},
+		"nibs-a2": {ID: "nibs-a2", Status: "todo", Parent: "ghost-q",
+			BlockedBy: []string{"ghost-z"},
+			Documents: []string{"docs/a2.md"}},
+		"nibs-a3": {ID: "nibs-a3", Status: "todo", BlockedBy: []string{"ghost-y2", "ghost-y1"}},
+		// Self links, spelled both in full and short, so resolution decides
+		// them the way it decides a broken target's spelling.
+		"nibs-s1": {ID: "nibs-s1", Status: "todo", Parent: "nibs-s1", Milestone: "s1",
+			BlockedBy: []string{"nibs-s1"}},
+		"nibs-s2": {ID: "nibs-s2", Status: "todo", Parent: "s2", Milestone: "nibs-s2"},
+		"nibs-s3": {ID: "nibs-s3", Status: "todo", BlockedBy: []string{"nibs-s3"}},
+		"nibs-s4": {ID: "nibs-s4", Status: "todo", Parent: "s4"},
+		"nibs-b1": {ID: "nibs-b1", Status: "todo",
+			Documents: []string{"docs/b1-c.md", "docs/b1-b.md", "docs/b1-a.md"}},
+		"nibs-b2": {ID: "nibs-b2", Status: "todo",
+			Documents: []string{"docs/b2-b.md", "docs/b2-a.md"}},
+	}
+
+	keysOf := func(r *LinkCheckResult) (broken, self, docs []string) {
+		return orderKeys(r.BrokenLinks, func(bl BrokenLink) []string {
+				return []string{bl.NibID, bl.LinkType, bl.Target}
+			}),
+			orderKeys(r.SelfLinks, func(sl SelfLink) []string {
+				return []string{sl.NibID, sl.LinkType}
+			}),
+			orderKeys(r.BrokenDocuments, func(bd BrokenDocument) []string {
+				return []string{bd.NibID, bd.Path}
+			})
+	}
+
+	first := CheckAllLinksInMap(nibs, projectRoot, "nibs-")
+	firstBroken, firstSelf, firstDocs := keysOf(first)
+
+	for _, c := range []struct {
+		name string
+		keys []string
+		want int
+	}{
+		{"broken_links", firstBroken, 8},
+		{"self_links", firstSelf, 7},
+		{"broken_documents", firstDocs, 8},
+	} {
+		if len(c.keys) != c.want {
+			t.Fatalf("%s: %d findings, want %d: %q", c.name, len(c.keys), c.want, c.keys)
+		}
+		// Every fixture entry is distinct, so a total order renders strictly
+		// ascending.
+		for i := 1; i < len(c.keys); i++ {
+			if c.keys[i-1] >= c.keys[i] {
+				t.Errorf("%s: not ascending at index %d: %q then %q\nfull: %q",
+					c.name, i, c.keys[i-1], c.keys[i], c.keys)
+			}
+		}
+		// The fixture only tells a compound key from a NibID-only one while
+		// some nib contributes more than one entry here.
+		perNib := map[string]int{}
+		most := 0
+		for _, k := range c.keys {
+			id := strings.SplitN(k, "\x00", 2)[0]
+			perNib[id]++
+			most = max(most, perNib[id])
+		}
+		if most < 2 {
+			t.Errorf("%s: no nib contributes two findings, so this fixture cannot tell a compound key from a NibID-only one", c.name)
+		}
+	}
+
+	// Repeated over enough scans that a surviving map-order dependence shows up
+	// rather than hiding behind one lucky iteration.
+	for i := range 300 {
+		got := CheckAllLinksInMap(nibs, projectRoot, "nibs-")
+		gotBroken, gotSelf, gotDocs := keysOf(got)
+		if !slices.Equal(gotBroken, firstBroken) {
+			t.Fatalf("scan %d: broken link order drifted\n got: %q\nwant: %q", i, gotBroken, firstBroken)
+		}
+		if !slices.Equal(gotSelf, firstSelf) {
+			t.Fatalf("scan %d: self link order drifted\n got: %q\nwant: %q", i, gotSelf, firstSelf)
+		}
+		if !slices.Equal(gotDocs, firstDocs) {
+			t.Fatalf("scan %d: broken document order drifted\n got: %q\nwant: %q", i, gotDocs, firstDocs)
+		}
 	}
 }

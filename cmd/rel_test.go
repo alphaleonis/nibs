@@ -74,6 +74,8 @@ func resetRelFlags() {
 	relNoEstimate = nil
 	relOpen = false
 	relAll = false
+	relQuiet = false
+	relCount = false
 	if relCmd != nil {
 		relCmd.Flags().Visit(func(f *pflag.Flag) {
 			f.Changed = false
@@ -970,6 +972,112 @@ func TestRelCommand_Limit_SetsTruncated(t *testing.T) {
 	if !env.Truncated {
 		t.Errorf("truncated = false, want true (limit dropped rows)")
 	}
+}
+
+// --- Terse outputs (-c / -q) ---
+
+// relQuietIDs splits bare -q output into ids and asserts nothing else rode
+// along: no "# <n> nibs" header, no hidden-closed annotation, no TSV columns.
+func relQuietIDs(t *testing.T, out string) []string {
+	t.Helper()
+	if strings.Contains(out, "#") || strings.Contains(out, "\t") || strings.Contains(out, "hidden") {
+		t.Errorf("quiet output must be bare ids, got:\n%s", out)
+	}
+	if strings.TrimSpace(out) == "" {
+		return nil
+	}
+	return strings.Split(strings.TrimRight(out, "\n"), "\n")
+}
+
+// TestRelCommand_Quiet emits one id per line for the resolved related set.
+func TestRelCommand_Quiet(t *testing.T) {
+	nibsDir := setupRelCobraTest(t, ancestryFixture)
+	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "root", "--rel", "descendants", "--depth", "all", "-q")
+	got := relQuietIDs(t, out)
+	if len(got) != 3 {
+		t.Fatalf("got %d lines, want 3 ids\nraw: %q", len(got), out)
+	}
+	seen := map[string]bool{}
+	for _, id := range got {
+		seen[id] = true
+	}
+	for _, want := range []string{"mid", "leaf", "grand"} {
+		if !seen[want] {
+			t.Errorf("quiet output missing %q, got %v", want, got)
+		}
+	}
+}
+
+// TestRelCommand_Quiet_IgnoresLimit: --limit governs the projection, and -q
+// returns before it — the terse list is the whole related set.
+func TestRelCommand_Quiet_IgnoresLimit(t *testing.T) {
+	nibsDir := setupRelCobraTest(t, ancestryFixture)
+	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "root", "--rel", "descendants", "--depth", "all",
+		"--limit", "1", "-q")
+	if got := relQuietIDs(t, out); len(got) != 3 {
+		t.Errorf("rel --limit 1 -q emitted %d ids, want all 3\nraw: %q", len(got), out)
+	}
+}
+
+// TestRelCommand_Count emits the size of the related set as a bare integer,
+// pre-limit like list's.
+func TestRelCommand_Count(t *testing.T) {
+	nibsDir := setupRelCobraTest(t, ancestryFixture)
+	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "root", "--rel", "descendants", "--depth", "all", "-c")
+	if strings.TrimSpace(out) != "3" {
+		t.Errorf("rel -c = %q, want bare integer %q", strings.TrimSpace(out), "3")
+	}
+}
+
+func TestRelCommand_Count_IgnoresLimit(t *testing.T) {
+	nibsDir := setupRelCobraTest(t, ancestryFixture)
+	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "root", "--rel", "descendants", "--depth", "all",
+		"--limit", "1", "-c")
+	if strings.TrimSpace(out) != "3" {
+		t.Errorf("rel --limit 1 -c = %q, want the pre-limit count %q", strings.TrimSpace(out), "3")
+	}
+}
+
+// TestRelCommand_TerseOutputs_HonorOpenDefault pins what `nibs cheat` promises
+// about rel's terse outputs: both see the open-by-default set, --all widens
+// both, and neither carries the hidden-closed annotation.
+func TestRelCommand_TerseOutputs_HonorOpenDefault(t *testing.T) {
+	// relStatusFixture: par has one open child and three closed ones.
+	t.Run("count is a bare open-default integer", func(t *testing.T) {
+		nibsDir := setupRelCobraTest(t, relStatusFixture)
+		out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "par", "--rel", "children", "-c")
+		if strings.TrimSpace(out) != "1" {
+			t.Errorf("rel -c = %q, want \"1\" (open default)", strings.TrimSpace(out))
+		}
+		if strings.Contains(out, "hidden") || strings.Contains(out, "#") {
+			t.Errorf("rel -c must stay bare, got %q", out)
+		}
+	})
+
+	t.Run("count --all gives the total", func(t *testing.T) {
+		nibsDir := setupRelCobraTest(t, relStatusFixture)
+		out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "par", "--rel", "children", "--all", "-c")
+		if strings.TrimSpace(out) != "4" {
+			t.Errorf("rel -c --all = %q, want \"4\"", strings.TrimSpace(out))
+		}
+	})
+
+	t.Run("quiet is bare ids honoring the open default", func(t *testing.T) {
+		nibsDir := setupRelCobraTest(t, relStatusFixture)
+		out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "par", "--rel", "children", "-q")
+		got := relQuietIDs(t, out)
+		if len(got) != 1 || got[0] != "co" {
+			t.Errorf("rel -q = %v, want [co] (open default)\nraw: %q", got, out)
+		}
+	})
+
+	t.Run("quiet --all lists every status", func(t *testing.T) {
+		nibsDir := setupRelCobraTest(t, relStatusFixture)
+		out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "par", "--rel", "children", "--all", "-q")
+		if got := relQuietIDs(t, out); len(got) != 4 {
+			t.Errorf("rel -q --all emitted %d ids, want 4\nraw: %q", len(got), out)
+		}
+	})
 }
 
 // --- Alias + retired commands ---

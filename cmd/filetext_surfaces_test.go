@@ -149,7 +149,7 @@ func TestFileSourcedTextNeverReachesAnEchoSurfaceRaw(t *testing.T) {
 				}
 				result := &nibcore.LinkCheckResult{
 					InvalidEnums: []nibcore.InvalidEnum{
-						{NibID: "tnib-0001", Reason: "invalid priority " + deceptivePayload},
+						{NibID: "tnib-0001-" + deceptivePayload, Reason: "invalid priority " + deceptivePayload},
 					},
 					InvalidAxes: []nibcore.InvalidAxis{
 						{NibID: "tnib-0001", Path: "data/" + deceptivePayload, Reason: "a milestone cannot have an area " + deceptivePayload},
@@ -158,7 +158,15 @@ func TestFileSourcedTextNeverReachesAnEchoSurfaceRaw(t *testing.T) {
 						{NibID: "tnib-0001", Path: "data/" + deceptivePayload, Key: deceptivePayload, Modeled: "milestone"},
 					},
 				}
-				return captureStdout(t, func() { renderFieldDiagnostics(&App{Core: core}, result) })
+				// The InvalidEnums branch echoes the id twice, once per arm of
+				// checkFix, and each arm is its own call site. Driving only one
+				// leaves the other's echo unguarded: reverting it then keeps the
+				// package green, which is what makes a guard decoration.
+				plain := captureStdout(t, func() { renderFieldDiagnostics(&App{Core: core}, result) })
+				prev := checkFix
+				checkFix = true
+				t.Cleanup(func() { checkFix = prev })
+				return plain + captureStdout(t, func() { renderFieldDiagnostics(&App{Core: core}, result) })
 			},
 		},
 		{

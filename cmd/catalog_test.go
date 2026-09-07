@@ -165,6 +165,39 @@ func TestCatalogFiltersMatchConfig(t *testing.T) {
 	}
 }
 
+// TestCatalogFiltersNamesTheSortVocabulary pins that `nibs catalog filters`
+// publishes the --sort keys in both forms. The catalog is what an agent reads
+// before typing a flag, so a vocabulary the command validates but the catalog
+// never names leaves the agent guessing at a value that exits 2. The expected
+// set is wantListSortKeys — the same contract the refusal and the flag help are
+// checked against in cmd/list_test.go.
+func TestCatalogFiltersNamesTheSortVocabulary(t *testing.T) {
+	out, err := execCatalog(t, "--json", "filters")
+	if err != nil {
+		t.Fatalf("catalog --json filters: %v", err)
+	}
+	var got struct {
+		SortKeys []string `json:"sort_keys"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("decode filters JSON: %v\n%s", err, out)
+	}
+	if !reflect.DeepEqual(got.SortKeys, wantListSortKeys) {
+		t.Errorf("sort_keys = %v, want %v", got.SortKeys, wantListSortKeys)
+	}
+
+	text, err := execCatalog(t, "filters")
+	if err != nil {
+		t.Fatalf("catalog filters: %v", err)
+	}
+	if !strings.Contains(text, "--sort") {
+		t.Errorf("catalog filters never names --sort:\n%s", text)
+	}
+	if want := strings.Join(wantListSortKeys, ", "); !strings.Contains(text, want) {
+		t.Errorf("catalog filters omits the sort vocabulary %q:\n%s", want, text)
+	}
+}
+
 // TestCatalogFiltersShowStatusGroups pins that catalog filters documents the
 // status groups (open/closed) with members derived from config, and discloses
 // the open-by-default behavior — the vocabulary the open default depends on for
