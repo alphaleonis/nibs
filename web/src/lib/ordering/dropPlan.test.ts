@@ -131,39 +131,84 @@ const CY2_NIB = makeNib({ id: "CY2", type: "epic", title: "Cycle two", parentId:
 const SC_NIB = makeNib({ id: "SC", type: "epic", title: "Cycle self", parentId: "SC" });
 const HIDDEN_CHILDREN: Region = { axis: "parent", parentId: "E9" };
 
+/**
+ * The fixture's sections as VALUES, because a section is one to `flatten`: it
+ * threads the object a container DRAWS down to every row inside it, so a member
+ * and the header above it carry the same section and not two equal copies. A row
+ * nested under a member carries it too (T1 under E1, B5 under FT) — the identity
+ * travels the whole way down.
+ *
+ * A section drawn at the TOP LEVEL is a member of none, which is what puts a
+ * milestone header and a Backlog row in different sections while both order in
+ * the root group. Nesting is where that stops: a declared section drawn inside
+ * another is a member of the one around it.
+ */
+const M1_SECTION = queueSection("M1", QUEUE_M1);
+const M2_SECTION = queueSection("M2", QUEUE_M2);
+const RS_SECTION = queueSection("RS", TOP_LEVEL);
+const BACKLOG_SECTION: RowSection = {
+  key: BACKLOG_ID,
+  display: { label: "Backlog", description: "", color: "" },
+  count: 5,
+  onEnter: { kind: "byRow" },
+};
+
 const ROWS: RowData[] = [
-  makeRow(makeNib({ id: "M1", type: "milestone", title: "v1.0" }), { drawsSection: queueSection("M1", QUEUE_M1) }),
-  makeRow(E1_NIB, { enclosing: QUEUE_M1 }),
-  makeRow(makeNib({ id: "T1", type: "task", title: "Task one", parentId: "E1" }), { parentNib: E1_NIB }),
-  makeRow(makeNib({ id: "E2", type: "epic", title: "Epic two", milestone: "M1" }), { enclosing: QUEUE_M1 }),
-  makeRow(makeNib({ id: "E4", type: "epic", title: "Epic four", milestone: "M1" }), { enclosing: QUEUE_M1 }),
-  makeRow(makeNib({ id: "QT", type: "task", title: "Queued task", milestone: "M1" }), { enclosing: QUEUE_M1 }),
-  makeRow(makeNib({ id: "M2", type: "milestone", title: "v2.0" }), { drawsSection: queueSection("M2", QUEUE_M2) }),
-  makeRow(makeNib({ id: "E3", type: "epic", title: "Epic three", milestone: "M2" }), { enclosing: QUEUE_M2 }),
-  makeRow(makeNib({ id: BACKLOG_ID, type: "", title: "Backlog" }), {
-    drawsSection: {
-      key: BACKLOG_ID,
-      display: { label: "Backlog", description: "", color: "" },
-      count: 5,
-      onEnter: { kind: "byRow" },
-    },
+  makeRow(makeNib({ id: "M1", type: "milestone", title: "v1.0" }), { drawsSection: M1_SECTION }),
+  makeRow(E1_NIB, { enclosing: QUEUE_M1, section: M1_SECTION }),
+  makeRow(makeNib({ id: "T1", type: "task", title: "Task one", parentId: "E1" }), {
+    parentNib: E1_NIB,
+    section: M1_SECTION,
   }),
-  makeRow(makeNib({ id: "B1", type: "task", title: "Backlog one" })),
-  makeRow(makeNib({ id: "B2", type: "task", title: "Backlog two" })),
-  makeRow(B3_NIB),
-  makeRow(FT_NIB),
-  makeRow(makeNib({ id: "B5", type: "task", title: "Under the feature", parentId: "FT" }), { parentNib: FT_NIB }),
-  makeRow(makeNib({ id: "PH", type: "feature", title: "Promoted header", parentId: "E9" }), { parentNib: E9 }),
-  makeRow(makeNib({ id: "PT", type: "task", title: "Promoted task", parentId: "F9" }), { parentNib: F9 }),
-  makeRow(makeNib({ id: "NP", type: "task", title: "No parent nib", parentId: "H9" })),
-  makeRow(CY1_NIB, { parentNib: CY2_NIB }),
-  makeRow(CY2_NIB, { parentNib: CY1_NIB, displayParentId: "CY1" }),
-  makeRow(SC_NIB, { parentNib: SC_NIB }),
-  makeRow(makeNib({ id: "RS", type: "milestone", title: "Root section" }), { drawsSection: queueSection("RS", TOP_LEVEL) }),
-  makeRow(makeNib({ id: "DR1", type: "task", title: "Declared one" }), { enclosing: TOP_LEVEL }),
+  makeRow(makeNib({ id: "E2", type: "epic", title: "Epic two", milestone: "M1" }), {
+    enclosing: QUEUE_M1,
+    section: M1_SECTION,
+  }),
+  makeRow(makeNib({ id: "E4", type: "epic", title: "Epic four", milestone: "M1" }), {
+    enclosing: QUEUE_M1,
+    section: M1_SECTION,
+  }),
+  makeRow(makeNib({ id: "QT", type: "task", title: "Queued task", milestone: "M1" }), {
+    enclosing: QUEUE_M1,
+    section: M1_SECTION,
+  }),
+  makeRow(makeNib({ id: "M2", type: "milestone", title: "v2.0" }), { drawsSection: M2_SECTION }),
+  makeRow(makeNib({ id: "E3", type: "epic", title: "Epic three", milestone: "M2" }), {
+    enclosing: QUEUE_M2,
+    section: M2_SECTION,
+  }),
+  makeRow(makeNib({ id: BACKLOG_ID, type: "", title: "Backlog" }), { drawsSection: BACKLOG_SECTION }),
+  makeRow(makeNib({ id: "B1", type: "task", title: "Backlog one" }), { section: BACKLOG_SECTION }),
+  makeRow(makeNib({ id: "B2", type: "task", title: "Backlog two" }), { section: BACKLOG_SECTION }),
+  makeRow(B3_NIB, { section: BACKLOG_SECTION }),
+  makeRow(FT_NIB, { section: BACKLOG_SECTION }),
+  makeRow(makeNib({ id: "B5", type: "task", title: "Under the feature", parentId: "FT" }), {
+    parentNib: FT_NIB,
+    section: BACKLOG_SECTION,
+  }),
+  makeRow(makeNib({ id: "PH", type: "feature", title: "Promoted header", parentId: "E9" }), {
+    parentNib: E9,
+    section: BACKLOG_SECTION,
+  }),
+  makeRow(makeNib({ id: "PT", type: "task", title: "Promoted task", parentId: "F9" }), {
+    parentNib: F9,
+    section: BACKLOG_SECTION,
+  }),
+  makeRow(makeNib({ id: "NP", type: "task", title: "No parent nib", parentId: "H9" }), {
+    section: BACKLOG_SECTION,
+  }),
+  makeRow(CY1_NIB, { parentNib: CY2_NIB, section: BACKLOG_SECTION }),
+  makeRow(CY2_NIB, { parentNib: CY1_NIB, displayParentId: "CY1", section: BACKLOG_SECTION }),
+  makeRow(SC_NIB, { parentNib: SC_NIB, section: BACKLOG_SECTION }),
+  makeRow(makeNib({ id: "RS", type: "milestone", title: "Root section" }), { drawsSection: RS_SECTION }),
+  makeRow(makeNib({ id: "DR1", type: "task", title: "Declared one" }), {
+    enclosing: TOP_LEVEL,
+    section: RS_SECTION,
+  }),
   makeRow(makeNib({ id: "DR2", type: "task", title: "Declared two", parentId: "B3" }), {
     enclosing: TOP_LEVEL,
     parentNib: B3_NIB,
+    section: RS_SECTION,
   }),
   makeRow(makeNib({ id: "HS", type: "milestone", title: "Hidden section" }), { drawsSection: queueSection("HS", HIDDEN_CHILDREN) }),
 ];
@@ -610,6 +655,42 @@ const CASES: Case[] = [
       command: reorderChain(["M2", "B1"], "M1", "after"),
     },
   },
+  // --- A milestone dragged over the Backlog. The Milestones view draws one
+  // ordering group in two places: the Backlog declares no region, so an
+  // unparented Backlog row falls back to the root group the milestone header is
+  // already in. The reorder lands, and no view can show where it went. ---
+  {
+    name: "the top edge of a Backlog row refuses a milestone",
+    drag: ["M2"],
+    target: "B1",
+    zone: "before",
+    expected: { ok: false, reason: "position-across-sections", region: TOP_LEVEL },
+  },
+  {
+    name: "the bottom edge of a Backlog leaf refuses it too",
+    drag: ["M2"],
+    target: "B2",
+    zone: "after",
+    expected: { ok: false, reason: "position-across-sections", region: TOP_LEVEL },
+  },
+  {
+    // Two milestones are one subject: neither is drawn in the Backlog, so the
+    // separator between two of its rows means no more for the pair than for one.
+    name: "several dragged milestones are refused the Backlog together",
+    drag: ["M2", "HS"],
+    target: "B1",
+    zone: "before",
+    expected: { ok: false, reason: "position-across-sections", region: TOP_LEVEL },
+  },
+  {
+    // The bottom edge of a Backlog CONTAINER is an entry, not a position, so it
+    // is the type hierarchy's question and keeps the more specific answer.
+    name: "the bottom edge of a Backlog container stays a type refusal",
+    drag: ["M2"],
+    target: "B3",
+    zone: "after",
+    expected: { ok: false, reason: "invalid-parent-type", region: { axis: "parent", parentId: "B3" } },
+  },
   {
     name: "several rows entering a queue chain behind the first",
     drag: ["E1", "E2"],
@@ -883,6 +964,54 @@ describe("planDrop", () => {
   });
 });
 
+/**
+ * The other half of the Backlog refusal: what makes a milestone's position
+ * unshowable is being drawn APART from the anchor, not being milestone-typed.
+ *
+ * A lens that draws milestones alongside other rows puts them in one section —
+ * the Areas view does exactly that, since `place` sends every nib to an area
+ * section and a milestone with no area lands in the leftover beside unassigned
+ * work. There the root-group reorder IS what the reader sees, and refusing it
+ * would take away the only gesture that orders those rows.
+ */
+describe("a milestone drawn in the same section as its anchor", () => {
+  const LEFTOVER: RowSection = {
+    key: "/__no_area__",
+    display: { label: "No area", description: "", color: "" },
+    count: 3,
+    onEnter: { kind: "byRow" },
+  };
+  const rows = [
+    makeRow(makeNib({ id: "MA", type: "milestone", title: "Alpha" }), { section: LEFTOVER }),
+    makeRow(makeNib({ id: "MB", type: "milestone", title: "Beta" }), { section: LEFTOVER }),
+    makeRow(makeNib({ id: "LT", type: "task", title: "Loose task" }), { section: LEFTOVER }),
+  ];
+  const byId = new Map(rows.map((r) => [r.nib.id, r]));
+
+  function planInSection(draggedIds: string[], targetId: string, zone: DropZone): DropPlan {
+    const target = byId.get(targetId);
+    if (target === undefined) throw new Error(`no row ${targetId}`);
+    return planDrop({
+      draggedIds,
+      rowsById: byId,
+      draggedRowsById: byId,
+      target,
+      zone,
+      descendantIds: collectDescendantIds(draggedIds, rows),
+      containment: buildContainmentIndex(rows.map((r) => ({ nib: r.nib, children: [], depth: 0 }))),
+    });
+  }
+
+  it.each([
+    { name: "beside another milestone", drag: ["MA"], target: "MB", command: reorderNib("MA", { beforeId: "MB" }) },
+    { name: "beside a task", drag: ["MA"], target: "LT", command: reorderNib("MA", { beforeId: "LT" }) },
+  ])("still reorders in the root group: $name", ({ drag, target, command }) => {
+    const plan = planInSection(drag, target, "before");
+    if (!plan.ok) throw new Error(plan.refusal.message);
+    expect({ kind: plan.kind, command: plan.command }).toEqual({ kind: "position", command });
+  });
+});
+
 describe("planDrop refusal messages", () => {
   it("distinguishes a mixed selection from a hidden member", () => {
     const mixed = planFor(["B1", "T1"], "B2", "before");
@@ -1068,7 +1197,7 @@ describe("planDrop with a namer", () => {
     expect(plan.refusal.message).toContain("the children of E9");
   });
 
-  // The WHOLE sentence for the four refusals no namer-covered assertion reached,
+  // The WHOLE sentence for the five refusals no namer-covered assertion reached,
   // plus `needs-assignment`, whose subject used to be spelled as a raw id in the
   // same breath as a title ("B1 is not in the v1.0 queue"). `toContain` on one
   // phrase cannot see that: it passes on the half that was threaded.
@@ -1094,6 +1223,14 @@ describe("planDrop with a namer", () => {
       zone: "before" as DropZone,
       message:
         "Epic one is ordered in the v1.0 queue, so clear the milestone assignment before ordering in the top level.",
+    },
+    {
+      reason: "position-across-sections",
+      drag: ["M2"],
+      target: "B1",
+      zone: "before" as DropZone,
+      message:
+        "v2.0 is ordered among the milestones, not in the Backlog section, and a milestone moves by a drop on another milestone's edge.",
     },
     {
       reason: "anchor-not-in-destination",
@@ -1191,7 +1328,7 @@ describe("dropPlan.ts import isolation", () => {
       'import { batch, reorderChain, reorderNib, reparentAndReorder, sequence, setParent, updateNib } from "../mutations/commands";',
       'import type { AnyCommand, CommandResult, LeafCommand, SequenceStep } from "../mutations/types";',
       'import type { ContainmentIndex } from "../containment";',
-      'import { takesAssignmentAxes } from "../membership";',
+      'import { MILESTONE_TYPE, takesAssignmentAxes } from "../membership";',
       'import type { RowData } from "../tableData";',
       'import type { SectionKey } from "../tree";',
       'import { canHaveChildren } from "../typeHierarchy";',

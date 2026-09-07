@@ -162,3 +162,69 @@ test("the cross-queue refusal offers an assignment that lands where the drop poi
     )
     .toEqual({ present: true, inV1Section: true, afterE001: true, beforeAnchor: true });
 });
+
+// The refusal that leads nowhere but still has to be SAID: a milestone dragged
+// between two Backlog rows. Both sit in the root ordering group — the Backlog
+// declares no region of its own, so an unparented row there falls back to its
+// own parent group, and a milestone takes no parent — while the view draws the
+// milestone among the headers and never in the Backlog. The write would land,
+// and what it shows — the sections resorting, or nothing at all — is never the
+// place the line was drawn.
+//
+// Chromium is what proves the affordance half. The classes are jsdom-assertable,
+// but the zone under the cursor comes from `document.elementFromPoint` and the
+// row's laid-out box, neither of which jsdom has: only a real engine decides
+// that this pointer is in the "before" band of that row and then declines to
+// draw the line for it.
+//
+// Guard proof (nibs-q2q2): disabling `planDrop`'s `position-across-sections`
+// refusal fails the class assertion below with the row reading
+// `... any-dragging drop-before` — the separator the bug drew.
+test("a milestone dragged between two Backlog rows draws no line and says why", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("nibs-filter-preferences", JSON.stringify({ viewLevel: "milestones" }));
+  });
+  await page.goto("/");
+  await expect(page.locator('tr[data-nib-id="tnib-m001"]')).toBeVisible({ timeout: 10_000 });
+
+  // Collapsed so the two milestone headers and the head of the Backlog fit on
+  // one screen: expanded, the whole of v1.0's subtree sits between them and the
+  // gesture would have to scroll mid-drag.
+  // The inner row each collapse is checked by has to be one still assigned to
+  // that section HERE: an earlier test in this file moves tnib-e006 into
+  // tnib-m001, which the first iteration collapses, so checking v1.1 by that row
+  // would pass whether or not v1.1 ever collapsed.
+  for (const [section, inner] of [
+    ["tnib-m001", "tnib-e001"],
+    ["tnib-m002", "tnib-e005"],
+  ]) {
+    await page.locator(`tr[data-nib-id="${section}"] [data-action="toggle"]`).click();
+    await expect(page.locator(`tr[data-nib-id="${inner}"]`)).toHaveCount(0);
+  }
+
+  // tnib-t032 and tnib-t033 are the first two Backlog rows, so the top edge of
+  // the second names the position between them.
+  const source = page.locator('tr[data-nib-id="tnib-m002"]');
+  const anchor = page.locator('tr[data-nib-id="tnib-t033"]');
+  await expect(anchor).toBeVisible();
+
+  const from = (await source.boundingBox())!;
+  const to = (await anchor.boundingBox())!;
+
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(from.x + from.width / 2 + 12, from.y + from.height / 2, { steps: 5 });
+  await expect(page.locator("body")).toHaveCSS("cursor", "grabbing");
+  // The top 10% of the row: the band that reads as "before this row".
+  await page.mouse.move(to.x + to.width / 2, to.y + to.height * 0.1, { steps: 10 });
+
+  // The row knows it is the target and refuses to promise a position in it.
+  await expect(anchor).toHaveClass(/drop-invalid/);
+  await expect(anchor).not.toHaveClass(/drop-before/);
+
+  await page.mouse.up();
+
+  await expect(page.locator("[data-sonner-toast]")).toContainText(
+    "v1.1 Team Collaboration is ordered among the milestones, not in the Backlog section",
+  );
+});
