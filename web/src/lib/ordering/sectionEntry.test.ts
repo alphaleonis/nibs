@@ -333,10 +333,13 @@ describe("a drag whose rows are in SEVERAL sections", () => {
     expect(onSection.label).toBe(plan.refusal.actionLabel);
   });
 
-  it("leaves a spanning drag alone where no section on either side assigns", () => {
-    // The refusal is about assignment, not about disagreement: two rows in two
-    // sections that decide nothing still take an ordinary reorder, because the
-    // write says nothing false about where they end up.
+  it("hands a spanning drag to the position guard where no section on either side assigns", () => {
+    // This refusal is about assignment, not about disagreement: two rows in two
+    // sections that decide nothing carry no field for a drop to write, so this
+    // band has nothing to say about them and does not answer. What refuses the
+    // drop is the guard below it, for the reason that survives when no
+    // assignment is involved — a reorder across a section boundary moves an
+    // order key the view draws nowhere.
     const byRowShape: ViewShape = { kind: "grouped", lens: { ...AREA_LENS, meaning: () => GOVERNS_NOTHING } };
     const table = buildShapedTableData(FIXTURE, noFilter, byRowShape, new Set());
     const rows = table.rows;
@@ -350,8 +353,8 @@ describe("a drag whose rows are in SEVERAL sections", () => {
       descendantIds: collectDescendantIds(["xa", "ya"], rows),
       containment: table.containment,
     });
-    if (!plan.ok) throw new Error(plan.refusal.message);
-    expect(plan.kind).toBe("position");
+    if (plan.ok) throw new Error(`expected a refusal, got ${plan.label}`);
+    expect(plan.refusal.reason).toBe("position-across-sections");
   });
 });
 

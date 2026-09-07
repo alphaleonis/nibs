@@ -225,6 +225,6 @@ test("a milestone dragged between two Backlog rows draws no line and says why", 
   await page.mouse.up();
 
   await expect(page.locator("[data-sonner-toast]")).toContainText(
-    "v1.1 Team Collaboration is ordered among the milestones, not in the Backlog section",
+    "v1.1 Team Collaboration is not drawn in the same section as Configure staging environment",
   );
 });

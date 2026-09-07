@@ -3,7 +3,7 @@ import { isValidCrossParentDrop, isValidDropTarget } from "../dropZone";
 import { batch, reorderChain, reorderNib, reparentAndReorder, sequence, setParent, updateNib } from "../mutations/commands";
 import type { AnyCommand, CommandResult, LeafCommand, SequenceStep } from "../mutations/types";
 import type { ContainmentIndex } from "../containment";
-import { MILESTONE_TYPE, takesAssignmentAxes } from "../membership";
+import { takesAssignmentAxes } from "../membership";
 import type { RowData } from "../tableData";
 import type { SectionKey } from "../tree";
 import { canHaveChildren } from "../typeHierarchy";
@@ -51,8 +51,10 @@ export type DropRefusalReason =
   | "crosses-section"
   /** The dragged types take no assignment on either membership axis. */
   | "unassignable-type"
-  /** A position beside a row the dragged rows are drawn APART from, in an
-   *  ordering group they nonetheless share — a write no view can show. */
+  /** A position beside a row a dragged row is drawn APART from, in an ordering
+   *  group they nonetheless share — a write no view can show. One such row is
+   *  enough: a drag straddling the boundary moves that row's key invisibly
+   *  whatever the rest of the selection does. */
   | "position-across-sections"
   /** The rows are already in the section the drop names, so it writes nothing. */
   | "already-in-section"
@@ -434,11 +436,11 @@ export function planDrop(req: DropRequest): DropPlan {
   // spanning two sections is crossing this boundary whatever the destination
   // says, because at most one of those sections can be the destination.
   const homeKeys = new Set(dragged.map((r) => r.section?.key ?? null));
-  if (homeKeys.size > 1 || !homeKeys.has(crossedKey)) {
-    // Exhaustive over the destination's entry arm, no default: `assign` is the
-    // only one that offers a write, but a `refuse` section must not fall through
-    // to a position write it has just said is meaningless. A fifth arm is a
-    // compile error here rather than silently taking the reorder.
+  // The one boundary question, asked once because two refusals split it between
+  // them: this block answers for a side that decides membership by a field, and
+  // the position guard below it for the writes that decide nothing at all.
+  const crossesSections = homeKeys.size > 1 || !homeKeys.has(crossedKey);
+  if (crossesSections) {
     // Exhaustive over the destination's entry arm, no default: `assign` is the
     // only one that offers a write, but a `refuse` section must not fall through
     // to a position write it has just said is meaningless. A fifth arm is a
@@ -490,36 +492,74 @@ export function planDrop(req: DropRequest): DropPlan {
     }
   }
 
-  // A position beside a row the dragged rows are drawn APART from, in the
-  // ordering group they nonetheless share. The separator promises a place among
-  // rows the subject is never drawn among; the write behind it lands, and what
-  // it moves is somewhere else on the screen or nothing at all.
+  // A position beside a row a dragged row is drawn APART from, in the ordering
+  // group they nonetheless share. The separator promises a place among rows that
+  // row is never drawn among; the write behind it lands, and what it moves is
+  // somewhere else on the screen or nothing at all.
   //
   // The Milestones view is where the two come apart. Its Backlog declares no
   // region, so an unparented Backlog row falls back to its own resolved parent
   // group — the root one a milestone header is already in, no type in
   // `VALID_CHILD_TYPES` accepting a milestone as a child — while the header
   // itself is drawn among the milestones. `sameRegion` is then true across a
-  // boundary no reorder can cross visibly.
+  // boundary no reorder can cross visibly, and in both directions: a milestone
+  // dropped between two Backlog rows, and a Backlog row dropped on a milestone
+  // header's own edge.
   //
-  // Keyed on the SECTIONS the two are in, not on which section the target's is:
-  // a milestone drawn in the SAME section as its anchor is a case this must
-  // leave alone, and the Areas view draws exactly that — `place` sends every nib
-  // to an area section, so two milestones there are drawn together and the
-  // root-group reorder is exactly what the reader sees.
+  // Keyed on the COMMAND, not on the subject's type. A reorder writes an order
+  // key and nothing else, so the row stays drawn where it was and the only run
+  // it can move within is its own; a REPARENT across this same boundary is
+  // accepted by the arm at the end of this function, because changing
+  // containment is a relocation the view draws. `reordersOnly` asks that, and
+  // its parts mirror the arms they predict: a `sameRegion` destination is one
+  // the rows are already in, so no membership changes; a milestone-axis one is
+  // then an in-queue move, which touches no parent link; a parent-axis one takes
+  // the bare reorder only while the rows already sit under `dest.parentId`, and
+  // `reparentAndReorder` otherwise.
   //
-  // Milestone-typed rather than `takesAssignmentAxes`, which is the same set
-  // today: the remedy names the milestones, so the subject the sentence is true
-  // of is the subject the gate holds.
-  if (
-    crossed !== null &&
-    !homeKeys.has(crossed.key) &&
+  // Not an `into` indicator, whichever of the two it would write. This guard is
+  // about a SEPARATOR promising a place among rows, and an entry draws none: it
+  // names the group under the cursor, so there is no position beside a row for
+  // it to be wrong about.
+  //
+  // That is the whole reason, deliberately — an entry landing a row somewhere
+  // other than the group it named is a real and separate defect, not one this
+  // exclusion may claim cannot happen. It can: a row carrying its own
+  // `milestone:` keeps it when reparented, so `milestoneOf` draws it in that
+  // queue's section rather than inside the container entered.
+  //
+  // Keyed on the SECTIONS the rows are in, not on which section the target's is:
+  // a row drawn in the SAME section as its anchor is a case this must leave
+  // alone, and the Areas view draws exactly that — `place` sends every nib to an
+  // area section, so a milestone and a task both landing in the leftover are
+  // drawn together and the root-group reorder is what the reader sees.
+  // The anchor's own parent is part of the question, not a separate one: a
+  // destination the anchor is not itself in is refused below as
+  // `anchor-not-in-destination`, and preempting that would answer a reader who
+  // asked something else. Asked per SELECTION, so a straddling drag whose rows
+  // disagree on parent collapses this to false and takes the reparent arm — the
+  // row in that batch which does not change container still gets the invisible
+  // write. Unreachable while no shipped lens declares a parent-axis
+  // `memberRegion`; a lens that does must revisit this per row.
+  const reordersOnly =
     sameRegion(source, dest) &&
-    draggedTypes.every((type) => type === MILESTONE_TYPE)
-  ) {
+    (dest.axis === "milestone" || (dragParentId === dest.parentId && dest.parentId === target.nib.parentId));
+  if (crossesSections && indicator !== "into" && reordersOnly) {
+    // Only the rows the sentence is true of. The drag can STRADDLE the boundary
+    // — a milestone selected alongside a Backlog row — and there the legible
+    // half moves where the line pointed while the other's key moves invisibly
+    // beside it, so a subject spanning the whole selection would assert of a row
+    // drawn in the anchor's section that it is not. Non-empty wherever this
+    // fires, `crossesSections` being exactly the statement that some dragged
+    // row's section differs from the anchor's.
+    const apart = dragged.filter((r) => (r.section?.key ?? null) !== crossedKey).map((r) => r.nib.id);
     return refuse(
       "position-across-sections",
-      `${subjectIs(draggedIds, nameOf)} ordered among the milestones, not in the ${crossed.display.label} section, and a milestone moves by a drop on another milestone's edge.`,
+      // The ANCHOR row, not the section it is in: a row heading a section is a
+      // member of none, so the sentence would have no section to name for the
+      // direction that drops onto a header's edge. What the reader pointed at
+      // has a title either way.
+      `${subjectIs(apart, nameOf)} not drawn in the same section as ${target.nib.title}, and a reorder positions a row only among the rows it is drawn with.`,
       { region: dest },
     );
   }
