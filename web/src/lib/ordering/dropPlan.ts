@@ -3,7 +3,7 @@ import { isValidCrossParentDrop, isValidDropTarget } from "../dropZone";
 import { batch, reorderChain, reorderNib, reparentAndReorder, sequence, setParent, updateNib } from "../mutations/commands";
 import type { AnyCommand, CommandResult, LeafCommand, SequenceStep } from "../mutations/types";
 import type { ContainmentIndex } from "../containment";
-import { takesAssignmentAxes } from "../membership";
+import { MILESTONE_TYPE, takesAssignmentAxes } from "../membership";
 import type { RowData } from "../tableData";
 import type { SectionKey } from "../tree";
 import { canHaveChildren } from "../typeHierarchy";
@@ -51,6 +51,9 @@ export type DropRefusalReason =
   | "crosses-section"
   /** The dragged types take no assignment on either membership axis. */
   | "unassignable-type"
+  /** A position beside a row the dragged rows are drawn APART from, in an
+   *  ordering group they nonetheless share — a write no view can show. */
+  | "position-across-sections"
   /** The rows are already in the section the drop names, so it writes nothing. */
   | "already-in-section"
   /** The section says entering it is meaningless, and carries the sentence. */
@@ -485,6 +488,40 @@ export function planDrop(req: DropRequest): DropPlan {
       // sees.
       return refuse("crosses-section", leavingMessage(leaving, dragged.length, nameOf), { region: dest });
     }
+  }
+
+  // A position beside a row the dragged rows are drawn APART from, in the
+  // ordering group they nonetheless share. The separator promises a place among
+  // rows the subject is never drawn among; the write behind it lands, and what
+  // it moves is somewhere else on the screen or nothing at all.
+  //
+  // The Milestones view is where the two come apart. Its Backlog declares no
+  // region, so an unparented Backlog row falls back to its own resolved parent
+  // group — the root one a milestone header is already in, no type in
+  // `VALID_CHILD_TYPES` accepting a milestone as a child — while the header
+  // itself is drawn among the milestones. `sameRegion` is then true across a
+  // boundary no reorder can cross visibly.
+  //
+  // Keyed on the SECTIONS the two are in, not on which section the target's is:
+  // a milestone drawn in the SAME section as its anchor is a case this must
+  // leave alone, and the Areas view draws exactly that — `place` sends every nib
+  // to an area section, so two milestones there are drawn together and the
+  // root-group reorder is exactly what the reader sees.
+  //
+  // Milestone-typed rather than `takesAssignmentAxes`, which is the same set
+  // today: the remedy names the milestones, so the subject the sentence is true
+  // of is the subject the gate holds.
+  if (
+    crossed !== null &&
+    !homeKeys.has(crossed.key) &&
+    sameRegion(source, dest) &&
+    draggedTypes.every((type) => type === MILESTONE_TYPE)
+  ) {
+    return refuse(
+      "position-across-sections",
+      `${subjectIs(draggedIds, nameOf)} ordered among the milestones, not in the ${crossed.display.label} section, and a milestone moves by a drop on another milestone's edge.`,
+      { region: dest },
+    );
   }
 
   const anchorId = target.nib.id;
