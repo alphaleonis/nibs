@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **The web's filter box speaks the assignment axis** — `milestone:<id>` selects that milestone's queue, and `is:backlog` the work in no milestone's plan, its own or an inherited one.
 - **The web's filter box speaks the ownership axis** — `area:<path>` selects an area's work, including everything declared beneath it.
 - **The web groups work by area** — the Areas view spines on the declared vocabulary, and an area nothing is assigned to is still a row, so the map shows what is empty as well as what is not.
+- **`nibs rel` takes `-c` and `-q`** — the size of the related set as a bare integer and the related ids one per line, with list's semantics, which is what the cheat sheet's FILTER block already promised of both verbs.
 
 ### Changed
 - **BREAKING: moving more than one nib at once now requires `--block`** — `nibs mv <a> <b> --first` is refused instead of quietly reordering a nib you did not name, which is what a mistyped single move produced, since `--first` takes no anchor and a trailing id became a second one; the help and cheat grammars that invited it are corrected too.
@@ -39,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **The web opens on the milestone-grouped view** — the Milestones view groups work by its milestone assignment instead of by type, each queue in its own order with a Backlog tail for whatever is in none, a nib's milestone is set from the detail panel or the row context menu, and a drag reorders within a queue or assigns into one; a stored view preference still wins, and the hierarchical view is still there as Tree.
 
 ### Fixed
+- **`nibs list --sort` refuses a value it does not recognize** (exit 2, naming the legal keys) instead of exiting 0 with an order matching neither the default nor any legal key.
+- **`nibs check --json` returns broken links, self links and broken documents in a stable order**, so repeated runs over an unchanged store no longer differ.
+- **Creating a nib no longer draws an id the store already holds**, which left two files claiming one id, reported only by the next load and `nibs check`.
 - **Switching the web table's view no longer leaves a nib selected that the new view has no row for**, where it stayed focused and a legal target for a bulk action the user could not see.
 - **A nib id containing a quote no longer breaks keyboard navigation and the drag preview in the web table**, where the row lookup built a CSS selector from it unescaped.
 - **A hand-authored nib file no longer conflicts with itself** — a file omitting `created_at` or `updated_at` had the stamps synthesized in memory but not on disk, so its etag disagreed with itself permanently: `nibs set <a> --blocking <b>` was refused as a conflict, and the token `nibs get -f etag` printed was the one the store then rejected.
