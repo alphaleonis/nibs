@@ -1110,18 +1110,22 @@ describe("App", () => {
         expect(milestoneRow()).toHaveAttribute("aria-selected", "true");
       });
 
-      // Epics ranks a milestone above its tier: buildViewTree descends into it
-      // without emitting a row, so the selection has nothing left to be on.
+      // Tree emits no row for a milestone: it is a waypoint outside the parent
+      // graph, so a shape spined on parentage has nothing to draw for it and the
+      // selection has nothing left to be on. (Epics reaches the same outcome by
+      // rank, and would serve here equally — Tree is the subject because it is
+      // the newer of the two rules.)
       await user.click(screen.getByRole("button", { name: /^View/ }));
-      await user.click(await screen.findByRole("menuitemradio", { name: "Epics" }));
+      await user.click(await screen.findByRole("menuitemradio", { name: "Tree" }));
       await waitFor(() => {
-        expect(screen.getByRole("button", { name: /^View/ })).toHaveTextContent("Epics");
+        expect(screen.getByRole("button", { name: /^View/ })).toHaveTextContent("Tree");
       });
       expect(milestoneRow()).toBeNull();
 
-      // In Tree the row exists again — and must no longer be selected.
+      // In Flat the row exists again — Flat stays the complete list — and must
+      // no longer be selected.
       await user.click(screen.getByRole("button", { name: /^View/ }));
-      await user.click(await screen.findByRole("menuitemradio", { name: "Tree" }));
+      await user.click(await screen.findByRole("menuitemradio", { name: /^Flat$/i }));
       await waitFor(() => {
         expect(milestoneRow()).not.toBeNull();
       });

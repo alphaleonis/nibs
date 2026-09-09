@@ -16,6 +16,7 @@ import { OPEN_STATUSES } from "../constants";
 import { SelectionState } from "../selection.svelte";
 import { DragState } from "../drag.svelte";
 import { TreeViewState } from "../treeView.svelte";
+import { buildShapedViewTree } from "../tree";
 import { makeTestContext } from "../contexts";
 import { switchViewLevel } from "../resolvePrefs";
 import { NibChangeTracker } from "../changeTracker.svelte";
@@ -95,7 +96,7 @@ describe("TreeTable", () => {
 
   it("renders a table with thead column headers and tbody with data rows", () => {
     const nibs: TreeTableNib[] = [
-      makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+      makeTreeTableNib({ id: "nibs-m1", title: "Epic", type: "epic" }),
       makeTreeTableNib({ id: "nibs-001", title: "First task", parentId: "nibs-m1" }),
       makeTreeTableNib({ id: "nibs-002", title: "Second task", parentId: "nibs-m1" }),
     ];
@@ -127,6 +128,31 @@ describe("TreeTable", () => {
     expect(screen.getByText("Second task")).toBeInTheDocument();
   });
 
+  it("renders a non-blank empty state when the Tree view's only nibs are milestones", () => {
+    // The store is not empty, but this shape has nothing to draw: every nib in it
+    // is a waypoint, which sits outside the parent graph. The bar is that the
+    // view reads as "nothing here" rather than as broken — a blank pane would be
+    // indistinguishable from a failed render.
+    //
+    // The wording is the generic no-rows message, which the Epics lens already
+    // reaches with the same input; it says "found" where "in this view" would be
+    // truer, and that imprecision predates this rule rather than arriving with it.
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-m1", title: "Waypoint one", type: "milestone" }),
+      makeTreeTableNib({ id: "nibs-m2", title: "Waypoint two", type: "milestone" }),
+    ];
+    mockQueryStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+    );
+
+    const { container } = renderTreeTable({ filter: {}, viewLevel: "none" as ViewLevel });
+
+    expect(container.querySelectorAll("tr[data-testid='tree-row']")).toHaveLength(0);
+    expect(screen.getByText("No nibs found")).toBeInTheDocument();
+    // Flat is still the complete list, so the nibs are reachable one click away.
+    expect(buildShapedViewTree(nibs, { kind: "flat" })).toHaveLength(2);
+  });
+
   it("renders column headers including ID, Type, Title, Status, Estimate, Tags", () => {
     const nibs: TreeTableNib[] = [
       makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
@@ -152,7 +178,7 @@ describe("TreeTable", () => {
 
   it("indents child rows by depth via padding on title cell content", () => {
     const nibs: TreeTableNib[] = [
-      makeTreeTableNib({ id: "nibs-001", title: "Milestone", type: "milestone" }),
+      makeTreeTableNib({ id: "nibs-001", title: "Epic", type: "epic" }),
       makeTreeTableNib({ id: "nibs-002", title: "Child epic", type: "epic", parentId: "nibs-001" }),
       makeTreeTableNib({ id: "nibs-003", title: "Grandchild bug", type: "bug", parentId: "nibs-002" }),
     ];
@@ -176,7 +202,7 @@ describe("TreeTable", () => {
 
   it("shows expand/collapse toggle on parent rows, not on leaves", () => {
     const nibs: TreeTableNib[] = [
-      makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+      makeTreeTableNib({ id: "nibs-m1", title: "Epic", type: "epic" }),
       makeTreeTableNib({ id: "nibs-001", title: "Parent epic", type: "epic", parentId: "nibs-m1" }),
       makeTreeTableNib({ id: "nibs-002", title: "Child task", type: "task", parentId: "nibs-001" }),
       makeTreeTableNib({ id: "nibs-003", title: "Standalone task", type: "task", parentId: "nibs-m1" }),
@@ -211,7 +237,7 @@ describe("TreeTable", () => {
   it("collapsing a parent hides children, expanding shows them again", async () => {
     const user = userEvent.setup();
     const nibs: TreeTableNib[] = [
-      makeTreeTableNib({ id: "nibs-001", title: "Milestone", type: "milestone" }),
+      makeTreeTableNib({ id: "nibs-001", title: "Epic", type: "epic" }),
       makeTreeTableNib({ id: "nibs-002", title: "The child task", type: "task", parentId: "nibs-001" }),
     ];
 
@@ -262,7 +288,7 @@ describe("TreeTable", () => {
   // "Loading..." over the existing data and drops the rows, failing this test.
   it("keeps the table mounted during a background refetch (fetching with data present)", () => {
     const nibs: TreeTableNib[] = [
-      makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+      makeTreeTableNib({ id: "nibs-m1", title: "Epic", type: "epic" }),
       makeTreeTableNib({ id: "nibs-001", title: "First task", parentId: "nibs-m1" }),
     ];
 
@@ -1761,10 +1787,12 @@ describe("TreeTable", () => {
       expect(screen.getByRole("columnheader", { name: "Type" })).toBeInTheDocument();
       const typeTh = Array.from(container.querySelectorAll("th")).find((th) => th.textContent?.trim() === "Type")!;
       expect(typeTh.getAttribute("aria-sort")).toBe("ascending");
-      // These three are all roots, so the sort reorders them by canonical rank
-      // (milestone → bug → task) exactly as in flat view.
+      // All three fixture nibs are roots, so the sort reorders them by canonical
+      // rank — but the tree view draws no row for the milestone (a waypoint sits
+      // outside the parent graph), so bug → task is what is left to order. The
+      // flat-view test above sees all three.
       const titles = Array.from(container.querySelectorAll("[data-testid='title-text']")).map((e) => e.textContent);
-      expect(titles).toEqual(["Milestone", "Bug", "Task"]);
+      expect(titles).toEqual(["Bug", "Task"]);
     });
   });
 
@@ -1836,8 +1864,8 @@ describe("TreeTable", () => {
     // title order (which would interleave "Alpha" ahead of the "Root A" parent).
     function renderNested(props: Record<string, unknown> = {}) {
       const nibs: TreeTableNib[] = [
-        makeTreeTableNib({ id: "nibs-m2", title: "Root Z", type: "milestone" }),
-        makeTreeTableNib({ id: "nibs-m1", title: "Root A", type: "milestone" }),
+        makeTreeTableNib({ id: "nibs-m2", title: "Root Z", type: "epic" }),
+        makeTreeTableNib({ id: "nibs-m1", title: "Root A", type: "epic" }),
         makeTreeTableNib({ id: "nibs-c2", title: "Zeta", type: "task", parentId: "nibs-m1" }),
         makeTreeTableNib({ id: "nibs-c1", title: "Alpha", type: "task", parentId: "nibs-m1" }),
       ];
@@ -3769,7 +3797,7 @@ describe("TreeTable", () => {
 
     it("renders updated data after filter change", async () => {
       const allNibs: TreeTableNib[] = [
-        makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+        makeTreeTableNib({ id: "nibs-m1", title: "Epic", type: "epic" }),
         makeTreeTableNib({ id: "nibs-001", title: "Active Task", type: "task", status: "todo", parentId: "nibs-m1" }),
         makeTreeTableNib({ id: "nibs-002", title: "Completed Task", type: "task", status: "completed", parentId: "nibs-m1" }),
       ];
@@ -3790,7 +3818,7 @@ describe("TreeTable", () => {
 
       // Now simulate server returning fewer nibs after filter change
       const filteredNibs: TreeTableNib[] = [
-        makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+        makeTreeTableNib({ id: "nibs-m1", title: "Epic", type: "epic" }),
         makeTreeTableNib({ id: "nibs-001", title: "Active Task", type: "task", status: "todo", parentId: "nibs-m1" }),
       ];
 
@@ -4569,9 +4597,12 @@ describe("view transition reconcile", () => {
   });
 
   it("switches the scroll even when the incoming view has the same number of rows", async () => {
-    // The Tree and Milestones lenses emit the same three rows for this fixture,
-    // so neither the container binding nor the row count changes — the epoch is
-    // the only thing that can tell the restore effect a switch happened.
+    // Tree and Epics emit the same TWO rows for this fixture — the epic and its
+    // task — because both omit the milestone, Tree as a waypoint outside the
+    // parent graph and Epics by rank. So neither the container binding nor the
+    // row count changes, and the epoch is the only thing that can tell the
+    // restore effect a switch happened. (Milestones would serve the subject
+    // equally but no longer the premise: its section header makes three.)
     const treeView = new TreeViewState("none");
     treeView.scrollTop = 500;
 
@@ -4583,7 +4614,7 @@ describe("view transition reconcile", () => {
       const before = container.querySelectorAll("tr[data-nib-id]").length;
       expect(sc.scrollTop).toBe(500);
 
-      switchViewLevel(prefs, undefined, treeView, "none", "milestones");
+      switchViewLevel(prefs, undefined, treeView, "none", "epics");
       await tick();
 
       expect(container.querySelectorAll("tr[data-nib-id]").length).toBe(before);

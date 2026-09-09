@@ -1,4 +1,5 @@
 import type { TreeNib, TreeNode, TreeTableNib } from "./types";
+import { MILESTONE_TYPE } from "./membership";
 import type { SectionMeaning } from "./ordering/sectionMeaning";
 
 export function buildTree<T extends TreeNib>(nibs: T[]): TreeNode<T>[] {
@@ -464,8 +465,22 @@ export function buildShapedViewTree<T extends TreeNib>(
       // Preserves incoming order (the manual `order` sequence).
       return nibs.map((nib) => ({ nib, children: [], depth: 0 }));
     case "tree":
-      // Full tree, nothing hidden; depths already set by buildTree.
-      return buildTree(nibs);
+      // Full tree MINUS the milestones; depths already set by buildTree.
+      //
+      // A milestone sits outside the parent graph by design — a waypoint, not a
+      // container — so in a shape spined on parentage its row can never nest,
+      // hold anything, or be dropped into, and membership is not parentage, so
+      // its queue is not visible here either. The row said "this milestone
+      // exists" and nothing more. The Milestone column is where a reader of this
+      // shape sees the axis instead.
+      //
+      // Filtering AHEAD of buildTree rather than pruning after: buildTree roots
+      // any node whose parent is absent from its map, so a nib hand-parented to
+      // a milestone — illegal per the hierarchy but representable in a file, and
+      // what `nibs check` reports — is promoted to a root rather than
+      // disappearing with the row. Pruning afterwards would have to re-home the
+      // subtree by hand.
+      return buildTree(nibs.filter((nib) => nib.type !== MILESTONE_TYPE));
     case "grouped":
       return buildGroupedTree(nibs, shape.lens, sortComparator);
   }

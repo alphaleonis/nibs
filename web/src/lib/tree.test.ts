@@ -350,7 +350,11 @@ describe("buildTree", () => {
 
 describe("buildViewTree", () => {
   describe("none lens", () => {
-    it("returns the full tree unchanged (nothing hidden, depths preserved)", () => {
+    it("nests every parented chain, hiding only the milestone and promoting what hung off it", () => {
+      // The chain is deliberately the PRE-v2 shape — an epic parented to a
+      // milestone, which the hierarchy now refuses but a file can still hold.
+      // Nothing about hiding the row may cost the four nibs beneath it their
+      // nesting: they rise by one and keep their order among themselves.
       const nibs: TreeNib[] = [
         makeTreeNib({ id: "nibs-001", title: "Milestone", type: "milestone" }),
         makeTreeNib({ id: "nibs-002", title: "Epic", type: "epic", parentId: "nibs-001" }),
@@ -361,20 +365,19 @@ describe("buildViewTree", () => {
 
       const result = buildViewTree(nibs, "none");
 
-      // Two roots: the milestone chain and the standalone task
+      // Two roots: the promoted epic heading its chain, and the standalone task.
+      // The milestone is gone from this shape entirely — it is a waypoint, not a
+      // container, so a view spined on parentage has nothing to say about it.
       expect(result).toHaveLength(2);
-      expect(result[0].nib.id).toBe("nibs-001");
+      expect(result[0].nib.id).toBe("nibs-002");
       expect(result[0].depth).toBe(0);
 
-      const epic = result[0].children[0];
-      expect(epic.nib.id).toBe("nibs-002");
-      expect(epic.depth).toBe(1);
-      const feature = epic.children[0];
+      const feature = result[0].children[0];
       expect(feature.nib.id).toBe("nibs-003");
-      expect(feature.depth).toBe(2);
+      expect(feature.depth).toBe(1);
       const task = feature.children[0];
       expect(task.nib.id).toBe("nibs-004");
-      expect(task.depth).toBe(3);
+      expect(task.depth).toBe(2);
 
       // Standalone task stays a root at depth 0 — nothing swept into a bucket
       expect(result[1].nib.id).toBe("nibs-005");
@@ -1564,5 +1567,69 @@ describe("shipped grouping lenses", () => {
         expect(lens.meaning(key).memberRegion, `${lens.leftover.key} / ${key}`).toBeNull();
       }
     }
+  });
+});
+
+describe("buildShapedViewTree — the tree shape hides milestones", () => {
+  // A milestone is a waypoint, not a container: it sits outside the parent graph
+  // entirely, so in a shape spined on parentage its row can never nest, hold
+  // anything, or be dropped into. Membership is not parentage, so its queue is
+  // not visible in this shape either. The Milestone column (nibs-nn9w) is where
+  // a reader of the Tree view sees the axis instead.
+  const TREE: ViewShape = { kind: "tree" };
+  const FLAT: ViewShape = { kind: "flat" };
+
+  const ids = (nodes: TreeNode<TreeNib>[]): string[] =>
+    nodes.flatMap((n) => [n.nib.id, ...ids(n.children)]);
+
+  it("yields no milestone node", () => {
+    const nibs = [
+      makeTreeNib({ id: "m1", type: "milestone" }),
+      makeTreeNib({ id: "e1", type: "epic" }),
+      makeTreeNib({ id: "t1", type: "task", parentId: "e1" }),
+    ];
+    expect(ids(buildShapedViewTree(nibs, TREE))).toEqual(["e1", "t1"]);
+  });
+
+  it("leaves the flat shape untouched, so the rule cannot be hiding them everywhere", () => {
+    // Flat remains the complete list. Without this the guard above is satisfied
+    // by a milestone dropped from every shape, which is a different feature.
+    const nibs = [
+      makeTreeNib({ id: "m1", type: "milestone" }),
+      makeTreeNib({ id: "t1", type: "task" }),
+    ];
+    expect(ids(buildShapedViewTree(nibs, FLAT))).toEqual(["m1", "t1"]);
+  });
+
+  it("promotes a nib hand-parented to a milestone rather than hiding it too", () => {
+    // Illegal per the hierarchy and reported by `nibs check`, but representable
+    // in a file — so the view has to render it. Hiding a node must not take its
+    // subtree with it: `buildTree` roots any node whose parent is absent from
+    // its map, which is why the filter runs BEFORE it rather than pruning after.
+    const nibs = [
+      makeTreeNib({ id: "m1", type: "milestone" }),
+      makeTreeNib({ id: "t1", type: "task", parentId: "m1" }),
+      makeTreeNib({ id: "t2", type: "task", parentId: "t1" }),
+    ];
+    const tree = buildShapedViewTree(nibs, TREE);
+    expect(ids(tree)).toEqual(["t1", "t2"]);
+    // Promoted to a ROOT, with its own subtree intact beneath it.
+    expect(tree).toHaveLength(1);
+    expect(tree[0].nib.id).toBe("t1");
+    expect(tree[0].depth).toBe(0);
+    expect(tree[0].children[0].nib.id).toBe("t2");
+    expect(tree[0].children[0].depth).toBe(1);
+  });
+
+  it("hides them unconditionally — a store of nothing but milestones yields no rows", () => {
+    // Matching the Epics lens, which hides a milestone whatever the filter says,
+    // rather than inventing a second rule for the filtered case.
+    const nibs = [
+      makeTreeNib({ id: "m1", type: "milestone" }),
+      makeTreeNib({ id: "m2", type: "milestone" }),
+    ];
+    expect(buildShapedViewTree(nibs, TREE)).toEqual([]);
+    // The same list is still complete in Flat.
+    expect(ids(buildShapedViewTree(nibs, FLAT))).toEqual(["m1", "m2"]);
   });
 });

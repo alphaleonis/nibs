@@ -86,7 +86,7 @@ describe("buildTableData", () => {
   });
 
   it("resolves parent-child hierarchy with correct depths, parentNib, and hasChildren", () => {
-    const milestone = makeTreeTableNib({ id: "nibs-001", type: "milestone", title: "Milestone" });
+    const milestone = makeTreeTableNib({ id: "nibs-001", type: "epic", title: "Epic" });
     const task = makeTreeTableNib({ id: "nibs-002", type: "task", title: "Task", parentId: "nibs-001" });
     const result = buildTableData([milestone, task], emptyFilter, "none", noCollapsed);
 
@@ -132,7 +132,7 @@ describe("buildTableData", () => {
 
   it("advanced filter: matching nibs visible, non-matching ancestors dimmed", () => {
     const nibs = [
-      makeTreeTableNib({ id: "nibs-001", type: "milestone", title: "Milestone" }),
+      makeTreeTableNib({ id: "nibs-001", type: "epic", title: "Epic" }),
       makeTreeTableNib({ id: "nibs-002", type: "bug", title: "Bug", parentId: "nibs-001" }),
     ];
     const bugFilter: NibFilter = { type: ["bug"] };
@@ -151,9 +151,9 @@ describe("buildTableData", () => {
 
   it("advanced filter: non-ancestors completely hidden from rows", () => {
     const nibs = [
-      makeTreeTableNib({ id: "nibs-001", type: "milestone", title: "Milestone A" }),
+      makeTreeTableNib({ id: "nibs-001", type: "epic", title: "Epic A" }),
       makeTreeTableNib({ id: "nibs-002", type: "bug", title: "Bug", parentId: "nibs-001" }),
-      makeTreeTableNib({ id: "nibs-003", type: "milestone", title: "Milestone B (unrelated)" }),
+      makeTreeTableNib({ id: "nibs-003", type: "epic", title: "Epic B (unrelated)" }),
       makeTreeTableNib({ id: "nibs-004", type: "task", title: "Task under B", parentId: "nibs-003" }),
     ];
     const bugFilter: NibFilter = { type: ["bug"] };
@@ -170,7 +170,7 @@ describe("buildTableData", () => {
 
   it("collapsed node: children absent from rows", () => {
     const nibs = [
-      makeTreeTableNib({ id: "nibs-001", type: "milestone", title: "Milestone" }),
+      makeTreeTableNib({ id: "nibs-001", type: "epic", title: "Epic" }),
       makeTreeTableNib({ id: "nibs-002", type: "task", title: "Task", parentId: "nibs-001" }),
     ];
     const collapsed = new Set(["nibs-001"]);
@@ -189,7 +189,7 @@ describe("buildTableData", () => {
   describe("status include-list client filter (hide completed)", () => {
     it("dims a completed parent with an active child instead of dropping it", () => {
       const nibs = [
-        makeTreeTableNib({ id: "nibs-001", type: "milestone", status: "completed", title: "Done milestone" }),
+        makeTreeTableNib({ id: "nibs-001", type: "epic", status: "completed", title: "Done epic" }),
         makeTreeTableNib({ id: "nibs-002", type: "task", status: "in-progress", title: "Active task", parentId: "nibs-001" }),
       ];
       const filter: NibFilter = { status: [...OPEN_STATUSES] };
@@ -209,7 +209,7 @@ describe("buildTableData", () => {
 
     it("hides a completed leaf with no active descendants", () => {
       const nibs = [
-        makeTreeTableNib({ id: "nibs-001", type: "milestone", status: "in-progress", title: "Active milestone" }),
+        makeTreeTableNib({ id: "nibs-001", type: "epic", status: "in-progress", title: "Active epic" }),
         makeTreeTableNib({ id: "nibs-002", type: "task", status: "completed", title: "Done leaf", parentId: "nibs-001" }),
       ];
       const filter: NibFilter = { status: [...OPEN_STATUSES] };
@@ -265,7 +265,7 @@ describe("buildTableData", () => {
   describe("excludeStatus client filter (`-status:completed` negation)", () => {
     it("dims an excluded (completed) parent with an active child, keeping the child nested", () => {
       const nibs = [
-        makeTreeTableNib({ id: "nibs-001", type: "milestone", status: "completed", title: "Done milestone" }),
+        makeTreeTableNib({ id: "nibs-001", type: "epic", status: "completed", title: "Done epic" }),
         makeTreeTableNib({ id: "nibs-002", type: "task", status: "in-progress", title: "Active task", parentId: "nibs-001" }),
       ];
       const filter: NibFilter = { excludeStatus: ["completed"] };
@@ -289,7 +289,7 @@ describe("buildTableData", () => {
 
     it("hides an excluded leaf with no active descendants", () => {
       const nibs = [
-        makeTreeTableNib({ id: "nibs-001", type: "milestone", status: "in-progress", title: "Active milestone" }),
+        makeTreeTableNib({ id: "nibs-001", type: "epic", status: "in-progress", title: "Active epic" }),
         makeTreeTableNib({ id: "nibs-002", type: "task", status: "completed", title: "Done leaf", parentId: "nibs-001" }),
       ];
       const filter: NibFilter = { excludeStatus: ["completed"] };
@@ -311,11 +311,16 @@ describe("buildTableData", () => {
       makeTreeTableNib({ id: "nibs-004", type: "task", title: "Task", parentId: "nibs-003" }),
     ];
 
-    it("none view: full tree, nothing hidden", () => {
+    it("none view: the whole chain, with only the milestone row hidden", () => {
+      // The fixture nests the epic under the milestone — the pre-v2 shape, which
+      // the hierarchy now refuses (`ValidChildTypes.milestone` is empty) but a
+      // file can still hold. The Tree view drops the milestone ROW and promotes
+      // what hung off it, matching what the Epics lens already does with the same
+      // nib ("omits a container the lens hides while descending into it", below).
       const result = buildTableData(hierarchyNibs, emptyFilter, "none", noCollapsed);
 
-      expect(result.rows.map(r => r.nib.id)).toEqual(["nibs-001", "nibs-002", "nibs-003", "nibs-004"]);
-      expect(result.rows.map(r => r.depth)).toEqual([0, 1, 2, 3]);
+      expect(result.rows.map(r => r.nib.id)).toEqual(["nibs-002", "nibs-003", "nibs-004"]);
+      expect(result.rows.map(r => r.depth)).toEqual([0, 1, 2]);
     });
 
     it("milestones view: a milestone's section holds what is ASSIGNED to it, not what is nested under it", () => {
@@ -376,10 +381,13 @@ describe("buildTableData", () => {
       expect(buildTableData([], emptyFilter, "epics", noCollapsed).viewMemberIds).toEqual(new Set());
     });
 
-    it("holds every nib in the Tree view", () => {
+    it("holds every nib the Tree view has a row for — which excludes the milestone", () => {
+      // Membership follows the rows, so hiding the milestone row takes it out of
+      // this set too. That is the point of the set: a view switch has to notice
+      // that a nib selected under one lens has no row under the next.
       const result = buildTableData(nibs, emptyFilter, "none", noCollapsed);
 
-      expect(result.viewMemberIds).toEqual(new Set(["m1", "e1", "t1"]));
+      expect(result.viewMemberIds).toEqual(new Set(["e1", "t1"]));
     });
 
     it("omits a container the lens hides while descending into it", () => {
@@ -411,8 +419,13 @@ describe("buildTableData", () => {
       // in here would make one set answer two different questions.
       const filtered = buildTableData(nibs, { type: ["epic"] }, "none", noCollapsed);
 
-      expect(filtered.rows.some(r => r.dimmed)).toBe(true);
-      expect(filtered.viewMemberIds).toEqual(new Set(["m1", "e1", "t1"]));
+      // The filter narrowed the ROWS — t1 does not match and heads nothing that
+      // does, so it is pruned — while membership still answers for the view's
+      // whole tree. Asserted as rows ⊂ members, which is the claim; the old
+      // proxy here was "some row is dimmed", and this fixture has no dimmed row
+      // left to offer now that its only non-matching ancestor was the milestone.
+      expect(filtered.rows.map(r => r.nib.id)).toEqual(["e1"]);
+      expect(filtered.viewMemberIds).toEqual(new Set(["e1", "t1"]));
     });
 
     it("names exactly the ids the lens emits as rows, in every view", () => {
@@ -629,7 +642,7 @@ describe("buildTableData", () => {
   describe("displayParentId (view-tree display position)", () => {
     it("none lens: root has null display parent, child points to its parent id", () => {
       const nibs = [
-        makeTreeTableNib({ id: "nibs-001", type: "milestone", title: "Root" }),
+        makeTreeTableNib({ id: "nibs-001", type: "epic", title: "Root" }),
         makeTreeTableNib({ id: "nibs-002", type: "task", title: "Child", parentId: "nibs-001" }),
       ];
       const result = buildTableData(nibs, emptyFilter, "none", noCollapsed);
@@ -729,7 +742,7 @@ describe("buildTableData", () => {
   describe("region (the ordering group)", () => {
     it("none lens: every row falls back to the group of its own resolved parent", () => {
       const nibs = [
-        makeTreeTableNib({ id: "nibs-001", type: "milestone", title: "Root" }),
+        makeTreeTableNib({ id: "nibs-001", type: "epic", title: "Root" }),
         makeTreeTableNib({ id: "nibs-002", type: "task", title: "Child", parentId: "nibs-001" }),
       ];
       const result = buildTableData(nibs, emptyFilter, "none", noCollapsed);
@@ -841,13 +854,13 @@ describe("buildTableData", () => {
 // tests exercise that seam directly (applySort → buildTableData), independent of
 // the Svelte component.
 describe("buildTableData — sibling-sort from a pre-sorted array", () => {
-  // Two milestone roots (input Z-before-A), one carrying two child tasks (input
+  // Two epic roots (input Z-before-A), one carrying two child tasks (input
   // Zeta-before-Alpha). A global-flat title order would be Alpha, Root A, Root Z,
   // Zeta — interleaving a child ahead of a root. Sibling-sort must instead keep
   // children nested under their parent while ordering each sibling group.
   const nestedRoots: TreeTableNib[] = [
-    makeTreeTableNib({ id: "m2", title: "Root Z", type: "milestone" }),
-    makeTreeTableNib({ id: "m1", title: "Root A", type: "milestone" }),
+    makeTreeTableNib({ id: "m2", title: "Root Z", type: "epic" }),
+    makeTreeTableNib({ id: "m1", title: "Root A", type: "epic" }),
     makeTreeTableNib({ id: "c2", title: "Zeta", type: "task", parentId: "m1" }),
     makeTreeTableNib({ id: "c1", title: "Alpha", type: "task", parentId: "m1" }),
   ];
@@ -1104,8 +1117,8 @@ describe("buildTableData — an id appears at most once in rows (nibs-pxk4)", ()
     makeTreeTableNib({ id: "c2", title: "C-Two", type: "feature", parentId: "c1" }),
     makeTreeTableNib({ id: "c3", title: "C-Three", type: "task", parentId: "c2" }),
     makeTreeTableNib({ id: "x1", title: "X-One", type: "task", parentId: "c3" }),
-    makeTreeTableNib({ id: "d1", title: "D-One", type: "milestone", parentId: "d3" }),
-    makeTreeTableNib({ id: "d2", title: "D-Two", type: "milestone", parentId: "d1" }),
+    makeTreeTableNib({ id: "d1", title: "D-One", type: "epic", parentId: "d3" }),
+    makeTreeTableNib({ id: "d2", title: "D-Two", type: "feature", parentId: "d1" }),
     makeTreeTableNib({ id: "d3", title: "D-Three", type: "epic", parentId: "d2" }),
     makeTreeTableNib({ id: "y1", title: "Y-One", type: "feature", parentId: "d3" }),
   ];
