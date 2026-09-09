@@ -285,6 +285,7 @@
       priority: n.priority ?? "",
       estimate: n.estimate ?? "",
       milestone: n.milestone ?? "",
+      area: n.area ?? "",
       tags: n.tags ? [...n.tags] : [],
       body: n.body ?? "",
       etag: n.etag,
@@ -310,7 +311,7 @@
       seed ??
       (detailNib && detailNib.id === nibId
         ? snapshotFromDetail(detailNib)
-        : { id: nibId, title: "", status: "", type: "task", priority: "", estimate: "", milestone: "", tags: [], body: "", etag: "" });
+        : { id: nibId, title: "", status: "", type: "task", priority: "", estimate: "", milestone: "", area: "", tags: [], body: "", etag: "" });
     return editNibForm({ mutations }, initial);
   };
 

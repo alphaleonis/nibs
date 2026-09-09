@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { createAreaVocabulary, cssColor, EMPTY_AREAS, LOADING_AREAS, UNAVAILABLE_AREAS } from "./areas";
+import {
+  createAreaVocabulary,
+  cssColor,
+  EMPTY_AREAS,
+  fromSelectValue,
+  LOADING_AREAS,
+  toSelectValue,
+  UNAVAILABLE_AREAS,
+} from "./areas";
 import type { AreaNode, AreaVocabulary } from "./areas";
 
 function area(path: string, depth: number, extra: Partial<AreaNode> = {}): AreaNode {
@@ -237,5 +245,30 @@ describe("cssColor", () => {
     expect(viaSetProperty.style.backgroundImage).toBe("");
 
     expect(cssColor(hostile)).toBeNull();
+  });
+});
+
+describe("the None select sentinel", () => {
+  // Every path a declared vocabulary can produce, in miniature: names that may
+  // be neither empty nor contain "/" (config.validateAreaNodes refuses both),
+  // joined with "/". `__none__` is in the alphabet on purpose — it is a legal
+  // area name, so a sentinel spelled that way would be one of these paths.
+  const names = ["__none__", "__no_area__", "no_area", "none", "None", "web", "a b"];
+  const declarable = names.flatMap((n) => [n, ...names.map((m) => `${n}/${m}`)]);
+
+  it("round-trips every declarable path back to itself", () => {
+    for (const path of declarable) {
+      expect(fromSelectValue(toSelectValue(path))).toBe(path);
+    }
+  });
+
+  it("shares its picker value with no declarable path", () => {
+    for (const path of declarable) {
+      expect(toSelectValue(path)).not.toBe(toSelectValue(""));
+    }
+  });
+
+  it("still maps the None item back to the unset assignment", () => {
+    expect(fromSelectValue(toSelectValue(""))).toBe("");
   });
 });

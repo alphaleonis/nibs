@@ -11,6 +11,9 @@ export type CreateNibInput = {
   tags?: string[];
   body?: string;
   parent?: string;
+  /** The ownership axis: the declared area path the new nib belongs to. Omitted
+   *  or "" leaves it unset, which is always legal. */
+  area?: string;
   blocking?: string[];
   blockedBy?: string[];
   documents?: string[];

@@ -83,6 +83,7 @@ export const NIB_DETAIL_QUERY = graphql(`
       priority
       estimate
       milestone
+      area
       tags
       body
       documents
@@ -146,6 +147,7 @@ export const NIB_CONFLICT_SNAPSHOT_QUERY = graphql(`
       priority
       estimate
       milestone
+      area
       tags
       body
       etag
@@ -163,6 +165,7 @@ export const UPDATE_NIB_MUTATION = graphql(`
       priority
       estimate
       milestone
+      area
       tags
       etag
     }
@@ -283,6 +286,7 @@ export const NIB_CHANGED_SUBSCRIPTION = graphql(`
         priority
         estimate
         milestone
+        area
         tags
         body
         etag

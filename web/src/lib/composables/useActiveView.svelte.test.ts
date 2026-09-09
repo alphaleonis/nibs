@@ -19,6 +19,7 @@ function snap(overrides: Partial<NibSnapshot> = {}): NibSnapshot {
     priority: "",
     estimate: "",
     milestone: "",
+    area: "",
     tags: [],
     body: "",
     etag: "e0",

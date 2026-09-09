@@ -172,3 +172,30 @@ export const UNAVAILABLE_AREAS: AreaVocabulary = Object.freeze({
   subtreeOf: () => EMPTY_NODES,
   completions: () => EMPTY_PATHS,
 } satisfies AreaVocabulary);
+
+/**
+ * The value standing for "no area" inside a `Select`.
+ *
+ * A sentinel rather than the empty string the field actually carries: a Select
+ * reads "" as "nothing is selected", so a None item valued "" cannot be chosen
+ * — its change event is indistinguishable from the component clearing itself.
+ * `fromSelectValue` is the one place that translates back.
+ *
+ * The leading "/" is what makes it unrepresentable as a declared path: an area
+ * name may be neither empty nor contain "/" (`validateAreaNodes`,
+ * internal/config/areas.go), so a joined path never starts with one. A plain
+ * `__none__` would NOT do — that is a legal area name, and declaring one would
+ * give the None item and that area the same picker value, so choosing the area
+ * would silently clear the assignment. Same shape as viewSpine's `NO_AREA_KEY`.
+ */
+export const NO_AREA = "/__no_area__";
+
+/** The stored assignment a picker value means: "" for the None sentinel. */
+export function fromSelectValue(value: string): string {
+  return value === NO_AREA ? "" : value;
+}
+
+/** The picker value for a stored assignment: the None sentinel for "". */
+export function toSelectValue(area: string): string {
+  return area === "" ? NO_AREA : area;
+}
