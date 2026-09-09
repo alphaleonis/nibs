@@ -1,6 +1,6 @@
 module github.com/alphaleonis/nibs
 
-go 1.25.12
+go 1.26.0
 
 tool github.com/99designs/gqlgen
 
@@ -98,7 +98,7 @@ require (
 	github.com/yuin/goldmark-emoji v1.0.6 // indirect
 	gitlab.com/gitlab-org/api/client-go v1.46.0 // indirect
 	go.etcd.io/bbolt v1.4.3 // indirect
-	golang.org/x/crypto v0.55.0 // indirect
+	golang.org/x/crypto v0.56.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
