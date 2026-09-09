@@ -41,7 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - **`nibs list --sort` refuses a value it does not recognize** (exit 2, naming the legal keys) instead of exiting 0 with an order matching neither the default nor any legal key.
-- **`nibs check --json` returns broken links, self links and broken documents in a stable order**, so repeated runs over an unchanged store no longer differ.
+- **`nibs check --json` returns broken links, self links and broken documents in a stable order**, where each of the three previously came back in the map's iteration order.
+- **`nibs check` reports a dependency cycle from a canonical starting node and in a stable order**, where it previously rendered the loop from whichever node the walk entered at — and could emit a path that was not a real walk around it.
 - **Creating a nib no longer draws an id the store already holds**, which left two files claiming one id, reported only by the next load and `nibs check`.
 - **Switching the web table's view no longer leaves a nib selected that the new view has no row for**, where it stayed focused and a legal target for a bulk action the user could not see.
 - **A nib id containing a quote no longer breaks keyboard navigation and the drag preview in the web table**, where the row lookup built a CSS selector from it unescaped.
