@@ -35,6 +35,35 @@ function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
 const emptyFilter: NibFilter = {};
 const noCollapsed = new Set<string>();
 
+describe("buildTableData — milestoneNib resolution", () => {
+  // The Milestone column shows the assigned milestone's TITLE, and a cell is a
+  // pure function of the row bag — so if this resolution silently returns null
+  // the column renders the raw id everywhere and still looks plausible. That is
+  // what these guard: the cell tests hand `milestoneNib` in directly, so only
+  // this seam proves anything ever computes it.
+  it("resolves a milestone assignment to the assigned nib", () => {
+    const ms = makeTreeTableNib({ id: "nibs-m001", title: "Release vNext", type: "milestone" });
+    const work = makeTreeTableNib({ id: "nibs-w001", type: "task", milestone: "nibs-m001" });
+    const result = buildTableData([ms, work], emptyFilter, "flat", noCollapsed);
+
+    const row = result.rows.find((r) => r.nib.id === "nibs-w001")!;
+    expect(row.milestoneNib?.id).toBe("nibs-m001");
+    expect(row.milestoneNib?.title).toBe("Release vNext");
+  });
+
+  it("resolves to null for an unassigned nib and for one naming a missing nib", () => {
+    // Two ways to reach null. `milestone` is reported verbatim, so a value
+    // pointing at nothing is representable and must not throw or resolve to
+    // some other row.
+    const unassigned = makeTreeTableNib({ id: "nibs-w001", type: "task", milestone: "" });
+    const dangling = makeTreeTableNib({ id: "nibs-w002", type: "task", milestone: "nibs-gone" });
+    const result = buildTableData([unassigned, dangling], emptyFilter, "flat", noCollapsed);
+
+    expect(result.rows.find((r) => r.nib.id === "nibs-w001")!.milestoneNib).toBeNull();
+    expect(result.rows.find((r) => r.nib.id === "nibs-w002")!.milestoneNib).toBeNull();
+  });
+});
+
 describe("buildTableData", () => {
   it("returns empty rows, tags, and parentIds for empty input", () => {
     const result = buildTableData([], emptyFilter, "milestones", noCollapsed);

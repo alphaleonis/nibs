@@ -72,6 +72,7 @@ function makeRow(
     hasChildren: false,
     dimmed: false,
     parentNib: opts.parentNib ?? null,
+    milestoneNib: null,
     displayParentId: opts.displayParentId ?? null,
     region: rowRegion(nib.id, nib.parentId, opts.enclosing ?? null),
     drawsSection: opts.drawsSection ?? null,

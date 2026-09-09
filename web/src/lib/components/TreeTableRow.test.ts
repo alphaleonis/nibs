@@ -524,6 +524,85 @@ describe("TreeTableRow", () => {
     expect(parentCell.getAttribute("title")).toBe("nibs-p001");
   });
 
+  // ---- the assignment axes -------------------------------------------------
+  // Neither axis can appear as an ancestor in a parent tree — a milestone is a
+  // waypoint outside the parent graph, an area is a declared path and not a nib
+  // — so a column is the only way a non-grouping view shows them.
+
+  it("renders the assigned milestone's title, with its id as the tooltip", () => {
+    const milestoneNib = makeTreeTableNib({ id: "nibs-m001", title: "Release vNext", type: "milestone" });
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ milestone: "nibs-m001" }),
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+      milestoneNib,
+    });
+
+    const cell = container.querySelector("[data-testid='nib-milestone']") as HTMLElement;
+    expect(cell.textContent).toContain("Release vNext");
+    // The TITLE is what shows; the id is the tooltip, as in the parent column.
+    expect(cell.textContent).not.toContain("nibs-m001");
+    expect(cell.getAttribute("title")).toBe("nibs-m001");
+  });
+
+  it("renders the area's FULL stored path, not its leaf segment", () => {
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ area: "web/dashboard" }),
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+    });
+
+    const cell = container.querySelector("[data-testid='nib-area']") as HTMLElement;
+    // A bare "dashboard" is ambiguous across parents, so the path is the value.
+    expect(cell.textContent?.trim()).toBe("web/dashboard");
+  });
+
+  it("renders both axis cells blank for a nib carrying neither assignment", () => {
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ milestone: "", area: "" }),
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+    });
+
+    expect((container.querySelector("[data-testid='nib-milestone']") as HTMLElement).textContent?.trim()).toBe("");
+    expect((container.querySelector("[data-testid='nib-area']") as HTMLElement).textContent?.trim()).toBe("");
+  });
+
+  it("renders both axis cells blank for a milestone, which takes neither axis", () => {
+    // A waypoint is not work: the server refuses both axes on a milestone-typed
+    // nib, so the cells have nothing to show rather than something withheld.
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ type: "milestone", milestone: "", area: "" }),
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+    });
+
+    expect((container.querySelector("[data-testid='nib-milestone']") as HTMLElement).textContent?.trim()).toBe("");
+    expect((container.querySelector("[data-testid='nib-area']") as HTMLElement).textContent?.trim()).toBe("");
+  });
+
+  it("falls back to the raw id when the milestone assignment names a nib the table lacks", () => {
+    // `milestone` is reported verbatim, so a dangling assignment is
+    // representable. Blank would read as "unassigned" — this nib IS assigned,
+    // to something not here — so the raw value shows, as MilestoneSelect does
+    // with the same case.
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ milestone: "nibs-gone" }),
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+      milestoneNib: null,
+    });
+
+    const cell = container.querySelector("[data-testid='nib-milestone']") as HTMLElement;
+    expect(cell.textContent?.trim()).toBe("nibs-gone");
+    expect(cell.getAttribute("title")).toBe("nibs-gone");
+  });
+
   it("renders empty parent cell when no parent", () => {
     const { container } = renderRow({
       nib: makeTreeTableNib({ parentId: null }),

@@ -30,6 +30,12 @@ export interface SortableRow {
   parentId: string | null;
   blockingIds: string[];
   blockedByIds: string[];
+  /** Milestone assignment as stored; "" when unassigned. Resolved through
+   *  `byId` to sort by the milestone's title, the way `parentId` is. */
+  milestone: string;
+  /** Area path as stored; "" when unassigned. Sorts as text — an area is a
+   *  declared path, not a nib, so there is nothing to resolve. */
+  area: string;
 }
 
 /** Epoch ms for an ISO string, or null for empty / unparseable input. */
@@ -75,6 +81,15 @@ const KEY_EXTRACTORS: Record<SortField, (nib: SortableRow, byId: ReadonlyMap<str
     const p = n.parentId ? byId.get(n.parentId) : undefined;
     return p ? textKey(p.title) : null;
   },
+  // Sorts by the assigned milestone's TITLE, matching the column's cell and the
+  // `parent` precedent — an id-keyed sort would order by mint sequence, which
+  // reads as arbitrary. An assignment naming a nib the table does not hold
+  // resolves to null and sinks last, like any other empty.
+  milestone: (n, byId) => {
+    const m = n.milestone ? byId.get(n.milestone) : undefined;
+    return m ? textKey(m.title) : null;
+  },
+  area: (n) => textKey(n.area),
 };
 
 /**
@@ -132,14 +147,22 @@ export function makeNibComparator<T extends SortableRow>(
  */
 export function applySort<T extends SortableRow>(nibs: T[], sort: TableSort | null): T[] {
   if (!sort) return nibs;
-  // Only the parent sort needs an id→nib index (to read the parent's title);
-  // building it for every sort would be wasted work.
+  // Only the sorts that RESOLVE an id to another row need the index; building it
+  // for every sort would be wasted work. Both resolving fields must be listed —
+  // a resolving sort handed EMPTY_BY_ID extracts null for every row, which is
+  // not an error but a silent collapse into "all empty", leaving the incoming
+  // order untouched and looking like a sort that ran.
   const byId: ReadonlyMap<string, T> =
-    sort.field === "parent" ? new Map<string, T>(nibs.map((n) => [n.id, n])) : EMPTY_BY_ID;
+    RESOLVING_SORT_FIELDS.has(sort.field) ? new Map<string, T>(nibs.map((n) => [n.id, n])) : EMPTY_BY_ID;
   return [...nibs].sort(makeNibComparator(sort, byId));
 }
 
-// A shared empty index for the non-parent sorts. `never` value type makes it
+// The sort fields whose extractor reads `byId` to resolve another row. Kept
+// beside the extractors it mirrors: a new resolving field added to
+// KEY_EXTRACTORS and not to this set sorts as if every value were empty.
+const RESOLVING_SORT_FIELDS: ReadonlySet<SortField> = new Set<SortField>(["parent", "milestone"]);
+
+// A shared empty index for the sorts that resolve nothing. `never` value type makes it
 // assignable to `ReadonlyMap<string, T>` for any `T extends SortableRow`, so the
 // empty branch allocates nothing.
 const EMPTY_BY_ID: ReadonlyMap<string, never> = new Map<string, never>();

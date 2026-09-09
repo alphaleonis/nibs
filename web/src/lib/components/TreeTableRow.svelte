@@ -19,6 +19,7 @@
     dimmed?: boolean;
     collapsed?: boolean;
     parentNib?: TreeTableNib | null;
+    milestoneNib?: TreeTableNib | null;
     visibleColumns?: ColumnKey[];
     columnOrder?: ColumnKey[];
     draggable?: boolean;
@@ -39,6 +40,7 @@
     dimmed = false,
     collapsed = false,
     parentNib = null,
+    milestoneNib = null,
     visibleColumns = [...ALL_COLUMN_KEYS],
     columnOrder = [...ALL_COLUMN_KEYS],
     draggable = false,
@@ -64,7 +66,7 @@
 
   // The bag each cell adapter reads. Cells are pure functions of this — they
   // touch no selection/drag context — so ambient row state stays on the <tr>.
-  let rowCtx: RowContext = $derived({ nib, depth, parentNib, hasChildren, collapsed, blockedEmphasis, drawsSection });
+  let rowCtx: RowContext = $derived({ nib, depth, parentNib, milestoneNib, hasChildren, collapsed, blockedEmphasis, drawsSection });
 
   // Computed from context + nib.id. `selectedIds` and `selectedNibId` are two
   // independent facts, so they get two independent channels here:

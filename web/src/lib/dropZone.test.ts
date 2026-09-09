@@ -43,6 +43,7 @@ function makeRow(overrides: Partial<Omit<RowData, "nib">> & { nib?: Partial<Tree
     hasChildren: false,
     dimmed: false,
     parentNib: null,
+    milestoneNib: null,
     displayParentId: null,
     // Production's own rule, called rather than restated — a fabricated bucket
     // built through this helper must come out a member of nothing, as it does

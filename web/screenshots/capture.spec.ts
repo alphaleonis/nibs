@@ -737,3 +737,44 @@ test("status facet — presets and per-status checkboxes", async ({ page }) => {
 });
 
 
+
+// The two assignment-axis columns, which no other capture can reach: both are
+// `defaultVisible: false`, so every shot above renders the table without them.
+// They exist for the views that do NOT spine on an axis, which is why Flat is
+// the subject — there a row's milestone and area are otherwise invisible.
+//
+// Filtered ON PURPOSE, and to two types. Only six fixture nibs carry a
+// milestone and all six are epics, so an unfiltered Flat view opens on a
+// screenful of tasks whose Milestone cells are all legitimately blank — a frame
+// indistinguishable from the column being broken. Bugs join them because the
+// area assignments live there instead. The text assertions below are what make
+// this capture evidence rather than decoration.
+//
+// `columnVisibility` is per view level and lives inside the same preferences
+// key `openApp` seeds; `title` is re-added by the persistence sanitizer whether
+// or not it is listed, so naming it is for the reader.
+test("table — flat with both assignment axes as columns", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "nibs-filter-preferences",
+      JSON.stringify({
+        q: "type:epic,bug",
+        viewLevel: "flat",
+        columnVisibility: { flat: ["id", "title", "type", "status", "milestone", "area"] },
+      }),
+    );
+  });
+  await page.goto("/");
+  await expect(page.locator("tr[data-nib-id]").first()).toBeVisible({ timeout: 10_000 });
+  // tnib-e001 is assigned tnib-m001, whose title is what the cell must show —
+  // the id would be the wrong answer and an empty cell the broken one, and this
+  // assertion fails on both.
+  const cell = page.locator('tr[data-nib-id="tnib-e001"] [data-testid="nib-milestone"]');
+  await expect(cell).toContainText("MVP", { timeout: 10_000 });
+  // The other axis, on a row that carries one. No fixture nib holds BOTH — the
+  // six milestone-carriers are epics and the seven area-carriers are bugs,
+  // features and a task — so the filter unions two types to get one populated
+  // cell of each on screen. tnib-b005 is assigned the area `web`.
+  await expect(page.locator('tr[data-nib-id="tnib-b005"] [data-testid="nib-area"]')).toHaveText("web");
+  await shot(page, "table-assignment-columns");
+});

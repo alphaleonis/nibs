@@ -1018,6 +1018,7 @@
           dimmed={row.dimmed}
           collapsed={treeView.isCollapsed(row.nib.id)}
           parentNib={row.parentNib}
+          milestoneNib={row.milestoneNib}
           drawsSection={row.drawsSection}
           visibleColumns={resolvedVisibleColumns}
           columnOrder={resolvedColumnOrder}
