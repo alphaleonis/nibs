@@ -311,6 +311,21 @@ test("detail panel — milestone picker open", async ({ page }) => {
   await shot(page, "detail-panel-milestone-open");
 });
 
+// The area picker open, on tnib-f008 — the fixture's one nib carrying a NESTED
+// assignment (`web/dashboard`). That subject is the point: the rows show every
+// declared path indented by depth and labeled by its own segment, while the
+// trigger behind them carries the full path, so one frame shows both halves of
+// the split. A nib with no area (tnib-e001, say) would show a "None" trigger and
+// prove only that the list renders.
+test("detail panel — area picker open", async ({ page }) => {
+  await openApp(page);
+  await page.locator('tr[data-nib-id="tnib-f008"]').locator('[data-action="title"]').click();
+  await expect(page.locator('[data-testid="anv-area"]')).toHaveText(/web\/dashboard/);
+  await page.locator('[data-testid="anv-area"]').click();
+  await expect(page.getByRole("option").first()).toBeVisible({ timeout: 5_000 });
+  await shot(page, "detail-panel-area-open");
+});
+
 // Task-list checkboxes in rendered nib body: clickable + theme-styled.
 // tnib-t005 has a MIXED checked/unchecked checklist; capture it under a
 // dark (graphite) and the light (daylight) palette so the themed checkbox — themed

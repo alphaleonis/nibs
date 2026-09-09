@@ -38,6 +38,9 @@ export interface RawNibPayload {
   // `String!` on the wire, so the mapper's `?? ""` is a defense for a
   // hand-built payload rather than a nullable field.
   milestone?: string | null;
+  // Same shape as `milestone`: `String!` on the wire, optional here so a
+  // hand-built payload need not carry it.
+  area?: string | null;
   // Present in the subscription selection but not part of NibSnapshot; kept
   // optional so callers may read them without widening the mapper.
   updatedAt?: string | null;
@@ -78,6 +81,7 @@ export function toNibSnapshot(nib: RawNibPayload): NibSnapshot {
     priority: nib.priority ?? "",
     estimate: nib.estimate ?? "",
     milestone: nib.milestone ?? "",
+    area: nib.area ?? "",
     tags: nib.tags ?? [],
     body: nib.body ?? "",
     etag: nib.etag ?? "",

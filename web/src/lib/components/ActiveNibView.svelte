@@ -55,6 +55,7 @@
   import PrioritySelect from "./PrioritySelect.svelte";
   import EstimateSelect from "./EstimateSelect.svelte";
   import MilestoneSelect from "./MilestoneSelect.svelte";
+  import AreaSelect from "./AreaSelect.svelte";
   import TagEditor from "./TagEditor.svelte";
   import RelationBadge from "./RelationBadge.svelte";
   import MarkdownEditor from "./MarkdownEditor.svelte";
@@ -820,10 +821,11 @@
           <span class="anv-field-label">Estimate</span>
           <EstimateSelect value={form.estimate} onchange={(v) => (form.estimate = v)} testId="anv-estimate" {disabled} />
         </div>
-        <!-- Edit mode only, and never for a milestone itself: CreateNibInput
-             declares no milestone, and `takesAssignmentAxes` is the client's
-             read of the rule that a waypoint carries no assignment. Neither
-             absence is a layout choice — both are writes the server refuses. -->
+        <!-- Both axes are hidden for a milestone itself: `takesAssignmentAxes`
+             is the client's read of the rule that a waypoint carries no
+             assignment. The milestone field is additionally edit-only, because
+             CreateNibInput declares no milestone. Neither absence is a layout
+             choice — both are writes the server refuses. -->
         {#if form.mode === "edit" && takesAssignmentAxes(form.type)}
           <div class="anv-field">
             <span class="anv-field-label">Milestone</span>
@@ -832,6 +834,19 @@
               subjectStatus={form.status}
               onchange={(v) => (form.milestone = v)}
               testId="anv-milestone"
+              {disabled}
+            />
+          </div>
+        {/if}
+        <!-- Not edit-only, unlike Milestone above: CreateNibInput DOES declare
+             `area`, so the assignment can be made as the nib is created. -->
+        {#if takesAssignmentAxes(form.type)}
+          <div class="anv-field">
+            <span class="anv-field-label">Area</span>
+            <AreaSelect
+              value={form.area}
+              onchange={(v) => (form.area = v)}
+              testId="anv-area"
               {disabled}
             />
           </div>

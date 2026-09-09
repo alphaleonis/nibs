@@ -20,6 +20,7 @@ function makePayload(overrides: Partial<RawNibPayload> = {}): RawNibPayload {
     priority: "high",
     estimate: "M",
     milestone: "nibs-m1",
+    area: "web/dashboard",
     tags: ["one", "two"],
     body: "Body text",
     etag: "etag-1",
@@ -42,17 +43,19 @@ describe("toNibSnapshot", () => {
       priority: "high",
       estimate: "M",
       milestone: "nibs-m1",
+      area: "web/dashboard",
       tags: ["one", "two"],
       body: "Body text",
       etag: "etag-1",
     });
   });
 
-  it("normalizes null priority/estimate/milestone/tags/body/etag to empty defaults", () => {
+  it("normalizes null priority/estimate/milestone/area/tags/body/etag to empty defaults", () => {
     const snap = toNibSnapshot(
-      makePayload({ priority: null, estimate: null, milestone: null, tags: null, body: null, etag: null }),
+      makePayload({ priority: null, estimate: null, milestone: null, area: null, tags: null, body: null, etag: null }),
     );
     expect(snap.milestone).toBe("");
+    expect(snap.area).toBe("");
     expect(snap.priority).toBe("");
     expect(snap.estimate).toBe("");
     expect(snap.tags).toEqual([]);
@@ -285,6 +288,7 @@ describe("NIB_CHANGED_SUBSCRIPTION field coverage guard", () => {
     "priority",
     "estimate",
     "milestone",
+    "area",
     "tags",
     "body",
     "etag",

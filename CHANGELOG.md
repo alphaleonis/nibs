@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **The web's filter box speaks the ownership axis** — `area:<path>` selects an area's work, including everything declared beneath it.
 - **The web groups work by area** — the Areas view spines on the declared vocabulary, and an area nothing is assigned to is still a row, so the map shows what is empty as well as what is not.
 - **The web table shows a nib's milestone and area as columns** — off by default and toggled on like Blocking or Created, so the views that group by neither axis can still show both.
+- **A nib's area is set from the web's detail panel** — a picker over the project's declared vocabulary, offered while creating as well as while editing, where before only `nibs set --area` could place a nib in one.
 - **`nibs rel` takes `-c` and `-q`** — the size of the related set as a bare integer and the related ids one per line, with list's semantics, which is what the cheat sheet's FILTER block already promised of both verbs.
 
 ### Changed

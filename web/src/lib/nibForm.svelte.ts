@@ -13,6 +13,7 @@ import type { MutationStore } from "./mutations/store.svelte";
 import { createNib as createNibCmd, updateNib as updateNibCmd } from "./mutations/commands";
 import type { CreateNibInput, UpdateNibInput } from "./mutations/types";
 import { getBodyTemplate } from "./bodyTemplates";
+import { takesAssignmentAxes } from "./membership";
 
 /** A committed nib. `etag` is ALWAYS present (it identifies a saved revision). */
 export interface NibSnapshot {
@@ -25,6 +26,9 @@ export interface NibSnapshot {
   /** The DIRECT milestone assignment, verbatim: "" for a nib in no queue of its
    *  own, including one scheduled through an assigned ancestor. */
   readonly milestone: string;
+  /** The DIRECT area assignment, verbatim: "" for a nib in no area. Unlike
+   *  `milestone` it names no nib, so it is a plain declared path. */
+  readonly area: string;
   readonly tags: readonly string[];
   readonly body: string;
   readonly etag: string;
@@ -50,6 +54,9 @@ export interface NibFormFields {
   /** Edit mode only: `CreateNibInput` declares no milestone, so a create form
    *  carries "" here and never sends it. */
   milestone: string;
+  /** Both modes: `CreateNibInput` DOES declare `area`, so a create form sends
+   *  whatever this carries. */
+  area: string;
   body: string;
   /** Replace the body wholesale, marking the buffer dirty exactly like typing does.
    *
@@ -99,6 +106,7 @@ interface FieldValues {
   priority: string;
   estimate: string;
   milestone: string;
+  area: string;
   tags: string[];
   body: string;
 }
@@ -111,6 +119,7 @@ function fieldsFromSnapshot(s: NibSnapshot): FieldValues {
     priority: s.priority,
     estimate: s.estimate,
     milestone: s.milestone,
+    area: s.area,
     tags: [...s.tags],
     body: s.body,
   };
@@ -217,6 +226,7 @@ abstract class BaseForm implements NibFormFields {
   priority = $state("");
   estimate = $state("");
   milestone = $state("");
+  area = $state("");
   body = $state("");
   #tags = $state<string[]>([]);
   #saving = $state(false);
@@ -228,6 +238,7 @@ abstract class BaseForm implements NibFormFields {
     priority: "",
     estimate: "",
     milestone: "",
+    area: "",
     tags: [],
     body: "",
   });
@@ -266,6 +277,7 @@ abstract class BaseForm implements NibFormFields {
       this.priority !== b.priority ||
       this.estimate !== b.estimate ||
       this.milestone !== b.milestone ||
+      this.area !== b.area ||
       !sameBody(this.body, b.body) ||
       !sameTags(this.#tags, b.tags)
     );
@@ -316,6 +328,7 @@ abstract class BaseForm implements NibFormFields {
     this.priority = v.priority;
     this.estimate = v.estimate;
     this.milestone = v.milestone;
+    this.area = v.area;
     this.body = v.body;
     this.#tags = [...v.tags];
   }
@@ -329,6 +342,7 @@ abstract class BaseForm implements NibFormFields {
       priority: v.priority,
       estimate: v.estimate,
       milestone: v.milestone,
+      area: v.area,
       tags: [...v.tags],
       body: v.body,
     };
@@ -351,6 +365,7 @@ abstract class BaseForm implements NibFormFields {
       priority: this.priority,
       estimate: this.estimate,
       milestone: this.milestone,
+      area: this.area,
       tags: [...this.#tags],
       body: this.body,
     };
@@ -391,6 +406,9 @@ export class CreateForm extends BaseForm implements NibFormFields {
       // No milestone: `CreateNibInput` declares no such field, so the server
       // accepts no assignment at create time and the control is not rendered.
       milestone: "",
+      // Area is unset rather than unsendable: `CreateNibInput` DOES declare it,
+      // so the control is rendered and whatever it holds reaches save().
+      area: "",
       tags: [],
       body: template,
     };
@@ -399,6 +417,17 @@ export class CreateForm extends BaseForm implements NibFormFields {
   }
 
   protected override afterTypeChange(newType: string): void {
+    // A milestone takes no area (`takesAssignmentAxes`), and the Area control is
+    // hidden the moment the type says so — a buffered value would then be sent
+    // from a row the user can no longer see, and the create refused with "a
+    // milestone cannot have an area". Cleared rather than merely withheld at
+    // save(): a hidden value that reappears on switching back is a write nobody
+    // chose. Ahead of the template early-return below, which answers a question
+    // about the BODY and must not gate this. No re-baseline is owed for it, as
+    // it is for the swapped body: `CreateDefaults` declares no area, so a create
+    // form's baseline area is "" and clearing lands back on it.
+    if (!takesAssignmentAxes(newType)) this.area = "";
+
     // Template policy by equality: only swap while the body is "untouched"
     // (equal to the last template). Deleting the body back to the template
     // re-enables the swap; an edited body is left alone.
@@ -424,6 +453,7 @@ export class CreateForm extends BaseForm implements NibFormFields {
       status: this.status,
       ...(this.priority ? { priority: this.priority } : {}),
       ...(this.estimate ? { estimate: this.estimate } : {}),
+      ...(this.area ? { area: this.area } : {}),
       ...(this.tags.length > 0 ? { tags: [...this.tags] } : {}),
       ...(this.body ? { body: this.body } : {}),
       ...(this.#parent ? { parent: this.#parent } : {}),
@@ -453,6 +483,9 @@ export class CreateForm extends BaseForm implements NibFormFields {
         priority: created?.priority ?? this.priority,
         estimate: created?.estimate ?? this.estimate,
         milestone: "",
+        // CREATE_NIB_MUTATION selects no `area`, so the sent value stands in:
+        // the server accepted it, since a refused area returns above.
+        area: this.area,
         tags: created?.tags ?? [...this.tags],
         body: created?.body ?? this.body,
         etag: created?.etag ?? "",
@@ -512,6 +545,7 @@ export class EditForm extends BaseForm implements NibFormFields {
       this.priority === remote.priority &&
       this.estimate === remote.estimate &&
       this.milestone === remote.milestone &&
+      this.area === remote.area &&
       sameBody(this.body, remote.body) &&
       sameTags(this.tags, remote.tags)
     );
@@ -591,6 +625,14 @@ export class EditForm extends BaseForm implements NibFormFields {
       input.milestone = this.milestone || null;
     }
 
+    // Also sent only when it changed, but for a weaker reason than milestone's:
+    // preValidateSubject runs ValidateArea over the CLONE on every update, so
+    // re-asserting an unchanged area is judged identically to omitting it. This
+    // is minimal-diff hygiene, not a guard against a refusal.
+    if (this.area !== this.baseline.area) {
+      input.area = this.area || null;
+    }
+
     const addedTags = this.tags.filter((t) => !baselineTags.includes(t));
     const removedTags = baselineTags.filter((t) => !this.tags.includes(t));
     if (addedTags.length > 0) input.addTags = addedTags;
@@ -645,6 +687,7 @@ export class EditForm extends BaseForm implements NibFormFields {
         priority: this.priority,
         estimate: this.estimate,
         milestone: this.milestone,
+        area: this.area,
         tags: [...this.tags],
         body: this.body,
         etag: newEtag,

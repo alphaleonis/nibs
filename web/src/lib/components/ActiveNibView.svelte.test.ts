@@ -2,7 +2,10 @@ import { render, screen, waitFor } from "@testing-library/svelte";
 import { userEvent } from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { flushSync } from "svelte";
-import { ACTIVE_VIEW_KEY, CONFIRM_DIALOG_KEY, MILESTONES_KEY } from "$lib/contexts";
+import { ACTIVE_VIEW_KEY, CONFIRM_DIALOG_KEY, MILESTONES_KEY, VIEW_SPINE_KEY } from "$lib/contexts";
+import { EMPTY_SPINE, makeViewSpine } from "$lib/viewSpine";
+import { createAreaVocabulary } from "$lib/areas";
+import type { ViewSpine } from "$lib/viewSpine";
 import type { ConfirmDialogState, ConfirmDialogOptions } from "$lib/composables/useConfirmDialog.svelte";
 import type { ActiveView, MissingNibOutcome } from "$lib/composables/useActiveView.svelte";
 import type { ViewState } from "$lib/composables/activeView";
@@ -86,6 +89,7 @@ interface FakeForm {
   priority: string;
   estimate: string;
   milestone: string;
+  area: string;
   tags: string[];
   body: string;
   bodyVersion: number;
@@ -111,6 +115,7 @@ function makeEditForm(overrides: Partial<FakeForm> = {}): FakeForm {
     priority: "normal",
     estimate: "m",
     milestone: "",
+    area: "",
     tags: ["web-ui", "detail-panel"],
     body: "## Heading\n\nSome **bold** text and see #gx0f for details.",
     bodyVersion: 0,
@@ -144,6 +149,7 @@ function makeCreateForm(overrides: Partial<FakeForm> = {}): FakeForm {
     priority: "",
     estimate: "",
     milestone: "",
+    area: "",
     tags: [] as string[],
     body: "Template body",
     bodyVersion: 0,
@@ -278,11 +284,13 @@ function renderView(
   view: FakeView,
   confirmDialog: ConfirmDialogState,
   props: Record<string, unknown> = {},
+  spine: ViewSpine = EMPTY_SPINE,
 ) {
   const ctx = new Map<string, unknown>();
   ctx.set(ACTIVE_VIEW_KEY, view);
   ctx.set(CONFIRM_DIALOG_KEY, confirmDialog);
   ctx.set(MILESTONES_KEY, () => MILESTONES);
+  ctx.set(VIEW_SPINE_KEY, () => spine);
   return render(ActiveNibView, { context: ctx, props });
 }
 
@@ -596,6 +604,55 @@ describe("ActiveNibView", () => {
     });
   });
 
+  describe("area field", () => {
+    const AREA_SPINE = makeViewSpine(
+      createAreaVocabulary([
+        { path: "web", name: "web", description: "", color: "", depth: 0 },
+        { path: "web/dashboard", name: "dashboard", description: "", color: "", depth: 1 },
+      ]),
+    );
+
+    it("shows the assigned area by its full stored path", () => {
+      const form = makeEditForm({ area: "web/dashboard" });
+      renderView(makeView({ form }), confirmDialog, {}, AREA_SPINE);
+
+      expect(screen.getByTestId("anv-area")).toHaveTextContent("web/dashboard");
+    });
+
+    it("writes the pick onto the buffer, which Save then persists", async () => {
+      const form = makeEditForm({ area: "" });
+      renderView(makeView({ form }), confirmDialog, {}, AREA_SPINE);
+
+      await user.click(screen.getByTestId("anv-area"));
+      await user.click(
+        screen.getAllByRole("option").find((o) => o.getAttribute("data-value") === "web")!,
+      );
+
+      // Buffered like its neighbors — no write of its own.
+      expect(form.area).toBe("web");
+      expect(mockExecute).not.toHaveBeenCalled();
+    });
+
+    it("is present while creating, unlike the milestone field beside it", () => {
+      // CreateNibInput DOES declare `area`, so the assignment can be made as the
+      // nib is created — the one place the two axes diverge.
+      const form = makeCreateForm();
+      renderView(makeView({ kind: "creating", form, detail: null }), confirmDialog, {}, AREA_SPINE);
+
+      expect(screen.getByTestId("anv-area")).toBeTruthy();
+      expect(screen.queryByTestId("anv-milestone")).toBeNull();
+    });
+
+    it("is absent for a milestone, which takes no area of its own", () => {
+      const form = makeEditForm({ type: "milestone" });
+      renderView(makeView({ form }), confirmDialog, {}, AREA_SPINE);
+
+      expect(screen.queryByTestId("anv-area")).toBeNull();
+      // Its neighbors are still there — this hides one field, not the band.
+      expect(screen.getByTestId("anv-status")).toBeTruthy();
+    });
+  });
+
   describe("task-list checkboxes (click to toggle, persist on save)", () => {
     // Uses a REAL EditForm so `dirty`/`discard`/`body` behave authentically —
     // the checkbox flip must mark the buffer dirty exactly like typing does.
@@ -610,6 +667,7 @@ describe("ActiveNibView", () => {
           priority: "normal",
           estimate: "m",
           milestone: "",
+          area: "",
           tags: [],
           body,
           etag: "e0",

@@ -64,6 +64,7 @@ function seed(overrides: Partial<NibSnapshot> = {}): NibSnapshot {
     priority: "high",
     estimate: "M",
     milestone: "",
+    area: "",
     tags: ["alpha", "beta"],
     body: "Original body",
     etag: "etag-1",
@@ -977,6 +978,155 @@ describe("editNibForm — milestone", () => {
     // And the buffer is clean again: the baseline adopted the new value, so a
     // second save would omit the field.
     expect(form.dirty).toBe(false);
+  });
+});
+
+describe("nibForm — area", () => {
+  it("marks an edit buffer dirty and sends the new assignment", async () => {
+    const { deps, calls } = makeMutations(updateResponder());
+    const form = editNibForm(deps, seed({ area: "" }));
+
+    expect(form.dirty).toBe(false);
+    form.area = "web/dashboard";
+    expect(form.dirty).toBe(true);
+
+    await form.save();
+    expect(calls[0].input.area).toBe("web/dashboard");
+  });
+
+  it("sends null to clear an assignment, the wire's spelling of 'no area'", async () => {
+    const { deps, calls } = makeMutations(updateResponder());
+    const form = editNibForm(deps, seed({ area: "web" }));
+
+    form.area = "";
+    await form.save();
+
+    expect(calls[0].input.area).toBeNull();
+  });
+
+  it("OMITS the field entirely when the assignment did not change", async () => {
+    const { deps, calls } = makeMutations(updateResponder());
+    const form = editNibForm(deps, seed({ area: "web" }));
+
+    form.title = "A new title";
+    await form.save();
+
+    expect(calls[0].input).not.toHaveProperty("area");
+  });
+
+  it("carries the saved assignment on the returned snapshot", async () => {
+    const { deps } = makeMutations(updateResponder());
+    const form = editNibForm(deps, seed({ area: "" }));
+
+    form.area = "web";
+    const outcome = await form.save();
+
+    expect(outcome.kind).toBe("saved");
+    if (outcome.kind === "saved") expect(outcome.snapshot.area).toBe("web");
+    expect(form.dirty).toBe(false);
+  });
+
+  it("counts an area-only difference as an unresolved external change", () => {
+    const { deps } = makeMutations(updateResponder());
+    const form = editNibForm(deps, seed({ area: "web" }));
+
+    // Someone else moved it to another area. Nothing else differs, so the
+    // convergence check is the only thing that can notice.
+    form.noteExternalChange(seed({ area: "cli", etag: "etag-remote" }));
+    expect(form.externalChange).not.toBeNull();
+
+    form.area = "cli";
+    expect(form.externalChange).toBeNull();
+  });
+
+  it("sends the assignment on the CREATE path too, unlike milestone", async () => {
+    // The one place the two axes diverge: `CreateNibInput` declares `area`, so
+    // a create form's value is not merely buffered — it reaches the server.
+    const { deps, calls } = makeMutations(createResponder());
+    const form = createNibForm(deps, { type: "feature" });
+    form.title = "My task";
+    form.area = "web/dashboard";
+
+    await form.save();
+
+    expect(calls[0].kind).toBe("create-nib");
+    expect(calls[0].input.area).toBe("web/dashboard");
+  });
+
+  it("omits an unset area from a create, like its omit-empty neighbors", async () => {
+    const { deps, calls } = makeMutations(createResponder());
+    const form = createNibForm(deps, { type: "feature" });
+    form.title = "My task";
+
+    await form.save();
+
+    expect(calls[0].input).not.toHaveProperty("area");
+  });
+
+  it("drops a buffered area when a create's type switches to milestone", async () => {
+    // The Area control disappears at that switch (`takesAssignmentAxes`), so a
+    // surviving value would be sent from a row the user can no longer see — and
+    // the server refuses the whole create with "a milestone cannot have an area".
+    const { deps, calls } = makeMutations(createResponder());
+    const form = createNibForm(deps, { type: "feature" });
+    form.title = "A waypoint";
+    form.area = "web/dashboard";
+
+    form.type = "milestone";
+    expect(form.area).toBe("");
+
+    await form.save();
+    expect(calls[0].input).not.toHaveProperty("area");
+  });
+
+  it("clears the area even when an edited body blocks the template swap", async () => {
+    // The template policy returns early on a touched body; the axis clear must
+    // not sit behind that return, since the refusal does not care about the body.
+    const { deps, calls } = makeMutations(createResponder());
+    const form = createNibForm(deps, { type: "feature" });
+    form.title = "A waypoint";
+    form.setBody("Hand-written body");
+    form.area = "web/dashboard";
+
+    form.type = "milestone";
+    expect(form.area).toBe("");
+
+    await form.save();
+    expect(calls[0].input).not.toHaveProperty("area");
+  });
+
+  it("leaves the area cleared, and the form pristine, on the way back out of milestone", () => {
+    const { deps } = makeMutations(createResponder());
+    const form = createNibForm(deps, { type: "feature" });
+    form.area = "web/dashboard";
+
+    form.type = "milestone";
+    form.type = "feature";
+
+    expect(form.area).toBe("");
+    expect(form.dirty).toBe(false);
+  });
+
+  it("keeps the area across a switch between two types that both accept it", () => {
+    const { deps } = makeMutations(createResponder());
+    const form = createNibForm(deps, { type: "feature" });
+    form.area = "web/dashboard";
+
+    form.type = "bug";
+
+    expect(form.area).toBe("web/dashboard");
+    expect(form.dirty).toBe(true);
+  });
+
+  it("leaves the buffer alone when the type is re-set to the value it already holds", () => {
+    const { deps } = makeMutations(createResponder());
+    const form = createNibForm(deps, { type: "feature" });
+    form.area = "web/dashboard";
+
+    form.type = "feature";
+
+    expect(form.area).toBe("web/dashboard");
+    expect(form.dirty).toBe(true);
   });
 });
 
