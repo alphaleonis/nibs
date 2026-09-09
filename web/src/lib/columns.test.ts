@@ -30,6 +30,8 @@ describe("columns model", () => {
       "Status",
       "Estimate",
       "Tags",
+      "Milestone",
+      "Area",
       "Blocking",
       "Blocked by",
       "Created",
@@ -47,6 +49,8 @@ describe("columns model", () => {
       status: 120,
       estimate: 70,
       tags: 150,
+      milestone: 160,
+      area: 140,
       blocking: 90,
       blockedBy: 100,
       created: 110,
@@ -71,8 +75,8 @@ describe("columns model", () => {
     ]);
   });
 
-  it("the opt-in columns (blocking, blockedBy, created) are hidden by default", () => {
-    const optIn: ColumnKey[] = ["blocking", "blockedBy", "created"];
+  it("the opt-in columns (milestone, area, blocking, blockedBy, created) are hidden by default", () => {
+    const optIn: ColumnKey[] = ["milestone", "area", "blocking", "blockedBy", "created"];
     for (const key of optIn) {
       expect(COLUMNS[key].defaultVisible).toBe(false);
       expect(DEFAULT_VISIBLE_COLUMNS).not.toContain(key);
@@ -90,6 +94,25 @@ describe("columns model", () => {
   it("SORTABLE_COLUMN_KEYS is the sortable subset in canonical order (all columns today)", () => {
     expect(SORTABLE_COLUMN_KEYS).toEqual(ALL_COLUMN_KEYS.filter((k) => COLUMNS[k].sortable));
     expect(SORTABLE_COLUMN_KEYS).toEqual([...ALL_COLUMN_KEYS]);
+  });
+
+  // The two assignment axes are columns because neither can ever appear as an
+  // ancestor in a parent tree: a milestone is a waypoint outside the parent
+  // graph, and an area is a declared path rather than a nib at all. They start
+  // hidden because the table is `table-layout: fixed` on a computed width, so a
+  // default-on column costs every view its share of that width — including the
+  // two views that already spine on the axis and would repeat their own section
+  // header in a column.
+  it("both assignment axes are registered columns that start hidden", () => {
+    for (const key of ["milestone", "area"] as const) {
+      expect(ALL_COLUMN_KEYS).toContain(key);
+      expect(DEFAULT_VISIBLE_COLUMNS).not.toContain(key);
+      expect(COLUMNS[key].defaultVisible).toBe(false);
+      // Hidden by default, but reachable: still toggleable and still sortable.
+      expect(COLUMNS[key].alwaysVisible).toBe(false);
+      expect(COLUMNS[key].sortable).toBe(true);
+      expect(SORTABLE_COLUMN_KEYS).toContain(key);
+    }
   });
 
   it("title is the only always-visible column", () => {

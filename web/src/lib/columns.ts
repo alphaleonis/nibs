@@ -24,6 +24,8 @@ export const ALL_COLUMN_KEYS = [
   "status",
   "estimate",
   "tags",
+  "milestone",
+  "area",
   "blocking",
   "blockedBy",
   "created",
@@ -48,7 +50,8 @@ export interface ColumnDef {
   // Cannot be toggled off in the Columns dropdown (title only, today).
   alwaysVisible: boolean;
   // Shown when a view has no persisted column configuration. Opt-in columns
-  // (blocking / blockedBy / created) start hidden but remain toggleable.
+  // (milestone / area / blocking / blockedBy / created) start hidden but remain
+  // toggleable.
   defaultVisible: boolean;
   // Column capabilities for the sort UI. Every column is sortable in every view;
   // the click-to-sort header + aria-sort live in TreeTable's <th> shell and read
@@ -64,6 +67,16 @@ export interface RowContext {
   nib: TreeTableNib;
   depth: number;
   parentNib: TreeTableNib | null;
+  /**
+   * The nib this row's `milestone` assignment resolves to, or null when it is
+   * unassigned OR names a nib the table does not hold. Resolved for the same
+   * reason `parentNib` is: a cell is a pure function of this bag, so a column
+   * that shows an assignment's TITLE cannot look one up for itself.
+   *
+   * The two nulls are deliberately not distinguished here — `nib.milestone`
+   * carries the raw value, so the cell tells them apart by reading it.
+   */
+  milestoneNib: TreeTableNib | null;
   hasChildren: boolean;
   collapsed: boolean;
   blockedEmphasis: BlockedEmphasis;
@@ -92,6 +105,8 @@ export const COLUMNS = {
   status: { key: "status", label: "Status", defaultWidth: 120, alwaysVisible: false, defaultVisible: true, sortable: true, sortKey: "status" },
   estimate: { key: "estimate", label: "Estimate", defaultWidth: 70, alwaysVisible: false, defaultVisible: true, sortable: true, sortKey: "estimate" },
   tags: { key: "tags", label: "Tags", defaultWidth: 150, alwaysVisible: false, defaultVisible: true, sortable: true, sortKey: "tags" },
+  milestone: { key: "milestone", label: "Milestone", defaultWidth: 160, alwaysVisible: false, defaultVisible: false, sortable: true, sortKey: "milestone" },
+  area: { key: "area", label: "Area", defaultWidth: 140, alwaysVisible: false, defaultVisible: false, sortable: true, sortKey: "area" },
   blocking: { key: "blocking", label: "Blocking", defaultWidth: 90, alwaysVisible: false, defaultVisible: false, sortable: true, sortKey: "blocking" },
   blockedBy: { key: "blockedBy", label: "Blocked by", defaultWidth: 100, alwaysVisible: false, defaultVisible: false, sortable: true, sortKey: "blockedBy" },
   created: { key: "created", label: "Created", defaultWidth: 110, alwaysVisible: false, defaultVisible: false, sortable: true, sortKey: "created" },

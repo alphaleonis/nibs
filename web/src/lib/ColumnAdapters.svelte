@@ -87,6 +87,8 @@
       status: { header: headerStatus, cell: cellStatus },
       estimate: { header: headerEstimate, cell: cellEstimate },
       tags: { header: headerTags, cell: cellTags },
+      milestone: { header: headerMilestone, cell: cellMilestone },
+      area: { header: headerArea, cell: cellArea },
       blocking: { header: headerBlocking, cell: cellBlocking },
       blockedBy: { header: headerBlockedBy, cell: cellBlockedBy },
       created: { header: headerCreated, cell: cellCreated },
@@ -122,6 +124,8 @@
 {#snippet headerStatus()}Status{/snippet}
 {#snippet headerEstimate()}Estimate{/snippet}
 {#snippet headerTags()}Tags{/snippet}
+{#snippet headerMilestone()}Milestone{/snippet}
+{#snippet headerArea()}Area{/snippet}
 {#snippet headerBlocking()}Blocking{/snippet}
 {#snippet headerBlockedBy()}Blocked by{/snippet}
 {#snippet headerCreated()}Created{/snippet}
@@ -148,6 +152,39 @@
       {parentNib.title}
     {/if}
   </td>
+{/snippet}
+
+<!-- Milestone column -->
+<!-- Follows cellParent's shape: the assigned nib's type icon plus its title,
+     with the id as the tooltip. Membership is not parentage, so this axis can
+     never show up as an ancestor in the tree — the column is the only place a
+     non-grouping view can show it.
+
+     A `milestone` naming a nib the table does not hold falls back to the raw
+     value rather than rendering blank, which is what MilestoneSelect does with
+     the same case ("falling back to the raw id keeps the trigger honest").
+     Blank would say "unassigned", and the nib IS assigned — to something that
+     is not here. -->
+{#snippet cellMilestone(ctx: RowContext)}
+  {@const milestoneNib = ctx.milestoneNib}
+  {@const assigned = ctx.nib.milestone}
+  <td data-testid="nib-milestone" class="text-body px-3 cell-truncate row-cell" style="color: var(--text-secondary);" title={milestoneNib ? milestoneNib.id : (assigned || undefined)}>
+    {#if milestoneNib}
+      <TypeIcon type={milestoneNib.type} size={14} />
+      {milestoneNib.title}
+    {:else if assigned}
+      {assigned}
+    {/if}
+  </td>
+{/snippet}
+
+<!-- Area column -->
+<!-- The stored path in full (`web/dashboard`), not the leaf: the path is the
+     value, and a bare leaf is ambiguous across parents. An area is a declared
+     path rather than a nib, so there is no type icon to pair it with. -->
+{#snippet cellArea(ctx: RowContext)}
+  {@const area = ctx.nib.area}
+  <td data-testid="nib-area" class="text-body px-3 cell-truncate row-cell" style="color: var(--text-secondary);" title={area || undefined}>{area}</td>
 {/snippet}
 
 <!-- Type column -->

@@ -51,6 +51,13 @@ export interface RowData {
   dimmed: boolean;
   parentNib: TreeTableNib | null;
   /**
+   * The nib this row's `milestone` assignment names, or null when unassigned or
+   * when the assignment names a nib this table does not hold. Resolved here for
+   * the same reason `parentNib` is — the Milestone column shows the assigned
+   * milestone's title, and a cell reads only the bag it is handed.
+   */
+  milestoneNib: TreeTableNib | null;
+  /**
    * The id of the nib this row would REORDER AGAINST in the current view tree,
    * or null when it reorders at the display root. Under a grouping lens it
    * differs from `nib.parentId` (a promoted header's display parent is null
@@ -389,6 +396,9 @@ export function buildShapedTableData(
         ? node.children.filter(c => visibleIds.has(c.nib.id))
         : node.children;
       const parentNib = node.nib.parentId ? nibMap.get(node.nib.parentId) ?? null : null;
+      // `milestone` is reported verbatim, so an assignment naming a missing or
+      // non-milestone nib reaches here as written and resolves to null.
+      const milestoneNib = node.nib.milestone ? nibMap.get(node.nib.milestone) ?? null : null;
 
       const drawsSection: RowSection | null =
         node.section === undefined
@@ -410,6 +420,7 @@ export function buildShapedTableData(
         hasChildren: visibleChildren.length > 0,
         dimmed,
         parentNib,
+        milestoneNib,
         // The display parent is the node whose children array holds this node.
         // Threaded top-down from the forest roots (null) so it reflects the
         // node's DISPLAY position after buildViewTree's grouping reparenting,

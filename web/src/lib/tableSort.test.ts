@@ -18,6 +18,8 @@ function row(overrides: Partial<SortableRow> = {}): SortableRow {
     parentId: null,
     blockingIds: [],
     blockedByIds: [],
+    milestone: "",
+    area: "",
     ...overrides,
   };
 }
@@ -250,5 +252,90 @@ describe("nextTableSort — tri-state cycle (field-agnostic)", () => {
     expect(s).toEqual({ field: "estimate", direction: "desc" });
     s = nextTableSort(s, "estimate");
     expect(s).toBeNull();
+  });
+});
+
+describe("applySort — the assignment axes", () => {
+  // Titles and ids are deliberately ANTI-CORRELATED: sorted by id these two
+  // milestones come out m001 then m002, sorted by title the reverse. A guard
+  // built on aligned fixtures would pass against an id-keyed extractor, which
+  // is the mistake worth catching — ids sort by mint sequence, which reads as
+  // arbitrary next to the title the cell actually shows.
+  const ZULU = row({ id: "nibs-m001", title: "Zulu wave", type: "milestone" });
+  const ALPHA = row({ id: "nibs-m002", title: "Alpha wave", type: "milestone" });
+
+  it("milestone: orders by the assigned milestone's TITLE, not its id", () => {
+    const rows = [
+      row({ id: "in-zulu", milestone: "nibs-m001" }),
+      row({ id: "in-alpha", milestone: "nibs-m002" }),
+      ZULU,
+      ALPHA,
+    ];
+    // "Alpha wave" < "Zulu wave", so the m002 member leads. Keyed on the id
+    // instead, "nibs-m001" < "nibs-m002" would put in-zulu first.
+    const sorted = ids(applySort(rows, { field: "milestone", direction: "asc" }));
+    expect(sorted.slice(0, 2)).toEqual(["in-alpha", "in-zulu"]);
+  });
+
+  it("milestone: descending reverses the assigned rows", () => {
+    const rows = [
+      row({ id: "in-alpha", milestone: "nibs-m002" }),
+      row({ id: "in-zulu", milestone: "nibs-m001" }),
+      ZULU,
+      ALPHA,
+    ];
+    expect(ids(applySort(rows, { field: "milestone", direction: "desc" })).slice(0, 2)).toEqual([
+      "in-zulu",
+      "in-alpha",
+    ]);
+  });
+
+  it("milestone: an assignment naming a row the table does not hold sinks last, like an empty one", () => {
+    // Both nulls, reached two different ways: never assigned, and assigned to
+    // something absent. The extractor cannot tell them apart and must not try —
+    // sinking last is what every other empty key does.
+    const rows = [
+      row({ id: "dangling", milestone: "nibs-gone" }),
+      row({ id: "unassigned", milestone: "" }),
+      row({ id: "assigned", milestone: "nibs-m002" }),
+      ALPHA,
+    ];
+    const asc = ids(applySort(rows, { field: "milestone", direction: "asc" }));
+    expect(asc[0]).toBe("assigned");
+    expect(asc.slice(1)).toContain("dangling");
+    expect(asc.slice(1)).toContain("unassigned");
+  });
+
+  it("milestone: unassigned rows sink LAST in both directions", () => {
+    const rows = [
+      row({ id: "none", milestone: "" }),
+      row({ id: "in-zulu", milestone: "nibs-m001" }),
+      row({ id: "in-alpha", milestone: "nibs-m002" }),
+      ZULU,
+      ALPHA,
+    ];
+    // The milestones themselves carry no assignment, so they sink too — the
+    // assertion is only that no unassigned row outranks an assigned one.
+    for (const direction of ["asc", "desc"] as const) {
+      const sorted = ids(applySort(rows, { field: "milestone", direction }));
+      expect(sorted.slice(0, 2).sort()).toEqual(["in-alpha", "in-zulu"]);
+      expect(sorted.slice(2)).toContain("none");
+    }
+  });
+
+  it("area: sorts the stored path as case-insensitive text", () => {
+    const rows = [
+      row({ id: "dash", area: "web/dashboard" }),
+      row({ id: "core", area: "Core" }),
+      row({ id: "web", area: "web" }),
+    ];
+    expect(ids(applySort(rows, { field: "area", direction: "asc" }))).toEqual(["core", "web", "dash"]);
+    expect(ids(applySort(rows, { field: "area", direction: "desc" }))).toEqual(["dash", "web", "core"]);
+  });
+
+  it("area: unassigned rows sink LAST in both directions", () => {
+    const rows = [row({ id: "none", area: "" }), row({ id: "zed", area: "zed" }), row({ id: "aaa", area: "aaa" })];
+    expect(ids(applySort(rows, { field: "area", direction: "asc" }))).toEqual(["aaa", "zed", "none"]);
+    expect(ids(applySort(rows, { field: "area", direction: "desc" }))).toEqual(["zed", "aaa", "none"]);
   });
 });

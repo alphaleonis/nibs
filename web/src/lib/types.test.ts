@@ -6,7 +6,8 @@ describe("column config: blocking / blockedBy columns", () => {
     expect(ALL_COLUMN_KEYS).toContain("blocking");
     expect(ALL_COLUMN_KEYS).toContain("blockedBy");
     // Appended after the original 7 columns, preserving canonical order.
-    // created / modified follow the relation columns.
+    // The assignment axes sit between tags and the relation columns; created /
+    // modified follow them.
     expect(ALL_COLUMN_KEYS).toEqual([
       "id",
       "parent",
@@ -15,6 +16,8 @@ describe("column config: blocking / blockedBy columns", () => {
       "status",
       "estimate",
       "tags",
+      "milestone",
+      "area",
       "blocking",
       "blockedBy",
       "created",
