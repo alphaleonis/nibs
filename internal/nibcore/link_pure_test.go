@@ -941,9 +941,9 @@ func TestCheckAllLinksInMapFindingOrderIsStable(t *testing.T) {
 // the node it entered at) and the ORDER the cycles arrive in (whichever the walk
 // reached first).
 //
-// The third is out of reach here and stays unfixed: `visited` spans the whole
-// walk, so WHICH cycles are found at all still varies with the entry node. See
-// FindCyclesInMap's own note.
+// The third — WHICH cycles are found at all, which `visited` spanning the whole
+// walk once left to the entry node — is out of reach here and pinned separately
+// by TestCycleSetDoesNotDependOnEntryOrder.
 //
 // The two fixture cycles have five and four members, so a report echoing the
 // entry node reproduces the canonical answer by luck alone — 201 of 20000 scans
@@ -1010,5 +1010,59 @@ func TestCycleReportRotationAndOrderAreStable(t *testing.T) {
 	projectRoot := t.TempDir()
 	for i := range 200 {
 		assertCanonical(t, i, CheckAllLinksInMap(newFixture(), projectRoot, "").Cycles)
+	}
+}
+
+// TestCycleSetDoesNotDependOnEntryOrder pins the third quantity the map walk
+// leaves to chance, and the one TestCycleReportRotationAndOrderAreStable puts
+// out of its own reach: WHICH cycles are reported at all.
+//
+// `visited` spans the whole walk, so a cycle whose nodes were finished under an
+// earlier root is never explored. Which root comes first therefore decides the
+// SET, not just its order — measured over 3000 random cyclic graphs, 1157 of
+// them reported a different set under a different root order.
+//
+// The fixture is the smallest shape with that property, found by enumerating
+// every 4-node digraph rather than reasoned: c1 → c2 → c1 is reachable both
+// directly and the long way round through c3. Entering at c1 finishes c2 before
+// the long way is walked, so only the short cycle is seen; entering at c3 sees
+// both. c4 is an isolated nib, there so the walk has a root that reaches
+// nothing.
+//
+// The answer below is the smaller of the two sets — a deterministic SUBSET, and
+// the exact-equality assertion pins that incompleteness as much as it pins the
+// determinism. So a future walk that legitimately finds MORE cycles fails here,
+// and should: widening the reported set is a deliberate change, not a free one.
+// What is guaranteed either way is that a cyclic store is never called clean,
+// since a directed graph has a cycle iff some DFS finds a back edge; 0 of those
+// same 3000 graphs reported nothing.
+func TestCycleSetDoesNotDependOnEntryOrder(t *testing.T) {
+	newFixture := func() map[string]*nib.Nib {
+		return map[string]*nib.Nib{
+			"c1": {ID: "c1", Status: "todo", BlockedBy: []string{"c2", "c3"}},
+			"c2": {ID: "c2", Status: "todo", BlockedBy: []string{"c1"}},
+			"c3": {ID: "c3", Status: "todo", BlockedBy: []string{"c2"}},
+			"c4": {ID: "c4", Status: "todo"},
+		}
+	}
+
+	want := []Cycle{{LinkType: "blocked_by", Path: []string{"c1", "c2", "c1"}}}
+
+	// Enough scans that Go's randomized map order reaches the entry this fixture
+	// discriminates on. Only a c1-first walk yields the answer above, and a walk
+	// keyed on map order lands elsewhere about one run in four — measured, not
+	// derived from the node count, which Go's small-map iteration does not make
+	// uniform. At that rate 200 scans go green by luck with probability ~1e-25.
+	for scan := range 200 {
+		if got := FindCyclesInMap(newFixture(), "blocked_by"); !reflect.DeepEqual(got, want) {
+			t.Fatalf("scan %d: cycle set varies with the entry node\n got: %v\nwant: %v", scan, got, want)
+		}
+	}
+
+	projectRoot := t.TempDir()
+	for scan := range 200 {
+		if got := CheckAllLinksInMap(newFixture(), projectRoot, "").Cycles; !reflect.DeepEqual(got, want) {
+			t.Fatalf("scan %d: cycle set varies through CheckAllLinksInMap\n got: %v\nwant: %v", scan, got, want)
+		}
 	}
 }
