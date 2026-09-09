@@ -1,13 +1,16 @@
 areas:
     - name: auth
       description: Sign-in, sessions, tokens and account security
+      color: teal
     - name: api
       description: The public HTTP API and the integrations built on it
       children:
         - name: webhooks
           description: Outbound webhook delivery and subscriptions
+          color: orange
     - name: web
       description: The browser client
+      color: "#7aa2f7"
       children:
         - name: dashboard
           description: The project dashboard and its charts
