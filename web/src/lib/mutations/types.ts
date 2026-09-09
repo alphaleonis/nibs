@@ -1,4 +1,4 @@
-import type { OrderScope, UpdateNibInput as GeneratedUpdateNibInput } from "../gql/graphql";
+import type { CreateNibInput as GeneratedCreateNibInput, OrderScope, UpdateNibInput as GeneratedUpdateNibInput } from "../gql/graphql";
 
 // --- Leaf command types ---
 
@@ -77,6 +77,23 @@ void _updateKeysCheck;
 type _GeneratedUpdateKeysExistOnClient = GeneratedUpdateKeys extends keyof UpdateNibInput ? true : never;
 const _generatedUpdateKeysCheck: _GeneratedUpdateKeysExistOnClient = true;
 void _generatedUpdateKeysCheck;
+
+// The same pair for CreateNibInput, for the reasons given above. Nothing else
+// in this client relates the two create types: `getVariables` in dispatcher.ts
+// returns `{ input: cmd.input }` from a function typed `Record<string, unknown>`,
+// so the hand-written shape is erased before urql sees it and no structural
+// comparison happens on that path. `area` went missing exactly that way.
+//
+// No Exclude<> on either side: the create input carries no command-level key
+// like `ifMatch`, so the two key sets are equal as written. Adding one to
+// silence a failure here would defeat the guard.
+type _CreateKeysExistOnGenerated = keyof CreateNibInput extends keyof GeneratedCreateNibInput ? true : never;
+const _createKeysCheck: _CreateKeysExistOnGenerated = true;
+void _createKeysCheck;
+
+type _GeneratedCreateKeysExistOnClient = keyof GeneratedCreateNibInput extends keyof CreateNibInput ? true : never;
+const _generatedCreateKeysCheck: _GeneratedCreateKeysExistOnClient = true;
+void _generatedCreateKeysCheck;
 
 export type CreateNibCommand = { kind: "create-nib"; input: CreateNibInput };
 export type UpdateNibCommand = { kind: "update-nib"; id: string; input: UpdateNibInput; ifMatch?: string };
