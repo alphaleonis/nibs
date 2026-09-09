@@ -1969,3 +1969,69 @@ describe("createActiveView · dispose", () => {
     dispose();
   });
 });
+
+/**
+ * A fabricated section-container row id names no nib (`isSyntheticRowId`), so an
+ * OPEN on one seats the view on a detail query that can only ever resolve empty
+ * — which App reads as the nib having gone away and reports as "no longer
+ * exists". The refusal lives here, in the one implementation every `view.open`
+ * caller shares, rather than at each of them.
+ */
+describe("createActiveView · a synthetic row id is not a nib", () => {
+  // Both shapes `sectionRowId` produces: an escaped section key (the Areas
+  // view's headers, which is what the reported error named) and a lens's
+  // leftover key, used verbatim.
+  it.each(["/section:web/dashboard_", "/__no_area__"])("refuses to open %s", async (id) => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open(id);
+    flushSync();
+
+    expect(view.state.kind).toBe("closed");
+    expect(h.nav.navigateToNib).not.toHaveBeenCalled();
+    // No detail query for the id, so nothing can settle null and drive App's
+    // missing-nib heal — the source of the false "no longer exists" message.
+    expect(h.detailInsts.has(id)).toBe(false);
+    expect(h.created).toEqual([]);
+
+    dispose();
+  });
+
+  it("leaves an already-open nib untouched, without prompting", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = view.form;
+    h.editForms.get("n1")!.dirty = true;
+
+    await view.open("/__no_area__");
+    flushSync();
+
+    // A refusal changes nothing: the buffer stays, and the user is not asked to
+    // discard edits for a navigation that is not happening.
+    expect(view.state).toEqual({ kind: "viewing", nibId: "n1", presentation: "docked" });
+    expect(view.form).toBe(f);
+    expect(h.confirm).not.toHaveBeenCalled();
+
+    dispose();
+  });
+
+  // The other direction, which is what stops the guard over-reaching: the
+  // predicate answers identity, so a REAL nib id opens however it is shaped.
+  it("still opens a real nib id", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+
+    expect(view.state).toEqual({ kind: "viewing", nibId: "n1", presentation: "docked" });
+    expect(h.nav.navigateToNib).toHaveBeenCalledWith("n1");
+    expect(h.detailInsts.has("n1")).toBe(true);
+
+    dispose();
+  });
+});

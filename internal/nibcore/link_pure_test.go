@@ -934,3 +934,81 @@ func TestCheckAllLinksInMapFindingOrderIsStable(t *testing.T) {
 		}
 	}
 }
+
+// TestCycleReportRotationAndOrderAreStable pins two of the three things the map
+// walk leaves unstable in the cycle report, both of which reach
+// `nibs check --json`: the ROTATION each cycle is written from (the DFS records
+// the node it entered at) and the ORDER the cycles arrive in (whichever the walk
+// reached first).
+//
+// The third is out of reach here and stays unfixed: `visited` spans the whole
+// walk, so WHICH cycles are found at all still varies with the entry node. See
+// FindCyclesInMap's own note.
+//
+// The two fixture cycles have five and four members, so a report echoing the
+// entry node reproduces the canonical answer by luck alone — 201 of 20000 scans
+// (1.0%) matched `want` before the rotation and sort landed. Asserting the
+// canonical answer as a literal is what makes that a certainty; a check that
+// only compared repeated runs to each other would accept an entry-node report
+// whenever the entry happened not to vary.
+func TestCycleReportRotationAndOrderAreStable(t *testing.T) {
+	// a1 → a4 → a2 → a5 → a3 → a1 and b1 → b3 → b4 → b2 → b1.
+	newFixture := func() map[string]*nib.Nib {
+		return map[string]*nib.Nib{
+			"a3": {ID: "a3", Status: "todo", BlockedBy: []string{"a1"}},
+			"a1": {ID: "a1", Status: "todo", BlockedBy: []string{"a4"}},
+			"a4": {ID: "a4", Status: "todo", BlockedBy: []string{"a2"}},
+			"a2": {ID: "a2", Status: "todo", BlockedBy: []string{"a5"}},
+			"a5": {ID: "a5", Status: "todo", BlockedBy: []string{"a3"}},
+
+			"b3": {ID: "b3", Status: "todo", BlockedBy: []string{"b4"}},
+			"b4": {ID: "b4", Status: "todo", BlockedBy: []string{"b2"}},
+			"b2": {ID: "b2", Status: "todo", BlockedBy: []string{"b1"}},
+			"b1": {ID: "b1", Status: "todo", BlockedBy: []string{"b3"}},
+		}
+	}
+
+	// A canonical Path starts at the cycle's smallest id and still CLOSES BACK
+	// on it, so `nibs check` renders the loop as "a1 → a4 → … → a3 → a1".
+	want := []Cycle{
+		{LinkType: "blocked_by", Path: []string{"a1", "a4", "a2", "a5", "a3", "a1"}},
+		{LinkType: "blocked_by", Path: []string{"b1", "b3", "b4", "b2", "b1"}},
+	}
+
+	assertCanonical := func(t *testing.T, scan int, got []Cycle) {
+		t.Helper()
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("scan %d: cycle report is not canonical\n got: %v\nwant: %v", scan, got, want)
+		}
+		// Restate the rule the literal encodes, so a later fixture edit cannot
+		// quietly move `want` off the canonical form.
+		for _, c := range got {
+			body := c.Path[:len(c.Path)-1]
+			if c.Path[len(c.Path)-1] != c.Path[0] {
+				t.Fatalf("scan %d: path does not close back on its start: %v", scan, c.Path)
+			}
+			if c.Path[0] != slices.Min(body) {
+				t.Fatalf("scan %d: path starts at %q, not the cycle's smallest id %q: %v",
+					scan, c.Path[0], slices.Min(body), c.Path)
+			}
+		}
+		for j := 1; j < len(got); j++ {
+			if slices.Compare(got[j-1].Path, got[j].Path) >= 0 {
+				t.Fatalf("scan %d: cycles not in ascending path order at index %d: %v then %v",
+					scan, j, got[j-1].Path, got[j].Path)
+			}
+		}
+	}
+
+	for i := range 200 {
+		assertCanonical(t, i, FindCyclesInMap(newFixture(), "blocked_by"))
+	}
+
+	// The same two halves through the surface `nibs check --json` serializes.
+	// Nothing is created under projectRoot, but no fixture nib links a
+	// document, so it stays unused.
+	projectRoot := t.TempDir()
+	for i := range 200 {
+		assertCanonical(t, i, CheckAllLinksInMap(newFixture(), projectRoot, "").Cycles)
+	}
+}

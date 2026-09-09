@@ -644,16 +644,14 @@ const CASES: Case[] = [
   {
     // One move positions one group, so a queue that refuses ONE dragged row
     // refuses the drag — the whole selection falls back to the positioned drop.
+    // Which is then refused in its own right, the rows being drawn in two
+    // sections: the `region` here is the root group and not the queue, so the
+    // fallback is what this answers about.
     name: "a selection carrying a milestone stays out of the queue too",
     drag: ["M2", "B1"],
     target: "M1",
     zone: "after",
-    expected: {
-      ok: true,
-      region: TOP_LEVEL,
-      indicator: "after",
-      command: reorderChain(["M2", "B1"], "M1", "after"),
-    },
+    expected: { ok: false, reason: "position-across-sections", region: TOP_LEVEL },
   },
   // --- A milestone dragged over the Backlog. The Milestones view draws one
   // ordering group in two places: the Backlog declares no region, so an
@@ -679,6 +677,33 @@ const CASES: Case[] = [
     name: "several dragged milestones are refused the Backlog together",
     drag: ["M2", "HS"],
     target: "B1",
+    zone: "before",
+    expected: { ok: false, reason: "position-across-sections", region: TOP_LEVEL },
+  },
+  // --- The same boundary from the other two directions. What makes the write
+  // unshowable is the COMMAND rather than the subject's type: a reorder changes
+  // no containment, so a row drawn in another section stays exactly where it is
+  // drawn whichever type it is. ---
+  {
+    // The symmetric direction. The line draws above the v1.0 HEADER and the
+    // write moves a BACKLOG row's root order key, which the reader sees, if at
+    // all, as a jump far below inside the Backlog. A header is a member of no
+    // section, so what says the two are drawn apart is the subject's own
+    // section, not the target's.
+    name: "the top edge of a milestone header refuses a Backlog row",
+    drag: ["B1"],
+    target: "M1",
+    zone: "before",
+    expected: { ok: false, reason: "position-across-sections", region: TOP_LEVEL },
+  },
+  {
+    // A selection straddling the boundary: the Backlog row would move where the
+    // line pointed, and the milestone's key would move invisibly beside it. One
+    // move positions one group, so the half that cannot be shown refuses the
+    // whole.
+    name: "a selection mixing a milestone with a Backlog row is refused between two Backlog rows",
+    drag: ["M2", "B1"],
+    target: "B2",
     zone: "before",
     expected: { ok: false, reason: "position-across-sections", region: TOP_LEVEL },
   },
@@ -1012,6 +1037,72 @@ describe("a milestone drawn in the same section as its anchor", () => {
   });
 });
 
+/**
+ * The same boundary in a view with no milestone anywhere in it. A type lens
+ * declares no region, so a section's own header row and a loose row in the
+ * leftover both fall back to the root group while being drawn apart — the shape
+ * the Milestones view has, reached by grouping on type instead.
+ *
+ * Driven through the shipped lens and `buildShapedTableData`, because what puts
+ * those two rows in one group is the lens's declaration and not anything this
+ * file could restate.
+ */
+describe("a type lens's leftover and the rows heading its sections", () => {
+  const NIBS: TreeTableNib[] = [
+    makeNib({ id: "EP", type: "epic", title: "An epic" }),
+    makeNib({ id: "IN", type: "task", title: "Inside the epic", parentId: "EP" }),
+    makeNib({ id: "LO", type: "task", title: "Loose one" }),
+    makeNib({ id: "LT", type: "task", title: "Loose two" }),
+  ];
+  const data = buildShapedTableData(NIBS, {}, viewShapeFor("epics"), new Set(), null);
+  const byId = new Map(data.rows.map((r) => [r.nib.id, r]));
+
+  function planAt(draggedIds: string[], targetId: string, zone: DropZone): DropPlan {
+    const target = byId.get(targetId);
+    if (target === undefined) throw new Error(`no row ${targetId}`);
+    return planDrop({
+      draggedIds,
+      rowsById: byId,
+      draggedRowsById: byId,
+      target,
+      zone,
+      descendantIds: collectDescendantIds(draggedIds, data.rows),
+      containment: data.containment,
+    });
+  }
+
+  it("draws the header and the leftover in one ordering group and two sections", () => {
+    // The premise the refusal rests on, asserted rather than assumed: separate
+    // groups would keep these rows apart on their own.
+    expect(byId.get("EP")!.region).toEqual(TOP_LEVEL);
+    expect(byId.get("LO")!.region).toEqual(TOP_LEVEL);
+    expect(byId.get("EP")!.section).toBeNull();
+    expect(byId.get("LO")!.section?.key).toBe("/__no_epic__");
+  });
+
+  it.each([
+    { name: "a leftover row onto the header's edge", drag: ["LO"], target: "EP" },
+    { name: "the header onto a leftover row's edge", drag: ["EP"], target: "LO" },
+  ])("refuses the reorder no view can show: $name", ({ drag, target }) => {
+    const plan = planAt(drag, target, "before");
+    if (plan.ok) throw new Error(`expected a refusal, got ${plan.label}`);
+    expect(plan.refusal.reason).toBe("position-across-sections");
+  });
+
+  it("leaves the reorder inside one section, and the entry into the header, alone", () => {
+    const inside = planAt(["LT"], "LO", "before");
+    if (!inside.ok) throw new Error(inside.refusal.message);
+    expect(inside.command).toEqual(reorderNib("LT", { beforeId: "LO" }));
+
+    // The gesture that CHANGES containment across the very same boundary: the
+    // bottom edge of a container is an entry, and the row lands where the view
+    // then draws it.
+    const entering = planAt(["LO"], "EP", "after");
+    if (!entering.ok) throw new Error(entering.refusal.message);
+    expect(entering.command).toEqual(batch([setParent("LO", "EP")]));
+  });
+});
+
 describe("planDrop refusal messages", () => {
   it("distinguishes a mixed selection from a hidden member", () => {
     const mixed = planFor(["B1", "T1"], "B2", "before");
@@ -1230,7 +1321,7 @@ describe("planDrop with a namer", () => {
       target: "B1",
       zone: "before" as DropZone,
       message:
-        "v2.0 is ordered among the milestones, not in the Backlog section, and a milestone moves by a drop on another milestone's edge.",
+        "v2.0 is not drawn in the same section as Backlog one, and a reorder positions a row only among the rows it is drawn with.",
     },
     {
       reason: "anchor-not-in-destination",
@@ -1251,6 +1342,31 @@ describe("planDrop with a namer", () => {
     if (plan.ok) throw new Error(`${reason} should be refused`);
     expect(plan.refusal.reason).toBe(reason);
     expect(plan.refusal.message).toBe(message);
+  });
+
+  /**
+   * The cross-section reorder sentence, for the two subjects a milestone-shaped
+   * one would lie about.
+   *
+   * The rule catches any pure reorder now, so the subject need not be a
+   * milestone and need not be drawn apart in its ENTIRETY: a sentence naming the
+   * whole drag would assert of the Backlog row something true only of the
+   * milestone beside it.
+   */
+  it("keeps the cross-section reorder sentence true of whatever is drawn apart", () => {
+    const ontoHeader = namedPlan(["B1"], "M1", "before");
+    if (ontoHeader.ok) throw new Error("a Backlog row on a milestone header's edge should be refused");
+    expect(ontoHeader.refusal.message).toBe(
+      "Backlog one is not drawn in the same section as v1.0, and a reorder positions a row only among the rows it is drawn with.",
+    );
+
+    // Only the milestone is named: Backlog one IS drawn in the anchor's section,
+    // so a subject spanning both rows would be false about it.
+    const mixed = namedPlan(["M2", "B1"], "B2", "before");
+    if (mixed.ok) throw new Error("a selection straddling the boundary should be refused");
+    expect(mixed.refusal.message).toBe(
+      "v2.0 is not drawn in the same section as Backlog two, and a reorder positions a row only among the rows it is drawn with.",
+    );
   });
 
   // The threading itself, rather than one phrase at a time. A required `nameOf`
@@ -1328,7 +1444,7 @@ describe("dropPlan.ts import isolation", () => {
       'import { batch, reorderChain, reorderNib, reparentAndReorder, sequence, setParent, updateNib } from "../mutations/commands";',
       'import type { AnyCommand, CommandResult, LeafCommand, SequenceStep } from "../mutations/types";',
       'import type { ContainmentIndex } from "../containment";',
-      'import { MILESTONE_TYPE, takesAssignmentAxes } from "../membership";',
+      'import { takesAssignmentAxes } from "../membership";',
       'import type { RowData } from "../tableData";',
       'import type { SectionKey } from "../tree";',
       'import { canHaveChildren } from "../typeHierarchy";',

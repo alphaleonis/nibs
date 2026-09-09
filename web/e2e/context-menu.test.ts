@@ -7,13 +7,13 @@ import { test, expect, type Page, type Locator } from "@playwright/test";
 // src/lib/testing/menu.ts, which opens submenus by keyboard there instead). So
 // this is the only place the hover path is covered at all.
 
-async function openApp(page: Page) {
-  await page.addInitScript(() => {
+async function openApp(page: Page, viewLevel = "flat") {
+  await page.addInitScript((level) => {
     localStorage.setItem(
       "nibs-filter-preferences",
-      JSON.stringify({ filter: {}, viewLevel: "flat" }),
+      JSON.stringify({ filter: {}, viewLevel: level }),
     );
-  });
+  }, viewLevel);
   await page.goto("/");
   await expect(page.locator("tr[data-nib-id]").first()).toBeVisible({ timeout: 15_000 });
 }
@@ -143,4 +143,24 @@ test("repeated submenu use in one session keeps working", async ({ page }) => {
       `iteration ${i}: priority not applied to ${nibId}`,
     ).toBeVisible({ timeout: 10_000 });
   }
+});
+
+// A section row the view FABRICATED names no nib, so Open and Edit on an area
+// header used to raise "Nib /section:web/dashboard_ no longer exists". Covered
+// in jsdom too (TreeTable.test.ts); here the header ids come from the fixture's
+// own areas rather than a stub, and the gesture is a real Chromium right-click.
+test("no row menu on a fabricated section header, while real rows keep theirs", async ({
+  page,
+}) => {
+  await openApp(page, "areas");
+
+  const header = page.locator('tr[data-nib-id^="/section:"]').first();
+  await expect(header).toBeVisible({ timeout: 15_000 });
+  await header.locator('[data-testid="nib-title"]').click({ button: "right" });
+  await expect(page.locator('[data-testid="context-menu"]')).toBeHidden();
+
+  // Positive control in the SAME view, so the assertion above is about the
+  // header and not about the Areas view having no menus at all.
+  const nibRow = page.locator('tr[data-nib-id]:not([data-nib-id^="/"])').first();
+  await openContextMenu(page, nibRow);
 });
