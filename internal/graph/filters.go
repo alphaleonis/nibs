@@ -177,11 +177,9 @@ func hasBoundingFilter(filter *model.NibFilter) bool {
 // mention filter branches and the search branch route through it so a duplicate
 // mention lookup or a repeated search term within a single GraphQL operation
 // hits the cache instead of the reader. CLI callers or pure unit tests may pass
-// context.Background(); the cache is keyed on ctx values only.
-//
-// ctx is currently consulted only for that RequestCache lookup. ApplyFilter does
-// not check cancellation or honor deadlines — passing a canceled ctx will not
-// short-circuit; every filter branch runs to completion.
+// context.Background(); the cache is keyed on ctx values only. That lookup is
+// the ONLY thing ctx is consulted for: ApplyFilter checks no cancellation and
+// honors no deadline, so every filter branch runs to completion.
 //
 // Callers threading filter.MentionsID / filter.MentionedByID must let
 // ApplyFilter handle ID resolution via resolveFilterTarget. Pre-normalizing in
@@ -489,8 +487,7 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 // On a relationship field that failure costs the WHOLE response: every such
 // field is [Nib!]!, so nothing between it and the response root is nullable and
 // GraphQL's null propagation carries the failure all the way up, discarding
-// every other nib's successful result. That is accepted rather than overlooked.
-// Degrading to "no match" would put this branch back in the business of
+// every other nib's successful result. That is accepted. Degrading to "no match" would put this branch back in the business of
 // answering a question it could not evaluate — the confident empty answer the
 // refusal classes above exist to eliminate — and a malformed term is not what
 // gets here: a query string the parser rejects degrades to a plain match query
@@ -600,20 +597,23 @@ func parentChain(b *nib.Nib, reader NibReader) []string {
 // resolvedParent returns the nib b's parent link resolves to, or nil when b has
 // no parent AND when the link names no nib.
 //
-// This function body is the project's one definition of "has a parent".
-// resolvedParentID is its ID-shaped wrapper, and is what most callers reach
-// for — so finding every decision point means asking for references to BOTH
-// names, not just this one. Do not restate the rationale below at a call site.
+// CANONICAL INVARIANT (what "has a parent" means). This doc is its single
+// authoritative statement; comments across internal/graph and cmd defer here
+// rather than re-derive it. resolvedParentID is its ID-shaped wrapper and is
+// what most callers reach for, so finding every decision point means asking for
+// references to BOTH names.
 //
-// Deciding parent-ness from the raw b.Parent string instead is the mistake this
-// exists to prevent: a surface that needs the rule without a reader in hand has
-// to re-derive it against whatever it does have, and every such re-derivation is
-// a place the rule can drift. Each one is expected to say what its equivalence
-// rests on.
+// Deciding parent-ness from the raw b.Parent string is the mistake this exists
+// to prevent, and a dangling link is what separates the two readings: the stored
+// field is non-empty, but nothing can be fetched through it. Under the raw
+// reading such a nib presents as a root everywhere the object graph is walked,
+// yet reports as parented to a filter, is missing from a root-level sibling
+// query, and is offered as a root's sibling by one surface while being refused
+// as that root's reorder anchor by another.
 //
-// Re-deriving is not the same as READING the stored field, and the two are worth
-// separating because most raw reads in this package are legitimate. What every
-// legitimate one has in common is that "is the string empty" is not its answer:
+// Re-deriving is not the same as READING the stored field, and most raw reads in
+// this package are legitimate. What every legitimate one has in common is that
+// "is the string empty" is not its answer:
 //
 //   - The rule's own body, here. Reading the field is what it is for.
 //   - WRITES. Storing a normalized parent, or clearing it, produces the spelling
@@ -626,46 +626,31 @@ func parentChain(b *nib.Nib, reader NibReader) []string {
 //     walk from. A link naming no nib ends the walk on its first lookup, which is
 //     the answer resolving would give, so resolving here would change only the
 //     cost.
-//   - The stored spelling AS THE SUBJECT. storedParentId and the `-f stored_parent`
-//     CLI field exist so a broken link stays inspectable; a diagnostic that
-//     deliberately prints both spellings would lose the information it exists to
-//     carry if it were routed through the rule.
+//   - The stored spelling AS THE SUBJECT. The storedParentId GraphQL field and
+//     the `-f stored_parent` CLI field exist so a broken link stays inspectable;
+//     routing a diagnostic that deliberately prints both spellings through the
+//     rule would lose the information it exists to carry.
 //   - A resolution by another route. Nib.parent resolves through GetSnapshot,
 //     which runs the same exact-then-prefix lookup as Get — a dependency not
 //     obvious at the call site, so it is pinned by
 //     TestParentResolverDependsOnGetSnapshotIDResolution rather than left to a
 //     reader to notice.
 //
-// That list covers this package. Surfaces OUTSIDE it read the raw link to decide
-// root-ness, which is why what is worth checking of them is agreement on the
-// ANSWER rather than the reading: a link naming no nib is absent from the id set
-// ui.BuildTree and membership.View each walk, so for a dangling link both arrive
-// at this rule's answer without calling it. The dangling link is the whole of the
-// claim; nothing here holds either surface to this rule for any other shape.
-//
-// The rule has one home because a surface that re-derives it from the raw
-// b.Parent string stays self-consistent while disagreeing with every other
-// surface. A dangling link is what separates the two readings: the stored field
-// is non-empty, but nothing can be fetched through it. Under the raw reading
-// such a nib presents as a root everywhere the object graph is walked, yet
-// reports as parented to a filter, is missing from a root-level sibling query,
-// and is offered as a root's sibling by one surface while being refused as that
-// root's reorder anchor by another.
-//
-// Every surface IN THIS PACKAGE that decides parent-ness is routed through here;
-// none reads the raw b.Parent to answer that question. The stored string is
-// still reachable — the storedParentId GraphQL field and the `-f stored_parent`
-// CLI field report it verbatim — but as an inspection value, so a broken link
-// stays diagnosable, never as an answer to "does this nib have a parent".
+// Every other surface in this package routes through here. Surfaces OUTSIDE it
+// read the raw link to decide root-ness, so what is worth checking of them is
+// agreement on the ANSWER rather than the reading: a link naming no nib is
+// absent from the id set ui.BuildTree and membership.View each walk, so for a
+// dangling link both arrive at this rule's answer without calling it. The
+// dangling link is the whole of the claim; nothing here holds either surface to
+// this rule for any other shape.
 //
 // Resolving is also what compares a short-form link under its resolved
 // spelling. Canonicalization makes the two spellings coincide, and every
-// mutation that can change the key set now re-runs it — Load, Core.Create,
+// mutation that can change the key set re-runs it — Load, Core.Create,
 // Core.Delete (gated on removalCanRebindLinksLocked) and the watcher's batch
-// (its scanAll branch) — so a Core-backed reader is not expected to hold an
-// unresolved short-form link. Resolving here does not lean on that: it keeps
-// the helper correct on any reader, including one that never ran the pass, so
-// the rule is a property of this package rather than of the store's history.
+// (its scanAll branch). Resolving here does not lean on that: it keeps the
+// helper correct on any reader, including one that never ran the pass, so the
+// rule is a property of this package rather than of the store's history.
 //
 // The returned pointer is the reader's LIVE store pointer (see NibReader.Get):
 // a caller whose result outlives the store lock must snapshot it, see
