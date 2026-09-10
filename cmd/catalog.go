@@ -338,13 +338,14 @@ func catalogHierarchy() error {
 	return nil
 }
 
-// areaCommandCatalogEntries returns the area surface: the three verbs that read
-// and edit the vocabulary, and the three flags that assign to it and filter by
-// it. Every purpose is the command's own Short or the flag's own usage string,
-// so this table cannot drift from what the CLI accepts.
+// areaCommandCatalogEntries returns the area surface: the verbs that read and
+// edit the vocabulary, and the three flags that assign to it and filter by it.
+// Every purpose is the command's own Short or the flag's own usage string, so
+// this table cannot drift from what the CLI accepts.
 func areaCommandCatalogEntries() []recipeInfo {
 	return []recipeInfo{
 		{"nibs area list", commandShort("area", "list")},
+		{"nibs area add <path>", commandShort("area", "add")},
 		{"nibs area rename <path> <new-name>", commandShort("area", "rename")},
 		{"nibs area rm <path>", commandShort("area", "rm")},
 		{`nibs new "<title>" -t <type> --area <path>`, flagUsage("new", "area")},
@@ -398,11 +399,15 @@ func catalogAreas() error {
 	b.WriteString("selects the nibs in web and those in every area declared beneath it. It is a\n")
 	b.WriteString("'nibs list' flag only ('nibs rel' takes no --area), and a milestone takes no\n")
 	b.WriteString("area at all.\n")
-	b.WriteString("\nEditing the vocabulary rewrites the nibs assigned at or below what the edit\n")
-	b.WriteString("touches, because an area is a PATH: 'nibs area rename' moves every path\n")
-	b.WriteString("under the node it renames, and 'nibs area rm' is refused while nibs are\n")
-	b.WriteString("assigned at or below the node unless a disposition says where they go\n")
-	b.WriteString("(--move-to <area> reassigns them, --unassign drops their assignment).\n")
+	b.WriteString("\n'nibs area add <path>' declares one, taking the FULL path of the new node\n")
+	b.WriteString("('add web/dashboard' nests it under an already-declared 'web') plus\n")
+	b.WriteString("--description and --color; a parent the store does not declare is refused\n")
+	b.WriteString("rather than created on the way.\n")
+	b.WriteString("\nEditing an area that already exists rewrites the nibs assigned at or below\n")
+	b.WriteString("what the edit touches, because an area is a PATH: 'nibs area rename' moves\n")
+	b.WriteString("every path under the node it renames, and 'nibs area rm' is refused while\n")
+	b.WriteString("nibs are assigned at or below the node unless a disposition says where they\n")
+	b.WriteString("go (--move-to <area> reassigns them, --unassign drops their assignment).\n")
 	b.WriteString("'nibs check' reports a nib whose area the vocabulary does not declare.\n")
 	fmt.Print(b.String())
 	return nil

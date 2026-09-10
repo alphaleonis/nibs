@@ -703,6 +703,7 @@ func TestCatalogAreasFromLiveCommands(t *testing.T) {
 
 	want := map[string]string{
 		"nibs area list":                             commandShort("area", "list"),
+		"nibs area add <path>":                       commandShort("area", "add"),
 		"nibs area rename <path> <new-name>":         commandShort("area", "rename"),
 		"nibs area rm <path>":                        commandShort("area", "rm"),
 		`nibs new "<title>" -t <type> --area <path>`: flagUsage("new", "area"),

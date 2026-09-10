@@ -478,7 +478,8 @@ func remedyStoreWithAreasShape(vocab string) func(t *testing.T) string {
 }
 
 // remedyAliasedAreasConfig declares web/dashboard through a YAML alias: the
-// loader resolves it and the file editor cannot address it.
+// loader resolves it, and the file editor refuses a file that inherits any of
+// its content because that is exactly what it cannot see.
 const remedyAliasedAreasConfig = `shared:
     dashboard: &dashboard
         name: dashboard
@@ -840,12 +841,12 @@ func remedySurfaces() []remedySurface {
 			wantCommands: 1,
 		},
 		{
-			name:     "a vocabulary reached through a YAML alias names no command",
+			name:     "a vocabulary that inherits its content names no command",
 			store:    remedyStoreWithAreasShape(remedyAliasedAreasConfig),
 			diagnose: remedyAreaRetireRefusal([]string{"rename", "web/dashboard", "panel"}),
-			mustName: []string{"YAML alias"},
+			mustName: []string{"anchors, aliases or merge keys"},
 			// The repair is an edit to areas.yml, which no nibs command makes —
-			// so the message names the key to write rather than a command. The
+			// so the message names the shape to write rather than a command. The
 			// row enrolls the surface: one added later is executed, not trusted.
 			wantCommands: 0,
 		},

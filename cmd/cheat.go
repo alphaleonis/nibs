@@ -61,7 +61,7 @@ READ   get <id…>          nib document (default); -f/--view id|ref|card|full; 
 WRITE  new "<title>" -t T create; also -s -p -e --area --parent --blocked-by --tag --after/--before/--first (siblings)
        set <id>           metadata/links; --clear %s; --remove-tag/-blocked-by/…
                           --milestone <ms> assigns to that milestone's queue, appended last (new cannot assign)
-                          --area <path> places it in a declared area; nibs area list|rename|rm prints and edits the set
+                          --area <path> places it in a declared area; nibs area list|add|rename|rm prints and edits the set
        body <id>          --set | --append | --section "## H" --set [--create] | --replace-old T --replace-new U
        mv <id…>           --after|--before <anchor> | --first | --parent <id> | --children-of <p> <id…>; 2+ ids need --block
                           --queue --after|--before <anchor> | --queue --first repositions within its queue

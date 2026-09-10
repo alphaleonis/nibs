@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/alphaleonis/nibs/internal/safetext"
 	"github.com/alphaleonis/nibs/internal/store"
 	"gopkg.in/yaml.v3"
 )
@@ -68,7 +69,7 @@ func (e *StoredAreaEdit) Write() (staleLinkTarget string, err error) {
 // message for it — but it is CHECKED here too, below, because the file this
 // writes has to be one the loader can read.
 func PlanRenameStoredArea(storeDir, path, newName string) (*StoredAreaEdit, error) {
-	return planStoredAreaEdit(storeDir, func(areas *yaml.Node) error {
+	return planStoredAreaEdit(storeDir, refuseMissingVocabulary, func(areas *yaml.Node) error {
 		found, err := findStoredArea(areas, path)
 		if err != nil {
 			return err
@@ -98,7 +99,7 @@ func PlanRenameStoredArea(storeDir, path, newName string) (*StoredAreaEdit, erro
 // An empty block declares no areas (AreasDeclared), which is the state the axis
 // then reports.
 func PlanRemoveStoredArea(storeDir, path string) (*StoredAreaEdit, error) {
-	return planStoredAreaEdit(storeDir, func(areas *yaml.Node) error {
+	return planStoredAreaEdit(storeDir, refuseMissingVocabulary, func(areas *yaml.Node) error {
 		found, err := findStoredArea(areas, path)
 		if err != nil {
 			return err
@@ -142,6 +143,109 @@ type storedArea struct {
 	owner *yaml.Node
 }
 
+// missingVocabulary is what one edit needs of a store whose areas.yml declares
+// nothing, and the two answers are not interchangeable.
+//
+// Rename and remove both NAME a node the file would have to already declare, so
+// a vocabulary declaring nothing is a refusal with nothing to say about the
+// argument. A create names a node that by definition is not declared yet, and
+// the first one in a store is exactly the call that finds nothing declared — so
+// it starts from a synthesized empty document and reaches the same single write
+// path.
+//
+// Declaring nothing is several shapes, and they are one disposition because a
+// caller cannot tell them apart: no file at all, a zero-byte file, a file
+// holding only comments, a file with other keys and no `areas:` block, an
+// `areas:` key with no value under it, and an empty `areas:` sequence — the
+// last of which is what PlanRemoveStoredArea leaves when the final declared
+// area goes. The rest are hand-authored, since Areas.Save deletes the file
+// rather than writing an empty one, and writing the file before the verb that
+// populates it is an ordinary way to arrive here.
+//
+// Areas.Save is deliberately not that path. It marshals from the struct, which
+// discards a hand-written file's comments, and it DELETES the file when nothing
+// is declared — a different disposition for "no areas on disk" than the empty
+// `areas:` block PlanRemoveStoredArea leaves behind. Two writers would be two
+// notions of that state.
+type missingVocabulary int
+
+const (
+	refuseMissingVocabulary missingVocabulary = iota
+	synthesizeMissingVocabulary
+)
+
+// emptyAreasDocument is the vocabulary a store that has never declared one
+// would have written: a document whose `areas:` block is there and empty.
+func emptyAreasDocument() yaml.Node {
+	return yaml.Node{
+		Kind: yaml.DocumentNode,
+		Content: []*yaml.Node{{
+			Kind: yaml.MappingNode,
+			Tag:  "!!map",
+			Content: []*yaml.Node{
+				{Kind: yaml.ScalarNode, Tag: "!!str", Value: "areas"},
+				{Kind: yaml.SequenceNode, Tag: "!!seq"},
+			},
+		}},
+	}
+}
+
+// yamlInheritance is one inheritance construct as the file writes it, with the
+// line it is written on. The refusal quotes it so the remedy names something
+// that is actually there: a remedy phrased for the `areas:` block instead is a
+// no-op on a file whose block is already literal and whose anchor sits
+// elsewhere, and a caller can follow that one forever without the answer
+// changing.
+type yamlInheritance struct {
+	construct string
+	line      int
+}
+
+// inheritsContent returns the first of YAML's inheritance constructs the
+// document reaches any of its content through — an anchor, an alias, or a `<<:`
+// merge key — anywhere in the file, at any depth, and nil for a document that
+// uses none.
+//
+// It is asked of the WHOLE document rather than of the `areas:` subtree, and
+// the bluntness is the point: deciding whether a particular anchor "actually
+// affects areas" is the reasoning it exists to replace. See the refusal in
+// planStoredAreaEdit for what it buys. WHICH construct comes back is for the
+// message alone — every one of them refuses, so the search stops at the first.
+func inheritsContent(node *yaml.Node) *yamlInheritance {
+	if node == nil {
+		return nil
+	}
+	if node.Kind == yaml.AliasNode {
+		// Here for the predicate rather than for its wording: yaml.v3 refuses a
+		// document whose alias precedes its anchor ("unknown anchor"), so the
+		// walk never reaches an alias without having refused already.
+		return &yamlInheritance{construct: fmt.Sprintf("the alias `*%s`", echoedYAMLName(node.Value)), line: node.Line}
+	}
+	if node.Anchor != "" {
+		return &yamlInheritance{construct: fmt.Sprintf("the anchor `&%s`", echoedYAMLName(node.Anchor)), line: node.Line}
+	}
+	if node.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			if node.Content[i].Value == "<<" {
+				return &yamlInheritance{construct: "a `<<:` merge key", line: node.Content[i].Line}
+			}
+		}
+	}
+	for _, child := range node.Content {
+		if found := inheritsContent(child); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+// echoedYAMLName bounds and strips an anchor or alias name on its way into a
+// message — file-sourced text, given the same treatment RenderAreaPath gives an
+// echoed area path.
+func echoedYAMLName(name string) string {
+	return truncateListedArea(safetext.Strip(name))
+}
+
 // planStoredAreaEdit applies edit to the `areas:` sequence of the vocabulary
 // inside storeDir and renders the result, without writing anything.
 //
@@ -156,12 +260,32 @@ type storedArea struct {
 // yaml.Marshal re-emits the whole document from the node tree, so the file comes
 // back with yaml.v3's layout rather than the project's. Measured on a
 // round trip (TestStoredAreaEditRoundTripPreservesWhatItClaims), what survives is
-// every comment — head, inline and footer — key order, nesting, anchors and
-// aliases, keys this build does not model at any depth, every per-node field,
-// and the file's permission bits. What does NOT survive is layout: indentation
-// is normalized to four spaces, blank lines are dropped, a leading `---` goes,
-// an inline comment loses its column alignment, a folded scalar is re-flowed,
-// and a `<<:` merge key gains an explicit `!!merge` tag.
+// every comment — head, inline and footer — key order, nesting, keys this build
+// does not model at any depth, every per-node field, and the file's permission
+// bits. What does NOT survive is layout: indentation is normalized to four
+// spaces, blank lines are dropped, a leading `---` goes, an inline comment loses
+// its column alignment, and a folded scalar is re-flowed.
+//
+// A file that reaches any of its content through YAML's inheritance constructs
+// — an anchor, an alias, a `<<:` merge key — is REFUSED before any write
+// decision is made, and that refusal is what makes the decisions below sound.
+// The loader resolves inheritance where this node tree sees only what is
+// literally typed, so on such a file the two disagree about what is declared;
+// and since YAML resolves an explicit key over a merged one, a key written on
+// the tree's "absent" answer overrides the inherited one it could not see.
+//
+// Refusing the constructs is what makes a nil from mappingValueNode
+// trustworthy, and it is not the only thing standing behind one. A key the
+// loader binds can still be one this tree does not match — `!!binary
+// "YXJlYXM="` is such a key, and it carries no anchor, alias or merge for the
+// gate to catch — so the second mechanism is the re-read below: the literal key
+// written on that nil leaves the decoder binding the same field twice, which it
+// rejects, and the edit is refused with the file untouched.
+//
+// That backstop answers a divergence in how a key is WRITTEN, and not an
+// inherited one. YAML lets an explicit key override what a merge supplied, so
+// there the field is bound once, the re-read is satisfied, and what the merge
+// carried is simply gone. That case is the gate's.
 //
 // A file holding more than one YAML document is REFUSED rather than edited: the
 // re-marshal emits only the first, so writing it back would silently delete the
@@ -173,34 +297,89 @@ type storedArea struct {
 // is the difference between a refused edit and a project that has to be repaired
 // by hand — and it is where the vocabulary's uniqueness rule is enforced against
 // whatever reached this function.
-func planStoredAreaEdit(storeDir string, edit func(areas *yaml.Node) error) (*StoredAreaEdit, error) {
+func planStoredAreaEdit(storeDir string, missing missingVocabulary, edit func(areas *yaml.Node) error) (*StoredAreaEdit, error) {
 	path := store.NewLayout(storeDir).AreasPath()
-	data, err := ReadConfigFile(path)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, refuseAreaEdit("no areas vocabulary at %s to edit; a store declares its areas there, beside its config.yml", path)
+	doc := emptyAreasDocument()
+	data, readErr := ReadConfigFile(path)
+	switch {
+	case readErr == nil:
+		parsed, err := soleConfigDocument(data)
+		if err != nil {
+			if errors.Is(err, errMultipleConfigDocuments) {
+				return nil, refuseAreaEdit(
+					"%s holds more than one YAML document, and editing its areas would rewrite the file from the first one alone — move anything after the `---` into its own file, or delete the marker if nothing follows it, then rerun",
+					path)
+			}
+			return nil, refuseAreaEdit("parsing %s: %v", path, err)
 		}
-		return nil, err
+		doc = parsed
+	case errors.Is(readErr, fs.ErrNotExist) && missing == synthesizeMissingVocabulary:
+		// The synthesized document stands in for the file, and the edit then
+		// takes the same path every other one does. What that costs is what a
+		// file which is not there was holding: no comments, no key this build
+		// does not model, nothing.
+	case errors.Is(readErr, fs.ErrNotExist):
+		return nil, refuseAreaEdit("no areas vocabulary at %s to edit; a store declares its areas there, beside its config.yml", path)
+	default:
+		return nil, readErr
 	}
 
-	doc, err := soleConfigDocument(data)
-	if err != nil {
-		if errors.Is(err, errMultipleConfigDocuments) {
-			return nil, refuseAreaEdit(
-				"%s holds more than one YAML document, and editing its areas would rewrite the file from the first one alone — move anything after the `---` into its own file, or delete the marker if nothing follows it, then rerun",
-				path)
-		}
-		return nil, refuseAreaEdit("parsing %s: %v", path, err)
-	}
-
-	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
-		return nil, refuseAreaEdit("%s declares no areas to edit", path)
-	}
-	areas := mappingValueNode(doc.Content[0], "areas")
-	if areas != nil && areas.Kind == yaml.AliasNode {
+	if found := inheritsContent(&doc); found != nil {
 		return nil, refuseAreaEdit(
-			"%s reaches its `areas:` block through a YAML alias, and this edit can only address a literal `areas:` sequence — write the block out under `areas:`, then rerun",
-			path)
+			"%s uses %s at line %d, and these edits cannot safely change a file that inherits any of its content — rewrite it without anchors, aliases or merge keys, writing out in place whatever they stand for, then rerun",
+			path, found.construct, found.line)
+	}
+	if err := yaml.Unmarshal(data, new(Areas)); err != nil {
+		// Not "the edit would leave it unreadable": the file arrived that way,
+		// so the remedy is to repair the file and not to change the argument.
+		return nil, refuseAreaEdit("%s cannot be read as an areas vocabulary (%v) — repair it, then rerun", path, err)
+	}
+
+	bootstrap := missing == synthesizeMissingVocabulary
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+		if !bootstrap {
+			return nil, refuseAreaEdit("%s declares no areas to edit", path)
+		}
+		// A file the decoder produced no node for: soleConfigDocument answers
+		// that way only for the io.EOF the decoder reports when the stream holds
+		// no document at all, so nothing in it is data there would be a node to
+		// carry. The bytes go on as the synthesized document's head comment
+		// instead — in such a file they are the whole of what somebody wrote —
+		// and yaml.v3 re-emits a head comment line for line, prefixing `#` where
+		// a line does not already start with one.
+		doc = emptyAreasDocument()
+		doc.Content[0].HeadComment = strings.TrimRight(string(data), "\r\n \t")
+	}
+	root := doc.Content[0]
+	areas := mappingValueNode(root, "areas")
+	// Only a create may synthesize the block, and only where the file has none:
+	// a vocabulary that declares anything reaches here with `areas:` already a
+	// literal sequence, so no case below can fire on one.
+	if bootstrap {
+		switch {
+		case root.Kind != yaml.MappingNode:
+			// A root that is not a mapping to add a key to, which is what a file
+			// holding only `---`, `null` or `~` parses as. The node is converted
+			// rather than replaced, which keeps the comments the file put on it
+			// — the same reason the third case converts.
+			root.Kind, root.Tag, root.Value, root.Style, root.Content = yaml.MappingNode, "!!map", "", 0, nil
+			areas = &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+			appendMappingEntry(root, "areas", areas)
+		case areas == nil:
+			// The `areas:` block is what is missing, not the file: the key is
+			// added to the document that is there, so every other key it
+			// carries — and every comment on them — is re-emitted with it.
+			areas = &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+			appendMappingEntry(root, "areas", areas)
+		case areas.Kind != yaml.SequenceNode:
+			// `areas:` with no value under it — the shape `nibs area list` tells
+			// a store declaring none to write, and a null value is the only
+			// non-sequence one that reaches here: every other `areas:` value
+			// fails to unmarshal as a vocabulary and is refused above. The node
+			// is converted rather than replaced, which keeps the comments the
+			// file put on it.
+			areas.Kind, areas.Tag, areas.Value, areas.Style, areas.Content = yaml.SequenceNode, "!!seq", "", 0, nil
+		}
 	}
 	if areas == nil || areas.Kind != yaml.SequenceNode {
 		return nil, refuseAreaEdit("%s declares no `areas:` block", path)
@@ -228,79 +407,52 @@ func planStoredAreaEdit(storeDir string, edit func(areas *yaml.Node) error) (*St
 // top-level node that happens to be named that way — the same resolution
 // findArea makes over the loaded model.
 //
-// It matches a LITERAL `name:` key, where the loaded model matches a resolved
-// tree, and the two diverge on exactly one class of file: a node reached through
-// a YAML alias (`- *dashboard`) or given its name by a merge key (`- <<: *d`) is
-// declared as far as cfg.IsValidArea is concerned and invisible here. That
-// divergence is reported as its own refusal rather than as "no such area",
-// because the caller has already been told the area exists and the remedy is to
-// spell the node out, not to pick a different path.
+// It matches a LITERAL `name:` key, and that is the same set of nodes the loaded
+// model matches: planStoredAreaEdit refuses a file whose content is inherited,
+// which is what would otherwise let cfg.IsValid see a node this search cannot.
 func findStoredArea(areas *yaml.Node, path string) (storedArea, error) {
 	seq, owner := areas, (*yaml.Node)(nil)
 	rest := path
 	for rest != "" {
 		name, tail, nested := strings.Cut(rest, AreaPathSeparator)
-		index, hidden := -1, ""
+		index := -1
 		for i, item := range seq.Content {
-			n := mappingValueNode(item, "name")
-			if n == nil {
-				if shape := unaddressableShape(item); shape != "" {
-					hidden = shape
-				}
-				continue
-			}
-			if n.Value == name {
+			if n := mappingValueNode(item, "name"); n != nil && n.Value == name {
 				index = i
 				break
 			}
 		}
 		if index < 0 {
-			return storedArea{}, missingStoredArea(path, hidden)
+			return storedArea{}, missingStoredArea(path)
 		}
 		node := seq.Content[index]
 		if !nested {
 			return storedArea{node: node, seq: seq, index: index, owner: owner}, nil
 		}
 		children := mappingValueNode(node, "children")
-		if children != nil && children.Kind == yaml.AliasNode {
-			return storedArea{}, missingStoredArea(path, "a YAML alias")
-		}
 		if children == nil || children.Kind != yaml.SequenceNode {
-			return storedArea{}, missingStoredArea(path, "")
+			return storedArea{}, missingStoredArea(path)
 		}
 		seq, owner, rest = children, node, tail
 	}
-	return storedArea{}, missingStoredArea(path, "")
+	return storedArea{}, missingStoredArea(path)
 }
 
-// unaddressableShape names the YAML construct that hides a declared node's name
-// from a literal search, or "" for an entry that simply is not one.
-func unaddressableShape(item *yaml.Node) string {
-	if item == nil {
-		return ""
-	}
-	if item.Kind == yaml.AliasNode {
-		return "a YAML alias"
-	}
-	if item.Kind == yaml.MappingNode {
-		for i := 0; i+1 < len(item.Content); i += 2 {
-			if item.Content[i].Value == "<<" {
-				return "a YAML merge key"
-			}
-		}
-	}
-	return ""
+// missingStoredArea reports a path the node tree could not resolve.
+func missingStoredArea(path string) error {
+	return refuseAreaEdit("this store's areas.yml declares no area %q", RenderAreaPath(path))
 }
 
-// missingStoredArea reports a path the node tree could not resolve, naming the
-// shape that hid it when one did.
-func missingStoredArea(path, shape string) error {
-	if shape == "" {
-		return refuseAreaEdit("this store's areas.yml declares no area %q", RenderAreaPath(path))
-	}
-	return refuseAreaEdit(
-		"this store's areas.yml reaches an area beside %q through %s, so this edit cannot address it — give the node its own `name:` key in the `areas:` block, then rerun",
-		RenderAreaPath(path), shape)
+// appendMappingEntry adds `key: value` to the end of a YAML mapping, which is
+// where the file will read it. removeMappingKey is its counterpart.
+func appendMappingEntry(node *yaml.Node, key string, value *yaml.Node) {
+	node.Content = append(node.Content, scalarNode(key), value)
+}
+
+// scalarNode is one plain string as the file carries it, with no style of its
+// own so yaml.v3 quotes it only where the value needs quoting.
+func scalarNode(value string) *yaml.Node {
+	return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}
 }
 
 // removeMappingKey drops key and its value from a YAML mapping.
@@ -314,4 +466,144 @@ func removeMappingKey(node *yaml.Node, key string) {
 			return
 		}
 	}
+}
+
+// PlanCreateStoredArea resolves declaring a new area at path, carrying the
+// description and color it is given and omitting the ones it is not.
+//
+// path is the FULL path of the new node, the same shape PlanRemoveStoredArea
+// takes, so `web/dashboard` declares `dashboard` under `web`. A parent the file
+// does not declare is REFUSED rather than created along the way: the vocabulary
+// is authorization data, so one typo minting two permanent areas is the failure
+// a declared vocabulary exists to prevent.
+//
+// The node is APPENDED after the last sibling, and there is no argument for
+// placing it elsewhere. Paths enumerates in declaration order and `nibs area
+// list` renders that order, so appending is the one placement that leaves every
+// node already declared exactly where the project put it.
+//
+// Unlike its two neighbours this edit has no member cascade, and the reason is
+// narrower than "a new area has no members": a nib may already CARRY the path,
+// left on it by a retire or a hand edit, and every write to that nib is refused
+// until the vocabulary declares it again (Areas.ValidateStored). Declaring it is
+// that repair, and the repair rewrites nothing — the value the nib is holding
+// becomes a declared one.
+func PlanCreateStoredArea(storeDir, path, description, color string) (*StoredAreaEdit, error) {
+	if err := ValidateNewAreaPath(path); err != nil {
+		return nil, err
+	}
+	parent, name := splitStoredAreaPath(path)
+	return planStoredAreaEdit(storeDir, synthesizeMissingVocabulary, func(areas *yaml.Node) error {
+		seq := areas
+		if parent != "" {
+			found, err := findStoredArea(areas, parent)
+			if err != nil {
+				return err
+			}
+			if seq, err = storedAreaChildren(found.node, parent); err != nil {
+				return err
+			}
+		}
+		seq.Content = append(seq.Content, newStoredAreaNode(name, description, color))
+		return nil
+	})
+}
+
+// ValidateNewAreaPath refuses a path no declared node could answer to, before
+// the file is even read.
+//
+// A create is the one edit that supplies a name the vocabulary has never held,
+// so it is the one that has to judge one. Each SEGMENT is put through the rule
+// validateAreaNodes applies on load, because the argument names the whole path
+// and an empty segment is how a stray separator arrives: `/infra` splits into an
+// empty root and `infra`, which would otherwise declare a root the caller did
+// not ask for. That load rule's remaining clause — a name holding the separator
+// — cannot fire on a segment splitting on the separator produced.
+//
+// planStoredAreaEdit re-reads the edited document and revalidates it, so this is
+// not what keeps a malformed vocabulary off disk. What it buys is a message
+// about the ARGUMENT: the backstop can only report that the file would be
+// unusable, and names a node by its position in a block the caller never wrote.
+//
+// It is exported so `nibs area add` can ask it BEFORE taking the store's write
+// lock, which is a blocking flock with no timeout that prints nothing while it
+// waits: a question the argument alone answers must not sit silent behind
+// another writer. PlanCreateStoredArea asks it again regardless — the planner is
+// the API, and a caller reaching it directly gets the same refusal.
+func ValidateNewAreaPath(path string) error {
+	if path == "" {
+		return refuseAreaEdit("an area is declared at a path, and none was given")
+	}
+	for _, segment := range strings.Split(path, AreaPathSeparator) {
+		trimmed := strings.TrimSpace(segment)
+		if trimmed == "" {
+			return refuseAreaEdit("the area path %q has a segment with no name in it; every declared area needs one",
+				RenderAreaPath(path))
+		}
+		if trimmed != segment {
+			return refuseAreaEdit("the area name %q has leading or trailing whitespace; an `area:` value would have to carry the same spaces to match it",
+				RenderAreaPath(segment))
+		}
+	}
+	return nil
+}
+
+// splitStoredAreaPath separates a path into its parent's path — empty for a
+// root — and the name of the node it ends in.
+func splitStoredAreaPath(path string) (parent, name string) {
+	i := strings.LastIndex(path, AreaPathSeparator)
+	if i < 0 {
+		return "", path
+	}
+	return path[:i], path[i+len(AreaPathSeparator):]
+}
+
+// storedAreaChildren returns the sequence a declared node's `children:` key
+// holds, adding an empty one when the node has no children yet — a node gains
+// the key on the day it gains its first child, which is the same shape
+// PlanRemoveStoredArea drops when the last one goes.
+//
+// No literal `children:` means the node has no children, and it means that only
+// because planStoredAreaEdit refused a file whose content is inherited: children
+// arriving through a merge key would be invisible here, and the key written on
+// this answer would override them.
+func storedAreaChildren(node *yaml.Node, path string) (*yaml.Node, error) {
+	switch children := mappingValueNode(node, "children"); {
+	case children == nil:
+		seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+		appendMappingEntry(node, "children", seq)
+		return seq, nil
+	case children.Kind == yaml.SequenceNode:
+		return children, nil
+	default:
+		return nil, refuseAreaEdit(
+			"the declared area %q has a `children:` key that is not a sequence, so there is nothing to declare a child in",
+			RenderAreaPath(path))
+	}
+}
+
+// newStoredAreaNode builds the mapping one declared area is written as, in the
+// key order AreaConfig declares. A field given nothing is left OUT rather than
+// written empty, which is the same thing the struct's `omitempty` tags do — an
+// explicit `description: ""` reads as one somebody deleted.
+func newStoredAreaNode(name, description, color string) *yaml.Node {
+	node := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	appendMappingEntry(node, "name", scalarNode(name))
+	if description != "" {
+		appendMappingEntry(node, "description", scalarNode(description))
+	}
+	if color != "" {
+		appendMappingEntry(node, "color", scalarNode(color))
+	}
+	return node
+}
+
+// CreateStoredArea plans and writes a create in one step, for a caller with
+// nothing to do between the two.
+func CreateStoredArea(storeDir, path, description, color string) (staleLinkTarget string, err error) {
+	edit, err := PlanCreateStoredArea(storeDir, path, description, color)
+	if err != nil {
+		return "", err
+	}
+	return edit.Write()
 }
