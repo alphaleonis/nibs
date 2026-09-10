@@ -409,17 +409,6 @@ func (c *Core) Areas() *config.Areas {
 	return c.areas.Load()
 }
 
-// loadAreas reads the store's vocabulary from disk and installs it. It is the
-// only writer of c.areas.
-func (c *Core) loadAreas() error {
-	areas, err := config.LoadAreasFromStore(c.root)
-	if err != nil {
-		return err
-	}
-	c.areas.Store(areas)
-	return nil
-}
-
 // AreasLoadError marks the half of Core.Load that failed on the VOCABULARY.
 //
 // Load reads the vocabulary and then walks the nibs, and only the vocabulary
@@ -464,10 +453,10 @@ func (c *Core) Load() error {
 // It is authorization data — what an `area:` may say, what a filter may close
 // over — so a store whose vocabulary cannot be honored must refuse on every
 // route in rather than open with an empty one, which would make every assigned
-// area undeclared at once. loadAreas writes c.areas through an atomic pointer
-// and takes no lock of its own, so it is equally correct on both routes.
+// area undeclared at once. loadAreasLocked requires c.mu, which both routes here
+// already hold, and is the one writer of c.areas (see it in watcher.go).
 func (c *Core) loadLocked() error {
-	if err := c.loadAreas(); err != nil {
+	if err := c.loadAreasLocked(); err != nil {
 		return &AreasLoadError{Cause: err}
 	}
 	return c.loadFromDisk()

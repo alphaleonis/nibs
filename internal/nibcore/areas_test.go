@@ -178,6 +178,14 @@ func writeNibFileFor(t *testing.T, core *Core, b *nib.Nib) error {
 	return os.WriteFile(filepath.Join(core.Root(), filepath.FromSlash(b.Path)), rendered, 0o644)
 }
 
+// reloadUnderLock installs the store's vocabulary the way every caller of
+// loadAreasLocked does — with c.mu held.
+func reloadUnderLock(core *Core) error {
+	core.mu.Lock()
+	defer core.mu.Unlock()
+	return core.loadAreasLocked()
+}
+
 // TestReloadAreasReportsAFileItCannotRead is the writer's half of the same
 // refusal TestWatcherKeepsTheLastGoodVocabularyOnAMalformedWrite pins for the
 // watcher: the vocabulary already loaded is kept either way, and the difference
@@ -192,8 +200,8 @@ func TestReloadAreasReportsAFileItCannotRead(t *testing.T) {
 	}
 
 	writeStoreAreas(t, nibsDir, "areas:\n    - name: web\n    - name: web\n")
-	if err := core.reloadAreas(); err == nil {
-		t.Fatal("reloadAreas accepted a vocabulary the loader refuses")
+	if err := reloadUnderLock(core); err == nil {
+		t.Fatal("the reload accepted a vocabulary the loader refuses")
 	}
 	if !core.Areas().IsValid("web") {
 		t.Error("the refused reload replaced the vocabulary already loaded")
@@ -202,10 +210,91 @@ func TestReloadAreasReportsAFileItCannotRead(t *testing.T) {
 	// And a readable file still reloads, so the error above is the refusal and
 	// not this method reporting one for every call.
 	writeStoreAreas(t, nibsDir, "areas:\n    - name: platform\n")
-	if err := core.reloadAreas(); err != nil {
-		t.Fatalf("reloadAreas over a good file: %v", err)
+	if err := reloadUnderLock(core); err != nil {
+		t.Fatalf("reloading over a good file: %v", err)
 	}
 	if !core.Areas().IsValid("platform") {
 		t.Error("the vocabulary was not reloaded")
+	}
+}
+
+// TestTheWatchersReloadDoesNotInstallOverAHeldStoreLock pins the half of the
+// vocabulary install the race detector cannot speak for. c.areas is an atomic
+// pointer, so a reload that reads areas.yml, is descheduled while an area edit
+// writes and installs a newer vocabulary, and then stores what it read is a LOST
+// UPDATE and not a data race — memory ends up a vocabulary behind disk, the
+// edit's own file event has already been spent, and every write to the nibs that
+// edit's cascade moved is refused from then on.
+//
+// What makes that impossible is the install being one step against the other
+// installer, so that is what is asserted: while an edit's critical section is
+// open, the vocabulary in memory does not move, however far behind disk it is.
+func TestTheWatchersReloadDoesNotInstallOverAHeldStoreLock(t *testing.T) {
+	core, nibsDir := setupAreasCore(t)
+	writeStoreAreas(t, nibsDir, "areas:\n    - name: web\n")
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Stand in for an area edit mid-flight: editArea holds c.mu from before it
+	// re-reads the store until after it has installed the vocabulary it wrote.
+	core.mu.Lock()
+	writeStoreAreas(t, nibsDir, "areas:\n    - name: platform\n")
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		core.watchReloadAreas()
+	}()
+
+	// One file read, so a reload that takes no lock finishes far inside this;
+	// one that takes c.mu cannot finish inside any window at all.
+	select {
+	case <-done:
+		t.Error("the watcher's reload ran to completion while the store's lock was held")
+	case <-time.After(200 * time.Millisecond):
+	}
+	if core.Areas().IsValid("platform") {
+		t.Fatal("the watcher's reload installed a vocabulary while an edit held the store: an edit installing its own vocabulary next is then reverted by whichever of the two stores last")
+	}
+
+	core.mu.Unlock()
+	<-done
+	if !core.Areas().IsValid("platform") {
+		t.Error("the watcher's reload installed nothing once the store's lock was free")
+	}
+}
+
+// TestARefusedAreaEditTicksTheVocabularyItInstalled: every area verb re-reads the
+// store under its write lock, so a verb that goes on to be REFUSED has still
+// installed whatever the file then declared. A silent install is not repaired by
+// the watcher's later reload — that one compares against what is already
+// installed, finds it equal and ticks nobody either — so the vocabulary moves in
+// memory while every open client keeps offering the retired one.
+func TestARefusedAreaEditTicksTheVocabularyItInstalled(t *testing.T) {
+	core, nibsDir := setupAreasCore(t)
+	writeStoreAreas(t, nibsDir, "areas:\n    - name: web\n")
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	ticks, unsubscribe := core.SubscribeAreas()
+	defer unsubscribe()
+
+	// Another process retires `web` and declares `ops` in its place, which is
+	// what makes the retire below refuse: the path it names is gone.
+	writeStoreAreas(t, nibsDir, "areas:\n    - name: ops\n")
+
+	if _, err := core.RemoveArea("web", AreaDisposition{}); err == nil {
+		t.Fatal("retiring an area this store no longer declares was accepted")
+	}
+	if !core.Areas().IsValid("ops") {
+		t.Fatal("the refused verb did not install the vocabulary it re-read")
+	}
+
+	select {
+	case <-ticks:
+	default:
+		t.Fatal("the refused verb installed a vocabulary no subscriber was told about, and the watcher's next reload finds it already equal and ticks nobody either")
 	}
 }

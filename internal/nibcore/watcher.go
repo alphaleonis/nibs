@@ -210,28 +210,46 @@ func (c *Core) SubscribeAreas() (<-chan struct{}, func()) {
 }
 
 // watchReloadAreas is the watcher's reload: the vocabulary already loaded is
-// kept on a failure (see reloadAreas), and since the reload is driven by file
-// events, repairing the file installs it with no further prompting. So the fault
-// is warned about and nothing else is owed.
+// kept on a failure (see loadAreasLocked), and since the reload is driven by
+// file events, repairing the file installs it with no further prompting. So the
+// fault is warned about and nothing else is owed.
+//
+// It takes c.mu because the install is a read-compare-swap and an area edit is
+// the other writer. Off that lock this timer can read the pre-edit file, be
+// descheduled while editArea writes areas.yml and installs what it wrote, and
+// then store what it read — leaving memory a vocabulary behind disk, with the
+// edit's own file event already spent and nothing left to correct it, so every
+// write to the nibs that edit's cascade moved is refused from then on. c.areas
+// is an atomic pointer, so that is a lost update rather than a data race and the
+// detector never sees it.
 func (c *Core) watchReloadAreas() {
-	if err := c.reloadAreas(); err != nil {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.loadAreasLocked(); err != nil {
 		c.logWarn("keeping the areas vocabulary already loaded: %v", err)
 	}
 }
 
-// reloadAreas re-reads the store's areas.yml and installs it, ticking every
-// areas subscriber when the vocabulary actually changed.
+// loadAreasLocked re-reads the store's areas.yml and installs it, ticking every
+// areas subscriber when the vocabulary actually changed. c.mu must be held: the
+// read, the comparison and the install are one step against the other callers.
 //
-// It has two callers with opposite needs, and the difference is what it does
-// with a read failure: it RETURNS one, and the watcher swallows it while an area
-// edit reports it (see watchReloadAreas and editArea). A file event has nobody to
-// report to and another event will come; an edit that has just replaced the file
-// and cannot read it back would otherwise answer with the vocabulary it replaced
-// and call that success.
+// It is the ONE writer of c.areas, and that is what the ticking rests on. A
+// second installer that skipped the tick would move the vocabulary in memory and
+// tell nobody, and the next reload — finding it already equal — would tick
+// nobody either, so an open client would keep offering the retired vocabulary
+// until something changed the file again. Every route in goes through here:
+// Core.loadLocked at load time and on the re-read every area verb makes under
+// the store's write lock, editArea's re-read of the file it has just written,
+// and the watcher's debounced reload.
 //
-// The edit's reload and the watcher's later one are idempotent rather than
-// racing: an unchanged vocabulary installs nothing and ticks nobody, so whichever
-// runs second is a no-op.
+// Those callers have opposite needs about a read failure, and the difference is
+// what they do with the error this RETURNS: the watcher swallows it while an
+// area edit reports it (see watchReloadAreas and editArea). A file event has
+// nobody to report to and another event will come; an edit that has just
+// replaced the file and cannot read it back would otherwise answer with the
+// vocabulary it replaced and call that success.
 //
 // A vocabulary the loader refuses does NOT replace the one in place. Swapping in
 // an empty tree on a malformed file would make every `area:` in the store
@@ -240,16 +258,21 @@ func (c *Core) watchReloadAreas() {
 // is kept, and the failure is the caller's to dispose of.
 //
 // An unchanged file ticks nobody: an editor that rewrites areas.yml byte for
-// byte, or a `touch`, must not wake every browser holding the view.
-func (c *Core) reloadAreas() error {
+// byte, or a `touch`, must not wake every browser holding the view. What it
+// decides is the TICK and not the install, which is unconditional: Equal
+// compares the declared tree and nothing else, so a vocabulary equal in content
+// can still differ in where it was read from, and Areas.StoreDir is what the
+// verbs plan the file they write against.
+func (c *Core) loadAreasLocked() error {
 	areas, err := config.LoadAreasFromStore(c.root)
 	if err != nil {
 		return err
 	}
-	if areas.Equal(c.areas.Load()) {
+	changed := !areas.Equal(c.areas.Load())
+	c.areas.Store(areas)
+	if !changed {
 		return nil
 	}
-	c.areas.Store(areas)
 
 	c.subMu.RLock()
 	defer c.subMu.RUnlock()

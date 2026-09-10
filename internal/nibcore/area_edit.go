@@ -369,14 +369,14 @@ func (p AreaEditPhase) describe() string {
 	}
 }
 
-// reloadAreasAfterEdit is Core.reloadAreas, indirected so a test can drive the
+// reloadAreasAfterEdit is Core.loadAreasLocked, indirected so a test can drive the
 // one IO phase the filesystem will not produce on demand: the edit's own re-read
 // of the file it has just written failing. Every other phase has a real fault to
 // inject — fsutil.RenameFn for the two writes, an unreadable store for the
 // re-read — and this one has none, because the bytes that were just written are
 // the bytes that are read back. It follows fsutil.RenameFn's shape: a seam owned
 // by the package that declares it.
-var reloadAreasAfterEdit = (*Core).reloadAreas
+var reloadAreasAfterEdit = (*Core).loadAreasLocked
 
 // AddArea declares a new area at path, with the description and color it is
 // given, and returns the vocabulary as it then stands.
@@ -623,7 +623,7 @@ func (c *Core) editArea(path string, plan func(before, now *config.Areas) (areaP
 
 	// Re-read under the same lock so the result carries the vocabulary this edit
 	// wrote, and so an areas subscriber in this process wakes on the edit rather
-	// than on the watcher's debounce. reloadAreas keeps the vocabulary it could
+	// than on the watcher's debounce. loadAreasLocked keeps the vocabulary it could
 	// still read when the file cannot be read back, which is the one the edit
 	// replaced — so ignoring the failure would answer with the pre-edit
 	// vocabulary and call the edit a success. The subscriber tick it makes takes

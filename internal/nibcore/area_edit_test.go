@@ -182,7 +182,7 @@ func TestAreaEditNamesTheHalfOfTheReReadThatFailed(t *testing.T) {
 	})
 }
 
-// TestAreaEditReportsAFailedReload: reloadAreas keeps the vocabulary it could
+// TestAreaEditReportsAFailedReload: loadAreasLocked keeps the vocabulary it could
 // still read when the file cannot be read back, and that is the one the edit
 // replaced — so an edit that ignored the failure would answer with the pre-edit
 // vocabulary and call itself a success, which renders in a client as the edit
