@@ -538,13 +538,20 @@ func setMutationError(jsonOutput bool, err error) error {
 //     blockers among them — so the repair is again to re-read the store, and a
 //     misnamed create is exactly what the refusal exists to stop.
 //   - An area vocabulary edit that failed on the FILESYSTEM — the store's write
-//     lock, the re-read under it, a member nib's rewrite, or the areas.yml write
-//     — is a FILE_ERROR, the class `nibs area rename` and `nibs area rm` already
-//     give the same failure. Its CONTENT counterpart, config.AreaEditRefusal,
-//     deliberately gets no branch: it carries no Unwrap, so no sentinel below can
-//     claim it, and the caller's VALIDATION_ERROR fallback is the class those two
-//     commands report for it. Recognized through the concrete type, which is why
-//     graph.AreaEditIOError is typed.
+//     lock, the re-read under it, a member nib's rewrite, the areas.yml write, or
+//     the re-read of the file it just wrote — is a FILE_ERROR, the class
+//     `nibs area rename` and `nibs area rm` already give the same failure. Its
+//     CONTENT counterpart, config.AreaEditRefusal, deliberately gets no branch: it
+//     carries no Unwrap, so no sentinel below can claim it, and the caller's
+//     VALIDATION_ERROR fallback is the class those two commands report for it.
+//     Recognized through the concrete type, which is why nibcore.AreaEditIOError
+//     is typed.
+//   - An area named in an edit that ANOTHER nibs process retired or renamed while
+//     this one waited for the store's write lock, and an areas.yml that vanished
+//     the same way, join it. Neither is bad input — the argument was true when it
+//     was given — so both are the same "the store is not what it should be" class
+//     the two commands give them, which is what keeps the wire and the CLI from
+//     classifying one event two ways.
 //
 // A SECONDARY id — a parent, a blocking or blocked-by target, a bulk-reorder
 // member or anchor — does NOT normally arrive as a sentinel: the graph layer
@@ -561,7 +568,8 @@ func setMutationError(jsonOutput bool, err error) error {
 // a not-found cause keeps its own class. That ordering is load-bearing for
 // OnDiskUnparseableError, the one classified type here with an Unwrap; it is
 // inert today because both of its construction sites carry an OS read error or a
-// YAML parse error. AreaEditIOError, ETagMismatchError, ETagRequiredError,
+// YAML parse error. AreaEditIOError, AreaRetiredWhileWaitingError,
+// AreaVocabularyVanishedError, ETagMismatchError, ETagRequiredError,
 // HierarchyError, ReplaceMatchError and StoreRePrefixedError implement no Unwrap
 // at all, so neither sentinel can claim the area-edit, conflict, hierarchy,
 // text-match or re-prefix branches either way, and their order among the
@@ -581,8 +589,16 @@ func mutationErrCode(err error) (string, bool) {
 	if errors.As(err, &rePrefixedErr) {
 		return output.ErrFileError, true
 	}
-	var areaEditErr *graph.AreaEditIOError
+	var areaEditErr *nibcore.AreaEditIOError
 	if errors.As(err, &areaEditErr) {
+		return output.ErrFileError, true
+	}
+	var areaRetiredErr *nibcore.AreaRetiredWhileWaitingError
+	if errors.As(err, &areaRetiredErr) {
+		return output.ErrFileError, true
+	}
+	var areaVanishedErr *nibcore.AreaVocabularyVanishedError
+	if errors.As(err, &areaVanishedErr) {
 		return output.ErrFileError, true
 	}
 	if isConflictError(err) {

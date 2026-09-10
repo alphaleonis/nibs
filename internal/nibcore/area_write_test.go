@@ -637,69 +637,21 @@ func countOf(items []string, want string) int {
 	return n
 }
 
-// rewriteAreasLocked runs one cascade under the store lock its caller owes it,
-// held for that call alone. Held any longer it would deadlock the next call: the
-// flock is per descriptor, so a second acquisition in this process waits on the
-// first.
+// rewriteAreasLocked runs one cascade under the two locks editArea holds around
+// it, taken in the documented order — c.mu, then the store's cross-process write
+// lock — and released as soon as the call returns. Held any longer the file lock
+// would deadlock the next call: the flock is per descriptor, so a second
+// acquisition in this process waits on the first.
 func rewriteAreasLocked(t *testing.T, core *Core, rewrite func(string) (string, bool)) ([]string, error) {
 	t.Helper()
-	lock, err := AcquireStoreLock(core.Root())
+	core.mu.Lock()
+	defer core.mu.Unlock()
+	release, err := core.acquireWriteLock()
 	if err != nil {
-		t.Fatalf("AcquireStoreLock: %v", err)
+		t.Fatalf("acquireWriteLock: %v", err)
 	}
-	defer func() { _ = lock.Release() }()
-	return core.RewriteAreaAssignments(lock, rewrite)
-}
-
-// TestRewriteAreaAssignmentsRequiresTheStoreLock pins the precondition the
-// signature states. Each of the three refusals makes the claim the token stands
-// for true, and any of them passing would run a cascade whose config write — the
-// other half of the same edit, made by the caller after this returns — is not
-// serialized against a concurrent area edit at all.
-func TestRewriteAreaAssignmentsRequiresTheStoreLock(t *testing.T) {
-	core, nibsDir := areaCoreWith(t, map[string]string{"nibs-aw71": "web/dashboard"})
-
-	other, _ := areaCoreWith(t, map[string]string{"nibs-aw72": "web"})
-	foreign, err := AcquireStoreLock(other.Root())
-	if err != nil {
-		t.Fatalf("AcquireStoreLock: %v", err)
-	}
-	defer func() { _ = foreign.Release() }()
-
-	released, err := AcquireStoreLock(core.Root())
-	if err != nil {
-		t.Fatalf("AcquireStoreLock: %v", err)
-	}
-	if err := released.Release(); err != nil {
-		t.Fatalf("Release: %v", err)
-	}
-
-	tests := []struct {
-		name string
-		lock *StoreLock
-		want string
-	}{
-		{name: "no token at all", lock: nil, want: "requires the store-wide lock"},
-		{name: "a token already released", lock: released, want: "already-released"},
-		{name: "a token for another store", lock: foreign, want: "different store"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			written, err := core.RewriteAreaAssignments(tt.lock, renameRewrite(core.Areas(), "web", "frontend"))
-			if err == nil {
-				t.Fatal("the cascade ran without proof of the store lock")
-			}
-			if !strings.Contains(err.Error(), tt.want) {
-				t.Errorf("error = %q, want substring %q", err, tt.want)
-			}
-			if len(written) != 0 {
-				t.Errorf("written = %v, want nothing written", written)
-			}
-			if got := storedAreaOf(t, core, nibsDir, "nibs-aw71"); got != "web/dashboard" {
-				t.Errorf("a refused cascade wrote a nib anyway: %q", got)
-			}
-		})
-	}
+	defer func() { _ = release() }()
+	return core.rewriteAreaAssignmentsLocked(rewrite)
 }
 
 // TestRewriteAreaAssignmentsRefusesAStalePathRatherThanRecreatingIt is the

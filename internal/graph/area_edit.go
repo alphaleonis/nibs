@@ -3,7 +3,6 @@ package graph
 import (
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/alphaleonis/nibs/internal/config"
@@ -12,143 +11,341 @@ import (
 	"github.com/alphaleonis/nibs/internal/safetext"
 )
 
-// AreaEditIOError reports that an area vocabulary edit failed on the
-// FILESYSTEM: the store's write lock could not be taken, the store could not be
-// re-read under it, a member nib could not be rewritten, or the edited
-// vocabulary could not be written back.
+// The area vocabulary mutations. Both are message formatters over
+// nibcore.Core's area verbs: the verb itself — the locks, the re-read under
+// them, the plan, the member cascade, the areas.yml write and the reload — lives
+// in nibcore, whole, because there is one lock order and a surface that reached
+// into Core step by step could not obey it (see nibcore.editArea).
 //
-// It is separate from config.AreaEditRefusal, which is about the file's
-// CONTENT, because the two have different audiences and different repairs: a
-// refusal is the caller's argument to fix and nothing about it is repaired by
-// rerunning, where this one is the machine's and a rerun often is the repair.
-// That is the same split `nibs area rename` and `nibs area rm` already report —
-// exit 2 for a refusal, exit 5 for this — and cmd/set.go's mutationErrCode maps
-// this type so the `nibs query` surface agrees with them.
+// What stays here is what only this surface knows: the argument-shape questions
+// the wire can ask before any lock is taken, and the wording of every refusal.
+// nibcore's refusals carry FIELDS, so `nibs area rm --unassign` and
+// `unassign: true` are the same refusal spoken to two different readers and
+// neither sentence has to live where the other one's reader would see it.
 //
-// Like FilterTargetUnreadableError it implements NO Unwrap, and for the same
-// reason: the causes it carries are whatever the operating system and the config
-// loader handed back, and exposing them to errors.Is would let any classifier
-// keyed on a sentinel claim this error and answer for it. Cause stays
-// inspectable as a field and is rendered into the message, so nothing is lost
-// for diagnosis.
-type AreaEditIOError struct {
-	// Msg is the whole sentence, built by the site that failed. It is not
-	// assembled from parts here because a partial failure has to say what it
-	// already wrote and whether rerunning finishes the job, and only the site
-	// knows that.
-	Msg string
-	// Cause is the filesystem failure, kept for diagnosis only. It is
-	// deliberately not named Err: that reads as "the thing you unwrap to" and
-	// would invite the one-line Unwrap this type must not have.
-	Cause error
-}
+// NO FILESYSTEM PATH IS NAMED by anything returned from here, and that is a
+// mechanism rather than a claim: config.AreaEditRefusal renders path-free from
+// Error and names its file only through Naming, nibcore's refusals keep theirs
+// in a field nothing below reads, and the sentences below interpolate nothing
+// but area paths and nib ids. These messages travel to an HTTP client that has
+// no business knowing where the store sits on disk — an absolute path there
+// discloses the operating-system username and the project layout.
+//
+// The exception is an IO failure's Cause: an operating-system error embeds the
+// path it failed on, and that is reachable only from a store that is already
+// broken. Redacting it is a boundary of its own and is not this one.
 
-func (e *AreaEditIOError) Error() string { return e.Msg }
+// renameAreaImpl renames the declared node at input.Path, cascading to every nib
+// assigned at or below it.
+func (r *mutationResolver) renameAreaImpl(input model.RenameAreaInput) (*model.Config, error) {
+	// Answered BEFORE the call, because the two arguments alone answer it and no
+	// vocabulary can change that answer. The store's write lock is a blocking
+	// flock with no timeout, so a pure argument question asked underneath it
+	// makes a malformed request sit silent for as long as any other cooperating
+	// writer holds the store — a whole `nibs migrate` run. None of this is what
+	// keeps a bad name off disk: the store refuses every one of them under the
+	// lock, in wording about the FILE rather than about the argument.
+	if err := validateAreaRenameArgument(input.NewName); err != nil {
+		return nil, err
+	}
 
-// areaEditIOError builds one, rendering cause into the message so a caller
-// holding only the text still sees it.
-func areaEditIOError(cause error, format string, a ...any) error {
-	return &AreaEditIOError{Msg: fmt.Sprintf(format, a...), Cause: cause}
-}
-
-// areaEditSession is one area edit's critical section: the store's cross-process
-// write lock, held for the WHOLE verb, and the vocabulary re-read under it.
-//
-// Both halves of an area edit — the member cascade and the `areas:` rewrite —
-// are read-modify-writes of shared state, and the second is a rewrite of the
-// entire file. Split across two critical sections, two concurrent edits
-// interleave: each reads the pre-edit config, each writes the whole file back,
-// and the loser's declaration is gone while its cascade sits on disk. Both
-// callers report success, so nothing ever says to rerun, and the members it
-// moved are write-refused from then on.
-//
-// It blocks rather than refusing, matching every other store mutation: the other
-// holder is another nibs process finishing one operation.
-//
-// The RELOAD is why blocking is safe. Waiting means another process was
-// mid-write while this one held the snapshot it started with. A concurrent
-// `nibs config set-prefix` renames every file in the store, so a cascade over
-// the old paths would write each member back under its pre-rename name; and a
-// concurrent area edit reshapes the very tree the membership question is asked
-// over. Reading the store again HERE is what makes both ordinary events.
-//
-// This is cmd/area.go's beginAreaEdit minus its startup-snapshot refusals
-// (areaRetiredWhileWaiting and the vanished-areas.yml case). Those rest on
-// App.StartupAreas, a CLI-process concept with no server analogue — a server
-// holds no per-command "what the store declared when I started" — and they only
-// choose between two WORDINGS for a path that is not declared now. They never
-// decide whether the store is written, so their absence costs a sentence and
-// never a write.
-type areaEditSession struct {
-	lock  *nibcore.StoreLock
-	areas *config.Areas
-}
-
-// beginAreaEdit opens the critical section. The caller owes the returned
-// session a release, including on every error path below it.
-func (r *mutationResolver) beginAreaEdit() (*areaEditSession, error) {
-	lock, err := nibcore.AcquireStoreLock(r.AreaEditor.Root())
+	res, err := r.AreaWriter.RenameArea(input.Path, input.NewName)
 	if err != nil {
-		return nil, areaEditIOError(err,
-			"this store's write lock could not be taken, and an areas edit rewrites both the nibs and the vocabulary so it must hold one: %v", err)
+		return nil, wordAreaRenameFailure(err)
 	}
-	if err := r.AreaEditor.Load(); err != nil {
-		_ = lock.Release()
-		// Which half of the re-read failed is worth a message of its own: Load
-		// reads the vocabulary and then walks the nibs, and the two are different
-		// files with different repairs. Named through nibcore's own marker, since
-		// the errors underneath are whatever the loader and the OS handed back and
-		// carry nothing to tell them apart by.
-		var areasErr *nibcore.AreasLoadError
-		if errors.As(err, &areasErr) {
-			return nil, areaEditIOError(err,
-				"nothing was written: re-reading this store's areas vocabulary under its write lock failed: %v", err)
-		}
-		return nil, areaEditIOError(err,
-			"nothing was written: re-reading this store's nibs under its write lock failed: %v", err)
-	}
-	return &areaEditSession{lock: lock, areas: r.AreaEditor.Areas()}, nil
+	r.reportStaleAreaLink(res)
+	return configResultWithAreas(r.Reader, res.Areas), nil
 }
 
-func (s *areaEditSession) release() { _ = s.lock.Release() }
+// removeAreaImpl retires the declared node at input.Path together with the
+// subtree it heads, disposing of every nib assigned at or below it as the input
+// says.
+func (r *mutationResolver) removeAreaImpl(input model.RemoveAreaInput) (*model.Config, error) {
+	disposition, err := areaDisposition(input)
+	if err != nil {
+		return nil, err
+	}
 
-// members returns the ids of every nib assigned at or below path, in id order —
-// the set a retire refuses over and a rename cascades through, read the same way
-// AreaEditor.RewriteAreaAssignments reads it.
+	res, err := r.AreaWriter.RemoveArea(input.Path, disposition)
+	if err != nil {
+		return nil, wordAreaRetireFailure(err)
+	}
+	r.reportStaleAreaLink(res)
+	return configResultWithAreas(r.Reader, res.Areas), nil
+}
+
+// validateAreaRenameArgument refuses a new name the argument alone rules out.
 //
-// The stored pointers All() hands back are read into plain strings immediately,
-// per the live-pointer discipline at NibReader.GetSnapshot: nothing here holds
-// one across the writes that follow.
-func (s *areaEditSession) members(reader NibReader, path string) []string {
-	var ids []string
-	for _, b := range reader.All() {
-		if s.areas.IsWithin(b.Area, path) {
-			ids = append(ids, b.ID)
+// config.ValidateAreaName is CALLED rather than copied, so the empty, padded and
+// over-long clauses have one definition. The separator clause is this surface's,
+// because it is about what a rename MEANS rather than about what the file may
+// hold: a rename changes a node's name and never moves it between parents, so a
+// value carrying the separator is not a name at all. The vocabulary's own
+// revalidation refuses it too, but only as a file that would not load.
+func validateAreaRenameArgument(newName string) error {
+	if err := config.ValidateAreaName(newName); err != nil {
+		return err
+	}
+	if strings.Contains(newName, config.AreaPathSeparator) {
+		return fmt.Errorf("%q is not a name: a rename changes a node's name and never moves it between parents, so send the name alone",
+			config.RenderAreaPath(newName))
+	}
+	return nil
+}
+
+// areaDisposition reads which disposition a retire was given and resolves its
+// target.
+//
+// The two are mutually exclusive, and there is no wire equivalent of Cobra's
+// MarkFlagsMutuallyExclusive to refuse them for us — so the contradiction is
+// refused HERE, before any lock, where a malformed request costs nothing.
+// `unassign: false` is read as NO disposition rather than as a contradiction: it
+// is what a client sends when a checkbox is off, and taking it as a conflicting
+// answer would refuse a perfectly ordinary `{path, moveTo, unassign: false}`.
+func areaDisposition(input model.RemoveAreaInput) (nibcore.AreaDisposition, error) {
+	switch {
+	case input.MoveTo != nil && input.Unassign != nil && *input.Unassign:
+		return nibcore.AreaDisposition{}, fmt.Errorf(
+			"moveTo and unassign: true are two different dispositions for the same nibs — send one")
+	case input.MoveTo != nil:
+		return nibcore.MoveAreaMembersTo(*input.MoveTo), nil
+	case input.Unassign != nil && *input.Unassign:
+		return nibcore.UnassignAreaMembers(), nil
+	default:
+		return nibcore.AreaDisposition{}, nil
+	}
+}
+
+// reportStaleAreaLink passes on the note an edit owes when the areas.yml it
+// replaced was a SYMLINK: the atomic write leaves a regular file in its place and
+// the old target still declares the pre-edit vocabulary, so when whatever manages
+// that target restores it the vocabulary declares the old paths again while every
+// nib the cascade rewrote carries the new one — undeclared, and write-refused
+// from then on.
+//
+// It goes to the store's warning sink rather than into the answer because the
+// answer is a Config: carrying a warning to the client is a schema change. The
+// sink is where a `nibs serve` operator reads, which is the reader who can act on
+// it, and `nibs area rename` prints the same note on its own account.
+func (r *mutationResolver) reportStaleAreaLink(res nibcore.AreaEditResult) {
+	if res.StaleLinkTarget == "" {
+		return
+	}
+	r.AreaWriter.Warn("this store's areas.yml was a symlink to %s and is now a regular file; %s still declares the old vocabulary, so update or remove it",
+		res.StaleLinkTarget, res.StaleLinkTarget)
+}
+
+// wordAreaRenameFailure words every way a rename can fail for this surface.
+func wordAreaRenameFailure(err error) error {
+	var unchanged *nibcore.AreaNameUnchangedError
+	if errors.As(err, &unchanged) {
+		return wordAreaRefusal(err, "area %q is already named %q, so the rename would change nothing",
+			config.RenderAreaPath(unchanged.Path), config.RenderAreaPath(unchanged.Name))
+	}
+	var taken *nibcore.AreaNameTakenError
+	if errors.As(err, &taken) {
+		return wordAreaRefusal(err, "cannot rename area %q to %q: this store already declares %q, and two siblings with one name make one path mean two nodes",
+			config.RenderAreaPath(taken.Path), config.RenderAreaPath(taken.NewName), config.RenderAreaPath(taken.Sibling))
+	}
+	var ioErr *nibcore.AreaEditIOError
+	if errors.As(err, &ioErr) {
+		switch ioErr.Phase {
+		case nibcore.AreaEditPhaseCascade:
+			return wordAreaRefusal(ioErr,
+				"rewrote %d of the %s assigned at or below area %q, then %v — the vocabulary still declares %q and those writes are persisted; rerun the same mutation to finish it, since a nib already rewritten is no longer a member and the rerun starts where this stopped",
+				len(ioErr.Written), areaNibCount(len(ioErr.Members)), config.RenderAreaPath(ioErr.Path),
+				ioErr.Cause, config.RenderAreaPath(ioErr.Path))
+		case nibcore.AreaEditPhaseWrite:
+			return wordAreaRefusal(ioErr,
+				"rewrote %s from area %q to %q, then the store's areas.yml could not be updated: %v — the vocabulary still declares %q and those writes are persisted; rerun the same mutation to finish it, since the rewritten nibs are no longer members and the rerun only renames the declaration",
+				areaNibCount(len(ioErr.Written)), config.RenderAreaPath(ioErr.Path), config.RenderAreaPath(ioErr.NewPath),
+				ioErr.Cause, config.RenderAreaPath(ioErr.Path))
 		}
 	}
-	sort.Strings(ids)
-	return ids
+	return wordAreaEditFailure(err, "rename")
 }
 
-// splitAreaPath separates a path into the path of its parent (empty at the top
-// level) and the node's own name — the half a rename replaces.
-func splitAreaPath(path string) (parent, name string) {
-	i := strings.LastIndex(path, config.AreaPathSeparator)
-	if i < 0 {
-		return "", path
+// wordAreaRetireFailure words every way a retire can fail for this surface.
+func wordAreaRetireFailure(err error) error {
+	var members *nibcore.AreaMembersPresentError
+	if errors.As(err, &members) {
+		return wordAreaRefusal(err,
+			"cannot retire area %q: %s assigned at or below it (%s) — reassign them with moveTo, drop their assignment with unassign: true, or leave the declaration in place",
+			config.RenderAreaPath(members.Path), areaNibsAre(len(members.Members)), namedMembers(members.Members))
 	}
-	return path[:i], path[i+len(config.AreaPathSeparator):]
+	var empty *nibcore.AreaDispositionEmptyError
+	if errors.As(err, &empty) {
+		return wordAreaRefusal(err, "nothing to %s: no nib is assigned at or below area %q — drop %s to retire it",
+			areaDispositionAction(empty.Disposition), config.RenderAreaPath(empty.Path),
+			areaDispositionField(empty.Disposition))
+	}
+	var within *nibcore.AreaMoveTargetWithinError
+	if errors.As(err, &within) {
+		return wordAreaRefusal(err,
+			"cannot move members to %q: it is declared at or below %q, which this mutation is retiring — name an area outside it, or send unassign: true to drop their assignment",
+			config.RenderAreaPath(within.Target), config.RenderAreaPath(within.Path))
+	}
+	var ioErr *nibcore.AreaEditIOError
+	if errors.As(err, &ioErr) {
+		switch ioErr.Phase {
+		case nibcore.AreaEditPhaseCascade:
+			return wordAreaRefusal(ioErr,
+				"%s %d of the %s assigned at or below area %q, then %v — %q is still declared and those writes are persisted; rerun the same mutation to finish it, since a nib already disposed of is no longer a member and the rerun starts where this stopped",
+				areaDispositionVerb(ioErr.Disposition), len(ioErr.Written), areaNibCount(len(ioErr.Members)),
+				config.RenderAreaPath(ioErr.Path), ioErr.Cause, config.RenderAreaPath(ioErr.Path))
+		case nibcore.AreaEditPhaseWrite:
+			return areaRetireWriteFailure(ioErr)
+		}
+	}
+	return wordAreaEditFailure(err, "retire")
 }
 
-// renamedAreaPath is the path the node at path answers to once it is renamed to
-// newName. A rename never re-parents, so the parent segments carry over verbatim
-// and only the last one changes.
-func renamedAreaPath(path, newName string) string {
-	parent, _ := splitAreaPath(path)
-	if parent == "" {
-		return newName
+// wordAreaEditFailure words the failures both verbs share. verb names what the
+// caller asked for, for the one refusal that has to say what there is none of.
+func wordAreaEditFailure(err error, verb string) error {
+	var undeclared *nibcore.AreaUndeclaredError
+	if errors.As(err, &undeclared) {
+		if !undeclared.Areas.Declared() {
+			return wordAreaRefusal(err, "this store declares no areas, so there is none to %s — declare an `areas:` block in the store's areas.yml first",
+				areaPathVerb(undeclared.Role, verb))
+		}
+		return wordAreaRefusal(err, "this store declares no area %q: the declared areas are %s",
+			config.RenderAreaPath(undeclared.Path), undeclared.Areas.List())
 	}
-	return parent + config.AreaPathSeparator + newName
+	var retired *nibcore.AreaRetiredWhileWaitingError
+	if errors.As(err, &retired) {
+		return areaRetiredWhileWaiting(err, retired)
+	}
+	var vanished *nibcore.AreaVocabularyVanishedError
+	if errors.As(err, &vanished) {
+		return wordAreaRefusal(err, "nothing was written: this store's areas vocabulary could not be read under its write lock — the file does not exist; restore it before editing the areas it declares")
+	}
+	var ioErr *nibcore.AreaEditIOError
+	if errors.As(err, &ioErr) {
+		switch ioErr.Phase {
+		case nibcore.AreaEditPhaseLock:
+			return wordAreaRefusal(ioErr,
+				"this store's write lock could not be taken, and an areas edit rewrites both the nibs and the vocabulary so it must hold one: %v", ioErr.Cause)
+		case nibcore.AreaEditPhaseLoadVocabulary:
+			return wordAreaRefusal(ioErr,
+				"nothing was written: re-reading this store's areas vocabulary under its write lock failed: %v", ioErr.Cause)
+		case nibcore.AreaEditPhaseLoadNibs:
+			return wordAreaRefusal(ioErr,
+				"nothing was written: re-reading this store's nibs under its write lock failed: %v", ioErr.Cause)
+		case nibcore.AreaEditPhaseReload:
+			// The one IO failure with nothing to rerun: both writes landed, so
+			// disk holds the finished edit. What is wrong is in THIS process,
+			// which keeps the vocabulary it could still read — the one the edit
+			// replaced. Reporting it keeps the alternative off the wire: answering
+			// with that vocabulary and calling the mutation a success, which
+			// renders in a client as the edit not having happened.
+			return wordAreaRefusal(ioErr,
+				"both halves of this edit landed on disk, and re-reading the vocabulary it just wrote then failed: %v — there is nothing to rerun; until that file can be read again this store answers from the vocabulary as it was before the edit",
+				ioErr.Cause)
+		}
+	}
+	// What is left is a config.AreaEditRefusal, whose Error is already worded for
+	// a reader who may not be told where the store is, or a read failure the
+	// planner passed through raw. Neither is re-worded here: the first would only
+	// be restated, and the second has nothing this surface knows to add.
+	return err
+}
+
+// areaRetiredWhileWaiting words the race the CLI reports through the same
+// classification: the area named was declared when this store was last read and
+// is not declared now, because another nibs process retired or renamed it while
+// this edit waited for the store's write lock.
+//
+// A SERVER'S "last read" is not a process's startup — it reloads the vocabulary
+// on every areas.yml event — so this says what it can honestly say and no more.
+// The remedy is the vocabulary as it now stands, not a rerun: nothing was
+// written, and the node the caller named is not coming back.
+func areaRetiredWhileWaiting(err error, e *nibcore.AreaRetiredWhileWaitingError) error {
+	return wordAreaRefusal(err, "nothing was written: this store declared area %q when this edit began and does not declare it now — another nibs process retired or renamed it while this one waited for the store's write lock; read the store's config for the vocabulary as it now stands",
+		config.RenderAreaPath(e.Path))
+}
+
+// areaRetireWriteFailure reports a retire whose members are disposed of and
+// whose config write then failed, branching on whether a disposition was
+// actually NAMED rather than on which one it was.
+//
+// With no disposition there is nothing to report as done and no argument to
+// drop: that branch is reachable only for an area nothing was assigned to, where
+// the refusal above has already established the member set is empty and the
+// cascade therefore wrote nothing. Selecting the wording on the move/unassign
+// pair instead made the same case in cmd/area.go claim an unassignment had run
+// and prescribe dropping an argument the caller never sent.
+func areaRetireWriteFailure(e *nibcore.AreaEditIOError) error {
+	if e.Disposition.Kind == nibcore.AreaDispositionNone {
+		return wordAreaRefusal(e,
+			"area %q could not be retired: the store's areas.yml could not be updated: %v — nothing is assigned at or below it, so nothing was rewritten and the store is as it was; rerun the same mutation once that is fixed",
+			config.RenderAreaPath(e.Path), e.Cause)
+	}
+	return wordAreaRefusal(e,
+		"%s %s from area %q, then the store's areas.yml could not be updated: %v — %q is still declared and those writes are persisted; rerun WITHOUT %s to retire it, which is what finishes the job now that nothing is assigned below it",
+		areaDispositionVerb(e.Disposition), areaNibCount(len(e.Written)), config.RenderAreaPath(e.Path), e.Cause,
+		config.RenderAreaPath(e.Path), areaDispositionField(e.Disposition))
+}
+
+// areaRefusal is one of the store's typed refusals worded for this surface.
+//
+// The wording has to travel WITH the refusal rather than replace it: cmd/set.go's
+// mutationErrCode classifies `nibs query` on the concrete type the store raised,
+// so an error that dropped it would arrive as a bare validation fallback — an
+// area another process retired while this edit waited would be reported as bad
+// input rather than as a store that moved, which is the divergence between the
+// two surfaces this closes.
+//
+// Unwrap reaches the refusal and stops there: nibcore.AreaEditIOError carries no
+// Unwrap of its own, so a classifier keyed on an OS sentinel still cannot claim
+// what an area edit's Cause happens to be.
+type areaRefusal struct {
+	msg   string
+	cause error
+}
+
+func (e *areaRefusal) Error() string { return e.msg }
+
+func (e *areaRefusal) Unwrap() error { return e.cause }
+
+// wordAreaRefusal words one of the store's refusals for this surface.
+func wordAreaRefusal(cause error, format string, a ...any) error {
+	return &areaRefusal{msg: fmt.Sprintf(format, a...), cause: cause}
+}
+
+// areaPathVerb names what the caller asked to do with the path a refusal is
+// about. A move target is the one role whose verb is not the mutation's own.
+func areaPathVerb(role nibcore.AreaPathRole, verb string) string {
+	if role == nibcore.AreaPathMoveTarget {
+		return "move work to"
+	}
+	return verb
+}
+
+// areaDispositionField is the input field that asked for a disposition, for a
+// message telling the caller to drop it. It is only ever reached for one that
+// was named.
+func areaDispositionField(d nibcore.AreaDisposition) string {
+	if d.Kind == nibcore.AreaDispositionMove {
+		return "moveTo"
+	}
+	return "unassign"
+}
+
+// areaDispositionVerb is the past tense a completed disposition reports in;
+// areaDispositionAction is the bare verb a refusal says there is nothing to do.
+func areaDispositionVerb(d nibcore.AreaDisposition) string {
+	if d.Kind == nibcore.AreaDispositionMove {
+		return "reassigned"
+	}
+	return "unassigned"
+}
+
+func areaDispositionAction(d nibcore.AreaDisposition) string {
+	if d.Kind == nibcore.AreaDispositionMove {
+		return "reassign"
+	}
+	return "unassign"
 }
 
 // areaMemberNameLimit is QueueNameLimit applied to the other project-sized set
@@ -192,290 +389,4 @@ func areaNibCount(n int) string {
 		return "1 nib"
 	}
 	return fmt.Sprintf("%d nibs", n)
-}
-
-// requireDeclaredArea refuses a path this store's vocabulary does not declare.
-//
-// It is a plain error rather than a typed one, which is what puts it in the
-// validation class: mutationErrCode recognizes AreaEditIOError and nothing else
-// from this file, so every other failure rides the caller's VALIDATION_ERROR
-// fallback — the same exit `nibs area rename` and `nibs area rm` give the same
-// refusal. config.AreaEditRefusal, which the planners raise, lands there by the
-// same route and needs no branch of its own.
-//
-// The planners refuse an undeclared path too, so this is not what keeps a bad
-// edit off disk. Two things make it worth asking first anyway. It names the
-// declared set, where the planner's message can only say the file declares no
-// such area; and removeArea reads the member set BEFORE it plans, so without it
-// a mistyped path is answered with "nothing is assigned at or below it" — a
-// factual claim about an area that does not exist.
-//
-// No filesystem path is named, following FilterAreaError: these messages travel
-// to an HTTP client that has no business knowing where the store sits on disk.
-func requireDeclaredArea(areas *config.Areas, path, verb string) error {
-	if path != "" && areas.IsValid(path) {
-		return nil
-	}
-	if !areas.Declared() {
-		return fmt.Errorf("this store declares no areas, so there is none to %s — declare an `areas:` block in the store's areas.yml first", verb)
-	}
-	return fmt.Errorf("this store declares no area %q: the declared areas are %s",
-		config.RenderAreaPath(path), areas.List())
-}
-
-// renameAreaImpl renames the declared node at input.Path, cascading to every nib
-// assigned at or below it, inside one critical section.
-func (r *mutationResolver) renameAreaImpl(input model.RenameAreaInput) (*model.Config, error) {
-	session, err := r.beginAreaEdit()
-	if err != nil {
-		return nil, err
-	}
-	defer session.release()
-
-	if err := requireDeclaredArea(session.areas, input.Path, "rename"); err != nil {
-		return nil, err
-	}
-
-	// The planner accepts this one: renaming a node to the name it already has
-	// leaves a valid vocabulary, so it hands back an edit and the file is
-	// rewritten with nothing changed about what it declares. A caller cannot tell
-	// that answer apart from a real rename, so it is refused here instead. It is
-	// asked after requireDeclaredArea because it SPEAKS about the node at path —
-	// over an undeclared one it would assert something about a node that is not
-	// there.
-	if _, oldName := splitAreaPath(input.Path); input.NewName == oldName {
-		return nil, fmt.Errorf("area %q is already named %q, so the rename would change nothing",
-			config.RenderAreaPath(input.Path), config.RenderAreaPath(input.NewName))
-	}
-
-	// The config edit is resolved BEFORE the first nib is touched. A member
-	// rewrite is durable the moment it lands, so a refusal that could only fire
-	// after the cascade would leave the members carrying a path the vocabulary
-	// does not declare, and every later write to them refused for it. Planning
-	// first moves every refusal the editor can make to before that point, where
-	// it leaves the store untouched.
-	edit, err := config.PlanRenameStoredArea(session.areas.StoreDir(), input.Path, input.NewName)
-	if err != nil {
-		return nil, err
-	}
-
-	// Read BEFORE the cascade: after a partial failure the set has already
-	// shrunk, so a count taken then would understate what the run set out to do.
-	members := session.members(r.Reader, input.Path)
-
-	newPath := renamedAreaPath(input.Path, input.NewName)
-	// A member assigned BELOW the renamed node keeps the remainder it carried:
-	// renaming a parent moves its children's paths without changing their names.
-	written, err := r.AreaEditor.RewriteAreaAssignments(session.lock, func(area string) (string, bool) {
-		if !session.areas.IsWithin(area, input.Path) {
-			return "", false
-		}
-		return newPath + strings.TrimPrefix(area, input.Path), true
-	})
-	if err != nil {
-		return nil, areaEditIOError(err,
-			"rewrote %d of the %s assigned at or below area %q, then %v — the vocabulary still declares %q and those writes are persisted; rerun the same mutation to finish it, since a nib already rewritten is no longer a member and the rerun starts where this stopped",
-			len(written), areaNibCount(len(members)), config.RenderAreaPath(input.Path), err, config.RenderAreaPath(input.Path))
-	}
-
-	if _, err := edit.Write(); err != nil {
-		return nil, areaEditIOError(err,
-			"rewrote %s from area %q to %q, then the store's areas.yml could not be updated: %v — the vocabulary still declares %q and those writes are persisted; rerun the same mutation to finish it, since the rewritten nibs are no longer members and the rerun only renames the declaration",
-			areaNibCount(len(written)), config.RenderAreaPath(input.Path), config.RenderAreaPath(newPath), err,
-			config.RenderAreaPath(input.Path))
-	}
-
-	if err := r.AreaEditor.ReloadAreas(); err != nil {
-		return nil, areaVocabularyReloadFailure(err)
-	}
-	return configResult(r.Reader), nil
-}
-
-// removeAreaImpl retires the declared node at input.Path together with the
-// subtree it heads, disposing of every nib assigned at or below it as the input
-// says, inside one critical section.
-func (r *mutationResolver) removeAreaImpl(input model.RemoveAreaInput) (*model.Config, error) {
-	session, err := r.beginAreaEdit()
-	if err != nil {
-		return nil, err
-	}
-	defer session.release()
-
-	if err := requireDeclaredArea(session.areas, input.Path, "retire"); err != nil {
-		return nil, err
-	}
-
-	disposition, target, err := session.disposition(input)
-	if err != nil {
-		return nil, err
-	}
-
-	members := session.members(r.Reader, input.Path)
-	switch {
-	case disposition != areaDispositionNone && len(members) == 0:
-		return nil, areaEmptyDispositionError(input.Path, disposition)
-	case disposition == areaDispositionNone && len(members) > 0:
-		return nil, fmt.Errorf(
-			"cannot retire area %q: %s assigned at or below it (%s) — reassign them with moveTo, drop their assignment with unassign: true, or leave the declaration in place",
-			config.RenderAreaPath(input.Path), areaNibsAre(len(members)), namedMembers(members))
-	}
-
-	// Resolved before the first nib is touched, for the reason renameAreaImpl
-	// plans first.
-	edit, err := config.PlanRemoveStoredArea(session.areas.StoreDir(), input.Path)
-	if err != nil {
-		return nil, err
-	}
-
-	written, err := r.AreaEditor.RewriteAreaAssignments(session.lock, func(area string) (string, bool) {
-		// Every member lands ON the target rather than keeping the remainder it
-		// carried below the retiring node: the target declares no such child, so
-		// preserving it would move each member to another undeclared path. target
-		// is "" for an unassign, which is the legal cleared value.
-		return target, session.areas.IsWithin(area, input.Path)
-	})
-	if err != nil {
-		return nil, areaEditIOError(err,
-			"%s %d of the %s assigned at or below area %q, then %v — %q is still declared and those writes are persisted; rerun the same mutation to finish it, since a nib already disposed of is no longer a member and the rerun starts where this stopped",
-			areaDispositionVerb(disposition), len(written), areaNibCount(len(members)),
-			config.RenderAreaPath(input.Path), err, config.RenderAreaPath(input.Path))
-	}
-
-	if _, err := edit.Write(); err != nil {
-		return nil, areaRetireWriteFailure(input.Path, disposition, len(written), err)
-	}
-
-	if err := r.AreaEditor.ReloadAreas(); err != nil {
-		return nil, areaVocabularyReloadFailure(err)
-	}
-	return configResult(r.Reader), nil
-}
-
-// areaVocabularyReloadFailure reports an edit whose two writes both landed and
-// whose re-read of the file it just wrote then failed.
-//
-// It is the one IO failure here with nothing to rerun: the members are written
-// and so is the vocabulary, so disk holds the finished edit. What is wrong is in
-// THIS process, which keeps the vocabulary it could still read (see
-// nibcore.Core.reloadAreas) — the one the edit replaced. Reporting it is what
-// keeps the alternative off the wire: answering with that vocabulary and calling
-// the mutation a success, which renders in a client as the edit not having
-// happened.
-func areaVocabularyReloadFailure(cause error) error {
-	return areaEditIOError(cause,
-		"both halves of this edit landed on disk, and re-reading the vocabulary it just wrote then failed: %v — there is nothing to rerun; until that file can be read again this store answers from the vocabulary as it was before the edit",
-		cause)
-}
-
-// areaRetireWriteFailure reports a retire whose members are disposed of and
-// whose config write then failed, branching on whether a disposition was
-// actually NAMED rather than on which one it was.
-//
-// With no disposition there is nothing to report as done and no argument to
-// drop: that branch is reachable only for an area nothing was assigned to, where
-// the refusal above has already established the member set is empty and the
-// cascade therefore wrote nothing. Selecting the wording on the move/unassign
-// pair instead made the same case in cmd/area.go claim an unassignment had run
-// and prescribe dropping an argument the caller never sent.
-func areaRetireWriteFailure(path string, disposition areaDisposition, written int, cause error) error {
-	if disposition == areaDispositionNone {
-		return areaEditIOError(cause,
-			"area %q could not be retired: the store's areas.yml could not be updated: %v — nothing is assigned at or below it, so nothing was rewritten and the store is as it was; rerun once that is fixed",
-			config.RenderAreaPath(path), cause)
-	}
-	return areaEditIOError(cause,
-		"%s %s from area %q, then the store's areas.yml could not be updated: %v — %q is still declared and those writes are persisted; rerun WITHOUT %s to retire it, which is what finishes the job now that nothing is assigned below it",
-		areaDispositionVerb(disposition), areaNibCount(written), config.RenderAreaPath(path), cause,
-		config.RenderAreaPath(path), areaDispositionField(disposition))
-}
-
-// areaEmptyDispositionError refuses a disposition that has nothing to act on.
-// Letting it succeed would report members disposed of when there were none, and
-// a silent no-op is the one answer a caller cannot tell apart from a real one.
-//
-// It is reachable two ways: by naming a disposition for an area nothing is
-// assigned to, and by rerunning after a cascade completed and the config write
-// did not. Dropping the disposition retires the area from either state, which is
-// why that is what the message prescribes.
-func areaEmptyDispositionError(path string, disposition areaDisposition) error {
-	return fmt.Errorf("nothing to %s: no nib is assigned at or below area %q — drop %s to retire it",
-		areaDispositionAction(disposition), config.RenderAreaPath(path), areaDispositionField(disposition))
-}
-
-// areaDisposition is what a retire was told to do with the nibs assigned at or
-// below the area it is retiring.
-//
-// None is a legal answer rather than a missing one — an area nothing is assigned
-// to needs no disposition — and it is a THIRD case, not the absence of moveTo.
-// Deriving the wording from a `move bool` made cmd/area.go's no-disposition
-// branch describe an unassignment that never ran.
-type areaDisposition int
-
-const (
-	areaDispositionNone areaDisposition = iota
-	areaDispositionMove
-	areaDispositionUnassign
-)
-
-// areaDispositionField is the input field that asked for it, for a message
-// telling the caller to drop it. It is only ever reached for one that was named.
-func areaDispositionField(d areaDisposition) string {
-	if d == areaDispositionMove {
-		return "moveTo"
-	}
-	return "unassign"
-}
-
-// areaDispositionVerb is the past tense a completed disposition reports in;
-// areaDispositionAction is the bare verb a refusal says there is nothing to do.
-func areaDispositionVerb(d areaDisposition) string {
-	if d == areaDispositionMove {
-		return "reassigned"
-	}
-	return "unassigned"
-}
-
-func areaDispositionAction(d areaDisposition) string {
-	if d == areaDispositionMove {
-		return "reassign"
-	}
-	return "unassign"
-}
-
-// disposition reads which disposition a retire was given and resolves its
-// target, returning "" for every case that clears the assignment.
-//
-// The two are mutually exclusive, and there is no wire equivalent of Cobra's
-// MarkFlagsMutuallyExclusive to refuse them for us. `unassign: false` is read as
-// NO disposition rather than as a contradiction: it is what a client sends when
-// a checkbox is off, and taking it as a conflicting answer would refuse a
-// perfectly ordinary `{path, moveTo, unassign: false}`.
-//
-// BOTH questions about a moveTo target are asked of the vocabulary re-read under
-// the lock, because the target is exactly as perishable as the node being
-// retired: a concurrent retire of the target finishing while this call waited
-// leaves it declared in any earlier snapshot and gone from the store, and the
-// reassignment then walks every member into the state the member refusal exists
-// to prevent.
-func (s *areaEditSession) disposition(input model.RemoveAreaInput) (areaDisposition, string, error) {
-	switch {
-	case input.MoveTo != nil && input.Unassign != nil && *input.Unassign:
-		return areaDispositionNone, "", fmt.Errorf(
-			"moveTo and unassign: true are two different dispositions for the same nibs — send one")
-	case input.MoveTo != nil:
-		target := *input.MoveTo
-		if err := requireDeclaredArea(s.areas, target, "move work to"); err != nil {
-			return areaDispositionNone, "", err
-		}
-		if s.areas.IsWithin(target, input.Path) {
-			return areaDispositionNone, "", fmt.Errorf(
-				"cannot move members to %q: it is declared at or below %q, which this mutation is retiring — name an area outside it, or send unassign: true to drop their assignment",
-				config.RenderAreaPath(target), config.RenderAreaPath(input.Path))
-		}
-		return areaDispositionMove, target, nil
-	case input.Unassign != nil && *input.Unassign:
-		return areaDispositionUnassign, "", nil
-	default:
-		return areaDispositionNone, "", nil
-	}
 }

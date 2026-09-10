@@ -10,11 +10,21 @@ import (
 // `configChanged` subscription, and the two area mutations — so a field added to
 // Config reaches all four at once rather than three of them.
 func configResult(reader NibReader) *model.Config {
+	return configResultWithAreas(reader, reader.Areas())
+}
+
+// configResultWithAreas is configResult over a vocabulary the caller already
+// holds. The area mutations answer through it with the vocabulary their own edit
+// wrote and re-read under the store's write lock, rather than re-asking the
+// reader — which would make the answer depend on Reader and the area writer
+// being backed by the same store, a requirement nothing could enforce and whose
+// violation is a silent wrong answer rather than a compile error.
+func configResultWithAreas(reader NibReader, areas *config.Areas) *model.Config {
 	cfg := reader.Config()
 	return &model.Config{
 		ProjectName: cfg.GetProjectName(),
 		Prefix:      cfg.Nibs.Prefix,
-		Areas:       flattenAreas(reader.Areas()),
+		Areas:       flattenAreas(areas),
 	}
 }
 

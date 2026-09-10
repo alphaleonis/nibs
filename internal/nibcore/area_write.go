@@ -7,38 +7,38 @@ import (
 	"github.com/alphaleonis/nibs/internal/fsutil"
 )
 
-// RewriteAreaAssignments rewrites the `area:` of every nib for which rewrite
-// returns a replacement, and returns the ids it wrote, in id order.
+// rewriteAreaAssignmentsLocked rewrites the `area:` of every nib for which
+// rewrite returns a replacement, and returns the ids it wrote, in id order.
 //
-// It is the cascade half of `nibs area rename` and `nibs area rm`: renaming a
-// declared node moves the paths of every nib assigned to it or to anything below
-// it, and retiring one has to dispose of its members before the declaration can
-// go. Both are bulk writes, so they go through one fsutil.DirSyncBatch — one
-// directory flush per DIRECTORY, and deferred, because an aborted cascade has
-// already committed every rename before the failure and still owes those entries
-// a flush.
+// It is the cascade half of a rename and a retire: renaming a declared node
+// moves the paths of every nib assigned to it or to anything below it, and
+// retiring one has to dispose of its members before the declaration can go. Both
+// are bulk writes, so they go through one fsutil.DirSyncBatch — one directory
+// flush per DIRECTORY, and deferred, because an aborted cascade has already
+// committed every rename before the failure and still owes those entries a
+// flush.
 //
 // The write is the NON-CREATING one (updateOnDiskDeferDirSync). Every target is
 // a nib already on disk, so a path this cascade cannot find is a path that went
 // stale — and a creating write answers that by writing the nib back under its
 // pre-rename name, leaving the store one file heavier under a prefix its config
-// no longer declares. The caller re-derives its paths under the lock so this
-// does not arise; the refusal is what makes a caller that forgot fail loudly
-// instead of duplicating the store.
+// no longer declares. editArea re-reads the store under the lock so this does
+// not arise; the refusal is what makes a caller that forgot fail loudly instead
+// of duplicating the store.
 //
-// CONCURRENCY: lock is PROOF-OF-LOCK — the *StoreLock the caller received from
-// AcquireStoreLock, held across the whole verb (see MigrateV0ToV1, which takes
-// it for the same reason). This method cannot self-acquire, because the flock is
+// CONCURRENCY: the caller holds BOTH c.mu and the store's cross-process write
+// lock, in that order, for the whole verb — editArea is the only caller and is
+// where that is arranged. Neither is acquired here. c.mu is not, because the
+// cascade is only one step of a critical section that spans the plan, the
+// cascade, the areas.yml write and the reload; the flock is not, because it is
 // per-descriptor and re-acquiring it in-process deadlocks.
 //
-// It is a parameter rather than a per-operation acquisition because the cascade
-// is only HALF of one edit: the config write that follows it is a
-// read-modify-write of the whole `areas:` block, and the two have to be inside
-// one critical section or a concurrent edit of another node is lost — last
-// writer wins, both cascades persist, both callers report success. That is the
-// state the members are then permanently write-refused in, and nothing prints a
-// reason to rerun. Holding the lock per-operation here would serialize the
-// cascades and leave exactly that window open between them.
+// The span matters, not just the exclusion. The config write that follows the
+// cascade is a read-modify-write of the whole `areas:` block, and the two have
+// to be inside one critical section or a concurrent edit of another node is
+// lost — last writer wins, both cascades persist, both callers report success.
+// That is the state the members are then permanently write-refused in, and
+// nothing prints a reason to rerun.
 //
 // IT DOES NOT GO THROUGH Update, and cannot. Update re-checks the `area:` the
 // nib will carry against the declared vocabulary (ValidateArea), and a rename
@@ -63,14 +63,7 @@ import (
 // field, so a changed nib is cloned, written and reinstalled under its key
 // rather than edited in place, leaving any off-lock reader still holding the old
 // pointer a stable value.
-func (c *Core) RewriteAreaAssignments(lock *StoreLock, rewrite func(area string) (string, bool)) ([]string, error) {
-	if err := c.requireStoreLock("RewriteAreaAssignments", lock); err != nil {
-		return nil, err
-	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
+func (c *Core) rewriteAreaAssignmentsLocked(rewrite func(area string) (string, bool)) ([]string, error) {
 	type target struct {
 		id   string
 		area string

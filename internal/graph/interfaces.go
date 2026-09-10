@@ -181,42 +181,35 @@ type NibSubscriber interface {
 	SubscribeAreas() (<-chan struct{}, func())
 }
 
-// AreaEditor provides the store-wide write path the area vocabulary mutations
-// need. It is a role of its own rather than more methods on NibWriter because it
-// is the one write here that spans MULTIPLE operations inside a single critical
-// section: the member cascade and the `areas:` rewrite have to be one, or a
-// concurrent edit lands between them and the loser's declaration is gone while
-// its cascade sits on disk.
+// AreaWriter is the store's area-vocabulary verbs: declaring an area, renaming
+// one, and retiring one together with the nibs assigned to it.
 //
-// That is why the methods take proof-of-lock instead of acquiring per operation.
-// The store lock is a per-descriptor flock, so a resolver already holding it
-// deadlocks the process by calling any self-acquiring mutator —
-// NibWriter.Update among them (see nibcore.Core.RewriteAreaAssignments, which
-// also explains why an area cascade cannot go through Update at all).
-type AreaEditor interface {
-	// Root is the store directory the cross-process write lock is taken on.
-	Root() string
-	// Load re-reads the store — both the nibs and the vocabulary — and is called
-	// UNDER that lock: the snapshot this process started from may name files a
-	// concurrent `nibs config set-prefix` has since renamed, and the vocabulary a
-	// concurrent area edit has since reshaped.
-	Load() error
-	// Areas returns the vocabulary as of the last Load. Every decision an area
-	// edit makes comes from the one taken under the lock, never from a pre-lock
-	// read.
-	Areas() *config.Areas
-	// RewriteAreaAssignments rewrites the `area:` of every nib the rewrite
-	// function claims, returning the ids it wrote in id order. lock is
-	// proof-of-lock, not a request to take one.
-	RewriteAreaAssignments(lock *nibcore.StoreLock, rewrite func(area string) (string, bool)) ([]string, error)
-	// ReloadAreas re-reads the vocabulary this edit just wrote and ticks the
-	// areas subscribers, so the answer carries what was written and a
-	// configChanged subscriber wakes on the edit rather than on the watcher's
-	// debounce. A failure to read the file back must be REPORTED rather than
-	// swallowed: the implementation keeps the vocabulary it already had, which is
-	// the one the edit replaced, so a caller that ignored this would answer with
-	// the pre-edit vocabulary and call the edit a success.
-	ReloadAreas() error
+// Each method is ONE WHOLE EDIT. It takes the store's two locks itself, in the
+// one order they may be taken in, and holds both across the re-read, the plan,
+// the member cascade, the areas.yml write and the reload — so this role carries
+// no lock, no proof-of-lock, and no ordering obligation a caller could get
+// wrong. That is deliberate: a resolver that took the cross-process file lock
+// and then reached back for the vocabulary, the member set and the cascade —
+// each of which takes the store's in-process mutex — inverted the documented
+// order, and a concurrent updateNib deadlocked the whole server against it.
+//
+// It also has no hidden coupling to NibReader. Every answer the mutations give
+// comes out of the AreaEditResult the verb returns, including the vocabulary it
+// wrote, so a decorated or per-request Reader cannot silently disagree with it.
+type AreaWriter interface {
+	// AddArea declares a new area. It rewrites no nib: a nib may already carry
+	// the path, and declaring it is what un-refuses that nib's next write.
+	AddArea(path, description, color string) (nibcore.AreaEditResult, error)
+	// RenameArea renames a declared node, cascading to every nib assigned at or
+	// below it.
+	RenameArea(path, newName string) (nibcore.AreaEditResult, error)
+	// RemoveArea retires a declared node and the subtree it heads, disposing of
+	// every nib assigned at or below it as disposition says.
+	RemoveArea(path string, disposition nibcore.AreaDisposition) (nibcore.AreaEditResult, error)
+	// Warn reports a note about an edit to the store's warning sink — where a
+	// running `nibs serve` operator reads. It is how a warning an edit owes
+	// reaches somebody when the answer's own shape has no room for one.
+	Warn(format string, args ...any)
 }
 
 // NibEvent represents a change to a nib (re-exported from nibcore).

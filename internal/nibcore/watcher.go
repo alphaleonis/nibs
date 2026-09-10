@@ -209,24 +209,6 @@ func (c *Core) SubscribeAreas() (<-chan struct{}, func()) {
 	return ch, unsubscribe
 }
 
-// ReloadAreas is reloadAreas for a WRITER that has just changed the file: the
-// GraphQL area mutations call it after their config write, so the vocabulary
-// they answer with is the one they wrote and an areas subscriber in this process
-// wakes on the edit rather than on the watcher's debounce.
-//
-// It is idempotent with that later watcher reload rather than racing it:
-// reloadAreas installs nothing and ticks nobody when the vocabulary it read
-// equals the one already loaded, so whichever of the two runs second is a no-op.
-//
-// The read failure the watcher's path swallows is RETURNED here, and the two
-// callers need opposite answers for the same reason. A file event has nobody to
-// report to and another event will come; a writer that has just replaced the
-// file and cannot read it back would otherwise answer its caller with the
-// vocabulary it replaced, and call that success.
-func (c *Core) ReloadAreas() error {
-	return c.reloadAreas()
-}
-
 // watchReloadAreas is the watcher's reload: the vocabulary already loaded is
 // kept on a failure (see reloadAreas), and since the reload is driven by file
 // events, repairing the file installs it with no further prompting. So the fault
@@ -239,6 +221,17 @@ func (c *Core) watchReloadAreas() {
 
 // reloadAreas re-reads the store's areas.yml and installs it, ticking every
 // areas subscriber when the vocabulary actually changed.
+//
+// It has two callers with opposite needs, and the difference is what it does
+// with a read failure: it RETURNS one, and the watcher swallows it while an area
+// edit reports it (see watchReloadAreas and editArea). A file event has nobody to
+// report to and another event will come; an edit that has just replaced the file
+// and cannot read it back would otherwise answer with the vocabulary it replaced
+// and call that success.
+//
+// The edit's reload and the watcher's later one are idempotent rather than
+// racing: an unchanged vocabulary installs nothing and ticks nobody, so whichever
+// runs second is a no-op.
 //
 // A vocabulary the loader refuses does NOT replace the one in place. Swapping in
 // an empty tree on a malformed file would make every `area:` in the store

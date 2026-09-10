@@ -91,4 +91,60 @@ func TestAreaMutationErrorClassesMatchTheAreaCommands(t *testing.T) {
 			t.Errorf("the message does not say the store was left alone: %s", ce.Error())
 		}
 	})
+
+	// The divergence this closes: the CLI classified an area another process
+	// retired while this one waited for the store's write lock as a file error —
+	// the argument was true when it was given — and the resolver rode the
+	// validation fallback, so one event carried opposite verdicts depending on
+	// which surface saw it.
+	t.Run("an area retired while the edit waited is a file error", func(t *testing.T) {
+		app := setupAreaMutationApp(t)
+		// The vocabulary this process loaded declares `auth`; another writer
+		// retires it before the edit re-reads the store under the lock.
+		if err := os.WriteFile(store.NewLayout(app.Core.Root()).AreasPath(),
+			[]byte("areas:\n    - name: web\n      children:\n        - name: ui\n"), 0644); err != nil {
+			t.Fatalf("rewriting the areas vocabulary: %v", err)
+		}
+
+		_, _, err := executeQuery(app,
+			`mutation { renameArea(input: {path: "auth", newName: "identity"}) { prefix } }`, nil, "")
+		if err == nil {
+			t.Fatal("renameArea over an area retired under the lock returned no error")
+		}
+		var ce *output.CodedError
+		if !errors.As(err, &ce) {
+			t.Fatalf("expected *output.CodedError, got %T: %v", err, err)
+		}
+		if ce.Code != output.ErrFileError {
+			t.Errorf("code = %q, want %q — the same class `nibs area rename` gives this race", ce.Code, output.ErrFileError)
+		}
+		if !strings.Contains(ce.Error(), "another nibs process") {
+			t.Errorf("the message does not name what moved: %s", ce.Error())
+		}
+	})
+
+	// The vanished-vocabulary refusal rides the same class for the same reason,
+	// and it must reach the wire naming no filesystem path.
+	t.Run("a vanished vocabulary is a file error naming no path", func(t *testing.T) {
+		app := setupAreaMutationApp(t)
+		if err := os.Remove(store.NewLayout(app.Core.Root()).AreasPath()); err != nil {
+			t.Fatalf("removing the areas vocabulary: %v", err)
+		}
+
+		_, _, err := executeQuery(app,
+			`mutation { renameArea(input: {path: "web", newName: "platform"}) { prefix } }`, nil, "")
+		if err == nil {
+			t.Fatal("renameArea over a vanished vocabulary returned no error")
+		}
+		var ce *output.CodedError
+		if !errors.As(err, &ce) {
+			t.Fatalf("expected *output.CodedError, got %T: %v", err, err)
+		}
+		if ce.Code != output.ErrFileError {
+			t.Errorf("code = %q, want %q", ce.Code, output.ErrFileError)
+		}
+		if strings.Contains(ce.Error(), app.Core.Root()) {
+			t.Errorf("the message names the store root, which reaches an HTTP client verbatim: %s", ce.Error())
+		}
+	})
 }

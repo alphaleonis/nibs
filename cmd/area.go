@@ -3,7 +3,6 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -235,57 +234,58 @@ func joinAreaPathForDisplay(parent, name string) string {
 func runAreaAdd(cmd *cobra.Command, args []string) error {
 	app := getApp(cmd)
 	path := args[0]
-	parent, _ := splitAreaPath(path)
 
-	// Answered BEFORE the lock, and printed straight away. AcquireStoreLock is a
-	// blocking flock with no timeout and prints nothing while it waits, so a
-	// question the arguments alone answer would otherwise make a typo sit silent
-	// for as long as any other cooperating writer holds the store. Unlike the
-	// rename's, none of these refusals speaks about a node the store declares —
-	// they judge the shape of the path and the color — so there is no vocabulary
-	// that could make one of them the wrong thing to say.
+	// Answered BEFORE the call, and printed straight away. The store's write
+	// lock is a blocking flock with no timeout and prints nothing while it
+	// waits, so a question the arguments alone answer would otherwise make a
+	// typo sit silent for as long as any other cooperating writer holds the
+	// store. Unlike the rename's, none of these refusals speaks about a node the
+	// store declares — they judge the shape of the path and the color — so there
+	// is no vocabulary that could make one of them the wrong thing to say.
 	if err := validateAreaAddArgument(areaAddJSON, path, areaAddColor); err != nil {
 		return err
 	}
 
-	// Every decision below is made from areas, the vocabulary re-read under the
-	// lock, and never from app.Config() — see beginAreaEdit. The lock is owed
-	// even though nothing cascades: areas.yml is rewritten whole, so two
-	// concurrent adds without it lose one of the two declarations.
-	lock, areas, err := beginAreaEdit(app, areaAddJSON)
+	// The verb is nibcore's, whole: it takes both of the store's locks in the
+	// one order they may be taken in and holds them across the re-read, the
+	// plan and the write. The lock is owed even though nothing cascades —
+	// areas.yml is rewritten whole, so two concurrent adds without it lose one
+	// of the two declarations — and every decision it makes comes from the
+	// vocabulary re-read under it, never from app.Config().
+	res, err := app.Core.AddArea(path, areaAddDescription, areaAddColor)
 	if err != nil {
-		return err
+		return areaAddRefusal(path, err)
 	}
-	defer func() { _ = lock.Release() }()
+	return reportAreaEdit(areaAddJSON, fmt.Sprintf("Declared area %s", quotedArea(path)), res)
+}
 
-	if areas.IsValid(path) {
+// areaAddRefusal words what `nibs area add` refuses. What it does not word falls
+// through to the refusals every area verb shares.
+func areaAddRefusal(path string, err error) error {
+	var declared *nibcore.AreaAlreadyDeclaredError
+	if errors.As(err, &declared) {
 		return cmdError(areaAddJSON, output.ErrValidation,
 			"cannot declare area %s: this store already declares it, and two siblings with one name make one path mean two nodes",
-			quotedArea(path))
+			quotedArea(declared.Path))
 	}
-	if parent != "" {
-		if areaRetiredWhileWaiting(app, areas, parent) {
-			return refuseAreaRetiredWhileWaiting(areaAddJSON, parent)
-		}
-		if err := requireDeclaredAreaParent(areas, path, parent); err != nil {
-			return err
-		}
+	// areaEditRefusal's undeclared-path wording is not reused: its no-vocabulary
+	// branch sends the reader to edit areas.yml by hand, where this verb IS the
+	// remedy, and its other branch speaks about a node to act ON rather than one
+	// to nest under. Both directions here have the same answer, so they are one
+	// message.
+	var parent *nibcore.AreaParentUndeclaredError
+	if errors.As(err, &parent) {
+		return cmdError(areaAddJSON, output.ErrValidation,
+			"cannot declare area %s: this store declares no area %s to nest it under, and a parent is never created on the way — declare it with `nibs area add %s` first, then rerun",
+			quotedArea(parent.Path), quotedArea(parent.Parent), config.RenderAreaPath(parent.Parent))
 	}
-
-	edit, err := planAreaEdit(areaAddJSON, func() (*config.StoredAreaEdit, error) {
-		return config.PlanCreateStoredArea(areas.StoreDir(), path, areaAddDescription, areaAddColor)
-	})
-	if err != nil {
-		return err
-	}
-
-	staleLink, err := edit.Write()
-	if err != nil {
+	var ioErr *nibcore.AreaEditIOError
+	if errors.As(err, &ioErr) && ioErr.Phase == nibcore.AreaEditPhaseWrite {
 		return cmdError(areaAddJSON, output.ErrFileError,
 			"area %s could not be declared: %s could not be updated: %v — nothing else was written, so the store is as it was; rerun `nibs area add %s` once that is fixed",
-			quotedArea(path), sanitizeFilePath(areas.Path()), err, config.RenderAreaPath(path))
+			quotedArea(path), sanitizeFilePath(ioErr.File), ioErr.Cause, config.RenderAreaPath(path))
 	}
-	return reportAreaEdit(app, areaAddJSON, fmt.Sprintf("Declared area %s", quotedArea(path)), staleLink, areas)
+	return areaEditRefusal(areaAddJSON, err, "declare")
 }
 
 // validateAreaAddArgument refuses every add the arguments alone rule out: a path
@@ -307,22 +307,6 @@ func validateAreaAddArgument(jsonMode bool, path, color string) error {
 	return nil
 }
 
-// requireDeclaredAreaParent refuses a nested add whose parent the store does not
-// declare, and names the command that declares it.
-//
-// requireDeclaredArea is not reused: its no-vocabulary branch sends the reader
-// to edit areas.yml by hand, which was the only remedy before this verb existed,
-// and its other branch speaks about a node to act ON rather than one to nest
-// under. Both directions here have the same answer, so they are one message.
-func requireDeclaredAreaParent(areas *config.Areas, path, parent string) error {
-	if areas.IsValid(parent) {
-		return nil
-	}
-	return cmdError(areaAddJSON, output.ErrValidation,
-		"cannot declare area %s: this store declares no area %s to nest it under, and a parent is never created on the way — declare it with `nibs area add %s` first, then rerun",
-		quotedArea(path), quotedArea(parent), config.RenderAreaPath(parent))
-}
-
 // --- rename ----------------------------------------------------------------
 
 func runAreaRename(cmd *cobra.Command, args []string) error {
@@ -330,9 +314,9 @@ func runAreaRename(cmd *cobra.Command, args []string) error {
 	path, newName := args[0], args[1]
 	parent, oldName := splitAreaPath(path)
 
-	// Answered BEFORE the lock, because the two arguments alone answer it and no
-	// vocabulary can change that answer. AcquireStoreLock is a blocking flock
-	// with no timeout and prints nothing while it waits, so asking a pure
+	// Answered BEFORE the call, because the two arguments alone answer it and no
+	// vocabulary can change that answer. The store's write lock is a blocking
+	// flock with no timeout and prints nothing while it waits, so asking a pure
 	// argument question afterwards makes a typo sit silent for as long as any
 	// other cooperating writer holds the store — a whole `nibs migrate` run.
 	//
@@ -342,87 +326,79 @@ func runAreaRename(cmd *cobra.Command, args []string) error {
 	// runnable `nibs area rename` for it — so over a path the store does not
 	// declare they answer about a node that is not there, and the prescription
 	// is a command the tool then refuses. Held rather than printed, the refusal
-	// waits behind requireDeclaredArea and the caller reads the typo first.
+	// waits behind the store's own answer and the caller reads the typo first.
 	//
 	// The snapshot decides only WHICH of two refusals is printed, never whether
 	// the store is written, so a stale answer costs a sentence — the same terms
-	// areaRetiredWhileWaiting is consulted on. A path it declares takes the fast
-	// exit; one it does not is the case where the extra information is worth the
-	// wait, since the caller has to fix the path before the name matters.
+	// nibcore.AreaRetiredWhileWaitingError is carried on. A path it declares
+	// takes the fast exit; one it does not is the case where the extra
+	// information is worth the wait, since the caller has to fix the path before
+	// the name matters.
 	argErr := validateAreaRenameArgument(areaRenameJSON, path, parent, oldName, newName)
 	if argErr != nil && areaDeclaredAtStartup(app, path) {
 		return argErr
 	}
 
-	// Every decision below is made from areas, the vocabulary re-read under the
-	// lock, and never from app.Config() — see beginAreaEdit.
-	lock, areas, err := beginAreaEdit(app, areaRenameJSON)
+	res, err := app.Core.RenameArea(path, newName)
 	if err != nil {
-		return err
+		return areaRenameRefusal(argErr, err)
 	}
-	defer func() { _ = lock.Release() }()
 
-	if areaRetiredWhileWaiting(app, areas, path) {
-		return refuseAreaRetiredWhileWaiting(areaRenameJSON, path)
+	msg := fmt.Sprintf("Renamed area %s to %s", quotedArea(path), quotedArea(res.NewPath))
+	if len(res.Written) > 0 {
+		msg += fmt.Sprintf(" and rewrote %s: %s%s",
+			areaNibCount(len(res.Written)), strings.Join(namedIDs(res.Written), ", "), moreThanNamed(len(res.Written)))
 	}
-	if err := requireDeclaredArea(areas, areaRenameJSON, path, "rename"); err != nil {
-		return err
-	}
-	// The path is declared, so the held refusal now speaks about a node that is
-	// there. It comes before requireAreaNameFree: a name too malformed to keep
-	// is not a name to go looking for a sibling collision on.
-	if argErr != nil {
+	return reportAreaEdit(areaRenameJSON, msg, res)
+}
+
+// areaRenameRefusal words what `nibs area rename` refuses, and decides when the
+// held argument refusal is the one to print.
+func areaRenameRefusal(argErr, err error) error {
+	// The store answered about the NAME rather than about the path, which means
+	// the node at `path` is there and the held refusal now speaks about a node
+	// that exists. It comes first for the reason it is held at all: it can name
+	// the runnable spelling, or the fact that nothing would change, where the
+	// vocabulary's own backstop can only report that the file would be unusable.
+	if argErr != nil && areaRenameNameRefusal(err) {
 		return argErr
 	}
-	if err := requireAreaNameFree(areas, areaRenameJSON, path, parent, newName); err != nil {
-		return err
+	var unchanged *nibcore.AreaNameUnchangedError
+	if errors.As(err, &unchanged) {
+		return areaNameUnchangedRefusal(areaRenameJSON, unchanged.Path, unchanged.Name)
 	}
-	newPath := joinAreaPathForDisplay(parent, newName)
-
-	// The config edit is resolved BEFORE the first nib is touched: see
-	// planAreaEdit for why a refusal has to land while the store is still
-	// untouched.
-	edit, err := planAreaEdit(areaRenameJSON, func() (*config.StoredAreaEdit, error) {
-		return config.PlanRenameStoredArea(areas.StoreDir(), path, newName)
-	})
-	if err != nil {
-		return err
+	var taken *nibcore.AreaNameTakenError
+	if errors.As(err, &taken) {
+		return cmdError(areaRenameJSON, output.ErrValidation,
+			"cannot rename area %s to %s: this store already declares %s, and two siblings with one name make one path mean two nodes",
+			quotedArea(taken.Path), quotedArea(taken.NewName), quotedArea(taken.Sibling))
 	}
-
-	// Read BEFORE the cascade: after a partial failure the set has already
-	// shrunk, so a count taken then would understate what the run set out to do.
-	members := areaMembers(app, areas, path)
-
-	// The cascade preserves whatever a member carried BELOW the renamed node,
-	// because renaming a parent moves its children's paths without changing
-	// their names.
-	written, err := app.Core.RewriteAreaAssignments(lock, func(area string) (string, bool) {
-		if !areas.IsWithin(area, path) {
-			return "", false
+	var ioErr *nibcore.AreaEditIOError
+	if errors.As(err, &ioErr) {
+		switch ioErr.Phase {
+		case nibcore.AreaEditPhaseCascade:
+			return cmdError(areaRenameJSON, output.ErrFileError,
+				"rewrote %d of the %s assigned at or below area %s, then %v — the vocabulary in %s still declares %s and those writes are persisted; rerun the same command to finish it, since a nib already rewritten is no longer a member and the rerun starts where this stopped",
+				len(ioErr.Written), areaNibCount(len(ioErr.Members)),
+				quotedArea(ioErr.Path), ioErr.Cause, sanitizeFilePath(ioErr.File), quotedArea(ioErr.Path))
+		case nibcore.AreaEditPhaseWrite:
+			return cmdError(areaRenameJSON, output.ErrFileError,
+				"rewrote %s from area %s to %s, then %s could not be updated: %v — the vocabulary still declares %s and those writes are persisted; rerun the same command to finish it, since the rewritten nibs are no longer members and the rerun only renames the declaration",
+				areaNibCount(len(ioErr.Written)), quotedArea(ioErr.Path), quotedArea(ioErr.NewPath),
+				sanitizeFilePath(ioErr.File), ioErr.Cause, quotedArea(ioErr.Path))
 		}
-		return newPath + strings.TrimPrefix(area, path), true
-	})
-	if err != nil {
-		return cmdError(areaRenameJSON, output.ErrFileError,
-			"rewrote %d of the %s assigned at or below area %s, then %v — the vocabulary in %s still declares %s and those writes are persisted; rerun the same command to finish it, since a nib already rewritten is no longer a member and the rerun starts where this stopped",
-			len(written), areaNibCount(len(members)),
-			quotedArea(path), err, sanitizeFilePath(areas.Path()), quotedArea(path))
 	}
+	return areaEditRefusal(areaRenameJSON, err, "rename")
+}
 
-	staleLink, err := edit.Write()
-	if err != nil {
-		return cmdError(areaRenameJSON, output.ErrFileError,
-			"rewrote %s from area %s to %s, then %s could not be updated: %v — the vocabulary still declares %s and those writes are persisted; rerun the same command to finish it, since the rewritten nibs are no longer members and the rerun only renames the declaration",
-			areaNibCount(len(written)), quotedArea(path), quotedArea(newPath),
-			sanitizeFilePath(areas.Path()), err, quotedArea(path))
-	}
-
-	msg := fmt.Sprintf("Renamed area %s to %s", quotedArea(path), quotedArea(newPath))
-	if len(written) > 0 {
-		msg += fmt.Sprintf(" and rewrote %s: %s%s",
-			areaNibCount(len(written)), strings.Join(namedIDs(written), ", "), moreThanNamed(len(written)))
-	}
-	return reportAreaEdit(app, areaRenameJSON, msg, staleLink, areas)
+// areaRenameNameRefusal reports that the store refused the NEW NAME rather than
+// the path — the refusals a rename makes only after establishing that the node
+// it was told to rename is declared.
+func areaRenameNameRefusal(err error) bool {
+	var unchanged *nibcore.AreaNameUnchangedError
+	var taken *nibcore.AreaNameTakenError
+	var refusal *config.AreaEditRefusal
+	return errors.As(err, &unchanged) || errors.As(err, &taken) || errors.As(err, &refusal)
 }
 
 // validateAreaRenameArgument refuses every new name the two arguments rule out
@@ -431,8 +407,8 @@ func runAreaRename(cmd *cobra.Command, args []string) error {
 //
 // All four read `path` and `newName` and nothing else — no vocabulary, no store — so
 // no vocabulary can change their answer and runAreaRename asks them before the
-// write lock. The vocabulary question a rename also has — does a sibling already
-// answer to the new name? — is requireAreaNameFree's, under the lock.
+// store's write lock. The vocabulary question a rename also has — does a sibling
+// already answer to the new name? — is nibcore's, under that lock.
 //
 // Two of the four nonetheless SPEAK about the node at `path`, so the refusal
 // they return is only correct over a path the store declares; when to print it
@@ -465,23 +441,19 @@ func validateAreaRenameArgument(jsonMode bool, path, parent, oldName, newName st
 			quotedArea(newName))
 	}
 	if newName == oldName {
-		return cmdError(jsonMode, output.ErrValidation,
-			"area %s is already named %s, so the rename would change nothing",
-			quotedArea(path), quotedArea(newName))
+		return areaNameUnchangedRefusal(jsonMode, path, newName)
 	}
 	return nil
 }
 
-// requireAreaNameFree refuses a rename onto a name a sibling already holds. It
-// is the one rename check that reads the vocabulary, so it is asked under the
-// lock against the vocabulary that is actually there — see beginAreaEdit.
-func requireAreaNameFree(areas *config.Areas, jsonMode bool, path, parent, newName string) error {
-	if sibling := joinAreaPathForDisplay(parent, newName); areas.IsValid(sibling) {
-		return cmdError(jsonMode, output.ErrValidation,
-			"cannot rename area %s to %s: this store already declares %s, and two siblings with one name make one path mean two nodes",
-			quotedArea(path), quotedArea(newName), quotedArea(sibling))
-	}
-	return nil
+// areaNameUnchangedRefusal refuses renaming a node to the name it already has.
+// It has two callers — the pre-lock argument check and the store's own refusal —
+// because the two ask the same question at different moments and must not answer
+// it differently.
+func areaNameUnchangedRefusal(jsonMode bool, path, newName string) error {
+	return cmdError(jsonMode, output.ErrValidation,
+		"area %s is already named %s, so the rename would change nothing",
+		quotedArea(path), quotedArea(newName))
 }
 
 // --- rm --------------------------------------------------------------------
@@ -493,84 +465,80 @@ func runAreaRm(cmd *cobra.Command, args []string) error {
 	// Cobra refuses the two together (MarkFlagsMutuallyExclusive above), so at
 	// most one of these is set here. It reads flags alone, so it needs no
 	// vocabulary and asks for no lock.
-	disposition := areaDispositionNone
+	disposition := nibcore.AreaDisposition{}
 	switch {
 	case cmd.Flags().Changed("move-to"):
-		disposition = areaDispositionMove
+		disposition = nibcore.MoveAreaMembersTo(areaRmMoveTo)
 	case areaRmUnassign:
-		disposition = areaDispositionUnassign
+		disposition = nibcore.UnassignAreaMembers()
 	}
 
-	// Every decision below is made from areas, the vocabulary re-read under the
-	// lock, and never from app.Config() — see beginAreaEdit.
-	lock, areas, err := beginAreaEdit(app, areaRmJSON)
+	res, err := app.Core.RemoveArea(path, disposition)
 	if err != nil {
-		return err
-	}
-	defer func() { _ = lock.Release() }()
-
-	if areaRetiredWhileWaiting(app, areas, path) {
-		return refuseAreaRetiredWhileWaiting(areaRmJSON, path)
-	}
-	if err := requireDeclaredArea(areas, areaRmJSON, path, "retire"); err != nil {
-		return err
-	}
-
-	members := areaMembers(app, areas, path)
-
-	target := ""
-	if disposition == areaDispositionMove {
-		if target, err = resolveAreaMoveTarget(app, areas, path); err != nil {
-			return err
-		}
-	}
-	switch {
-	case disposition != areaDispositionNone && len(members) == 0:
-		return areaEmptyDispositionError(path, disposition)
-	case disposition == areaDispositionNone && len(members) > 0:
-		return cmdError(areaRmJSON, output.ErrValidation,
-			"cannot retire area %s: %s assigned at or below it (%s%s) — reassign them with `nibs area rm %s --move-to <area>`, drop their assignment with `nibs area rm %s --unassign`, or leave the declaration in place",
-			quotedArea(path), areaNibsAre(len(members)),
-			strings.Join(namedIDs(members), ", "), moreThanNamed(len(members)),
-			config.RenderAreaPath(path), config.RenderAreaPath(path))
-	}
-
-	// The config edit is resolved BEFORE the first nib is touched: see
-	// planAreaEdit.
-	edit, err := planAreaEdit(areaRmJSON, func() (*config.StoredAreaEdit, error) {
-		return config.PlanRemoveStoredArea(areas.StoreDir(), path)
-	})
-	if err != nil {
-		return err
-	}
-
-	written, err := app.Core.RewriteAreaAssignments(lock, func(area string) (string, bool) {
-		// Every member lands ON the target rather than keeping the remainder it
-		// carried below the retiring node: the target declares no such child, so
-		// preserving it would move each member to another undeclared path.
-		return target, areas.IsWithin(area, path)
-	})
-	if err != nil {
-		return cmdError(areaRmJSON, output.ErrFileError,
-			"%s %d of the %s assigned at or below area %s, then %v — %s is still declared and those writes are persisted; rerun the same command to finish it, since a nib already disposed of is no longer a member and the rerun starts where this stopped",
-			areaDispositionVerb(disposition), len(written), areaNibCount(len(members)),
-			quotedArea(path), err, quotedArea(path))
-	}
-
-	staleLink, err := edit.Write()
-	if err != nil {
-		return areaRetireWriteFailure(areas, path, disposition, len(written), err)
+		return areaRetireRefusal(path, err)
 	}
 
 	msg := fmt.Sprintf("Retired area %s", quotedArea(path))
-	if below := countDeclaredBelow(areas, path); below > 0 {
-		msg += fmt.Sprintf(" and the %s declared beneath it", areaDeclaredCount(below))
+	if res.DeclaredBelow > 0 {
+		msg += fmt.Sprintf(" and the %s declared beneath it", areaDeclaredCount(res.DeclaredBelow))
 	}
-	if len(written) > 0 {
-		msg += fmt.Sprintf("; %s %s: %s%s", areaDispositionVerb(disposition), areaNibCount(len(written)),
-			strings.Join(namedIDs(written), ", "), moreThanNamed(len(written)))
+	if len(res.Written) > 0 {
+		msg += fmt.Sprintf("; %s %s: %s%s", areaDispositionVerb(disposition), areaNibCount(len(res.Written)),
+			strings.Join(namedIDs(res.Written), ", "), moreThanNamed(len(res.Written)))
 	}
-	return reportAreaEdit(app, areaRmJSON, msg, staleLink, areas)
+	return reportAreaEdit(areaRmJSON, msg, res)
+}
+
+// areaRetireRefusal words what `nibs area rm` refuses.
+func areaRetireRefusal(path string, err error) error {
+	var members *nibcore.AreaMembersPresentError
+	if errors.As(err, &members) {
+		return cmdError(areaRmJSON, output.ErrValidation,
+			"cannot retire area %s: %s assigned at or below it (%s%s) — reassign them with `nibs area rm %s --move-to <area>`, drop their assignment with `nibs area rm %s --unassign`, or leave the declaration in place",
+			quotedArea(members.Path), areaNibsAre(len(members.Members)),
+			strings.Join(namedIDs(members.Members), ", "), moreThanNamed(len(members.Members)),
+			config.RenderAreaPath(members.Path), config.RenderAreaPath(members.Path))
+	}
+	// Reachable two ways: by naming a disposition for an area nothing is
+	// assigned to, and by rerunning after a disposition completed and the config
+	// write did not. Dropping the flag retires the area from either state, which
+	// is why that is what the message prescribes.
+	var empty *nibcore.AreaDispositionEmptyError
+	if errors.As(err, &empty) {
+		return cmdError(areaRmJSON, output.ErrValidation,
+			"nothing to %s: no nib is assigned at or below area %s — drop %s and run `nibs area rm %s` to retire it",
+			areaDispositionAction(empty.Disposition), quotedArea(empty.Path),
+			areaDispositionFlag(empty.Disposition), config.RenderAreaPath(empty.Path))
+	}
+	var within *nibcore.AreaMoveTargetWithinError
+	if errors.As(err, &within) {
+		return cmdError(areaRmJSON, output.ErrValidation,
+			"cannot move members to %s: it is declared at or below %s, which this command is retiring — name an area outside it, or drop their assignment with `nibs area rm %s --unassign`",
+			quotedArea(within.Target), quotedArea(within.Path), config.RenderAreaPath(within.Path))
+	}
+	// A --move-to target retired under the lock has its own remedy: the members
+	// are not going anywhere, so the caller needs a target that still exists or
+	// no target at all. The generic wording sends them to `nibs area list`, which
+	// answers a different question.
+	var retired *nibcore.AreaRetiredWhileWaitingError
+	if errors.As(err, &retired) && retired.Role == nibcore.AreaPathMoveTarget {
+		return cmdError(areaRmJSON, output.ErrFileError,
+			"nothing was written: this store declared area %s when this command started and does not declare it now — another nibs process retired or renamed it while this one waited for the store's write lock, and moving members there would leave every one of them carrying a path the vocabulary no longer declares; name a target `nibs area list` shows, or drop their assignment with `nibs area rm %s --unassign`",
+			quotedArea(retired.Path), config.RenderAreaPath(path))
+	}
+	var ioErr *nibcore.AreaEditIOError
+	if errors.As(err, &ioErr) {
+		switch ioErr.Phase {
+		case nibcore.AreaEditPhaseCascade:
+			return cmdError(areaRmJSON, output.ErrFileError,
+				"%s %d of the %s assigned at or below area %s, then %v — %s is still declared and those writes are persisted; rerun the same command to finish it, since a nib already disposed of is no longer a member and the rerun starts where this stopped",
+				areaDispositionVerb(ioErr.Disposition), len(ioErr.Written), areaNibCount(len(ioErr.Members)),
+				quotedArea(ioErr.Path), ioErr.Cause, quotedArea(ioErr.Path))
+		case nibcore.AreaEditPhaseWrite:
+			return areaRetireWriteFailure(ioErr)
+		}
+	}
+	return areaEditRefusal(areaRmJSON, err, "retire")
 }
 
 // areaRetireWriteFailure reports a retire whose members are disposed of and
@@ -583,267 +551,139 @@ func runAreaRm(cmd *cobra.Command, args []string) error {
 // cascade therefore wrote nothing. Selecting the wording on the move/unassign
 // pair instead made this case claim an unassignment had run and prescribe
 // dropping a flag the caller never typed.
-func areaRetireWriteFailure(areas *config.Areas, path string, disposition areaDisposition, written int, cause error) error {
-	if disposition == areaDispositionNone {
+func areaRetireWriteFailure(e *nibcore.AreaEditIOError) error {
+	if e.Disposition.Kind == nibcore.AreaDispositionNone {
 		return cmdError(areaRmJSON, output.ErrFileError,
 			"area %s could not be retired: %s could not be updated: %v — nothing is assigned at or below it, so nothing was rewritten and the store is as it was; rerun `nibs area rm %s` once that is fixed",
-			quotedArea(path), sanitizeFilePath(areas.Path()), cause, config.RenderAreaPath(path))
+			quotedArea(e.Path), sanitizeFilePath(e.File), e.Cause, config.RenderAreaPath(e.Path))
 	}
 	return cmdError(areaRmJSON, output.ErrFileError,
 		"%s %s from area %s, then %s could not be updated: %v — %s is still declared and those writes are persisted; rerun WITHOUT %s to retire it, which is what finishes the job now that nothing is assigned below it",
-		areaDispositionVerb(disposition), areaNibCount(written), quotedArea(path),
-		sanitizeFilePath(areas.Path()), cause, quotedArea(path), areaDispositionFlag(disposition))
-}
-
-// resolveAreaMoveTarget validates --move-to's area: it has to be declared, and
-// it has to survive this command — an area inside the subtree being retired is
-// about to stop existing, so moving work into it would leave that work carrying
-// a path the vocabulary no longer declares, which is the state the whole refusal
-// exists to prevent.
-//
-// BOTH questions are asked of areas, the vocabulary re-read under the store's
-// write lock, because the target is exactly as perishable as the node being
-// retired: a concurrent `nibs area rm <target>` finishing while this command
-// waited leaves the target declared in the snapshot this process loaded and gone
-// from the store, and the reassignment then walks every member into the state
-// the refusal above exists to prevent — with both processes exiting 0.
-func resolveAreaMoveTarget(app *App, areas *config.Areas, path string) (string, error) {
-	target := areaRmMoveTo
-	if areaRetiredWhileWaiting(app, areas, target) {
-		return "", cmdError(areaRmJSON, output.ErrFileError,
-			"nothing was written: this store declared area %s when this command started and does not declare it now — another nibs process retired or renamed it while this one waited for the store's write lock, and moving members there would leave every one of them carrying a path the vocabulary no longer declares; name a target `nibs area list` shows, or drop their assignment with `nibs area rm %s --unassign`",
-			quotedArea(target), config.RenderAreaPath(path))
-	}
-	if err := requireDeclaredArea(areas, areaRmJSON, target, "move work to"); err != nil {
-		return "", err
-	}
-	if areas.IsWithin(target, path) {
-		return "", cmdError(areaRmJSON, output.ErrValidation,
-			"cannot move members to %s: it is declared at or below %s, which this command is retiring — name an area outside it, or drop their assignment with `nibs area rm %s --unassign`",
-			quotedArea(target), quotedArea(path), config.RenderAreaPath(path))
-	}
-	return target, nil
-}
-
-// areaEmptyDispositionError refuses a disposition that has nothing to act on.
-// Letting it succeed would report members disposed of when there were none, and
-// a silent no-op is the one answer a caller cannot tell apart from a real one.
-//
-// The caller reaches it two ways: by naming a disposition for an area nothing is
-// assigned to, and by rerunning after a disposition completed and the config
-// write did not. Dropping the flag retires the area from either state, which is
-// why that is what the message prescribes.
-func areaEmptyDispositionError(path string, disposition areaDisposition) error {
-	return cmdError(areaRmJSON, output.ErrValidation,
-		"nothing to %s: no nib is assigned at or below area %s — drop %s and run `nibs area rm %s` to retire it",
-		areaDispositionAction(disposition), quotedArea(path), areaDispositionFlag(disposition), config.RenderAreaPath(path))
-}
-
-// beginAreaEdit opens an areas edit's critical section: it takes the store's
-// cross-process write lock for the WHOLE verb — so the member cascade and the
-// `areas:` rewrite that follows it are one critical section — and then re-reads
-// BOTH halves of the store under it: the nibs, and the vocabulary it returns for
-// the verb to decide everything else from.
-//
-// Both halves of the edit are read-modify-writes of shared state, and the config
-// half is a rewrite of the entire file. Taken separately — a lock per cascade and
-// none at all for the config — two concurrent area edits interleave: each reads
-// the pre-edit config, each writes the whole file back, and the loser's
-// declaration is gone while its cascade is on disk. Both processes exit 0, so
-// nothing ever says to rerun, and the members it moved are write-refused from
-// then on.
-//
-// It blocks rather than refusing, matching every other store mutation: the other
-// holder is another nibs process finishing one operation.
-//
-// THE RELOAD IS WHY THE BLOCKING IS SAFE. Waiting here means another process was
-// mid-write, and this one has been holding the snapshot it loaded at startup the
-// whole time. A `nibs config set-prefix` renames every file in the store, so the
-// path each member carried is then a name nothing is at, and a cascade over
-// those paths writes each member back under its pre-rename name — leaving the
-// store with more files than it had, under a prefix the config no longer
-// declares. Reading the store again HERE, rather than refusing over a store that
-// moved, is what makes a concurrent rename an ordinary event: the cascade
-// proceeds against the paths the store holds now.
-//
-// Core.Load re-reads BOTH the nibs and the store's areas.yml, and it is that
-// re-read vocabulary the verb is handed. The other holder this command waited on
-// is very often ANOTHER AREA EDIT, so the vocabulary is the half likeliest to
-// have moved: deciding from the startup snapshot resolves `--move-to <area>`
-// against a node a concurrent `nibs area rm` has already retired, and asks the
-// cascade's membership question over a tree a concurrent `nibs area rename` has
-// already reshaped — where a member sitting on a path this process never loaded
-// answers "not a member" and is left on it after the node above it is renamed or
-// retired away. Either way both processes exit 0 and those members are
-// write-refused from then on, which is the same permanent damage the locking
-// above exists to prevent.
-//
-// The vocabulary is the ONE part of a store's configuration a reload may
-// replace, and it is replaced here: it lives behind an atomic pointer precisely
-// so a reload cannot race the off-lock readers (Core.ValidateArea and the
-// GraphQL pre-check that reaches it). Everything in config.yml is left alone and
-// stays fixed at construction — Core reads it off-lock in around thirty places
-// (ValidateEnums, configPrefix and its callers) and hands the pointer out raw
-// through Config(), all resting on that. What this verb still holds from startup
-// is App.StartupAreas, kept only to word a refusal about what moved.
-//
-// A failure to re-read is a REFUSAL rather than a fallback to the startup copy:
-// an areas edit is a cascading rewrite of the store, planning it is about to
-// read that very file anyway, and refusing here leaves the store untouched where
-// a fallback would decide from a snapshot with no evidence it is still current.
-func beginAreaEdit(app *App, jsonMode bool) (*nibcore.StoreLock, *config.Areas, error) {
-	lock, err := nibcore.AcquireStoreLock(app.Core.Root())
-	if err != nil {
-		return nil, nil, cmdError(jsonMode, output.ErrFileError,
-			"this store's write lock could not be taken, and an areas edit rewrites both the nibs and the vocabulary so it must hold one: %v", err)
-	}
-	if err := app.Core.Load(); err != nil {
-		_ = lock.Release()
-		return nil, nil, cmdError(jsonMode, output.ErrFileError,
-			"nothing was written: re-reading this store's areas vocabulary under its write lock failed: %v", err)
-	}
-	areas := app.Core.Areas()
-
-	// Absence is carried in the vocabulary itself rather than re-observed on the
-	// path, the same way Core.mintingVocabulary carries it: config.LoadAreas
-	// answers a MISSING file with an empty vocabulary and a nil error, so an
-	// areas.yml that vanished between this process starting and the lock being
-	// granted arrives here declaring nothing — indistinguishable from a
-	// concurrent `area rm` having retired every node, which is the cause
-	// areaRetiredWhileWaiting would then name. `.nibs` is its own git repository
-	// in this project, so a `git -C .nibs checkout` under a waiting command is
-	// the ordinary way in.
-	//
-	// It takes BOTH halves to say the file vanished, and only that shape is
-	// refused here. A store that never had an areas.yml reaches this line with
-	// the same empty vocabulary and is a legitimate shape — the store-resolution
-	// evidence rule accepts a real directory named `.nibs`, and `nibs list` and
-	// `nibs area list` both serve it — so refusing it would name a file to
-	// restore that never existed, and would reclassify an undamaged store from
-	// VALIDATION to FILE_ERROR. It falls through to requireDeclaredArea, whose
-	// "declares no areas" is both the true cause and the reachable remedy.
-	if app.StartupAreas().LoadedFromFile() && !areas.LoadedFromFile() {
-		_ = lock.Release()
-		return nil, nil, cmdError(jsonMode, output.ErrFileError,
-			"nothing was written: this store's areas vocabulary could not be read under its write lock — %s does not exist; restore it before editing the areas it declares",
-			sanitizeFilePath(areas.Path()))
-	}
-	return lock, areas, nil
-}
-
-// areaRetiredWhileWaiting reports that path was declared when this process
-// loaded the store and is not declared now — what another nibs process
-// finishing an `area rm` or `area rename` while this one waited for the store's
-// write lock leaves behind.
-//
-// The startup snapshot is consulted for this ONE purpose: to word a refusal.
-// Every decision the verb makes is made from the vocabulary the store declares
-// NOW, and this only tells a caller whose argument was true when they typed it
-// apart from one who named a path that never existed — so a wrong answer costs a
-// sentence and never a write. nibcore.StoreRePrefixedError carries its Loaded
-// prefix on the same terms.
-//
-// A Core holding no config answers false, leaving the ordinary undeclared-path
-// refusal to speak: with nothing loaded there is no earlier state to have
-// diverged from.
-func areaRetiredWhileWaiting(app *App, areas *config.Areas, path string) bool {
-	return areaDeclaredAtStartup(app, path) && !areas.IsValid(path)
-}
-
-// areaDeclaredAtStartup reports that path was in the vocabulary this process
-// loaded. It is the startup half of every question a verb asks about what moved
-// under it, and never on its own grounds for a write: a snapshot cannot say what
-// the store declares NOW.
-func areaDeclaredAtStartup(app *App, path string) bool {
-	return path != "" && app.StartupAreas().IsValid(path)
-}
-
-// refuseAreaRetiredWhileWaiting refuses the node a verb was told to rename or
-// retire, once it is gone from the store the lock was finally granted over.
-//
-// config.PlanRenameStoredArea and PlanRemoveStoredArea already refuse this — the
-// plan is resolved against the file — but as "declares no area", which reads as
-// a typo the caller did not make, and as a VALIDATION error, which says the
-// argument was bad. Neither is true: the argument was declared when it was
-// typed, so this is classified with every other refusal over a store the
-// filesystem moved out from under a command.
-//
-// It prescribes the listing rather than a rerun. A rerun repairs a partial
-// write; nothing here was written, and the node the caller named is not coming
-// back — what they need is the vocabulary as it now stands.
-func refuseAreaRetiredWhileWaiting(jsonMode bool, path string) error {
-	return cmdError(jsonMode, output.ErrFileError,
-		"nothing was written: this store declared area %s when this command started and does not declare it now — another nibs process retired or renamed it while this one waited for the store's write lock; `nibs area list` prints the vocabulary as it now stands",
-		quotedArea(path))
-}
-
-// planAreaEdit resolves the config edit before its caller writes a single nib.
-//
-// The order is the fix for a partial failure a rerun could never repair. The
-// members are rewritten first so that a rerun finds fewer of them and finishes
-// the job — but that only works if the config edit's REMAINING failure modes are
-// transient. Two of them are not: a vocabulary that inherits any of its content
-// — through an anchor, an alias or a merge key — resolves for the loaded model
-// and is invisible to the file editor, and a config holding a second YAML
-// document cannot be rewritten from the first one alone. Discovered after the cascade, either leaves the members carrying an
-// undeclared path — write-refused, with a printed remedy that fails identically
-// forever. Discovered here, they are a refusal over an untouched store.
-//
-// The split in exit codes follows the same line: config.AreaEditRefusal is about
-// the file's CONTENT, which is the caller's to fix, and anything else is the
-// filesystem's.
-func planAreaEdit(jsonMode bool, plan func() (*config.StoredAreaEdit, error)) (*config.StoredAreaEdit, error) {
-	edit, err := plan()
-	if err == nil {
-		return edit, nil
-	}
-	var refusal *config.AreaEditRefusal
-	if errors.As(err, &refusal) {
-		return nil, cmdError(jsonMode, output.ErrValidation, "%v", err)
-	}
-	return nil, cmdError(jsonMode, output.ErrFileError, "%v", err)
+		areaDispositionVerb(e.Disposition), areaNibCount(len(e.Written)), quotedArea(e.Path),
+		sanitizeFilePath(e.File), e.Cause, quotedArea(e.Path), areaDispositionFlag(e.Disposition))
 }
 
 // --- shared ----------------------------------------------------------------
 
-// requireDeclaredArea refuses a path the store's vocabulary does not declare.
+// areaEditRefusal words the refusals every area verb shares, and is the last
+// word on an error none of the per-verb formatters claimed.
 //
-// The two directions are separate messages for the reason config.AreaError
-// separates them: "must be one of" followed by nothing reads as a bug in nibs,
-// where the real answer is that this project has never declared a vocabulary —
-// which is a config edit and not a different argument. Neither branch prescribes
-// a command: the declared set IS the repair for the first, and the second names
-// a file to edit.
-func requireDeclaredArea(areas *config.Areas, jsonMode bool, path, verb string) error {
-	if path != "" && areas.IsValid(path) {
-		return nil
-	}
-	if !areas.Declared() {
+// verb names what the caller asked for, for the one refusal that has to say what
+// there is none of. The two directions of an undeclared path are separate
+// messages for the reason config.AreaError separates them: "must be one of"
+// followed by nothing reads as a bug in nibs, where the real answer is that this
+// project has never declared a vocabulary — which is a config edit and not a
+// different argument. Neither branch prescribes a command: the declared set IS
+// the repair for the first, and the second names a file to edit.
+//
+// The exit classes follow one line: what the caller sent is theirs to fix
+// (validation), and a store the filesystem moved out from under the command is
+// not (file error). config.AreaEditRefusal is about the file's CONTENT and lands
+// on the first side; anything left over is the filesystem's.
+func areaEditRefusal(jsonMode bool, err error, verb string) error {
+	var undeclared *nibcore.AreaUndeclaredError
+	if errors.As(err, &undeclared) {
+		if !undeclared.Areas.Declared() {
+			return cmdError(jsonMode, output.ErrValidation,
+				"this store declares no areas, so there is none to %s — declare an `areas:` block in %s first",
+				areaPathVerb(undeclared.Role, verb), sanitizeFilePath(undeclared.Areas.Path()))
+		}
 		return cmdError(jsonMode, output.ErrValidation,
-			"this store declares no areas, so there is none to %s — declare an `areas:` block in %s first",
-			verb, sanitizeFilePath(areas.Path()))
+			"this store declares no area %s: the declared areas are %s",
+			quotedArea(undeclared.Path), undeclared.Areas.List())
 	}
-	return cmdError(jsonMode, output.ErrValidation,
-		"this store declares no area %s: the declared areas are %s",
-		quotedArea(path), areas.List())
-}
-
-// areaMembers returns the ids of every nib assigned at or below path, in id
-// order — the set a retire refuses over and a rename cascades through, read the
-// same way Core.RewriteAreaAssignments reads it.
-//
-// The stored pointers All() hands back are read into plain strings immediately,
-// per internal/graph's live-pointer discipline: nothing here holds one across
-// the writes below.
-func areaMembers(app *App, areas *config.Areas, path string) []string {
-	var ids []string
-	for _, b := range app.Core.All() {
-		if areas.IsWithin(b.Area, path) {
-			ids = append(ids, b.ID)
+	var retired *nibcore.AreaRetiredWhileWaitingError
+	if errors.As(err, &retired) {
+		// config.PlanRenameStoredArea and PlanRemoveStoredArea refuse this too —
+		// the plan is resolved against the file — but as "declares no area",
+		// which reads as a typo the caller did not make, and as a VALIDATION
+		// error, which says the argument was bad. Neither is true: the argument
+		// was declared when it was typed, so this is classified with every other
+		// refusal over a store the filesystem moved out from under a command.
+		//
+		// It prescribes the listing rather than a rerun. A rerun repairs a
+		// partial write; nothing here was written, and the node the caller named
+		// is not coming back — what they need is the vocabulary as it now stands.
+		return cmdError(jsonMode, output.ErrFileError,
+			"nothing was written: this store declared area %s when this command started and does not declare it now — another nibs process retired or renamed it while this one waited for the store's write lock; `nibs area list` prints the vocabulary as it now stands",
+			quotedArea(retired.Path))
+	}
+	var vanished *nibcore.AreaVocabularyVanishedError
+	if errors.As(err, &vanished) {
+		return cmdError(jsonMode, output.ErrFileError,
+			"nothing was written: this store's areas vocabulary could not be read under its write lock — %s does not exist; restore it before editing the areas it declares",
+			sanitizeFilePath(vanished.File))
+	}
+	var ioErr *nibcore.AreaEditIOError
+	if errors.As(err, &ioErr) {
+		switch ioErr.Phase {
+		case nibcore.AreaEditPhaseLock:
+			return cmdError(jsonMode, output.ErrFileError,
+				"this store's write lock could not be taken, and an areas edit rewrites both the nibs and the vocabulary so it must hold one: %v", ioErr.Cause)
+		case nibcore.AreaEditPhaseLoadVocabulary:
+			return cmdError(jsonMode, output.ErrFileError,
+				"nothing was written: re-reading this store's areas vocabulary under its write lock failed: %v", ioErr.Cause)
+		case nibcore.AreaEditPhaseLoadNibs:
+			return cmdError(jsonMode, output.ErrFileError,
+				"nothing was written: re-reading this store's nibs under its write lock failed: %v", ioErr.Cause)
+		case nibcore.AreaEditPhaseReload:
+			return cmdError(jsonMode, output.ErrFileError,
+				"both halves of this edit landed on disk, and re-reading the vocabulary it just wrote then failed: %v — there is nothing to rerun; until that file can be read again this store answers from the vocabulary as it was before the edit",
+				ioErr.Cause)
 		}
 	}
-	sort.Strings(ids)
-	return ids
+	var refusal *config.AreaEditRefusal
+	if errors.As(err, &refusal) {
+		// The refusal renders path-free by default, because the same sentence
+		// reaches an HTTP client through the area mutations. This reader owns the
+		// directory the store sits in, so it is named here.
+		return cmdError(jsonMode, output.ErrValidation, "%s", refusal.Naming(sanitizeFilePath(refusal.File)))
+	}
+	return cmdError(jsonMode, output.ErrFileError, "%v", err)
+}
+
+// areaPathVerb names what the caller asked to do with the path a refusal is
+// about. A --move-to target is the one role whose verb is not the command's own.
+func areaPathVerb(role nibcore.AreaPathRole, verb string) string {
+	if role == nibcore.AreaPathMoveTarget {
+		return "move work to"
+	}
+	return verb
+}
+
+// areaDeclaredAtStartup reports that path was in the vocabulary this process
+// loaded. It is the startup half of the one question a verb asks BEFORE calling
+// the store — whether a held argument refusal may be printed straight away — and
+// never on its own grounds for a write: a snapshot cannot say what the store
+// declares NOW. The store makes the same comparison under its own lock, from the
+// vocabulary it held before the edit re-read it, which for a one-shot command is
+// this same snapshot.
+//
+// A Core holding no vocabulary answers false, leaving the ordinary refusal to
+// speak: with nothing loaded there is no earlier state to have diverged from.
+func areaDeclaredAtStartup(app *App, path string) bool {
+	return path != "" && app.StartupAreas().IsValid(path)
+}
+
+// reportAreaEdit prints what an area edit did, adding the stale-symlink note
+// Areas.Save and SetStoredPrefix both owe: the atomic write replaced a link, so
+// whatever manages the target still holds the old vocabulary and will restore it.
+//
+// It names no live `nibs serve`, unlike `nibs config set-prefix` beside it. A
+// server watches the store's areas.yml and reloads it, so this edit reaches one
+// on its own — the restart that used to be owed here is not owed any more.
+func reportAreaEdit(jsonMode bool, msg string, res nibcore.AreaEditResult) error {
+	if res.StaleLinkTarget != "" {
+		file := sanitizeFilePath(res.Areas.Path())
+		target := sanitizeFilePath(res.StaleLinkTarget)
+		msg += fmt.Sprintf("\nNote: %s was a symlink to %s and is now a regular file; %s still declares the old vocabulary, so update or remove it",
+			file, target, target)
+	}
+	if jsonMode {
+		return output.SuccessMessage(msg)
+	}
+	ui.Println(msg)
+	return nil
 }
 
 // splitAreaPath separates a path into the path of its parent (empty at the top
@@ -854,18 +694,6 @@ func splitAreaPath(path string) (parent, name string) {
 		return "", path
 	}
 	return path[:i], path[i+len(config.AreaPathSeparator):]
-}
-
-// countDeclaredBelow counts the areas declared beneath path, which a retire
-// takes with it.
-func countDeclaredBelow(areas *config.Areas, path string) int {
-	n := 0
-	for _, declared := range areas.Paths() {
-		if declared != path && areas.IsWithin(declared, path) {
-			n++
-		}
-	}
-	return n
 }
 
 // quotedArea renders an area path as a quoted value inside a message. The path
@@ -904,25 +732,10 @@ func areaDeclaredCount(n int) string {
 	return fmt.Sprintf("%d areas", n)
 }
 
-// areaDisposition is what `nibs area rm` was told to do with the nibs assigned
-// at or below the area it is retiring.
-//
-// None is a legal answer rather than a missing one — an area nothing is assigned
-// to needs no disposition — and it is a THIRD case, not the absence of --move-to.
-// Deriving the wording from a `move bool` made the no-flag branch describe an
-// unassignment that never ran and prescribe dropping a flag never passed.
-type areaDisposition int
-
-const (
-	areaDispositionNone areaDisposition = iota
-	areaDispositionMove
-	areaDispositionUnassign
-)
-
-// areaDispositionFlag is the flag that asked for it, for a message telling the
-// caller to drop it. It is only ever reached for a disposition that was named.
-func areaDispositionFlag(d areaDisposition) string {
-	if d == areaDispositionMove {
+// areaDispositionFlag is the flag that asked for a disposition, for a message
+// telling the caller to drop it. It is only ever reached for one that was named.
+func areaDispositionFlag(d nibcore.AreaDisposition) string {
+	if d.Kind == nibcore.AreaDispositionMove {
 		return "--move-to"
 	}
 	return "--unassign"
@@ -930,35 +743,16 @@ func areaDispositionFlag(d areaDisposition) string {
 
 // areaDispositionVerb is the past tense a completed disposition reports in;
 // areaDispositionAction is the bare verb a refusal says there is nothing to do.
-func areaDispositionVerb(d areaDisposition) string {
-	if d == areaDispositionMove {
+func areaDispositionVerb(d nibcore.AreaDisposition) string {
+	if d.Kind == nibcore.AreaDispositionMove {
 		return "reassigned"
 	}
 	return "unassigned"
 }
 
-func areaDispositionAction(d areaDisposition) string {
-	if d == areaDispositionMove {
+func areaDispositionAction(d nibcore.AreaDisposition) string {
+	if d.Kind == nibcore.AreaDispositionMove {
 		return "reassign"
 	}
 	return "unassign"
-}
-
-// reportAreaEdit prints what an area edit did, adding the stale-symlink note
-// Areas.Save and SetStoredPrefix both owe: the atomic write replaced a link, so
-// whatever manages the target still holds the old vocabulary and will restore it.
-//
-// It names no live `nibs serve`, unlike `nibs config set-prefix` beside it. A
-// server watches the store's areas.yml and reloads it, so this edit reaches one
-// on its own — the restart that used to be owed here is not owed any more.
-func reportAreaEdit(app *App, jsonMode bool, msg, staleLink string, areas *config.Areas) error {
-	if staleLink != "" {
-		msg += fmt.Sprintf("\nNote: %s was a symlink to %s and is now a regular file; %s still declares the old vocabulary, so update or remove it",
-			sanitizeFilePath(areas.Path()), sanitizeFilePath(staleLink), sanitizeFilePath(staleLink))
-	}
-	if jsonMode {
-		return output.SuccessMessage(msg)
-	}
-	ui.Println(msg)
-	return nil
 }

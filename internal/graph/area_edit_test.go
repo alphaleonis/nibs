@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -74,11 +75,9 @@ func storedAreaOfNib(t *testing.T, core *nibcore.Core, id string) string {
 	return ""
 }
 
-// TestRenameAreaCascadesToMembers is the guard on step 4 of the sequence: the
-// member rewrite runs BETWEEN the plan and the config write, through
-// AreaEditor.RewriteAreaAssignments — the one primitive that takes the store
-// lock as proof rather than acquiring it, which is what keeps a resolver already
-// holding the per-descriptor flock from deadlocking on itself.
+// TestRenameAreaCascadesToMembers is the guard on the member rewrite: it runs
+// BETWEEN the plan and the config write, inside the one critical section the
+// store's own verb holds both of its locks across.
 //
 // A member assigned BELOW the renamed node keeps the remainder it carried, so
 // the two rows are not the same assertion twice: `web/ui` has to arrive at
@@ -160,7 +159,7 @@ func TestRenameAreaRefusesAnUndeclaredPath(t *testing.T) {
 	if err == nil {
 		t.Fatal("RenameArea accepted a path the store does not declare")
 	}
-	var ioErr *AreaEditIOError
+	var ioErr *nibcore.AreaEditIOError
 	if errors.As(err, &ioErr) {
 		t.Errorf("an undeclared path is a validation-class refusal, got the IO class: %v", err)
 	}
@@ -185,7 +184,7 @@ func TestRemoveAreaRefusesAnUndeclaredPath(t *testing.T) {
 	if err == nil {
 		t.Fatal("RemoveArea accepted a path the store does not declare")
 	}
-	var ioErr *AreaEditIOError
+	var ioErr *nibcore.AreaEditIOError
 	if errors.As(err, &ioErr) {
 		t.Errorf("an undeclared path is a validation-class refusal, got the IO class: %v", err)
 	}
@@ -218,7 +217,7 @@ func TestRenameAreaRefusesASiblingNameBeforeTouchingAMember(t *testing.T) {
 	if err == nil {
 		t.Fatal("RenameArea accepted a name a sibling already holds")
 	}
-	var ioErr *AreaEditIOError
+	var ioErr *nibcore.AreaEditIOError
 	if errors.As(err, &ioErr) {
 		t.Errorf("a sibling collision is a validation-class refusal, got the IO class: %v", err)
 	}
@@ -256,7 +255,7 @@ func TestRenameAreaArgumentRefusals(t *testing.T) {
 			if err == nil {
 				t.Fatalf("RenameArea(%q -> %q) was accepted", tt.path, tt.newName)
 			}
-			var ioErr *AreaEditIOError
+			var ioErr *nibcore.AreaEditIOError
 			if errors.As(err, &ioErr) {
 				t.Errorf("want a validation-class refusal, got the IO class: %v", err)
 			}
@@ -303,7 +302,7 @@ func TestRemoveAreaRefusesWhileMembersRemain(t *testing.T) {
 	if err == nil {
 		t.Fatal("RemoveArea retired an area with members and no disposition")
 	}
-	var ioErr *AreaEditIOError
+	var ioErr *nibcore.AreaEditIOError
 	if errors.As(err, &ioErr) {
 		t.Errorf("a member refusal is validation-class, got the IO class: %v", err)
 	}
@@ -436,7 +435,7 @@ func TestRemoveAreaDispositionRefusals(t *testing.T) {
 			if err == nil {
 				t.Fatalf("RemoveArea(%+v) was accepted", tt.input)
 			}
-			var ioErr *AreaEditIOError
+			var ioErr *nibcore.AreaEditIOError
 			if errors.As(err, &ioErr) {
 				t.Errorf("want a validation-class refusal, got the IO class: %v", err)
 			}
@@ -525,122 +524,464 @@ func TestAreaMutationTicksConfigChanged(t *testing.T) {
 	}
 }
 
-// areaEditorLoadFailure is the AreaEditor role over a real store with the
-// re-read under the lock made to fail. Everything else — the lock, the
-// vocabulary, the cascade — is the store's own, so only the branch under test
-// differs from an ordinary run.
-type areaEditorLoadFailure struct {
-	*nibcore.Core
-	err error
+// TestAreaEditRunsAlongsideANibUpdate is the lock-order regression guard.
+//
+// The store has two locks and ONE order they may be taken in: c.mu, then the
+// cross-process file lock (nibcore.Core.acquireWriteLock states it, and every
+// Core mutator obeys it). An area edit that took the file lock FIRST — as this
+// resolver did while it drove the verb step by step — and then reached back into
+// the store for the vocabulary, the member set and the cascade inverted that
+// order, and a concurrent updateNib holding c.mu while parked on the file lock
+// is the other half of a textbook ABBA. Nothing recovers from it: c.mu is never
+// released, so every read resolver in the process wedges too, and the file
+// lock's descriptor is never closed, so every other nibs process on the machine
+// blocks as well.
+//
+// THE GATE IS WHAT MAKES THE INTERLEAVING HAPPEN rather than hoping for it. A
+// third descriptor on the same lock file holds it, so both operations have to
+// queue for it and the order they queue in is this test's to choose: the area
+// edit first, then the update. Released, an inverted edit takes the lock it was
+// queued for and then asks for the mutex the update is holding, while the update
+// asks for the lock the edit now has. Without the gate the two simply do not
+// overlap — 1,600 updates against 8 renames finish in 50ms and never meet, which
+// is exactly how a deadlock guard passes while its subject is broken.
+//
+// The timeout is the assertion, not a nicety: a deadlocked pair cannot be
+// interrupted, so the guard has to report from a THIRD goroutine or it would
+// hang the suite it is part of.
+func TestAreaEditRunsAlongsideANibUpdate(t *testing.T) {
+	resolver, core := setupTestResolverWithAreas(t)
+	mustCreate(t, core, &nib.Nib{ID: "dl1", Title: "Member", Type: "task", Status: "todo", Area: "web"})
+	mustCreate(t, core, &nib.Nib{ID: "dl2", Title: "Bystander", Type: "task", Status: "todo"})
+
+	for round := range 4 {
+		// The vocabulary is renamed back and forth so every round is a real
+		// rename with a real member cascade rather than a refused no-op.
+		from, to := "web", "platform"
+		if round%2 == 1 {
+			from, to = to, from
+		}
+
+		gate, err := nibcore.AcquireStoreLock(core.Root())
+		if err != nil {
+			t.Fatalf("round %d: holding the store lock: %v", round, err)
+		}
+
+		renamed := make(chan error, 1)
+		go func() {
+			_, err := resolver.Mutation().RenameArea(context.Background(),
+				model.RenameAreaInput{Path: from, NewName: to})
+			renamed <- err
+		}()
+		// Queued first, so the released gate hands the file lock to the area
+		// edit — the arrival that makes an inverted order deadlock rather than
+		// merely serialize.
+		time.Sleep(100 * time.Millisecond)
+
+		updated := make(chan error, 1)
+		go func() {
+			title := fmt.Sprintf("spin %d", round)
+			_, err := resolver.Mutation().UpdateNib(context.Background(), "dl2",
+				model.UpdateNibInput{Title: &title})
+			updated <- err
+		}()
+		time.Sleep(100 * time.Millisecond)
+
+		if err := gate.Release(); err != nil {
+			t.Fatalf("round %d: releasing the gate: %v", round, err)
+		}
+
+		for pending := 2; pending > 0; pending-- {
+			select {
+			case err := <-renamed:
+				if err != nil {
+					t.Fatalf("round %d: RenameArea: %v", round, err)
+				}
+			case err := <-updated:
+				if err != nil {
+					t.Fatalf("round %d: UpdateNib: %v", round, err)
+				}
+			case <-time.After(20 * time.Second):
+				t.Fatalf("round %d: the area edit and the nib update deadlocked", round)
+			}
+		}
+	}
 }
 
-func (e areaEditorLoadFailure) Load() error { return e.err }
+// stubAreaWriter stands in for the store when what is under test is the SENTENCE
+// rather than the edit. Every failure these mutations word is a value the store
+// hands back, so a stub that hands back one value exercises exactly one branch
+// and nothing else — where driving a real store into each phase would need a
+// different fault injected per row.
+type stubAreaWriter struct {
+	res      nibcore.AreaEditResult
+	err      error
+	calls    int
+	warnings []string
+}
 
-// TestAreaEditNamesTheHalfOfTheReloadThatFailed: beginAreaEdit re-reads the
-// whole store, and Core.Load is two passes over two different files — the
-// vocabulary, then the nib walk. A message naming the vocabulary for a walk
-// failure sends the reader to the wrong file.
-func TestAreaEditNamesTheHalfOfTheReloadThatFailed(t *testing.T) {
+func (s *stubAreaWriter) AddArea(string, string, string) (nibcore.AreaEditResult, error) {
+	s.calls++
+	return s.res, s.err
+}
+
+func (s *stubAreaWriter) RenameArea(string, string) (nibcore.AreaEditResult, error) {
+	s.calls++
+	return s.res, s.err
+}
+
+func (s *stubAreaWriter) RemoveArea(string, nibcore.AreaDisposition) (nibcore.AreaEditResult, error) {
+	s.calls++
+	return s.res, s.err
+}
+
+func (s *stubAreaWriter) Warn(format string, args ...any) {
+	s.warnings = append(s.warnings, fmt.Sprintf(format, args...))
+}
+
+// TestAreaMutationsWordEveryIOPhase pins what this surface says for each phase
+// an area edit can fail in, and that the value it says it in is still the type
+// cmd/set.go's mutationErrCode classifies on.
+//
+// The wording and the type travel together on purpose: nibcore.AreaEditIOError
+// implements no Unwrap, so a surface cannot put its sentence in a wrapper and
+// keep the error classifiable — it re-stamps a copy instead.
+func TestAreaMutationsWordEveryIOPhase(t *testing.T) {
+	cause := errors.New("disk on fire")
 	tests := []struct {
 		name     string
-		err      error
-		want     string
-		unwanted string
+		err      *nibcore.AreaEditIOError
+		retire   bool
+		want     []string
+		unwanted []string
 	}{
 		{
-			name:     "the vocabulary half",
-			err:      &nibcore.AreasLoadError{Cause: errors.New("boom")},
-			want:     "areas vocabulary",
-			unwanted: "this store's nibs",
+			name: "the write lock",
+			err:  &nibcore.AreaEditIOError{Phase: nibcore.AreaEditPhaseLock, Cause: cause},
+			want: []string{"write lock could not be taken", "disk on fire"},
 		},
 		{
-			name:     "the nib walk",
-			err:      errors.New("boom"),
-			want:     "this store's nibs",
-			unwanted: "areas vocabulary",
+			name:     "the vocabulary half of the re-read",
+			err:      &nibcore.AreaEditIOError{Phase: nibcore.AreaEditPhaseLoadVocabulary, Cause: cause},
+			want:     []string{"nothing was written", "areas vocabulary"},
+			unwanted: []string{"this store's nibs"},
+		},
+		{
+			name:     "the nib half of the re-read",
+			err:      &nibcore.AreaEditIOError{Phase: nibcore.AreaEditPhaseLoadNibs, Cause: cause},
+			want:     []string{"nothing was written", "this store's nibs"},
+			unwanted: []string{"areas vocabulary"},
+		},
+		{
+			name: "a rename's cascade",
+			err: &nibcore.AreaEditIOError{
+				Phase: nibcore.AreaEditPhaseCascade, Path: "web", NewPath: "platform",
+				Written: []string{"a"}, Members: []string{"a", "b"}, Cause: cause,
+			},
+			want: []string{"rewrote 1 of the 2 nibs", `area "web"`, "rerun the same mutation"},
+		},
+		{
+			name: "a rename's vocabulary write",
+			err: &nibcore.AreaEditIOError{
+				Phase: nibcore.AreaEditPhaseWrite, Path: "web", NewPath: "platform",
+				Written: []string{"a", "b"}, Members: []string{"a", "b"}, Cause: cause,
+			},
+			want: []string{"rewrote 2 nibs", `to "platform"`, "rerun the same mutation"},
+		},
+		{
+			name: "a retire's cascade",
+			err: &nibcore.AreaEditIOError{
+				Phase: nibcore.AreaEditPhaseCascade, Path: "web",
+				Disposition: nibcore.UnassignAreaMembers(),
+				Written:     []string{"a"}, Members: []string{"a", "b"}, Cause: cause,
+			},
+			retire: true,
+			want:   []string{"unassigned 1 of the 2 nibs", "rerun the same mutation"},
+		},
+		{
+			name: "a retire's vocabulary write, with a disposition",
+			err: &nibcore.AreaEditIOError{
+				Phase: nibcore.AreaEditPhaseWrite, Path: "web",
+				Disposition: nibcore.MoveAreaMembersTo("auth"),
+				Written:     []string{"a", "b"}, Members: []string{"a", "b"}, Cause: cause,
+			},
+			retire: true,
+			want:   []string{"reassigned 2 nibs", "rerun WITHOUT moveTo"},
+		},
+		{
+			// The no-disposition branch is reachable only for an area nothing was
+			// assigned to, so it has nothing to report as done and no argument to
+			// drop — and saying otherwise would claim an unassignment that never
+			// ran.
+			name: "a retire's vocabulary write, with none",
+			err: &nibcore.AreaEditIOError{
+				Phase: nibcore.AreaEditPhaseWrite, Path: "web", Cause: cause,
+			},
+			retire:   true,
+			want:     []string{"nothing is assigned at or below it", "the store is as it was"},
+			unwanted: []string{"unassign", "moveTo", "persisted"},
+		},
+		{
+			name: "the re-read of the file it just wrote",
+			err: &nibcore.AreaEditIOError{
+				Phase: nibcore.AreaEditPhaseReload, Path: "web", Cause: cause,
+			},
+			want: []string{"both halves of this edit landed on disk", "nothing to rerun"},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resolver, core := setupTestResolverWithAreas(t)
-			resolver.AreaEditor = areaEditorLoadFailure{Core: core, err: tt.err}
-			before := storeSnapshot(t, core.Root())
+			resolver, _ := setupTestResolverWithAreas(t)
+			resolver.AreaWriter = &stubAreaWriter{err: tt.err}
 
-			_, err := resolver.Mutation().RenameArea(context.Background(), model.RenameAreaInput{Path: "web", NewName: "platform"})
+			var err error
+			if tt.retire {
+				_, err = resolver.Mutation().RemoveArea(context.Background(), model.RemoveAreaInput{Path: "web"})
+			} else {
+				_, err = resolver.Mutation().RenameArea(context.Background(),
+					model.RenameAreaInput{Path: "web", NewName: "platform"})
+			}
 			if err == nil {
-				t.Fatal("RenameArea reported success over a store it could not re-read")
+				t.Fatal("the mutation reported success over a failed edit")
 			}
-			var ioErr *AreaEditIOError
+			var ioErr *nibcore.AreaEditIOError
 			if !errors.As(err, &ioErr) {
-				t.Errorf("error = %v (%T), want the IO class", err, err)
+				t.Fatalf("error = %v (%T), want the IO class so `nibs query` exits 5", err, err)
 			}
-			if !strings.Contains(err.Error(), tt.want) {
-				t.Errorf("error = %q, want substring %q", err.Error(), tt.want)
+			if ioErr.Phase != tt.err.Phase {
+				t.Errorf("Phase = %d, want %d — the fields a later reader inspects must survive the wording", ioErr.Phase, tt.err.Phase)
 			}
-			if strings.Contains(err.Error(), tt.unwanted) {
-				t.Errorf("error = %q, want it not to blame %q", err.Error(), tt.unwanted)
+			for _, want := range tt.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error = %q, want substring %q", err.Error(), want)
+				}
 			}
-			assertStoreUnchanged(t, before, core.Root())
+			for _, unwanted := range tt.unwanted {
+				if strings.Contains(err.Error(), unwanted) {
+					t.Errorf("error = %q, want it not to carry %q", err.Error(), unwanted)
+				}
+			}
 		})
 	}
 }
 
-// areaEditorReloadFailure is the AreaEditor role over a real store with the
-// re-read of the file the edit just WROTE made to fail. Every other step —
-// including both writes — is the store's own, so the edit really does land
-// before the failure under test.
-type areaEditorReloadFailure struct {
-	*nibcore.Core
-	err error
-}
-
-func (e areaEditorReloadFailure) ReloadAreas() error { return e.err }
-
-// TestAreaMutationsReportAFailedReload: Core keeps the vocabulary it could read
-// when a reload fails, and that is the one the edit replaced — so a mutation
-// that ignored the failure would answer with the pre-edit vocabulary and report
-// success, which renders in a client as the edit not having happened.
-func TestAreaMutationsReportAFailedReload(t *testing.T) {
+// TestAreaMutationsAnswerArgumentsWithoutTheStore is finding #5's first half: a
+// question the arguments alone answer must not sit behind the store's write
+// lock, which is a blocking flock with no timeout that says nothing while it
+// waits. The stub's call count is the assertion — the store is never reached.
+func TestAreaMutationsAnswerArgumentsWithoutTheStore(t *testing.T) {
 	unassign := true
 	tests := []struct {
 		name string
-		call func(*Resolver) (*model.Config, error)
+		call func(*Resolver) error
+		want string
 	}{
 		{
-			name: "rename",
-			call: func(r *Resolver) (*model.Config, error) {
-				return r.Mutation().RenameArea(context.Background(), model.RenameAreaInput{Path: "web", NewName: "platform"})
+			name: "an empty new name",
+			call: func(r *Resolver) error {
+				_, err := r.Mutation().RenameArea(context.Background(), model.RenameAreaInput{Path: "web", NewName: ""})
+				return err
+			},
+			want: "none was given",
+		},
+		{
+			name: "a padded new name",
+			call: func(r *Resolver) error {
+				_, err := r.Mutation().RenameArea(context.Background(), model.RenameAreaInput{Path: "web", NewName: " ui"})
+				return err
+			},
+			want: "whitespace",
+		},
+		{
+			name: "a new name carrying the separator",
+			call: func(r *Resolver) error {
+				_, err := r.Mutation().RenameArea(context.Background(), model.RenameAreaInput{Path: "web", NewName: "a/b"})
+				return err
+			},
+			want: "is not a name",
+		},
+		{
+			name: "a name no store could read back",
+			call: func(r *Resolver) error {
+				_, err := r.Mutation().RenameArea(context.Background(),
+					model.RenameAreaInput{Path: "web", NewName: strings.Repeat("x", 201)})
+				return err
+			},
+			want: "bounded at 200",
+		},
+		{
+			name: "both dispositions at once",
+			call: func(r *Resolver) error {
+				target := "auth"
+				_, err := r.Mutation().RemoveArea(context.Background(),
+					model.RemoveAreaInput{Path: "web", MoveTo: &target, Unassign: &unassign})
+				return err
+			},
+			want: "two different dispositions",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resolver, _ := setupTestResolverWithAreas(t)
+			stub := &stubAreaWriter{}
+			resolver.AreaWriter = stub
+
+			err := tt.call(resolver)
+			if err == nil {
+				t.Fatal("the mutation was accepted")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("error = %q, want substring %q", err.Error(), tt.want)
+			}
+			if stub.calls != 0 {
+				t.Errorf("the store was asked %d times for a question the arguments answer", stub.calls)
+			}
+			var ioErr *nibcore.AreaEditIOError
+			if errors.As(err, &ioErr) {
+				t.Errorf("error = %v, want a validation-class refusal", err)
+			}
+		})
+	}
+}
+
+// TestAreaMutationReportsAReplacedSymlink: the answer is a Config, so the note
+// an edit owes when it replaced a symlinked areas.yml has nowhere to go on the
+// wire — it goes to the store's warning sink, where a running `nibs serve`
+// operator reads. Dropped, the mutation reports success over an edit that
+// whatever manages the link target is about to undo.
+func TestAreaMutationReportsAReplacedSymlink(t *testing.T) {
+	resolver, core := setupTestResolverWithAreas(t)
+	stub := &stubAreaWriter{res: nibcore.AreaEditResult{
+		Areas:           core.Areas(),
+		StaleLinkTarget: "/srv/vocab/areas.yml",
+	}}
+	resolver.AreaWriter = stub
+
+	if _, err := resolver.Mutation().RenameArea(context.Background(),
+		model.RenameAreaInput{Path: "web", NewName: "platform"}); err != nil {
+		t.Fatalf("RenameArea: %v", err)
+	}
+	if len(stub.warnings) != 1 {
+		t.Fatalf("warnings = %v, want the stale-link note", stub.warnings)
+	}
+	for _, want := range []string{"/srv/vocab/areas.yml", "symlink", "old vocabulary"} {
+		if !strings.Contains(stub.warnings[0], want) {
+			t.Errorf("warning = %q, want substring %q", stub.warnings[0], want)
+		}
+	}
+
+	// And an ordinary edit warns about nothing, so the note above is the
+	// replacement being reported and not a line every edit prints.
+	stub.res.StaleLinkTarget = ""
+	stub.warnings = nil
+	if _, err := resolver.Mutation().RenameArea(context.Background(),
+		model.RenameAreaInput{Path: "web", NewName: "platform"}); err != nil {
+		t.Fatalf("RenameArea: %v", err)
+	}
+	if len(stub.warnings) != 0 {
+		t.Errorf("warnings = %v, want none", stub.warnings)
+	}
+}
+
+// TestAreaMutationsNameNoPath is the mechanism behind the claim at the head of
+// area_edit.go: these messages reach an unauthenticated HTTP client, and an
+// absolute store path in one discloses the operating-system username and the
+// project layout.
+//
+// It drives REAL refusals through the real store — every refusal class the two
+// mutations can raise from a store that is intact — because the leak it closes
+// was per-branch: the planner's inner reason was already path-free and its
+// wrapper added the path, so a reader auditing one branch concluded the surface
+// was clean.
+//
+// What it does NOT cover is an IO failure's Cause: an operating-system error
+// embeds the path it failed on, and redacting that is a separate boundary from
+// this one. Those messages are reachable only from a store that is already
+// broken.
+func TestAreaMutationsNameNoPath(t *testing.T) {
+	unassign := true
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, core *nibcore.Core)
+		call  func(*Resolver) error
+	}{
+		{
+			name: "a path the store does not declare",
+			call: func(r *Resolver) error {
+				_, err := r.Mutation().RenameArea(context.Background(), model.RenameAreaInput{Path: "nosuch", NewName: "x"})
+				return err
 			},
 		},
 		{
-			name: "retire",
-			call: func(r *Resolver) (*model.Config, error) {
-				return r.Mutation().RemoveArea(context.Background(), model.RemoveAreaInput{Path: "web", Unassign: &unassign})
+			name: "a name a sibling already holds",
+			call: func(r *Resolver) error {
+				_, err := r.Mutation().RenameArea(context.Background(), model.RenameAreaInput{Path: "web/dashboard", NewName: "ui"})
+				return err
+			},
+		},
+		{
+			name: "a retire with members and no disposition",
+			setup: func(t *testing.T, core *nibcore.Core) {
+				mustCreate(t, core, &nib.Nib{ID: "np1", Title: "Member", Type: "task", Status: "todo", Area: "web"})
+			},
+			call: func(r *Resolver) error {
+				_, err := r.Mutation().RemoveArea(context.Background(), model.RemoveAreaInput{Path: "web"})
+				return err
+			},
+		},
+		{
+			name: "a disposition with nothing to dispose of",
+			call: func(r *Resolver) error {
+				_, err := r.Mutation().RemoveArea(context.Background(), model.RemoveAreaInput{Path: "web", Unassign: &unassign})
+				return err
+			},
+		},
+		{
+			// The planner's refusal, which used to bake the absolute areas.yml
+			// path into its own text.
+			name: "a vocabulary these edits cannot address",
+			setup: func(t *testing.T, core *nibcore.Core) {
+				if err := os.WriteFile(store.NewLayout(core.Root()).AreasPath(), []byte(
+					"defaults: &d\n    description: shared\nareas:\n    - name: web\n      <<: *d\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			call: func(r *Resolver) error {
+				_, err := r.Mutation().RenameArea(context.Background(), model.RenameAreaInput{Path: "web", NewName: "platform"})
+				return err
+			},
+		},
+		{
+			name: "a store declaring no areas at all",
+			setup: func(t *testing.T, core *nibcore.Core) {
+				if err := os.WriteFile(store.NewLayout(core.Root()).AreasPath(), []byte("areas: []\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			call: func(r *Resolver) error {
+				_, err := r.Mutation().RemoveArea(context.Background(), model.RemoveAreaInput{Path: "web"})
+				return err
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			resolver, core := setupTestResolverWithAreas(t)
-			mustCreate(t, core, &nib.Nib{ID: "rl1", Title: "Member", Type: "task", Status: "todo", Area: "web"})
-			resolver.AreaEditor = areaEditorReloadFailure{Core: core, err: errors.New("areas.yml went missing")}
+			if tt.setup != nil {
+				tt.setup(t, core)
+			}
 
-			cfg, err := tt.call(resolver)
+			err := tt.call(resolver)
 			if err == nil {
-				t.Fatalf("the mutation reported success and answered with %v", pathsOf(cfg.Areas))
+				t.Fatal("the mutation was accepted, so no refusal is under test")
 			}
-			var ioErr *AreaEditIOError
-			if !errors.As(err, &ioErr) {
-				t.Errorf("error = %v (%T), want the IO class", err, err)
+			if strings.Contains(err.Error(), core.Root()) {
+				t.Errorf("error = %q names the store root %s, which reaches an HTTP client verbatim", err.Error(), core.Root())
 			}
-			if !strings.Contains(err.Error(), "nothing to rerun") {
-				t.Errorf("error = %q, want it to say the edit needs no rerun", err.Error())
-			}
-
-			// The edit itself landed, which is what makes "nothing to rerun" the
-			// right remedy: this is a stale reader, not a half-written store.
-			if stored := storedAreasFile(t, core.Root()); strings.Contains(stored, "name: web") {
-				t.Errorf("the edit did not reach disk, so the failure under test is not the reload:\n%s", stored)
+			// The temp directory the store sits in, in case a message names the
+			// project rather than the store.
+			if parent := filepath.Dir(core.Root()); strings.Contains(err.Error(), parent) {
+				t.Errorf("error = %q names the project directory %s", err.Error(), parent)
 			}
 		})
 	}

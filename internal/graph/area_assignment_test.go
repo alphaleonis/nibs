@@ -42,7 +42,7 @@ func setupTestResolverWithAreas(t *testing.T) (*Resolver, *nibcore.Core) {
 		Blocking:   core,
 		Subscriber: core,
 		Orderer:    NewOrderer(core, core),
-		AreaEditor: core,
+		AreaWriter: core,
 	}, core
 }
 

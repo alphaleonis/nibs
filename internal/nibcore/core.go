@@ -279,6 +279,18 @@ func (c *Core) SetWarnWriter(w io.Writer) {
 	c.warnWriter = safetext.NewWriter(w)
 }
 
+// Warn reports a non-fatal note about this store to its warning sink — the same
+// channel the loader's per-file diagnostics use, and rendered through the same
+// safetext boundary, so a caller cannot bypass it.
+//
+// It is exported for a surface whose ANSWER has no room for a warning: the area
+// mutations return a Config, so the stale-symlink note an edit owes has nowhere
+// to go on the wire and would otherwise be dropped. It reports; it never
+// decides.
+func (c *Core) Warn(format string, args ...any) {
+	c.logWarn(format, args...)
+}
+
 // SetSearchIndex sets a custom search index implementation.
 // When set, Core uses this instead of lazily initializing a Bleve index.
 // It controls only the full-text leg of Search: Core unions direct ID
@@ -438,18 +450,26 @@ func (e *AreasLoadError) Unwrap() error { return e.Cause }
 // strength of the startup gate alone. Either way, what Load reports is what
 // disk holds.
 func (c *Core) Load() error {
-	// The vocabulary is read BEFORE the lock and before the nibs, and a
-	// malformed one aborts the load. It is authorization data — what an `area:`
-	// may say, what a filter may close over — so a store whose vocabulary cannot
-	// be honored must refuse on every route in rather than open with an empty
-	// one, which would make every assigned area undeclared at once.
-	if err := c.loadAreas(); err != nil {
-		return &AreasLoadError{Cause: err}
-	}
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	return c.loadLocked()
+}
+
+// loadLocked is Load with c.mu already held, for the area-vocabulary verbs:
+// each of those holds c.mu across its whole critical section (see editArea), so
+// the self-locking form would deadlock on its own mutex.
+//
+// The vocabulary is read BEFORE the nibs, and a malformed one aborts the load.
+// It is authorization data — what an `area:` may say, what a filter may close
+// over — so a store whose vocabulary cannot be honored must refuse on every
+// route in rather than open with an empty one, which would make every assigned
+// area undeclared at once. loadAreas writes c.areas through an atomic pointer
+// and takes no lock of its own, so it is equally correct on both routes.
+func (c *Core) loadLocked() error {
+	if err := c.loadAreas(); err != nil {
+		return &AreasLoadError{Cause: err}
+	}
 	return c.loadFromDisk()
 }
 

@@ -21,12 +21,56 @@ import (
 // the caller's argument to fix (a validation refusal), where a filesystem error
 // is the machine's. Nothing about a refusal is repaired by rerunning, which is
 // the sentence the CLI must not print for one.
-type AreaEditRefusal struct{ msg string }
+//
+// Error() NAMES NO FILESYSTEM PATH, and that is a mechanism rather than a
+// convention: these refusals reach an unauthenticated HTTP client through the
+// area mutations, which has no business knowing where the store sits on disk —
+// an absolute path there discloses the operating-system username and the
+// project layout. A refusal about a file carries it in File and renders it only
+// through Naming, so a new call site leaks nothing by forgetting to redact.
+type AreaEditRefusal struct {
+	// File is the config file the refusal is about, empty for one that judges
+	// an argument alone.
+	File string
+
+	// msg is the sentence Error() gives: File rendered as a path-free noun
+	// phrase. format and args re-render the SAME sentence naming the file, and
+	// are nil when File is empty. One format string produces both, so the two
+	// renderings cannot drift apart.
+	msg    string
+	format string
+	args   []any
+}
 
 func (e *AreaEditRefusal) Error() string { return e.msg }
 
+// Naming renders this refusal with the file named as file — for a surface whose
+// reader owns the directory the store sits in, which is the CLI and not the
+// wire. A refusal that names no file is returned unchanged.
+func (e *AreaEditRefusal) Naming(file string) string {
+	if e.format == "" {
+		return e.msg
+	}
+	return fmt.Sprintf(e.format, append([]any{file}, e.args...)...)
+}
+
 func refuseAreaEdit(format string, a ...any) error {
 	return &AreaEditRefusal{msg: fmt.Sprintf(format, a...)}
+}
+
+// storedAreasNoun is how a path-free refusal refers to the file it is about.
+const storedAreasNoun = "this store's areas.yml"
+
+// refuseAreaEditAbout builds a refusal about a config FILE. format's FIRST verb
+// is the file, and it is rendered twice from that one format: path-free for
+// Error, named for Naming.
+func refuseAreaEditAbout(file, format string, a ...any) error {
+	return &AreaEditRefusal{
+		File:   file,
+		msg:    fmt.Sprintf(format, append([]any{storedAreasNoun}, a...)...),
+		format: format,
+		args:   a,
+	}
 }
 
 // StoredAreaEdit is one edit to a store's `areas:` block, resolved against the
@@ -311,11 +355,11 @@ func planStoredAreaEdit(storeDir string, missing missingVocabulary, edit func(ar
 		parsed, err := soleConfigDocument(data)
 		if err != nil {
 			if errors.Is(err, errMultipleConfigDocuments) {
-				return nil, refuseAreaEdit(
+				return nil, refuseAreaEditAbout(path,
 					"%s holds more than one YAML document, and editing its areas would rewrite the file from the first one alone — move anything after the `---` into its own file, or delete the marker if nothing follows it, then rerun",
-					path)
+				)
 			}
-			return nil, refuseAreaEdit("parsing %s: %v", path, err)
+			return nil, refuseAreaEditAbout(path, "parsing %s: %v", err)
 		}
 		doc = parsed
 	case errors.Is(readErr, fs.ErrNotExist) && missing == synthesizeMissingVocabulary:
@@ -324,26 +368,26 @@ func planStoredAreaEdit(storeDir string, missing missingVocabulary, edit func(ar
 		// file which is not there was holding: no comments, no key this build
 		// does not model, nothing.
 	case errors.Is(readErr, fs.ErrNotExist):
-		return nil, refuseAreaEdit("no areas vocabulary at %s to edit; a store declares its areas there, beside its config.yml", path)
+		return nil, refuseAreaEditAbout(path, "no areas vocabulary at %s to edit; a store declares its areas there, beside its config.yml")
 	default:
 		return nil, readErr
 	}
 
 	if found := inheritsContent(&doc); found != nil {
-		return nil, refuseAreaEdit(
+		return nil, refuseAreaEditAbout(path,
 			"%s uses %s at line %d, and these edits cannot safely change a file that inherits any of its content — rewrite it without anchors, aliases or merge keys, writing out in place whatever they stand for, then rerun",
-			path, found.construct, found.line)
+			found.construct, found.line)
 	}
 	if err := yaml.Unmarshal(data, new(Areas)); err != nil {
 		// Not "the edit would leave it unreadable": the file arrived that way,
 		// so the remedy is to repair the file and not to change the argument.
-		return nil, refuseAreaEdit("%s cannot be read as an areas vocabulary (%v) — repair it, then rerun", path, err)
+		return nil, refuseAreaEditAbout(path, "%s cannot be read as an areas vocabulary (%v) — repair it, then rerun", err)
 	}
 
 	bootstrap := missing == synthesizeMissingVocabulary
 	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
 		if !bootstrap {
-			return nil, refuseAreaEdit("%s declares no areas to edit", path)
+			return nil, refuseAreaEditAbout(path, "%s declares no areas to edit")
 		}
 		// A file the decoder produced no node for: soleConfigDocument answers
 		// that way only for the io.EOF the decoder reports when the stream holds
@@ -387,7 +431,7 @@ func planStoredAreaEdit(storeDir string, missing missingVocabulary, edit func(ar
 		}
 	}
 	if areas == nil || areas.Kind != yaml.SequenceNode {
-		return nil, refuseAreaEdit("%s declares no `areas:` block", path)
+		return nil, refuseAreaEditAbout(path, "%s declares no `areas:` block")
 	}
 	if err := edit(areas); err != nil {
 		return nil, err
@@ -409,16 +453,16 @@ func planStoredAreaEdit(storeDir string, missing missingVocabulary, edit func(ar
 	// edit that adds nothing at all. ValidateAreaName answers for the argument,
 	// where the message can name what to shorten.
 	if len(out) > MaxConfigBytes {
-		return nil, refuseAreaEdit(
+		return nil, refuseAreaEditAbout(path,
 			"the edit would leave %s at %d bytes, past the %d-byte configuration limit, and a store whose areas.yml is over that limit cannot be opened by any command — declare fewer areas, or shorter names, then rerun",
-			path, len(out), MaxConfigBytes)
+			len(out), MaxConfigBytes)
 	}
 	var edited Areas
 	if err := yaml.Unmarshal(out, &edited); err != nil {
-		return nil, refuseAreaEdit("the edit would leave %s unreadable: %v", path, err)
+		return nil, refuseAreaEditAbout(path, "the edit would leave %s unreadable: %v", err)
 	}
 	if err := edited.Validate(); err != nil {
-		return nil, refuseAreaEdit("the edit would leave %s declaring an unusable vocabulary: %v", path, err)
+		return nil, refuseAreaEditAbout(path, "the edit would leave %s declaring an unusable vocabulary: %v", err)
 	}
 	return &StoredAreaEdit{path: path, out: out}, nil
 }
