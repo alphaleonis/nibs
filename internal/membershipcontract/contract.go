@@ -51,9 +51,7 @@
 // So a new decision carries an obligation nothing enforces: add a fixture row
 // whose answer it moves, add a mutant that undoes it, mirror it in
 // web/src/lib/membership.ts, and run `task codegen`. That is the price of a
-// fixture-bounded contract, and it is cheaper than the alternative — the two
-// rules were fingerprinted structurally for a while, and five of six
-// behavior-preserving edits to them reddened the fingerprint.
+// fixture-bounded contract.
 //
 // TestRenderedTypeIsTheWireType holds the projection those tests answer over:
 // `type` is the effective type and `parentId` the resolved parent.
