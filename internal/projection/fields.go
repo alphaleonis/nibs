@@ -11,6 +11,10 @@
 // is kept separate because the field-mask engine needs a store accessor
 // (Resolver) and an ordered result type that a pure string-formatting package
 // like internal/output has no business depending on.
+//
+// CANONICAL INVARIANT (one projection engine for every transport). This doc is
+// its single authoritative statement; comments in cmd and internal/graph defer
+// here rather than re-derive it.
 package projection
 
 import (

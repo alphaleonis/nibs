@@ -261,6 +261,10 @@ func New(root string, cfg *config.Config) *Core {
 // order is always c.mu then this file lock, so cooperating processes serialize
 // their mutations without any deadlock. Held only for the span of one mutating
 // operation so a long-lived serve process never starves concurrent CLIs.
+//
+// CANONICAL INVARIANT (the c.mu-then-flock lock order). This doc is its single
+// authoritative statement; sibling comments across internal/nibcore defer here
+// rather than re-derive it.
 func (c *Core) acquireWriteLock() (func() error, error) {
 	return acquireFileLock(c.lockPath)
 }

@@ -13,6 +13,10 @@ import (
 	"github.com/alphaleonis/nibs/internal/nibtypes"
 )
 
+// CANONICAL INVARIANT (what survives gqlgen codegen in schema.resolvers.go).
+// This doc is its single authoritative statement; comments in internal/graph and
+// cmd defer here rather than re-derive it.
+//
 // schema.resolvers.go is generated but not disposable: gqlgen rewrites it on
 // every codegen and carries parts of the existing file into the new one. Which
 // parts is the whole subtlety. Resolver bodies survive as raw source; a

@@ -7,6 +7,10 @@ import (
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
+// CANONICAL INVARIANT (link-id canonicalization at the disk-read boundary).
+// This doc is its single authoritative statement; sibling comments across
+// internal/nibcore defer here rather than re-derive it.
+//
 // Link-id canonicalization: every id stored in c.nibs is a FULL id.
 //
 // A nib file may name its parent, milestone or a blocker by SHORT id

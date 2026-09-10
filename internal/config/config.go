@@ -766,6 +766,10 @@ func (c *Config) GetDefaultType() string {
 // Statuses are hardcoded and not configurable, so the receiver is currently
 // never dereferenced — but callers should not depend on that: hand it a real
 // *Config (config.Default() if nothing better is in reach).
+//
+// CANONICAL INVARIANT (the closed-status answer). This doc is its single
+// authoritative statement; comments across cmd, internal/graph, internal/nibcore
+// and internal/nibcontext defer here rather than re-derive it.
 func (c *Config) IsClosedStatus(name string) bool {
 	if s := c.GetStatus(name); s != nil {
 		return s.Role.Closed()
@@ -797,6 +801,11 @@ func (c *Config) ClosedStatusNames() []string {
 // dependents.
 // Like IsClosedStatus the receiver is currently never dereferenced, but callers
 // should hand it a real *Config anyway (config.Default() if nothing better).
+//
+// CANONICAL INVARIANT (the blocker-release answer, deliberately distinct from
+// closed). This doc is its single authoritative statement; the blocking graph in
+// internal/graph and the CLI's readiness surface defer here rather than
+// re-derive it.
 func (c *Config) StatusReleasesDependents(name string) bool {
 	if s := c.GetStatus(name); s != nil {
 		return s.Role.ReleasesDependents()

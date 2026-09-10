@@ -21,6 +21,10 @@ var ErrAlreadyReported = errors.New("already reported to stdout")
 // process exit status via ExitCode. It also carries the user-visible
 // message and a Reported flag.
 //
+// CANONICAL INVARIANT (the code-to-exit-status boundary contract). This doc is
+// its single authoritative statement; comments in cmd and internal/graph defer
+// here rather than re-derive it.
+//
 // When Reported is true the command has already written the user-visible
 // report to stdout — either the --json error envelope (Error) or get's
 // single-stream text line (TextError) — so the boundary must NOT also print

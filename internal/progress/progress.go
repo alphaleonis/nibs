@@ -23,8 +23,10 @@ import (
 // reuse, so `nibs get <id> -f progress` and those views report the same number.
 // Build it only via ByCount — do not fork the rule.
 //
-// Canonical definition (single source of truth). Each child falls into exactly
-// one of three buckets, keyed on its status's ROLE (config.StatusRole):
+// CANONICAL INVARIANT (the child-completion rollup). This doc is its single
+// authoritative statement; the recipe views in cmd and internal/graph defer here
+// rather than re-derive it. Each child falls into exactly one of three buckets,
+// keyed on its status's ROLE (config.StatusRole):
 //
 //   - Done    = children whose status carries the done role ("completed") — the
 //     work actually happened. They also count toward Total.

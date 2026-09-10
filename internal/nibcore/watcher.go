@@ -895,6 +895,10 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 	// this decision and fanOut — resolves by dropping the batch for it (see fanOut
 	// and Subscribe): correct under the drop contract, and strictly safer than
 	// leaking a live pointer.
+	// CANONICAL INVARIANT (the c.mu-then-subMu lock order). This block is its
+	// single authoritative statement; sibling comments across internal/nibcore
+	// defer here rather than re-derive it.
+
 	cloningPayloads := c.hasPayloadSubscribers()
 	if cloningPayloads {
 		for i := range events {

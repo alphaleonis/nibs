@@ -75,10 +75,11 @@ type NibReader interface {
 	//     (Parent, BlockedBy, Status, Type, Priority, Tags, Title, timestamps,
 	//     Order, ...) off live pointers before the final snapshot — safe precisely
 	//     because the canonical rule guarantees those fields are never rewritten in
-	//     place on a published pointer (Core.Update, the watcher's create/write
-	//     branch, and — as of nib nibs-pyei — RemoveLinksTo/FixBrokenLinks all
-	//     install a fresh pointer; MigrateV0ToV1 stages every change on clones
-	//     and reinstalls them the same way).
+	//     place on a published pointer. Which mutators exist is deliberately not
+	//     restated here: nibcore.TestCoreMutators_FreezePartition classifies every
+	//     exported *Core method as mutator or non-mutator and fails on an
+	//     unclassified one, so that registry is the list and this prose cannot go
+	//     stale against it.
 	//
 	// Unlike Get (live pointer) the result is race-safe to read from later; ok is
 	// false when the nib is absent.
