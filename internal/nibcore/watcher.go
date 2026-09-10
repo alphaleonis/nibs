@@ -1000,7 +1000,7 @@ func (c *Core) isArchivedAbsPath(absPath string) bool {
 // path.
 //
 // Scanning the store ROOT instead of data/ would misread every ordinary move:
-// nib files no longer live there, so the scan would find nothing and the
+// nib files do not live there, so the scan would find nothing and the
 // removal branch would fall through to a genuine deletion, dropping a live nib
 // whose file is present on disk.
 func (c *Core) findRelPathByID(id string) (string, bool) {

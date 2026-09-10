@@ -13,11 +13,10 @@ import (
 // its own Blocking field is cleared, and its Version is stamped 1 — then every
 // changed nib is persisted. Returns the number of v0 nibs converted.
 //
-// This is the explicit-migration relocation of what the load path used to do
-// silently: it runs only under `nibs migrate`, on a store that already loaded
-// cleanly (the command gates on LoadDiagnostics first), and it is FAIL-LOUD —
-// the first persistence failure aborts with an error instead of the old
-// best-effort log-and-continue.
+// The conversion is explicit rather than silent: it runs only under
+// `nibs migrate`, on a store that already loaded cleanly (the command gates on
+// LoadDiagnostics first), and it is FAIL-LOUD — the first persistence failure
+// aborts with an error rather than logging and continuing.
 //
 // Persistence is TWO-PHASE, and the split is what makes a crashed run
 // resumable. The version stamp is the step's per-file completion record (v0

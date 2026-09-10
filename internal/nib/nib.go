@@ -498,11 +498,11 @@ func (b *Nib) EffectivePriority() string {
 // line) — the same first-line rule the migration header scan applies
 // (cmd/migrate's readFrontMatterHeader), so every consumer of this parse
 // (Core.Load, the watcher, computeStoredETag, the scans) shares ONE
-// definition of "not a nib file". Fence-less content used to parse into an
-// empty v0 nib: a README in the store became a phantom row every query
-// surfaced, writers could rewrite the document into a nib render, and the
-// migration scan called the same file "not a nib file" while check reported
-// all clear. Refusing here retires that class at the root; loaders degrade
+// definition of "not a nib file". Parsing fence-less content into an empty v0
+// nib instead makes a README in the store a phantom row every query surfaces,
+// lets writers rewrite the document into a nib render, and splits the migration
+// scan — which calls the same file "not a nib file" — from check, which reports
+// all clear. Refusing here closes that class at the root; loaders degrade
 // per file (log-and-skip into diagnostics), so one document never fails a
 // store.
 //

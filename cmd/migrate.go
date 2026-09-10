@@ -172,12 +172,10 @@ type logf func(format string, a ...any)
 // steps after it address the store's new location.
 //
 // plan and invalidatesLoad are DECLARED CAPABILITIES rather than things a gate
-// infers. Two gates used to read "any step with no per-file predicate is pending"
-// as "the layout step is pending", in opposite directions — one runs planLayout
-// when it holds, the other skips itself when it holds — and only the layout step
-// actually has the property both were reaching for. A second shape step would have
-// silently disabled the load gate for the whole run with nothing in the type or the
-// list to catch it.
+// infers. Inferring them — reading "any step with no per-file predicate is
+// pending" as "the layout step is pending" — holds only while the layout step is
+// the sole shape step: a second one would silently disable the load gate for the
+// whole run, with nothing in the type or the list to catch it.
 type migrationStep struct {
 	name, title string
 	pred        func(fmHeader) bool
@@ -564,10 +562,10 @@ func layoutClassifyFiles(env migrateEnv) (moves []layoutMove, declined []string,
 // of it.
 //
 // Planning and performing are separated so that every refusal this step can
-// raise is raised before the FIRST rename. The moves used to run unconditionally
-// and the config relocation validate afterwards, so a `nibs.path` refusal
-// arrived with the store already half-moved — recoverable by re-running, but a
-// gate that fires after the movement it guards is not a gate.
+// raise is raised before the FIRST rename. Moving unconditionally and validating
+// the config relocation afterwards lets a `nibs.path` refusal arrive with the
+// store already half-moved — recoverable by re-running, but a gate that fires
+// after the movement it guards is not a gate.
 type layoutPlan struct {
 	// relocateTo is where the WHOLE store directory moves, or "" when it is
 	// already at `<project>/.nibs`. See planStoreRelocation.
@@ -901,9 +899,9 @@ type configRelocation struct {
 
 // planConfigRelocation prepares moving the pre-layout `.nibs.yml` into the store
 // as config.yml, dropping the retired `nibs.path` key on the way. The key is not
-// cosmetic debris: every config `nibs init` used to write carries it, and a
-// config still carrying it is a hard load error — so relocating the file
-// verbatim would leave a store that refuses to open.
+// cosmetic debris: every pre-layout config carries it, and a config still
+// carrying it is a hard load error — so relocating the file verbatim would leave
+// a store that refuses to open.
 //
 // The rewrite goes through a YAML node tree rather than the Config struct so
 // that everything else in the file survives: comments, key order, and any key
@@ -1250,8 +1248,7 @@ func sameDir(a, b string) bool {
 // skipped target erases the edge from the source while the target never
 // receives it), and a duplicate id means the loaded store is not a faithful
 // picture of the directory. The refusal names every offending file and points
-// at `nibs check`; the deferral concept the old load-time migration carried is
-// deliberately gone.
+// at `nibs check`; there is deliberately no deferral path around such a file.
 func loadStoreForMigration(env migrateEnv) (*nibcore.Core, error) {
 	cfg, err := env.config()
 	if err != nil {
@@ -1387,12 +1384,12 @@ func (e *newerStoreError) render(list func([]string) string) string {
 // it was written by a newer nibs and this build must not touch the store. Which
 // files that question is ASKED of is newerVersionSpeaksForStore's, and it is
 // deliberately not "every fenced file" — `version:` is ordinary front matter
-// elsewhere, and one documentation page used to lock a store out of every
-// command including the migrate that would fix it. The
-// refusal is raised AFTER the walk completes rather than aborting at the first
-// such file, so it can name every newer file and every other problem the walk
-// collected — aborting mid-walk used to hide a coexisting broken file behind the
-// version refusal until the user repaired their way to it.
+// elsewhere, and one documentation page carrying it locks a store out of every
+// command including the migrate that would fix it. The refusal is raised AFTER
+// the walk completes rather than aborting at the first such file, so it can name
+// every newer file and every other problem the walk collected; aborting mid-walk
+// hides a coexisting broken file behind the version refusal until the user
+// repairs their way to it.
 func scanStore(env migrateEnv) (*storeScan, error) {
 	scan := &storeScan{counts: make([]int, len(migrationSteps))}
 
@@ -1850,11 +1847,9 @@ func gateContentClassifiable(env migrateEnv, scan *storeScan) gateResult {
 const olderHolderAdvice = "A `nibs serve` or `nibs tui` of this release or later cannot run while this migrates. Stop an OLDER one yourself — it does not take the interlock, and can write its pre-migration copy back afterwards."
 
 // confirmMigration pauses before the first change, so migrate's advice about a
-// holder it cannot see is something the reader can still act on.
-//
-// It used to print "Stop any running `nibs serve` before migrating." immediately
-// BEFORE applying, with no pause and no bypass flag — narration of work already
-// underway. Only --dry-run surfaced it in time to act.
+// holder it cannot see is something the reader can still act on. Printed
+// immediately BEFORE applying, with no pause and no bypass flag, that advice is
+// narration of work already underway — actionable only under --dry-run.
 //
 // INTERACTIVE ONLY, and deliberately unlike --force's policy for ambiguous files.
 // --force decides what happens to a user's files, which no script should do
@@ -2381,11 +2376,10 @@ var nibRenderFormat = nibFileFormat{
 }
 
 // nibFileVerdict is what the layout step concludes about one file it is deciding
-// whether to move into data/. Three answers rather than two, because the honest
-// middle one is what this step kept getting wrong: its bar used to be nib.Parse's
-// (a front-matter fence), which a documentation page clears, and raising it to
-// nib.Render's alone would leave a hand-authored nib behind — and a nib left
-// outside data/ is gone from every query with nothing said about it.
+// whether to move into data/. Three answers rather than two, because neither
+// single bar is right: nib.Parse's (a front-matter fence) is cleared by a
+// documentation page, and nib.Render's alone leaves a hand-authored nib behind —
+// and a nib left outside data/ is gone from every query with nothing said about it.
 type nibFileVerdict int
 
 const (
@@ -2806,9 +2800,9 @@ func migrateCmdError(err error) error {
 // somebody added on one side only.
 //
 // A gate that cannot be answered in advance says so, and says so UNCONDITIONALLY.
-// The note used to live in the `else` of the refusal branch, so it vanished the
-// moment any other gate fired — precisely the case where the user fixes what the
-// preview named and re-runs, and then meets the unpreviewed refusal anyway. Its
+// Confining the note to the `else` of the refusal branch drops it the moment any
+// other gate fires — precisely the case where the user fixes what the preview
+// named, re-runs, and then meets the unpreviewed refusal anyway. Its
 // whole purpose is that its silence must not read as all-clear, which makes
 // "printed only when everything else is clear" self-defeating.
 func reportDryRun(env migrateEnv, scan *storeScan) error {

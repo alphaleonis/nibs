@@ -165,8 +165,8 @@ type PriorityConfig struct {
 	Description string `yaml:"description,omitempty"`
 }
 
-// Config holds the nibs configuration.
-// Note: Statuses are no longer stored in config - they are hardcoded like types.
+// Config holds the nibs configuration. Statuses are hardcoded rather than
+// configured, like types.
 type Config struct {
 	Nibs NibsConfig `yaml:"nibs"`
 
@@ -260,9 +260,9 @@ func LoadFromStore(storeDir string) (*Config, error) {
 }
 
 // retiredPathProbe detects a `nibs.path:` key, which the store layout retired.
-// The key used to point the config at a data directory somewhere else; the
-// store directory now IS the data directory's parent, so a config still
-// carrying it describes a layout this build cannot honor. Refusing loudly
+// The key points the config at a data directory somewhere else; the store
+// directory IS the data directory's parent, so a config still carrying the key
+// describes a layout this build cannot honor. Refusing loudly
 // beats silently reading the key's value as decoration and operating on a
 // different directory than the user wrote down.
 //
@@ -632,9 +632,9 @@ func (c *Config) Save(storeDir string) (staleLinkTarget string, err error) {
 	}
 
 	// Keep the existing file's permissions; a config that has never existed gets
-	// the ordinary 0644 this used to hardcode for every case. A stat failure that is
-	// not "absent" is reported rather than answered with 0644 — that fallback could
-	// only widen a config whose real mode was narrower.
+	// the ordinary 0644. A stat failure that is not "absent" is reported rather
+	// than answered with 0644 — that fallback could only widen a config whose real
+	// mode was narrower.
 	perm := os.FileMode(0644)
 	info, statErr := os.Stat(path)
 	switch {

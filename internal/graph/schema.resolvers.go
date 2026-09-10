@@ -196,10 +196,9 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 	//
 	// All four enum fields land in this block, ABOVE the type-change branch that
 	// follows, so preValidateSubject between them sees the final subject and still
-	// precedes every step that writes to another nib's file. Priority and estimate
-	// used to sit below that branch; moving them up also makes the branch position
-	// by the same priority the parent block further down already uses (see the
-	// pre-check comment).
+	// precedes every step that writes to another nib's file. Keeping priority and
+	// estimate above that branch also orders it by the same priority the parent
+	// block further down already uses (see the pre-check comment).
 	if input.Title != nil {
 		b.Title = *input.Title
 	}

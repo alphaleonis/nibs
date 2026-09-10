@@ -175,8 +175,8 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 	// The backlog comes from the view, computed against every
 	// DECLARED milestone rather than the status-filtered list above — work
 	// under a status-hidden milestone is scheduled work the filter chose not
-	// to show, not backlog. (The old two-level walk leaked it here; restoring
-	// that would be a deliberate policy change, not a default.)
+	// to show, not backlog. (Leaking it into the backlog would be a deliberate
+	// policy change, not a default.)
 	rem := view.Backlog()
 
 	// The backlog is the tree, filtered (decision 2.5). Its epics and its

@@ -157,7 +157,7 @@ func priorityNames() []string {
 // their leftover section instead of hiding it — a type lens hides only what
 // ranks ABOVE its tier (typeLens.place in web/src/lib/tree.ts). Pinning them
 // above every container is what keeps a milestone out of "No epic". The
-// Milestones view itself no longer reads rank at all: it groups by membership.
+// Milestones view itself does not read rank at all: it groups by membership.
 func typeRanks() map[string]int {
 	ranks := make(map[string]int, len(config.DefaultTypes))
 	var rank func(t string) int

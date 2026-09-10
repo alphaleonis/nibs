@@ -270,14 +270,14 @@ func resolveStoreDir() (string, error) {
 	// muscle memory keep producing it long after a project is migrated, so what
 	// this refusal says about that project has to be OBSERVED rather than assumed.
 	//
-	// It used to be assumed, from the basename alone: every caller was told "a
-	// project still carrying that file has not been migrated" and sent to run
-	// `nibs migrate` in the file's directory. For `--config /gone/.nibs.yml` that
-	// prescribed a command in a directory that is not there, and for an
-	// already-migrated project both halves were false — the file is gone, the
-	// project is migrated, and the prescribed migrate answers "Store is up to
+	// Assuming it from the basename alone does not survive either case. Telling
+	// every caller "a project still carrying that file has not been migrated" and
+	// sending them to run `nibs migrate` in the file's directory prescribes, for
+	// `--config /gone/.nibs.yml`, a command in a directory that is not there; and
+	// for an already-migrated project both halves are false — the file is gone,
+	// the project is migrated, and the prescribed migrate answers "Store is up to
 	// date" while `--nibs-path <project>/.nibs`, the remedy that actually
-	// resolves, went unmentioned.
+	// resolves, goes unmentioned.
 	//
 	// So: stat the file, and look for the store beside it. A `.nibs` directory
 	// there is the answer whether or not it has been migrated yet — resolving it
@@ -1119,9 +1119,9 @@ func isRealImmediateChild(dir, parent string) (bool, error) {
 // itself lives in nibRenderFormat; one file anywhere under dir passing it is
 // enough.
 //
-// A single `status:` used to be the whole bar, and ordinary content reached it:
-// note vaults and docs sites track a page's own state that way, so a `notes/`
-// directory was renamed to `.nibs` and every file in it rewritten as a nib
+// A single `status:` is not enough of a bar, because ordinary content reaches
+// it: note vaults and docs sites track a page's own state that way, so a
+// `notes/` directory renamed to `.nibs` has every file in it rewritten as a nib
 // render. The rendered shape is much harder to meet by accident — a
 // hand-authored header rarely opens with a comment — but it is still a SHAPE,
 // never provenance: anyone who knows the rule can write a file that passes, and
@@ -1145,9 +1145,9 @@ func isRealImmediateChild(dir, parent string) (bool, error) {
 // entries rather than on the walk finding no markdown, because what acceptance
 // authorizes is a whole-directory os.Rename plus deletion of the project's
 // `.nibs.yml` — a mutation that has nothing to do with file CONTENTS. An asset
-// directory holding only `style.css` and `img/logo.svg` was renamed to `.nibs`
-// wholesale, and so was a note vault whose markdown all lived under `.obsidian/`
-// (the walk prunes dot directories, so it saw none).
+// directory holding only `style.css` and `img/logo.svg` can be renamed to
+// `.nibs` wholesale, and so can a note vault whose markdown all lives under
+// `.obsidian/` (the walk prunes dot directories, so it sees none).
 //
 // A file whose header cannot be READ makes the answer UNDECIDED rather than
 // negative. layoutMovableFiles moves such a file into data/ precisely because the

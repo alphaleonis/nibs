@@ -1,8 +1,8 @@
-// Package membership is the one answer to "what belongs to container X". The
-// roadmap, the context summaries and the projection rollups used to derive
-// container membership through rival ad-hoc parent walks — raw-keyed children
-// maps, a two-level milestone walk, per-nib store scans — that disagreed on
-// depth, on dangling links and on illegal nests. This package holds the single
+// Package membership is the one answer to "what belongs to container X".
+// Deriving container membership per consumer — the roadmap, the context
+// summaries and the projection rollups each reaching for a raw-keyed children
+// map, a two-level milestone walk or a per-nib store scan — produces rival
+// answers that disagree on depth, on dangling links and on illegal nests. This package holds the single
 // definition; consumers get SETS and keep every display policy (filtering,
 // sorting, progress arithmetic, queue order) to themselves.
 //
@@ -33,8 +33,8 @@
 //
 // THE RULE FOR CONSUMERS: ask this package "what belongs to container X" rather
 // than re-deriving it from the raw `parent:` link. The rival walks listed above
-// each stayed self-consistent while disagreeing with the others, and the field
-// they disagreed over is one string — so a second derivation is not a second
+// each stay self-consistent while disagreeing with the others, and the field
+// they disagree over is one string — so a second derivation is not a second
 // opinion, it is a second answer nobody reconciles.
 //
 // What that rule does NOT forbid is reading `b.Parent` at all. It is the stored
@@ -248,8 +248,8 @@ type Backlog struct {
 // resolved assignment is scheduled work, not backlog, while a dangling
 // assignment schedules nothing. The remainder is computed against every
 // declared milestone regardless of status: work under a status-hidden
-// milestone is scheduled work, not backlog — a consumer wanting the old leak
-// back has to build it deliberately.
+// milestone is scheduled work, not backlog — a consumer wanting that work in the
+// backlog has to build it deliberately.
 func (v *View) Backlog() Backlog {
 	var rem Backlog
 	for _, b := range v.all {

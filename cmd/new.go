@@ -48,8 +48,8 @@ is used as-is — with --no-edit, with --json, or when stdin/stdout is not a ter
 (pipe, redirect, or agent/subagent shell), keeping --json output clean and parseable.`,
 	// At most one positional: the optional title. Zero args is legal (the title
 	// defaults to "Untitled"), so this is MaximumNArgs(1), not ExactArgs(1).
-	// Extra args used to be silently folded into the title via strings.Join;
-	// rejecting them keeps the documented `nibs new "<title>"` contract explicit.
+	// Extra args are rejected rather than silently folded into the title via
+	// strings.Join, which keeps the documented `nibs new "<title>"` contract explicit.
 	Args: codedMaximumNArgs(&newJSON, 1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		app := getApp(cmd)
@@ -218,8 +218,8 @@ is used as-is — with --no-edit, with --json, or when stdin/stdout is not a ter
 // parseable), --no-edit (explicit opt-out), or any context without a controlling
 // terminal on both stdin and stdout (agent Bash tool, subagent, pipe/redirect).
 // In a non-tty context the editor cannot open /dev/tty; launching it there errors
-// and its stderr noise corrupts --json capture, which previously produced a
-// duplicate nib on the parse-failure retry.
+// and its stderr noise corrupts --json capture, which produces a duplicate nib
+// on the parse-failure retry.
 func shouldOpenEditor(tmplBody string) bool {
 	if tmplBody == "" || newJSON || newNoEdit {
 		return false

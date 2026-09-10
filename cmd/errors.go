@@ -143,10 +143,10 @@ func filterTargetErrCode(err error) (string, bool) {
 // errors. Parity is therefore a per-command obligation held up by tests naming
 // both exits, not a property of this call. `nibs mv` is the worked example —
 // alone among the five commands that classify through mutationErrCode it
-// pre-checks no id, so an unknown id used to reach only that function's
-// concrete-type checks and exit 2 while this surface exited 3. mutationErrCode's
-// sentinel branch is what closed that, and cmd/mv_test.go's
-// TestMvUnknownIdIsNotFound is what keeps it closed.
+// pre-checks no id, so an unknown id arrives at mutationErrCode's own checks and
+// nowhere else. Its sentinel branch is what gives such an id exit 3 rather than
+// the concrete-type checks' exit 2, and cmd/mv_test.go's
+// TestMvUnknownIdIsNotFound is what holds it there.
 //
 // The two calls do not overlap on any reachable value, so their order here is
 // inert. mutationErrCode's sentinel test claims every not-found cause, including

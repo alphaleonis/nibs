@@ -141,9 +141,9 @@ var (
 	// no ordinary file on a volume without FIFOs blocks that way, so there is
 	// nothing to substitute.
 	//
-	// REQUIRED ON THE LINUX LEG. The escape clause this used to rest on — that a
+	// REQUIRED ON THE LINUX LEG. One escape clause does not reach here — that a
 	// DIRECTORY row beside the FIFO row reaches the same refusal, so a skip costs
-	// only the blocking-open spelling — held for config reads and holds nowhere
+	// only the blocking-open spelling — which holds for config reads and nowhere
 	// else. The store-walk guards have no such twin: a directory named `x.md`
 	// returns at the walk's own d.IsDir() branch and never reaches the regularity
 	// test, so a FIFO is the ONLY fixture that exercises them and a silent skip
