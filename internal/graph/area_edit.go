@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -93,8 +94,18 @@ func (r *mutationResolver) beginAreaEdit() (*areaEditSession, error) {
 	}
 	if err := r.AreaEditor.Load(); err != nil {
 		_ = lock.Release()
+		// Which half of the re-read failed is worth a message of its own: Load
+		// reads the vocabulary and then walks the nibs, and the two are different
+		// files with different repairs. Named through nibcore's own marker, since
+		// the errors underneath are whatever the loader and the OS handed back and
+		// carry nothing to tell them apart by.
+		var areasErr *nibcore.AreasLoadError
+		if errors.As(err, &areasErr) {
+			return nil, areaEditIOError(err,
+				"nothing was written: re-reading this store's areas vocabulary under its write lock failed: %v", err)
+		}
 		return nil, areaEditIOError(err,
-			"nothing was written: re-reading this store's areas vocabulary under its write lock failed: %v", err)
+			"nothing was written: re-reading this store's nibs under its write lock failed: %v", err)
 	}
 	return &areaEditSession{lock: lock, areas: r.AreaEditor.Areas()}, nil
 }

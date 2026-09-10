@@ -491,3 +491,63 @@ func TestAreaMutationTicksConfigChanged(t *testing.T) {
 		t.Fatal("an area mutation delivered no configChanged event")
 	}
 }
+
+// areaEditorLoadFailure is the AreaEditor role over a real store with the
+// re-read under the lock made to fail. Everything else — the lock, the
+// vocabulary, the cascade — is the store's own, so only the branch under test
+// differs from an ordinary run.
+type areaEditorLoadFailure struct {
+	*nibcore.Core
+	err error
+}
+
+func (e areaEditorLoadFailure) Load() error { return e.err }
+
+// TestAreaEditNamesTheHalfOfTheReloadThatFailed: beginAreaEdit re-reads the
+// whole store, and Core.Load is two passes over two different files — the
+// vocabulary, then the nib walk. A message naming the vocabulary for a walk
+// failure sends the reader to the wrong file.
+func TestAreaEditNamesTheHalfOfTheReloadThatFailed(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		want     string
+		unwanted string
+	}{
+		{
+			name:     "the vocabulary half",
+			err:      &nibcore.AreasLoadError{Cause: errors.New("boom")},
+			want:     "areas vocabulary",
+			unwanted: "this store's nibs",
+		},
+		{
+			name:     "the nib walk",
+			err:      errors.New("boom"),
+			want:     "this store's nibs",
+			unwanted: "areas vocabulary",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resolver, core := setupTestResolverWithAreas(t)
+			resolver.AreaEditor = areaEditorLoadFailure{Core: core, err: tt.err}
+			before := storeSnapshot(t, core.Root())
+
+			_, err := resolver.Mutation().RenameArea(context.Background(), model.RenameAreaInput{Path: "web", NewName: "platform"})
+			if err == nil {
+				t.Fatal("RenameArea reported success over a store it could not re-read")
+			}
+			var ioErr *AreaEditIOError
+			if !errors.As(err, &ioErr) {
+				t.Errorf("error = %v (%T), want the IO class", err, err)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("error = %q, want substring %q", err.Error(), tt.want)
+			}
+			if strings.Contains(err.Error(), tt.unwanted) {
+				t.Errorf("error = %q, want it not to blame %q", err.Error(), tt.unwanted)
+			}
+			assertStoreUnchanged(t, before, core.Root())
+		})
+	}
+}
