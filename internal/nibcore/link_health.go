@@ -1061,9 +1061,7 @@ func canonicalCycleKey(path []string) string {
 //
 //   - The TARGET is resolved through the same exact-id-then-prefix-prepended
 //     rule as Core.Get and Core.Delete (normalizeIDInMap), so a short id names
-//     the nib it names everywhere else. Requiring callers to pass a resolved id
-//     would make this the only id-taking Core mutator to do so, and its failure
-//     mode is silent — (0, nil), no error, links left dangling behind a delete.
+//     the nib it names everywhere else.
 //   - A STORED link matches when IT resolves to that same nib, by the same rule.
 //     Canonicalization resolves stored link ids to their full form at the
 //     disk-read boundary, but Core.Create stores a nib's links exactly as given
@@ -1073,10 +1071,9 @@ func canonicalCycleKey(path []string) string {
 // A literal equality against the id AS GIVEN matches as well, which is what
 // strips links to a target that resolves to nothing — an unresolvable id is
 // carried verbatim by design, so verbatim is the only way to name it. That leg
-// serves a direct Core caller repairing links left behind by a nib that is
-// already gone; no production caller reaches it, since the GraphQL DeleteNib
-// resolver resolves its target before calling and so always passes one that
-// resolves.
+// serves a direct Core caller repairing links behind an already-deleted nib; the
+// GraphQL DeleteNib resolver resolves its target first, so no production caller
+// reaches it.
 //
 // A store holding BOTH a bare token `tgt` and its prefixed twin `nibs-tgt` keeps
 // them as separate edges throughout: `tgt` resolves to itself by exact match, so
@@ -1098,31 +1095,21 @@ func canonicalCycleKey(path []string) string {
 // rejects an empty LINK id, so a nib whose Parent is unset is never an incoming
 // link to anything.
 //
-// Copy-on-write: for every nib that actually changes we clone it, mutate the
-// clone, persist the clone, and reinstall it under c.nibs[id] — the stored
-// pointer is never edited in place. This upholds the canonical live-pointer /
-// copy-on-write invariant (see NibReader.GetSnapshot in
-// internal/graph/interfaces.go): the changed fields here (Parent, a torn string;
-// BlockedBy, a memory-unsafe torn slice header) are non-Path, so they must land
-// on a fresh pointer, leaving any off-lock reader still holding the old one a
-// stable, unmutated value. Ranging over c.nibs while reassigning an existing
-// key's value is safe in Go.
+// Copy-on-write, per the canonical live-pointer invariant (see
+// NibReader.GetSnapshot in internal/graph/interfaces.go): the changed fields
+// here are non-Path — Parent, a torn string, and BlockedBy, a memory-unsafe torn
+// slice header — so a changed nib is cloned, persisted and reinstalled under its
+// key. Ranging over c.nibs while reassigning an existing key's value is safe in
+// Go.
 //
 // CONCURRENCY: this is a whole-store sweep, so it takes the per-operation
-// cross-process write lock the single-nib writers take (c.mu first, then the
-// flock — see Core.acquireWriteLock), which excludes `nibs config set-prefix`
-// for its duration. It therefore cannot be called under AcquireStoreLock: that
-// flock is per-descriptor, so a second acquisition in one process deadlocks.
+// cross-process write lock the single-nib writers take (c.mu then the flock —
+// see Core.acquireWriteLock), which excludes `nibs config set-prefix` for its
+// duration. It therefore cannot be called under AcquireStoreLock, whose flock is
+// the same per-descriptor one (see flock.go).
 //
-// The write is the NON-CREATING one (updateOnDiskDeferDirSync), matching the
-// other whole-store sweep, Core.rewriteAreaAssignmentsLocked. Every nib here is
-// already on disk at the path its in-memory copy carries, so a path this sweep
-// cannot find is a path that went stale — and a creating write answers that by
-// writing the nib back under its retired name, leaving the store a second copy
-// under a prefix its config no longer declares. The lock is what keeps a stale
-// path from arising; the refusal is what makes one loud rather than duplicating
-// the store if it arises anyway — a rename by something that does not take this
-// lock, a set-prefix from a release predating it.
+// The write is the NON-CREATING one (updateOnDiskDeferDirSync), for the reason
+// the other whole-store sweep states — see Core.rewriteAreaAssignmentsLocked.
 func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

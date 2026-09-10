@@ -52,8 +52,8 @@ const (
 // names. The zero value is "none", so a caller that was given no disposition
 // passes nothing.
 //
-// The two are one value rather than two parameters because they are mutually
-// exclusive, and a type that cannot express the contradiction is what spares
+// The two are one value because they are mutually exclusive, and a type that
+// cannot express the contradiction is what spares
 // every surface from having to refuse it under the store's write lock. Each
 // surface still refuses its own spelling of the contradiction — Cobra's
 // MarkFlagsMutuallyExclusive, the resolver's own check — before it calls here.
@@ -546,9 +546,9 @@ type areaPlan struct {
 // cascade, write and reload — with both locks held throughout and released only
 // on the way out.
 //
-// THE LOCK ORDER IS THE POINT. acquireWriteLock documents it as always c.mu then
-// the file lock, and every other Core mutator obeys it; taking them the other way
-// round anywhere deadlocks the process against an ordinary concurrent Update.
+// THE LOCK ORDER IS THE POINT: c.mu then the file lock, as acquireWriteLock
+// states canonically and every other Core mutator obeys. Taking them the other
+// way round deadlocks against an ordinary concurrent Update.
 //
 // BOTH HALVES OF THE EDIT ARE ONE CRITICAL SECTION, and that is the point too.
 // The member cascade and the `areas:` rewrite are read-modify-writes of shared
@@ -565,13 +565,11 @@ type areaPlan struct {
 // from before the file lock is asked for until after the reload, so it spans an
 // untimed wait for another process, a walk of every nib file in the store, the
 // member cascade, the whole-file config write and the re-read. Get, All and
-// Search all read under c.mu, and a GraphQL query resolver reaches the store
-// through them, so under `nibs serve` a read blocks for the length of the edit —
-// a step beyond the single-nib mutators, none of which walks the store or
-// rewrites a config file under this lock. That
-// is the price of the paragraph above: narrowing the span is what would let two
-// edits interleave and lose one's declaration. Whether the availability can be
-// recovered without giving that up is nibs-8465.
+// Search all read under c.mu, so under `nibs serve` a read blocks for the length
+// of the edit — a step beyond the single-nib mutators. That is the price of the
+// paragraph above: narrowing the span is what lets two edits interleave and lose
+// one's declaration. Whether the availability can be recovered without giving
+// that up is nibs-8465.
 //
 // THE RE-READ IS WHY BLOCKING IS SAFE. Waiting means another process was
 // mid-write while this one held the state it started with. A concurrent

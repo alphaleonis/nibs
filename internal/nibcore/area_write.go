@@ -18,20 +18,21 @@ import (
 // committed every rename before the failure and still owes those entries a
 // flush.
 //
-// The write is the NON-CREATING one (updateOnDiskDeferDirSync). Every target is
-// a nib already on disk, so a path this cascade cannot find is a path that went
-// stale — and a creating write answers that by writing the nib back under its
-// pre-rename name, leaving the store one file heavier under a prefix its config
-// no longer declares. editArea re-reads the store under the lock so this does
-// not arise; the refusal is what makes a caller that forgot fail loudly instead
-// of duplicating the store.
+// THE WRITE IS THE NON-CREATING ONE (updateOnDiskDeferDirSync), and this is the
+// statement RemoveLinksTo's identical sweep defers to. Every target is a nib
+// already on disk, so a path the sweep cannot find is a path that went stale —
+// and a creating write answers that by writing the nib back under its pre-rename
+// name, leaving the store one file heavier under a prefix its config no longer
+// declares. The write lock is what keeps a stale path from arising; the refusal
+// is what makes a caller that lost it fail loudly instead of duplicating the
+// store.
 //
 // CONCURRENCY: the caller holds BOTH c.mu and the store's cross-process write
 // lock, in that order, for the whole verb — editArea is its only production
-// caller and is where that is arranged. Neither is acquired here. c.mu is not, because the
-// cascade is only one step of a critical section that spans the plan, the
-// cascade, the areas.yml write and the reload; the flock is not, because it is
-// per-descriptor and re-acquiring it in-process deadlocks.
+// caller and is where that is arranged. Neither is acquired here: c.mu because
+// the cascade is only one step of a critical section spanning the plan, the
+// cascade, the areas.yml write and the reload; the flock because it is
+// per-descriptor (see flock.go).
 //
 // The span matters, not just the exclusion. The config write that follows the
 // cascade is a read-modify-write of the whole `areas:` block, and the two have
@@ -44,10 +45,9 @@ import (
 // nib will carry against the declared vocabulary (ValidateArea), and a rename
 // has no vocabulary that declares both ends: write the config first and every
 // member's stored value is undeclared, write the members first and their new one
-// is. The refusal is right for an ordinary write and wrong for the one command
-// whose job is to move the vocabulary, so this path validates nothing about
-// areas and the CALLER owes the check — it holds the declared tree on both sides
-// of the edit, which is the only place that judgment can be made.
+// is. So this path validates nothing about areas and the CALLER owes the check —
+// it holds the declared tree on both sides of the edit, which is the only place
+// that judgment can be made.
 //
 // ORDER IS BY ID, and it is a contract rather than a tidiness: the caller's
 // partial-failure message names the nib that refused, and a loop that stopped
@@ -61,8 +61,7 @@ import (
 // Copy-on-write, per the canonical live-pointer invariant (see
 // NibReader.GetSnapshot in internal/graph/interfaces.go): Area is a non-Path
 // field, so a changed nib is cloned, written and reinstalled under its key
-// rather than edited in place, leaving any off-lock reader still holding the old
-// pointer a stable value.
+// rather than edited in place.
 func (c *Core) rewriteAreaAssignmentsLocked(rewrite func(area string) (string, bool)) ([]string, error) {
 	type target struct {
 		id   string
