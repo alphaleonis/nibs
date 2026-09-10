@@ -791,6 +791,7 @@ func TestAreaRenameRefusesABadNameWithoutTakingTheStoreLock(t *testing.T) {
 	}{
 		{name: "an empty new name", args: []string{"web", ""}, want: "needs a name"},
 		{name: "a new name that is only whitespace padding", args: []string{"web", " frontend"}, want: "whitespace"},
+		{name: "a new name over the bound an edit may write", args: []string{"web", strings.Repeat("a", 201)}, want: "bounded at 200"},
 		{name: "a path where a name belongs", args: []string{"web/dashboard", "web/panel"}, want: "not a name"},
 		{name: "the name the node already has", args: []string{"api/webhooks", "webhooks"}, want: "already named"},
 	}

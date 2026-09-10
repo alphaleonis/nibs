@@ -405,14 +405,20 @@ func areaRenameNameRefusal(err error) bool {
 // on their own, in the order a caller can act on: the shape of the name first,
 // then whether it changes anything.
 //
-// All four read `path` and `newName` and nothing else — no vocabulary, no store — so
+// All five read `path` and `newName` and nothing else — no vocabulary, no store — so
 // no vocabulary can change their answer and runAreaRename asks them before the
 // store's write lock. The vocabulary question a rename also has — does a sibling
 // already answer to the new name? — is nibcore's, under that lock.
 //
-// Two of the four nonetheless SPEAK about the node at `path`, so the refusal
+// Two of the five nonetheless SPEAK about the node at `path`, so the refusal
 // they return is only correct over a path the store declares; when to print it
 // is runAreaRename's call and not this function's.
+//
+// The LENGTH clause is config.ValidateAreaName's and is CALLED rather than
+// copied, which is the whole reason that function exists — the wire surface
+// calls it too. Its empty and padded clauses are reached only when this
+// function's own two are removed: those come first because they can name the
+// node being renamed, where a bound shared with a create cannot.
 //
 // config.PlanRenameStoredArea re-checks the RESULT before it hands back an edit
 // to write, so none of this is what keeps a broken vocabulary off disk. What it
@@ -428,6 +434,9 @@ func validateAreaRenameArgument(jsonMode bool, path, parent, oldName, newName st
 		return cmdError(jsonMode, output.ErrValidation,
 			"the new name %s has leading or trailing whitespace; an `area:` value would have to carry the same spaces to match it",
 			quotedArea(newName))
+	}
+	if err := config.ValidateAreaName(newName); err != nil {
+		return cmdError(jsonMode, output.ErrValidation, "%s", err)
 	}
 	if strings.Contains(newName, config.AreaPathSeparator) {
 		newParent, tail := splitAreaPath(newName)
