@@ -5,6 +5,29 @@ import (
 	"github.com/alphaleonis/nibs/internal/graph/model"
 )
 
+// configResult builds the wire Config from the reader as it stands NOW. Every
+// surface that answers with one goes through it — the `config` query, the
+// `configChanged` subscription, and the two area mutations — so a field added to
+// Config reaches all four at once rather than three of them.
+func configResult(reader NibReader) *model.Config {
+	return configResultWithAreas(reader, reader.Areas())
+}
+
+// configResultWithAreas is configResult over a vocabulary the caller already
+// holds. The area mutations answer through it with the vocabulary their own edit
+// wrote and re-read under the store's write lock, rather than re-asking the
+// reader — which would make the answer depend on Reader and the area writer
+// being backed by the same store, a requirement nothing could enforce and whose
+// violation is a silent wrong answer rather than a compile error.
+func configResultWithAreas(reader NibReader, areas *config.Areas) *model.Config {
+	cfg := reader.Config()
+	return &model.Config{
+		ProjectName: cfg.GetProjectName(),
+		Prefix:      cfg.Nibs.Prefix,
+		Areas:       flattenAreas(areas),
+	}
+}
+
 // flattenAreas walks the declared vocabulary into the flat, declaration-ordered
 // list `Config.areas` is specified as: a parent immediately before the subtree
 // it heads, each node carrying its depth from a root.

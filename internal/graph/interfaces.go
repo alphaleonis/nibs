@@ -181,5 +181,36 @@ type NibSubscriber interface {
 	SubscribeAreas() (<-chan struct{}, func())
 }
 
+// AreaWriter is the store's area-vocabulary verbs: declaring an area, renaming
+// one, and retiring one together with the nibs assigned to it.
+//
+// Each method is ONE WHOLE EDIT. It takes the store's two locks itself, in the
+// one order they may be taken in, and holds both across the re-read, the plan,
+// the member cascade, the areas.yml write and the reload — so this role carries
+// no lock, no proof-of-lock, and no ordering obligation a caller could get
+// wrong. That is deliberate: a resolver that took the cross-process file lock
+// and then reached back for the vocabulary, the member set and the cascade —
+// each of which takes the store's in-process mutex — inverted the documented
+// order, and a concurrent updateNib deadlocked the whole server against it.
+//
+// The VOCABULARY a mutation answers with comes out of the AreaEditResult the
+// verb returns rather than from a re-ask, so a decorated or per-request Reader
+// cannot silently disagree with the edit about what the store now declares. The
+// other two fields of that answer, projectName and prefix, do come from the
+// Reader — safely, because config.yml is fixed at construction and no area verb
+// touches it.
+type AreaWriter interface {
+	// RenameArea renames a declared node, cascading to every nib assigned at or
+	// below it.
+	RenameArea(path, newName string) (nibcore.AreaEditResult, error)
+	// RemoveArea retires a declared node and the subtree it heads, disposing of
+	// every nib assigned at or below it as disposition says.
+	RemoveArea(path string, disposition nibcore.AreaDisposition) (nibcore.AreaEditResult, error)
+	// Warn reports a note about an edit to the store's warning sink — where a
+	// running `nibs serve` operator reads. It is how a warning an edit owes
+	// reaches somebody when the answer's own shape has no room for one.
+	Warn(format string, args ...any)
+}
+
 // NibEvent represents a change to a nib (re-exported from nibcore).
 type NibEvent = nibcore.NibEvent

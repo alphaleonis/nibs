@@ -314,29 +314,42 @@ func freezeGuardCases() []freezeGuardCase {
 			},
 		},
 		{
-			name:   "RewriteAreaAssignments",
-			covers: []string{"RewriteAreaAssignments"},
+			name:   "RenameArea",
+			covers: []string{"RenameArea"},
 			// The default core's config declares no areas, and a store that
 			// declares none refuses every assignment — so there would be no
 			// member to rewrite and the guard would be vacuous.
 			newCore: setupAreaCore,
-			setup: func(t *testing.T, c *Core, _ string) {
-				if err := c.Create(&nib.Nib{
-					ID: "placed", Title: "Placed", Status: "todo", Area: "web/dashboard",
-				}); err != nil {
-					t.Fatalf("setup Create placed: %v", err)
+			setup:   publishAreaMember,
+			mutate: func(t *testing.T, c *Core, _ string) {
+				if _, err := c.RenameArea("web", "platform"); err != nil {
+					t.Fatalf("RenameArea: %v", err)
 				}
 			},
-			mutate: func(t *testing.T, c *Core, dir string) {
-				lock, err := AcquireStoreLock(dir)
-				if err != nil {
-					t.Fatalf("AcquireStoreLock: %v", err)
+		},
+		{
+			name:    "RemoveArea",
+			covers:  []string{"RemoveArea"},
+			newCore: setupAreaCore,
+			setup:   publishAreaMember,
+			mutate: func(t *testing.T, c *Core, _ string) {
+				if _, err := c.RemoveArea("web", MoveAreaMembersTo("auth")); err != nil {
+					t.Fatalf("RemoveArea: %v", err)
 				}
-				defer func() { _ = lock.Release() }()
-				if _, err := c.RewriteAreaAssignments(lock, func(area string) (string, bool) {
-					return "auth", area == "web/dashboard"
-				}); err != nil {
-					t.Fatalf("RewriteAreaAssignments: %v", err)
+			},
+		},
+		{
+			name:   "AddArea",
+			covers: []string{"AddArea"},
+			// AddArea rewrites no nib, so this asserts the negative the other two
+			// assert the positive of: declaring an area leaves every published
+			// pointer — including one already CARRYING the path being declared —
+			// exactly as it was.
+			newCore: setupAreaCore,
+			setup:   publishAreaMember,
+			mutate: func(t *testing.T, c *Core, _ string) {
+				if _, err := c.AddArea("platform", "", ""); err != nil {
+					t.Fatalf("AddArea: %v", err)
 				}
 			},
 		},
@@ -566,9 +579,12 @@ func TestCoreMutators_FreezePartition(t *testing.T) {
 	// c.nibs pointer and therefore MUST have freeze-guard coverage. Verified
 	// against the nibcore sources: Create/Update/Delete/Archive/Unarchive/
 	// LoadAndUnarchive write the store (core.go); RemoveLinksTo/FixBrokenLinks
-	// rewrite linking nibs copy-on-write (link_health.go); RewriteAreaAssignments
-	// rewrites the members of a renamed or retired area the same way
-	// (area_write.go).
+	// rewrite linking nibs copy-on-write (link_health.go); RenameArea and
+	// RemoveArea rewrite the members of a renamed or retired area the same way
+	// (area_edit.go, through rewriteAreaAssignmentsLocked). AddArea is in the
+	// registry because it is an area VERB and a reader classifying the three
+	// together must find all three here — it rewrites no nib, and its freeze
+	// subtest asserts exactly that.
 	freezeMutators := map[string]bool{
 		"Create":                    true,
 		"Update":                    true,
@@ -581,14 +597,17 @@ func TestCoreMutators_FreezePartition(t *testing.T) {
 		"MigrateV0ToV1":             true,
 		"MigrateV1ToV2":             true,
 		"NormalizeLegacyPriorities": true,
-		"RewriteAreaAssignments":    true,
+		"AddArea":                   true,
+		"RenameArea":                true,
+		"RemoveArea":                true,
 	}
 
 	// freezeNonMutators: every OTHER exported *Core method (readers, lifecycle,
 	// helpers). None installs or rewrites a published c.nibs pointer in a way that
 	// can tear a non-Path field for an off-lock reader: readers return live
 	// pointers or GetSnapshot clones; Load swaps the whole c.nibs map with fresh
-	// pointers (leaving any held pointer frozen); GetForUpdate returns a clone.
+	// pointers (leaving any held pointer frozen); GetForUpdate returns a clone;
+	// Warn writes to the store's warning sink and reads no nib at all.
 	freezeNonMutators := map[string]bool{
 		"All":                true,
 		"CheckAllLinks":      true,
@@ -613,6 +632,7 @@ func TestCoreMutators_FreezePartition(t *testing.T) {
 		"Load":               true,
 		"LoadDiagnostics":    true,
 		"NormalizeID":        true,
+		"Warn":               true,
 		"Root":               true,
 		"Search":             true,
 		"SearchAll":          true,
@@ -682,6 +702,17 @@ func TestCoreMutators_FreezePartition(t *testing.T) {
 		if !covered[name] {
 			t.Errorf("freezeMutators names %q, but no TestCoreMutators_FreezeGuard subtest covers it — add covers:[]string{%q} to the subtest that exercises it", name, name)
 		}
+	}
+}
+
+// publishAreaMember publishes a nib assigned inside the subtree the area cases
+// rename and retire, so a cascade that wrote in place would have a published
+// pointer to tear.
+func publishAreaMember(t *testing.T, c *Core, _ string) {
+	if err := c.Create(&nib.Nib{
+		ID: "nibs-placed", Title: "Placed", Status: "todo", Area: "web/dashboard",
+	}); err != nil {
+		t.Fatalf("setup Create placed: %v", err)
 	}
 }
 

@@ -41,6 +41,9 @@ type Resolver struct {
 	Blocking   BlockingChecker
 	Subscriber NibSubscriber
 	Orderer    *Orderer
+	// AreaWriter is the write path for the area vocabulary mutations. See the
+	// interface for why it is a role of its own.
+	AreaWriter AreaWriter
 	// Version is the running binary version, used by the updateStatus query.
 	// Empty (or "dev") disables the check.
 	Version string

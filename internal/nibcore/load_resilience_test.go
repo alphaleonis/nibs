@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/store"
+	"github.com/alphaleonis/nibs/internal/testskip"
 )
 
 // TestLoadSkipsUnparseableFiles covers duplicate-key resilience: yaml.v3 hard-errors
@@ -324,5 +326,98 @@ Body.
 	}
 	if !errors.Is(err, fs.ErrPermission) {
 		t.Errorf("Load() error = %q, want errors.Is(err, fs.ErrPermission) to still hold through the wrap", err)
+	}
+}
+
+// loadResilienceNib is a nib file with nothing interesting in it, for the tests
+// below that care about how many of them survive rather than what they hold.
+const loadResilienceNib = `---
+version: 1
+title: Kept
+status: todo
+type: task
+priority: normal
+created_at: 2026-01-02T03:04:05Z
+updated_at: 2026-01-02T03:04:05Z
+---
+
+Body.
+`
+
+// TestFailedLoadKeepsTheStoreAlreadyInMemory: a load that cannot finish its walk
+// must leave the store answering with what it already had.
+//
+// Core.Load used to run only at startup, from the CLI, or from the TUI's
+// explicit reload — never against a store other clients were reading. An area
+// mutation re-reads the store inside a request handler, so a walk failure there
+// would empty a live server's store for every concurrent client, with nothing to
+// repopulate it: the watcher handles change events, and a failed walk is not one.
+func TestFailedLoadKeepsTheStoreAlreadyInMemory(t *testing.T) {
+	nibsDir := setupNibsDir(t)
+	writeNibFile(t, storeData(t, nibsDir), "keep1--kept.md", loadResilienceNib)
+
+	core := New(nibsDir, config.Default())
+	core.SetWarnWriter(nil)
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := len(core.All()); got != 1 {
+		t.Fatalf("the store loaded %d nibs, want 1", got)
+	}
+
+	// A directory the walk cannot enumerate, which is an enumeration failure and
+	// so aborts the load — unlike one unparseable FILE, which is skipped.
+	deep := filepath.Join(storeData(t, nibsDir), "deep")
+	if err := os.MkdirAll(deep, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeNibFile(t, deep, "deep1--deep.md", loadResilienceNib)
+	if err := os.Chmod(deep, 0); err != nil {
+		testskip.Unavailable(t, testskip.UnreadablePaths, "os.Chmod(deep, 0): %v", err)
+	}
+	// Restored so the temp directory can be removed at the end of the test.
+	defer func() { _ = os.Chmod(deep, 0755) }()
+	if _, err := os.ReadDir(deep); err == nil {
+		testskip.Unavailable(t, testskip.UnreadablePaths, "this process reads a mode-000 directory anyway (running as root?)")
+	}
+
+	err := core.Load()
+	if err == nil {
+		t.Fatal("Load reported success over a directory it could not enumerate")
+	}
+	// The nib walk failed, not the vocabulary read, and the marker says so — it
+	// is what lets a caller's message name the half that failed.
+	var areasErr *AreasLoadError
+	if errors.As(err, &areasErr) {
+		t.Errorf("a walk failure is marked as a vocabulary failure: %v", err)
+	}
+
+	if got := len(core.All()); got != 1 {
+		t.Errorf("the failed load left %d nibs in the store, want the 1 it already had", got)
+	}
+	if _, err := core.Get("keep1"); err != nil {
+		t.Errorf("the nib loaded before the failure is gone: %v", err)
+	}
+}
+
+// TestLoadMarksAVocabularyFailure pins the other half of the same marker: the
+// vocabulary is read before the nibs are walked, so this is the failure that
+// returns before a single nib is looked at.
+func TestLoadMarksAVocabularyFailure(t *testing.T) {
+	nibsDir := setupNibsDir(t)
+	writeNibFile(t, storeData(t, nibsDir), "voc1--nib.md", loadResilienceNib)
+	if err := os.WriteFile(store.NewLayout(nibsDir).AreasPath(), []byte("areas: [\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	core := New(nibsDir, config.Default())
+	core.SetWarnWriter(nil)
+	err := core.Load()
+	if err == nil {
+		t.Fatal("Load accepted a vocabulary it cannot parse")
+	}
+	var areasErr *AreasLoadError
+	if !errors.As(err, &areasErr) {
+		t.Errorf("error = %v (%T), want it marked as the vocabulary half of the load", err, err)
 	}
 }

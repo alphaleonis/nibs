@@ -1115,7 +1115,7 @@ func canonicalCycleKey(path []string) string {
 // flock is per-descriptor, so a second acquisition in one process deadlocks.
 //
 // The write is the NON-CREATING one (updateOnDiskDeferDirSync), matching the
-// other whole-store sweep, Core.RewriteAreaAssignments. Every nib here is
+// other whole-store sweep, Core.rewriteAreaAssignmentsLocked. Every nib here is
 // already on disk at the path its in-memory copy carries, so a path this sweep
 // cannot find is a path that went stale — and a creating write answers that by
 // writing the nib back under its retired name, leaving the store a second copy

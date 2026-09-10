@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/alphaleonis/nibs/internal/safetext"
 	"github.com/alphaleonis/nibs/internal/store"
@@ -20,12 +21,56 @@ import (
 // the caller's argument to fix (a validation refusal), where a filesystem error
 // is the machine's. Nothing about a refusal is repaired by rerunning, which is
 // the sentence the CLI must not print for one.
-type AreaEditRefusal struct{ msg string }
+//
+// Error() NAMES NO FILESYSTEM PATH, and that is a mechanism rather than a
+// convention: these refusals reach an unauthenticated HTTP client through the
+// area mutations, which has no business knowing where the store sits on disk —
+// an absolute path there discloses the operating-system username and the
+// project layout. A refusal about a file carries it in File and renders it only
+// through Naming, so a new call site leaks nothing by forgetting to redact.
+type AreaEditRefusal struct {
+	// File is the config file the refusal is about, empty for one that judges
+	// an argument alone.
+	File string
+
+	// msg is the sentence Error() gives: File rendered as a path-free noun
+	// phrase. format and args re-render the SAME sentence naming the file, and
+	// are nil when File is empty. One format string produces both, so the two
+	// renderings cannot drift apart.
+	msg    string
+	format string
+	args   []any
+}
 
 func (e *AreaEditRefusal) Error() string { return e.msg }
 
+// Naming renders this refusal with the file named as file — for a surface whose
+// reader owns the directory the store sits in, which is the CLI and not the
+// wire. A refusal that names no file is returned unchanged.
+func (e *AreaEditRefusal) Naming(file string) string {
+	if e.format == "" {
+		return e.msg
+	}
+	return fmt.Sprintf(e.format, append([]any{file}, e.args...)...)
+}
+
 func refuseAreaEdit(format string, a ...any) error {
 	return &AreaEditRefusal{msg: fmt.Sprintf(format, a...)}
+}
+
+// storedAreasNoun is how a path-free refusal refers to the file it is about.
+const storedAreasNoun = "this store's areas.yml"
+
+// refuseAreaEditAbout builds a refusal about a config FILE. format's FIRST verb
+// is the file, and it is rendered twice from that one format: path-free for
+// Error, named for Naming.
+func refuseAreaEditAbout(file, format string, a ...any) error {
+	return &AreaEditRefusal{
+		File:   file,
+		msg:    fmt.Sprintf(format, append([]any{storedAreasNoun}, a...)...),
+		format: format,
+		args:   a,
+	}
 }
 
 // StoredAreaEdit is one edit to a store's `areas:` block, resolved against the
@@ -66,9 +111,13 @@ func (e *StoredAreaEdit) Write() (staleLinkTarget string, err error) {
 // Renaming is a NAME edit, not a move, so the caller supplies a bare name and
 // this never re-parents anything. Whether the new name is one the vocabulary can
 // hold is the caller's refusal to make — `nibs area rename` has the better
-// message for it — but it is CHECKED here too, below, because the file this
+// message for it — but it is CHECKED here too, by ValidateAreaName and by the
+// re-read planStoredAreaEdit makes of its own output, because the file this
 // writes has to be one the loader can read.
 func PlanRenameStoredArea(storeDir, path, newName string) (*StoredAreaEdit, error) {
+	if err := ValidateAreaName(newName); err != nil {
+		return nil, err
+	}
 	return planStoredAreaEdit(storeDir, refuseMissingVocabulary, func(areas *yaml.Node) error {
 		found, err := findStoredArea(areas, path)
 		if err != nil {
@@ -306,11 +355,11 @@ func planStoredAreaEdit(storeDir string, missing missingVocabulary, edit func(ar
 		parsed, err := soleConfigDocument(data)
 		if err != nil {
 			if errors.Is(err, errMultipleConfigDocuments) {
-				return nil, refuseAreaEdit(
+				return nil, refuseAreaEditAbout(path,
 					"%s holds more than one YAML document, and editing its areas would rewrite the file from the first one alone — move anything after the `---` into its own file, or delete the marker if nothing follows it, then rerun",
-					path)
+				)
 			}
-			return nil, refuseAreaEdit("parsing %s: %v", path, err)
+			return nil, refuseAreaEditAbout(path, "parsing %s: %v", err)
 		}
 		doc = parsed
 	case errors.Is(readErr, fs.ErrNotExist) && missing == synthesizeMissingVocabulary:
@@ -319,26 +368,26 @@ func planStoredAreaEdit(storeDir string, missing missingVocabulary, edit func(ar
 		// file which is not there was holding: no comments, no key this build
 		// does not model, nothing.
 	case errors.Is(readErr, fs.ErrNotExist):
-		return nil, refuseAreaEdit("no areas vocabulary at %s to edit; a store declares its areas there, beside its config.yml", path)
+		return nil, refuseAreaEditAbout(path, "no areas vocabulary at %s to edit; a store declares its areas there, beside its config.yml")
 	default:
 		return nil, readErr
 	}
 
 	if found := inheritsContent(&doc); found != nil {
-		return nil, refuseAreaEdit(
+		return nil, refuseAreaEditAbout(path,
 			"%s uses %s at line %d, and these edits cannot safely change a file that inherits any of its content — rewrite it without anchors, aliases or merge keys, writing out in place whatever they stand for, then rerun",
-			path, found.construct, found.line)
+			found.construct, found.line)
 	}
 	if err := yaml.Unmarshal(data, new(Areas)); err != nil {
 		// Not "the edit would leave it unreadable": the file arrived that way,
 		// so the remedy is to repair the file and not to change the argument.
-		return nil, refuseAreaEdit("%s cannot be read as an areas vocabulary (%v) — repair it, then rerun", path, err)
+		return nil, refuseAreaEditAbout(path, "%s cannot be read as an areas vocabulary (%v) — repair it, then rerun", err)
 	}
 
 	bootstrap := missing == synthesizeMissingVocabulary
 	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
 		if !bootstrap {
-			return nil, refuseAreaEdit("%s declares no areas to edit", path)
+			return nil, refuseAreaEditAbout(path, "%s declares no areas to edit")
 		}
 		// A file the decoder produced no node for: soleConfigDocument answers
 		// that way only for the io.EOF the decoder reports when the stream holds
@@ -382,7 +431,7 @@ func planStoredAreaEdit(storeDir string, missing missingVocabulary, edit func(ar
 		}
 	}
 	if areas == nil || areas.Kind != yaml.SequenceNode {
-		return nil, refuseAreaEdit("%s declares no `areas:` block", path)
+		return nil, refuseAreaEditAbout(path, "%s declares no `areas:` block")
 	}
 	if err := edit(areas); err != nil {
 		return nil, err
@@ -392,12 +441,28 @@ func planStoredAreaEdit(storeDir string, missing missingVocabulary, edit func(ar
 	if err != nil {
 		return nil, err
 	}
+	// The file this WRITES is bounded the way the file it READ is. ReadConfigFile
+	// refuses anything over MaxConfigBytes, and Core.Load reads the vocabulary
+	// before the nibs and aborts on that refusal, so an areas.yml written past the
+	// cap is a store no command can open — this edit's own rerun included, which
+	// is what makes it repairable by hand alone.
+	//
+	// Asked of the rendered output rather than of the edit's arguments because
+	// this is a semantic-preserving RE-MARSHAL: indentation is normalized and
+	// quoting added, so a vocabulary already close to the cap crosses it on an
+	// edit that adds nothing at all. ValidateAreaName answers for the argument,
+	// where the message can name what to shorten.
+	if len(out) > MaxConfigBytes {
+		return nil, refuseAreaEditAbout(path,
+			"the edit would leave %s at %d bytes, past the %d-byte configuration limit, and a store whose areas.yml is over that limit cannot be opened by any command — declare fewer areas, or shorter names, then rerun",
+			len(out), MaxConfigBytes)
+	}
 	var edited Areas
 	if err := yaml.Unmarshal(out, &edited); err != nil {
-		return nil, refuseAreaEdit("the edit would leave %s unreadable: %v", path, err)
+		return nil, refuseAreaEditAbout(path, "the edit would leave %s unreadable: %v", err)
 	}
 	if err := edited.Validate(); err != nil {
-		return nil, refuseAreaEdit("the edit would leave %s declaring an unusable vocabulary: %v", path, err)
+		return nil, refuseAreaEditAbout(path, "the edit would leave %s declaring an unusable vocabulary: %v", err)
 	}
 	return &StoredAreaEdit{path: path, out: out}, nil
 }
@@ -544,6 +609,58 @@ func ValidateNewAreaPath(path string) error {
 			return refuseAreaEdit("the area name %q has leading or trailing whitespace; an `area:` value would have to carry the same spaces to match it",
 				RenderAreaPath(segment))
 		}
+		// Only the length clause can fire: the two above have already answered
+		// for an empty or padded segment, in wording that names the whole path.
+		if err := ValidateAreaName(segment); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// maxAreaNameRunes bounds the length of a name an EDIT may write. It is
+// deliberately NOT a bound on what a store may HOLD: validateAreaNodes runs on
+// every load and is not tightened for exactly that reason (see the note there),
+// so a name already declared keeps loading whatever its length.
+//
+// The number is maxListedAreaRunes, the bound RenderAreaPath already applies to
+// every path a message echoes, so a name an edit may write is never unboundedly
+// longer than what a refusal about it can show. It is not a promise that every
+// echo is complete: a refusal quoting a nested PATH built from the name renders
+// the parent segments too, and RenderAreaPath elides what those push past the
+// bound.
+const maxAreaNameRunes = maxListedAreaRunes
+
+// ValidateAreaName refuses a name an edit must not write, before the file is
+// even read. It is the rename's counterpart to ValidateNewAreaPath, which asks
+// it of every segment of a create's path.
+//
+// The LENGTH clause is the one this adds over the load-time rule, and it is
+// about the file the edit produces rather than about the name. A name arrives
+// here as caller-supplied text of no bounded length — the wire carries up to
+// cmd/serve.go's 4 MiB request body — while a config file is read through
+// ReadConfigFile, which refuses anything over MaxConfigBytes. Core.Load reads
+// the vocabulary before it walks the nibs and aborts on that refusal, so an
+// areas.yml written past the cap is a store no command can open, this edit's own
+// rerun included, repairable only by hand.
+//
+// It does not stand alone: a rename that adds nothing can still carry a
+// vocabulary already near the cap past it, since the re-marshal normalizes
+// indentation. planStoredAreaEdit measures its rendered output for that.
+func ValidateAreaName(name string) error {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return refuseAreaEdit("an area is declared under a name, and none was given")
+	}
+	if trimmed != name {
+		return refuseAreaEdit("the area name %q has leading or trailing whitespace; an `area:` value would have to carry the same spaces to match it",
+			RenderAreaPath(name))
+	}
+	// The name is not echoed: it is the thing that is too long, and a message
+	// quoting 200 runes of it says nothing the count does not.
+	if n := utf8.RuneCountInString(name); n > maxAreaNameRunes {
+		return refuseAreaEdit("the area name is %d characters long, and a declared name is bounded at %d — a longer one only writes an areas.yml no command could read back",
+			n, maxAreaNameRunes)
 	}
 	return nil
 }

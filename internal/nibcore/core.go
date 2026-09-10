@@ -279,6 +279,18 @@ func (c *Core) SetWarnWriter(w io.Writer) {
 	c.warnWriter = safetext.NewWriter(w)
 }
 
+// Warn reports a non-fatal note about this store to its warning sink — the same
+// channel the loader's per-file diagnostics use, and rendered through the same
+// safetext boundary, so a caller cannot bypass it.
+//
+// It is exported for a surface whose ANSWER has no room for a warning: the area
+// mutations return a Config, so the stale-symlink note an edit owes has nowhere
+// to go on the wire and would otherwise be dropped. It reports; it never
+// decides.
+func (c *Core) Warn(format string, args ...any) {
+	c.logWarn(format, args...)
+}
+
 // SetSearchIndex sets a custom search index implementation.
 // When set, Core uses this instead of lazily initializing a Bleve index.
 // It controls only the full-text leg of Search: Core unions direct ID
@@ -397,16 +409,21 @@ func (c *Core) Areas() *config.Areas {
 	return c.areas.Load()
 }
 
-// loadAreas reads the store's vocabulary from disk and installs it. It is the
-// only writer of c.areas.
-func (c *Core) loadAreas() error {
-	areas, err := config.LoadAreasFromStore(c.root)
-	if err != nil {
-		return err
-	}
-	c.areas.Store(areas)
-	return nil
-}
+// AreasLoadError marks the half of Core.Load that failed on the VOCABULARY.
+//
+// Load reads the vocabulary and then walks the nibs, and only the vocabulary
+// half returns before the walk begins — so a caller whose message names which
+// half failed needs the two told apart, and there is nothing in the error text
+// to tell them apart by.
+//
+// It carries no wording of its own: Error is the cause's, so wrapping changes
+// nothing any caller prints, and Unwrap keeps errors.Is reaching the fs and
+// yaml sentinels underneath.
+type AreasLoadError struct{ Cause error }
+
+func (e *AreasLoadError) Error() string { return e.Cause.Error() }
+
+func (e *AreasLoadError) Unwrap() error { return e.Cause }
 
 // Load reads all nibs from disk into memory. It NEVER writes: every load-time
 // normalization that used to persist (the v0→v1 blocking migration, the
@@ -422,32 +439,48 @@ func (c *Core) loadAreas() error {
 // strength of the startup gate alone. Either way, what Load reports is what
 // disk holds.
 func (c *Core) Load() error {
-	// The vocabulary is read BEFORE the lock and before the nibs, and a
-	// malformed one aborts the load. It is authorization data — what an `area:`
-	// may say, what a filter may close over — so a store whose vocabulary cannot
-	// be honored must refuse on every route in rather than open with an empty
-	// one, which would make every assigned area undeclared at once.
-	if err := c.loadAreas(); err != nil {
-		return err
-	}
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	return c.loadLocked()
+}
+
+// loadLocked is Load with c.mu already held, for the area-vocabulary verbs:
+// each of those holds c.mu across its whole critical section (see editArea), so
+// the self-locking form would deadlock on its own mutex.
+//
+// The vocabulary is read BEFORE the nibs, and a malformed one aborts the load.
+// It is authorization data — what an `area:` may say, what a filter may close
+// over — so a store whose vocabulary cannot be honored must refuse on every
+// route in rather than open with an empty one, which would make every assigned
+// area undeclared at once. loadAreasLocked requires c.mu, which both routes here
+// already hold, and is the one writer of c.areas (see it in watcher.go).
+func (c *Core) loadLocked() error {
+	if err := c.loadAreasLocked(); err != nil {
+		return &AreasLoadError{Cause: err}
+	}
 	return c.loadFromDisk()
 }
 
 // loadFromDisk reads all nibs from disk (must be called with lock held).
 // Loads all .md files from the root directory and any subdirectories.
+//
+// The map and both diagnostics are built beside the ones in place and installed
+// only once the walk has SUCCEEDED. c.nibs is the live store every concurrent
+// query in a serve process is answered from, and this runs in a request handler
+// — an area mutation re-reads the store under the write lock — so clearing it
+// first would empty that store for every client the moment a walk failed, with
+// nothing to repopulate it: the watcher handles change events, and a walk
+// failure is not one. What the caller then reports about disk stays true either
+// way, since this writes nothing.
 func (c *Core) loadFromDisk() error {
-	// Clear existing nibs
-	c.nibs = make(map[string]*nib.Nib)
+	nibs := make(map[string]*nib.Nib)
 
 	// Both diagnostics describe THIS load only, so a repaired file stops being
-	// reported the moment it loads cleanly. Cleared here rather than appended to
-	// so a reload never accumulates stale accusations.
-	c.unparseableFiles = nil
-	c.duplicateIDs = nil
+	// reported the moment it loads cleanly. Collected afresh rather than appended
+	// to so a reload never accumulates stale accusations.
+	var unparseable []UnparseableFile
+	var duplicates []DuplicateID
 
 	// Every per-file warning below spends this budget; the retained diagnostics
 	// above do not, so `nibs check` still answers for the whole store however
@@ -476,7 +509,7 @@ func (c *Core) loadFromDisk() error {
 			// cannot do is share the path below, because that path OPENS the file
 			// and opening this one never returns.
 			if errors.Is(err, ErrNotRegularFile) {
-				c.recordUnparseable(warns, path, ErrNotRegularFile)
+				c.recordUnparseable(warns, &unparseable, path, ErrNotRegularFile)
 				return nil
 			}
 			return err
@@ -497,7 +530,7 @@ func (c *Core) loadFromDisk() error {
 			// writer nothing in production redirects, while the skipped nib is
 			// missing from every query with nothing to explain it. `nibs check`
 			// reads these back (see Core.CheckAllLinks).
-			c.recordUnparseable(warns, path, loadErr)
+			c.recordUnparseable(warns, &unparseable, path, loadErr)
 			return nil
 		}
 
@@ -514,10 +547,10 @@ func (c *Core) loadFromDisk() error {
 		// The same event is also retained as a diagnostic so `nibs check` can
 		// report it (see Core.CheckAllLinks); there the two files are named in
 		// nib.Path form, which is how every other nibs surface spells a path.
-		if existing, ok := c.nibs[b.ID]; ok {
+		if existing, ok := nibs[b.ID]; ok {
 			warns.warn("duplicate nib id %q on disk: %s shadows %s (last file loaded wins; resolve the duplicate)",
 				b.ID, path, filepath.Join(c.root, existing.Path))
-			c.duplicateIDs = append(c.duplicateIDs, DuplicateID{
+			duplicates = append(duplicates, DuplicateID{
 				NibID:    b.ID,
 				Loaded:   b.Path,
 				Shadowed: existing.Path,
@@ -548,7 +581,7 @@ func (c *Core) loadFromDisk() error {
 				b.ID, axisErr, AxisKeysNoun(axes), ClearAxesCommand(b.ID, axes))
 		}
 
-		c.nibs[b.ID] = b
+		nibs[b.ID] = b
 		return nil
 	})
 	// Closed here rather than deferred so the elision line lands at the end of the
@@ -558,6 +591,10 @@ func (c *Core) loadFromDisk() error {
 	if err != nil {
 		return err
 	}
+
+	c.nibs = nibs
+	c.unparseableFiles = unparseable
+	c.duplicateIDs = duplicates
 
 	// Resolve every short-form link id to its full form now that the whole map
 	// exists (see canonicalize.go for why this is the single normalization
@@ -619,10 +656,14 @@ func (c *Core) relPathFromRoot(path string) string {
 // Only the WARNING is bounded by the load's budget. The diagnostic is retained
 // unconditionally, because it is what `nibs check` reads back — and the bounded
 // warning sends the reader there.
-func (c *Core) recordUnparseable(warns *warnBudget, path string, reason error) {
+//
+// The diagnostic joins the caller's own collection rather than the one the store
+// is answering from: a load installs what it found only once its walk has
+// finished (see loadFromDisk).
+func (c *Core) recordUnparseable(warns *warnBudget, into *[]UnparseableFile, path string, reason error) {
 	warns.warn("skipping unparseable nib file %s: %v", path, reason)
 	id, _ := nib.ParseFilename(filepath.Base(path), c.configPrefix())
-	c.unparseableFiles = append(c.unparseableFiles, UnparseableFile{
+	*into = append(*into, UnparseableFile{
 		NibID:  id,
 		Path:   c.relPathFromRoot(path),
 		Reason: reason.Error(),
@@ -1118,7 +1159,7 @@ func (c *Core) ValidateEnums(b *nib.Nib) error {
 // watcher picks BOTH up — where it used to take only the member rewrites and
 // refuse every later write to them against the vocabulary it read at startup.
 //
-// RewriteAreaAssignments, the cascade beside those edits, is
+// rewriteAreaAssignmentsLocked, the cascade beside those edits, is
 // deliberately not a caller of this method for the same reason a rename could
 // not go through Update at all: no single vocabulary declares both the value a
 // member is leaving and the one it is arriving at.

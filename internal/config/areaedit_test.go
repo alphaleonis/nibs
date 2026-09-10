@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -533,9 +534,13 @@ func TestStoredAreaEditsRefuseAnInheritedVocabulary(t *testing.T) {
 						t.Errorf("error = %v (%T), want an *AreaEditRefusal so the CLI reports it as a validation refusal", err, err)
 					}
 					areasPath := store.NewLayout(storeDir).AreasPath()
+					// Named through Naming, not Error: the refusal renders
+					// path-free by default because the same sentence reaches an
+					// HTTP client through the area mutations.
+					named := refusal.Naming(areasPath)
 					for _, want := range []string{areasPath, tt.construct, "anchors, aliases or merge keys", "then rerun"} {
-						if !strings.Contains(err.Error(), want) {
-							t.Errorf("error = %q, want it to carry %q", err, want)
+						if !strings.Contains(named, want) {
+							t.Errorf("Naming = %q, want it to carry %q", named, want)
 						}
 					}
 					if got := readAreaEditStore(t, storeDir); got != tt.vocab {
@@ -586,9 +591,10 @@ areas:
 			if !errors.As(err, &refusal) {
 				t.Errorf("error = %v (%T), want an *AreaEditRefusal", err, err)
 			}
+			named := refusal.Naming(store.NewLayout(storeDir).AreasPath())
 			for _, want := range []string{store.NewLayout(storeDir).AreasPath(), "cannot be read as an areas vocabulary", "repair it, then rerun"} {
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("error = %q, want it to carry %q", err, want)
+				if !strings.Contains(named, want) {
+					t.Errorf("Naming = %q, want it to carry %q", named, want)
 				}
 			}
 			if got := readAreaEditStore(t, storeDir); got != broken {
@@ -1107,8 +1113,12 @@ func TestStoredAreaEditsStillRefuseAFileDeclaringNothing(t *testing.T) {
 					if !errors.As(err, &refusal) {
 						t.Errorf("error = %v (%T), want an *AreaEditRefusal so the CLI reports it as a validation refusal", err, err)
 					}
-					if areasPath := store.NewLayout(storeDir).AreasPath(); !strings.Contains(err.Error(), areasPath) {
-						t.Errorf("error = %q, want it to name %s — the file declaring nothing, not the path that was typed", err, areasPath)
+					areasPath := store.NewLayout(storeDir).AreasPath()
+					if named := refusal.Naming(areasPath); !strings.Contains(named, areasPath) {
+						t.Errorf("Naming = %q, want it to name %s — the file declaring nothing, not the path that was typed", named, areasPath)
+					}
+					if refusal.File != areasPath {
+						t.Errorf("File = %q, want %q — a surface that may name the file reads it from here", refusal.File, areasPath)
 					}
 					if got := readAreaEditStore(t, storeDir); got != tt.vocab {
 						t.Errorf("the refused edit rewrote the file:\n%s", got)
@@ -1355,5 +1365,173 @@ func TestCreateStoredAreaKeepsEverythingElse(t *testing.T) {
 	want := []string{"auth", "api", "api/webhooks", "web", "web/dashboard", "infra"}
 	if got := loadAreaEditConfig(t, storeDir).Paths(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("Paths() = %v, want %v", got, want)
+	}
+}
+
+// TestStoredAreaEditRefusesANameNoStoreCouldReadBack is the write half of the
+// bound the read half has always had. ReadConfigFile refuses an areas.yml over
+// MaxConfigBytes and Core.Load reads the vocabulary before the nibs, so a name
+// long enough to carry the file past that limit leaves a store no command can
+// open — including the edit that would undo it. The bound is on what an EDIT may
+// write and not on what a store may hold: validateAreaNodes still accepts a name
+// of any length on load.
+func TestStoredAreaEditRefusesANameNoStoreCouldReadBack(t *testing.T) {
+	storeDir := writeAreaEditStore(t, areaEditFixture)
+
+	_, err := PlanRenameStoredArea(storeDir, "web", strings.Repeat("x", maxAreaNameRunes+1))
+	if err == nil {
+		t.Fatal("the planner accepted a name past the bound")
+	}
+	var refusal *AreaEditRefusal
+	if !errors.As(err, &refusal) {
+		t.Errorf("error = %v (%T), want an *AreaEditRefusal — the caller's argument, not the machine", err, err)
+	}
+	if !strings.Contains(err.Error(), "bounded at 200") {
+		t.Errorf("error = %q, want it to name the bound", err)
+	}
+	if got := readAreaEditStore(t, storeDir); got != areaEditFixture {
+		t.Errorf("a refused rename rewrote the file:\n%s", got)
+	}
+
+	// A name AT the bound is accepted, so the refusal above is the bound biting
+	// and not the planner refusing every long name it is handed.
+	if _, err := PlanRenameStoredArea(storeDir, "web", strings.Repeat("x", maxAreaNameRunes)); err != nil {
+		t.Errorf("a name at the bound was refused: %v", err)
+	}
+}
+
+// TestStoredAreaEditRefusesAnOutputPastTheConfigLimit is the same refusal
+// reached with no long argument at all. The edit is a semantic-preserving
+// RE-MARSHAL, so a vocabulary written with two-space indentation comes back with
+// four and grows by a fifth — enough for a file legally under MaxConfigBytes to
+// cross it on a rename that shortens the only name it touches.
+func TestStoredAreaEditRefusesAnOutputPastTheConfigLimit(t *testing.T) {
+	// Sized from the growth this re-marshal actually produces: 58,000 top-level
+	// nodes read as 858,909 bytes and render as 1,090,918, so the input clears
+	// the limit by 190 KiB and the output passes it by 42 KiB.
+	var b strings.Builder
+	b.WriteString("areas:\n")
+	for i := range 58000 {
+		fmt.Fprintf(&b, "- name: a%d\n", i)
+	}
+	b.WriteString("- name: web\n")
+	vocab := b.String()
+	if len(vocab) > MaxConfigBytes {
+		t.Fatalf("the fixture is %d bytes, past the %d-byte limit before any edit", len(vocab), MaxConfigBytes)
+	}
+	storeDir := writeAreaEditStore(t, vocab)
+
+	_, err := PlanRenameStoredArea(storeDir, "web", "ui")
+	if err == nil {
+		t.Fatal("the planner accepted an edit whose output no store could read back")
+	}
+	var refusal *AreaEditRefusal
+	if !errors.As(err, &refusal) {
+		t.Errorf("error = %v (%T), want an *AreaEditRefusal", err, err)
+	}
+	if !strings.Contains(err.Error(), "configuration limit") {
+		t.Errorf("error = %q, want it to name the limit it would pass", err)
+	}
+	// The last of the file-naming refusals, held to the same rule as the rest
+	// (see TestAreaEditRefusalsNameNoPathUntilAsked); it is asserted here rather
+	// than there because the fixture that reaches it is 58,000 nodes.
+	if strings.Contains(refusal.Error(), storeDir) {
+		t.Errorf("Error = %q names the store directory, which reaches an HTTP client verbatim", refusal.Error())
+	}
+	if areasPath := store.NewLayout(storeDir).AreasPath(); !strings.Contains(refusal.Naming(areasPath), areasPath) {
+		t.Errorf("Naming = %q, want it to name %s", refusal.Naming(areasPath), areasPath)
+	}
+	if got := readAreaEditStore(t, storeDir); got != vocab {
+		t.Error("a refused rename rewrote the file")
+	}
+}
+
+// TestAreaEditRefusalsNameNoPathUntilAsked is the mechanism half of the rule the
+// AreaEditRefusal doc states: these sentences reach an unauthenticated HTTP
+// client through the area mutations, so Error names no filesystem path, and the
+// one surface entitled to name it asks for it.
+//
+// It drives every refusal shape planStoredAreaEdit can make about a FILE — one
+// per branch that interpolates the path — because the leak this closes was a
+// per-branch one: the wrapper added the path while the inner reason was already
+// path-free, so a reader auditing one branch concluded the whole surface was
+// clean.
+func TestAreaEditRefusalsNameNoPathUntilAsked(t *testing.T) {
+	tests := []struct {
+		name  string
+		vocab string
+		plan  func(storeDir string) (*StoredAreaEdit, error)
+		want  string
+	}{
+		{
+			name:  "a file that is not YAML",
+			vocab: "areas: [\n",
+			want:  "parsing",
+		},
+		{
+			name:  "more than one document",
+			vocab: "areas:\n    - name: web\n---\nother: 1\n",
+			want:  "more than one YAML document",
+		},
+		{
+			name:  "a vocabulary that inherits its content",
+			vocab: "defaults: &d\n    description: shared\nareas:\n    - name: web\n      <<: *d\n",
+			want:  "anchors, aliases or merge keys",
+		},
+		{
+			name:  "a file the loader cannot read as a vocabulary",
+			vocab: "areas: 5\n",
+			want:  "cannot be read as an areas vocabulary",
+		},
+		{
+			name:  "a file declaring no areas to edit",
+			vocab: "# just a comment\n",
+			want:  "declares no areas to edit",
+		},
+		{
+			name:  "a file with no `areas:` block",
+			vocab: "other: 1\n",
+			want:  "declares no `areas:` block",
+		},
+		{
+			name:  "an edit the loader would reject",
+			vocab: "areas:\n    - name: web\n    - name: auth\n",
+			plan: func(storeDir string) (*StoredAreaEdit, error) {
+				return PlanRenameStoredArea(storeDir, "web", "auth")
+			},
+			want: "declaring an unusable vocabulary",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			storeDir := writeAreaEditStore(t, tt.vocab)
+			plan := tt.plan
+			if plan == nil {
+				plan = func(storeDir string) (*StoredAreaEdit, error) {
+					return PlanRenameStoredArea(storeDir, "web", "frontend")
+				}
+			}
+			edit, err := plan(storeDir)
+			if err == nil {
+				t.Fatalf("planning must refuse this vocabulary, got a plan for %s", edit.Path())
+			}
+			var refusal *AreaEditRefusal
+			if !errors.As(err, &refusal) {
+				t.Fatalf("error = %v (%T), want an *AreaEditRefusal", err, err)
+			}
+			if !strings.Contains(refusal.Error(), tt.want) {
+				t.Errorf("Error = %q, want substring %q — the branch under test is not the one that fired", refusal.Error(), tt.want)
+			}
+			if strings.Contains(refusal.Error(), storeDir) {
+				t.Errorf("Error = %q names the store directory %s, which reaches an HTTP client verbatim", refusal.Error(), storeDir)
+			}
+			areasPath := store.NewLayout(storeDir).AreasPath()
+			if refusal.File != areasPath {
+				t.Errorf("File = %q, want %q", refusal.File, areasPath)
+			}
+			if named := refusal.Naming(areasPath); !strings.Contains(named, areasPath) {
+				t.Errorf("Naming = %q, want it to name %s", named, areasPath)
+			}
+		})
 	}
 }
