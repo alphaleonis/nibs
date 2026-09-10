@@ -416,9 +416,13 @@ func areaRenameNameRefusal(err error) bool {
 //
 // The LENGTH clause is config.ValidateAreaName's and is CALLED rather than
 // copied, which is the whole reason that function exists — the wire surface
-// calls it too. Its empty and padded clauses are reached only when this
-// function's own two are removed: those come first because they can name the
-// node being renamed, where a bound shared with a create cannot.
+// calls it too. It is asked LAST of the shape clauses, because it is the only
+// one that cannot name a remedy: a path given where a name belongs is refused
+// above with the `nibs area rename` that would work, and a bound shared with a
+// create can only report a count. Asked earlier, a long path-as-name reported
+// the length of the whole path and the runnable spelling was never printed.
+// Its own empty and padded clauses are unreachable from here — this function's
+// two answer first, in wording that names the node being renamed.
 //
 // config.PlanRenameStoredArea re-checks the RESULT before it hands back an edit
 // to write, so none of this is what keeps a broken vocabulary off disk. What it
@@ -435,9 +439,6 @@ func validateAreaRenameArgument(jsonMode bool, path, parent, oldName, newName st
 			"the new name %s has leading or trailing whitespace; an `area:` value would have to carry the same spaces to match it",
 			quotedArea(newName))
 	}
-	if err := config.ValidateAreaName(newName); err != nil {
-		return cmdError(jsonMode, output.ErrValidation, "%s", err)
-	}
 	if strings.Contains(newName, config.AreaPathSeparator) {
 		newParent, tail := splitAreaPath(newName)
 		if newParent == parent && tail != "" {
@@ -448,6 +449,9 @@ func validateAreaRenameArgument(jsonMode bool, path, parent, oldName, newName st
 		return cmdError(jsonMode, output.ErrValidation,
 			"%s is not a name: a rename changes a node's name and never moves it between parents, so give the name alone — `nibs area list` prints the declared tree",
 			quotedArea(newName))
+	}
+	if err := config.ValidateAreaName(newName); err != nil {
+		return cmdError(jsonMode, output.ErrValidation, "%s", err)
 	}
 	if newName == oldName {
 		return areaNameUnchangedRefusal(jsonMode, path, newName)

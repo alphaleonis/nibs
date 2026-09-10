@@ -788,11 +788,23 @@ func TestAreaRenameRefusesABadNameWithoutTakingTheStoreLock(t *testing.T) {
 		name string
 		args []string
 		want string
+		// unwanted, when set, is a substring the refusal must NOT carry — the
+		// wording of a clause that had to lose for this row to mean anything.
+		unwanted string
 	}{
 		{name: "an empty new name", args: []string{"web", ""}, want: "needs a name"},
 		{name: "a new name that is only whitespace padding", args: []string{"web", " frontend"}, want: "whitespace"},
 		{name: "a new name over the bound an edit may write", args: []string{"web", strings.Repeat("a", 201)}, want: "bounded at 200"},
 		{name: "a path where a name belongs", args: []string{"web/dashboard", "web/panel"}, want: "not a name"},
+		// Both clauses match this one, and only the separator clause can print a
+		// spelling that works — so it has to be asked first. Ordered the other
+		// way this reported the length of the whole path and the caller was left
+		// without the command that would have succeeded.
+		{
+			name: "a path where a name belongs, long enough to trip the bound too",
+			args: []string{"web/dashboard", "web/" + strings.Repeat("a", 198)},
+			want: "give the name alone", unwanted: "bounded at 200",
+		},
 		{name: "the name the node already has", args: []string{"api/webhooks", "webhooks"}, want: "already named"},
 	}
 
@@ -824,6 +836,9 @@ func TestAreaRenameRefusesABadNameWithoutTakingTheStoreLock(t *testing.T) {
 				}
 				if !strings.Contains(err.Error(), tt.want) {
 					t.Errorf("error = %q, want substring %q", err.Error(), tt.want)
+				}
+				if tt.unwanted != "" && strings.Contains(err.Error(), tt.unwanted) {
+					t.Errorf("error = %q, want it to carry no %q", err.Error(), tt.unwanted)
 				}
 			case <-time.After(10 * time.Second):
 				t.Fatalf("`area rename %v` is still waiting for the store's write lock — the two arguments alone refuse it, and nothing is printed while it waits", tt.args)
