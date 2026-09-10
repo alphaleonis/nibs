@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **The web table shows a nib's milestone and area as columns** — off by default and toggled on like Blocking or Created, so the views that group by neither axis can still show both.
 - **A nib's area is set from the web's detail panel** — a picker over the project's declared vocabulary, offered while creating as well as while editing, where before only `nibs set --area` could place a nib in one.
 - **`nibs rel` takes `-c` and `-q`** — the size of the related set as a bare integer and the related ids one per line, with list's semantics, which is what the cheat sheet's FILTER block already promised of both verbs.
+- **Areas are renamed and retired over the API** — the work assigned beneath an area is reassigned or unassigned as the call directs.
 
 ### Changed
 - **The web's Tree view no longer lists milestones** — a milestone is a waypoint outside the parent graph, so a view spined on parentage had nothing to nest under it; Flat still shows every nib, and the Milestone column shows the assignment.
