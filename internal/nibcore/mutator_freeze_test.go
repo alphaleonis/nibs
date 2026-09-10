@@ -588,7 +588,9 @@ func TestCoreMutators_FreezePartition(t *testing.T) {
 	// helpers). None installs or rewrites a published c.nibs pointer in a way that
 	// can tear a non-Path field for an off-lock reader: readers return live
 	// pointers or GetSnapshot clones; Load swaps the whole c.nibs map with fresh
-	// pointers (leaving any held pointer frozen); GetForUpdate returns a clone.
+	// pointers (leaving any held pointer frozen); GetForUpdate returns a clone;
+	// ReloadAreas replaces the VOCABULARY behind its atomic pointer and reads no
+	// nib at all.
 	freezeNonMutators := map[string]bool{
 		"All":                true,
 		"CheckAllLinks":      true,
@@ -613,6 +615,7 @@ func TestCoreMutators_FreezePartition(t *testing.T) {
 		"Load":               true,
 		"LoadDiagnostics":    true,
 		"NormalizeID":        true,
+		"ReloadAreas":        true,
 		"Root":               true,
 		"Search":             true,
 		"SearchAll":          true,

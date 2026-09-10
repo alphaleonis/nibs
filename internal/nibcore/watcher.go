@@ -209,6 +209,18 @@ func (c *Core) SubscribeAreas() (<-chan struct{}, func()) {
 	return ch, unsubscribe
 }
 
+// ReloadAreas is reloadAreas for a WRITER that has just changed the file: the
+// GraphQL area mutations call it after their config write, so the vocabulary
+// they answer with is the one they wrote and an areas subscriber in this process
+// wakes on the edit rather than on the watcher's debounce.
+//
+// It is idempotent with that later watcher reload rather than racing it:
+// reloadAreas installs nothing and ticks nobody when the vocabulary it read
+// equals the one already loaded, so whichever of the two runs second is a no-op.
+func (c *Core) ReloadAreas() {
+	c.reloadAreas()
+}
+
 // reloadAreas re-reads the store's areas.yml and installs it, ticking every
 // areas subscriber when the vocabulary actually changed.
 //
