@@ -478,70 +478,54 @@ func newGraphQLHandler(app *App, wsPingPong time.Duration) http.Handler {
 //     reconcilable optimistic-concurrency conflict the web client routes into
 //     its inline "Load theirs / Overwrite" resolver. errors.As walks the wrap
 //     chain, so a wrapped ETagMismatchError is still recognized.
-//   - "NOT_FOUND" on any error carrying nib.ErrNotFound (via errors.Is, so a
-//     wrapped "target nib not found: <id>: nib not found" still matches). A
+//
+//   - "NOT_FOUND" on any error carrying nib.ErrNotFound (via errors.Is). A
 //     delete of the edited nib surfaces here — GetForUpdate returns ErrNotFound
 //     BEFORE any if-match check, so it is not an etag conflict — and the web
-//     client routes it to its gone/deleted notice instead of a raw toast. The tag
-//     keys only on the error type, not on WHICH nib is gone: a concurrently-
-//     deleted BLOCKING target (a different nib than the one being edited) also
-//     carries ErrNotFound, because updateTargetClone wraps it with %w
-//     ("target nib not found: <id>: %w"), so it would be tagged NOT_FOUND too. (A
-//     missing PARENT does NOT: validateAndSetParent formats its id with %s and
-//     does not carry ErrNotFound, so it never tags.) That breadth is inert on
-//     today's web save path because its edit-save input sends no parent/blocking
-//     fields (only title/status/type/priority/estimate/body/tags), so the only
-//     ErrNotFound it can raise is the edited nib's own deletion, and an archived
-//     nib stays in the store so its Update lands as a normal write. If blocking
-//     fields are later added to that input, a deleted BLOCKING target would also
-//     mint NOT_FOUND
-//     and misroute the still-alive edited nib to gone/deleted.
+//     client routes it to its gone/deleted notice.
+//
+//     The tag keys on the error TYPE, not on WHICH nib is gone: a concurrently
+//     deleted BLOCKING target carries ErrNotFound too, because updateTargetClone
+//     wraps it with %w. (A missing PARENT does not: validateAndSetParent formats
+//     its id with %s.) That breadth is inert only because the web's edit-save
+//     input sends no parent/blocking fields; adding them would let a deleted
+//     blocking target misroute the still-alive edited nib to gone/deleted.
+//
 //     NOT_FOUND also arrives on the READ path, which no other code does: a
-//     filter field naming one nib refuses an id no nib answers to
-//     (graph.FilterTargetNotFoundError), and the web filter box sends
-//     user-typed — so routinely half-typed — ids. The list keys on the code to
-//     explain that inline instead of rendering it as a failure.
-//     An UNRESOLVABLE-ID filter refusal is the ONLY read-path source of this
-//     code, and web/src/lib/components/TreeTable.svelte routes ANY read-path
-//     NOT_FOUND to that calm inline empty state on the strength of it. Not every
-//     filter refusal qualifies: an id-valued field given the EMPTY STRING is
-//     refused too (graph.FilterTargetEmptyError) and deliberately carries no
-//     code, below. What holds the invariant up is that every read resolver
-//     returns (nil, nil) on a miss (queryResolver.Nib, nibResolver.Parent) and
-//     only mutations wrap nib.ErrNotFound (snapshotResult). A new read resolver
-//     that carried it — nib(id:) erroring instead of resolving to null, say —
-//     would be presented as an empty result rather than as the failure it is.
+//     filter field naming an id no nib answers to raises
+//     graph.FilterTargetNotFoundError, and the web filter box sends user-typed —
+//     so routinely half-typed — ids, which TreeTable.svelte explains inline
+//     instead of rendering as a failure. An unresolvable-id filter refusal is the
+//     ONLY read-path source of this code, and what holds that up is that every
+//     read resolver returns (nil, nil) on a miss (queryResolver.Nib,
+//     nibResolver.Parent) while only mutations wrap nib.ErrNotFound
+//     (snapshotResult). A new read resolver that carried it — nib(id:) erroring
+//     instead of resolving to null — would be presented as an empty result
+//     rather than as the failure it is.
+//
 //   - "FILTER_CONTRADICTION" on the typed *graph.FilterTargetContradictionError —
 //     an id-valued filter field combined with its presence twin set to false
-//     (parentId + hasParent:false, blockedById + hasBlockedBy:false). It is a
-//     read-path refusal like the two above and needs a code of its own because
-//     both alternatives misinform. NOT_FOUND would route it to the "no such nib"
-//     empty state, whose wording blames an id when both halves of the pair may
-//     name real nibs — the type's own doc comment refuses that collapse for the
-//     same reason on the CLI side. Leaving it uncoded lands it in the web list's
-//     destructive error box, which is where the web client's query box can reach
-//     it in two clicks: it registers `parent:<id>` and `no:parent` as independent
-//     tokens, and "Children of this" on the row context menu ANDs a parentId onto
-//     whatever is already set, so a `no:parent` view reaches the pair without
-//     anyone typing it. Its own code lets TreeTable.svelte name the two tokens in
-//     the box's own vocabulary and, for the hierarchy pair, keep the "Clear
-//     hierarchy filters" button the empty state offered before the refusal
-//     existed.
+//     (parentId + hasParent:false). It needs a code of its own because both
+//     alternatives misinform: NOT_FOUND routes it to the "no such nib" empty
+//     state, whose wording blames an id when both halves may name real nibs,
+//     while leaving it uncoded lands it in the destructive error box. The web
+//     query box reaches the pair without anyone typing it — "Children of this"
+//     ANDs a parentId onto whatever is already set, including a `no:parent` view
+//     — so its own code is what lets TreeTable.svelte name the two tokens in the
+//     box's own vocabulary and keep its "Clear hierarchy filters" button.
 //
 // Every other error (the enum-validation errors, ETagRequiredError,
 // OnDiskUnparseableError, a filter target that vanished mid-query, a filter
-// field given an empty id or a nib of the wrong type, generic failures) is
-// left EXACTLY as the default presenter formats it: no code is added, so
-// callers can't mistake a non-reconcilable failure for a retryable conflict or
-// a real deletion.
+// field given an empty id or a nib of the wrong type, generic failures) is left
+// EXACTLY as the default presenter formats it, so callers cannot mistake a
+// non-reconcilable failure for a retryable conflict or a real deletion.
 //
-// The empty-id refusal is the case where that default is a decision rather than
-// an omission. It is a malformed query — an empty id is what a client sends when
-// a variable did not interpolate — so it must surface as a failure. Tagging it
-// NOT_FOUND would route it to the inline "nothing matched" state and hide a
-// client bug behind exactly the confident empty answer the refusal exists to
-// replace; the CLI keys on the Go error chain instead and gives it exit 2 (see
-// filterTargetErrCode).
+// The empty-id refusal is where that default is a decision rather than an
+// omission. It is a malformed query — an empty id is what a client sends when a
+// variable did not interpolate — so it must surface as a failure; tagging it
+// NOT_FOUND would hide a client bug behind the confident empty answer the
+// refusal exists to replace. The CLI keys on the Go error chain instead and
+// gives it exit 2 (see filterTargetErrCode).
 //
 // The web classifiers key on these codes first; the "etag mismatch" substring
 // match is kept only as a fallback (see web/src/lib/nibForm.svelte.ts,

@@ -90,7 +90,7 @@ var versionCmd = &cobra.Command{
 // cannot see whether they came from here or from two copies of the same literal.
 // Editing either copy is still caught.
 //
-// Shared rather than written twice because the two spellings are asked by
+// Shared because the two spellings are asked by
 // different readers — a person types one, a script or an agent reaches for the
 // other — and a build-identity string that differs by how it was asked for is one
 // somebody parses wrongly. Cobra's default version template would have printed

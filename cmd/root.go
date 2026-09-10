@@ -243,10 +243,10 @@ func resolveStoreDir() (string, error) {
 	//
 	// Given ALONE, --config stays supported and simply names the store through
 	// its containing directory — that is the whole reason the combination is
-	// redundant rather than useful.
+	// redundant.
 	//
-	// The refusal is deliberately UNCONDITIONAL rather than narrowed to the case
-	// where the two disagree. Comparing them with sameDir would accept the
+	// The refusal is deliberately UNCONDITIONAL. Comparing them with sameDir
+	// would accept the
 	// self-consistent spelling, which is exactly the spelling that teaches the
 	// habit: the same invocation silently changes meaning the moment either value
 	// moves, and the flag it would sanction adds nothing --nibs-path does not
@@ -444,38 +444,26 @@ func bindNamedStore(dir string) (string, error) {
 				filepath.Join(projectDir, store.DirName),
 				filepath.Join(projectDir, store.LegacyProjectConfigFileName))
 		}
-		// The naming clause reports what was CHECKED. A `.nibs.yml` beside it
-		// that declares some other path is not "no config names it", and the
-		// difference matters most where it is least visible: sameDir compares
-		// paths as text, so on a case-insensitive filesystem the other path can
-		// be this very directory under another spelling. Denying that any
-		// config names it then sends a user standing on real nibs to
-		// `nibs init`.
+		// The naming clause reports what was CHECKED, not what is true. sameDir
+		// compares paths as text, so on a case-insensitive filesystem — or through
+		// a symlink alias — a `.nibs.yml` declaring some other path can be naming
+		// this very directory. Concluding "no config names it" would then send a
+		// user standing on real nibs to `nibs init`, and concluding "it names a
+		// different DIRECTORY" is the same unestablished claim wearing a
+		// conclusion. So the clause states the comparison instead — the declared
+		// value where this branch has one, and that the match is textual — which
+		// stays true whether the two names are two directories or one.
 		//
-		// "It names a different DIRECTORY" is that same unestablished claim
-		// wearing a conclusion, and it is false in exactly the cases the
-		// comparison is weakest on: a symlink alias and a case variant both
-		// fail sameDir while reaching this very directory (`<proj>/link ->
-		// nibdata` and `<proj>/nibdata` report one inode, and either spelling
-		// resolves as the store). So the clause states the comparison instead
-		// — the declared value where this branch has one, and that the match
-		// is textual — which stays true whether the two names are two
-		// directories or one.
-		//
-		// What such a config describes is a PRE-LAYOUT PROJECT, so the remedy
-		// is preLayoutRemedy's — the same answer the discovery route gives for
-		// the same project. It names the declared value, the directory that
-		// value resolves to and what to do about it, and it prescribes
-		// `nibs migrate` only for the shapes the store-evidence guard accepts.
-		// Advice of the form "name it the way the config does" cannot make
-		// that distinction: for `docs/nibs`, an absolute path, `.` or `..` —
-		// shapes that guard refuses — following it lands on a second refusal
-		// whose only advice is the `nibs init` this branch exists to avoid.
+		// What such a config describes is a PRE-LAYOUT PROJECT, so the remedy is
+		// preLayoutRemedy's: the same answer the discovery route gives for the same
+		// project, naming the declared value, the directory it resolves to and what
+		// to do about it, and prescribing `nibs migrate` only for the shapes the
+		// store-evidence guard accepts.
 		//
 		// It also keeps the resolved path out of sanitizeFileText's hands. The
-		// declared value is echoed as EVIDENCE, collapsed and bounded because
-		// it is untrusted file content; the path the reader has to act on is
-		// the resolved one, which must survive intact.
+		// declared value is echoed as EVIDENCE, collapsed and bounded because it is
+		// untrusted file content; the path the reader has to act on is the resolved
+		// one, which must survive intact.
 		if declaredErr == nil && declared != "" {
 			// preLayoutRemedy's precondition is that no store sits beside the
 			// pre-layout config. Its other two callers establish that; this
@@ -679,61 +667,47 @@ func noStoreFoundError(cwd string) error {
 // destination it is.
 //
 // A NON-store may still be sitting on the name — a `.nibs` symlink leading
-// somewhere that carries no store evidence is the shape symlinkedStoreError hands
-// over from, and a dangling one blocks MkdirAll the same way. That is why the
-// obstruction clause below exists rather than the precondition simply forbidding
-// it: "no store beside it" stays true, while "create <project>/.nibs" would be
-// unfollowable in silence. Stating it once here is also what lets that caller
-// delegate instead of writing a fifth copy of this remedy.
+// somewhere that carries no store evidence, or a dangling one, which blocks
+// MkdirAll just the same. That is what the obstruction clause below is for:
+// "no store beside it" stays true, while "create <project>/.nibs" would be
+// unfollowable in silence.
 //
 // For the shapes `nibs migrate` can relocate itself, the remedy is
-// `nibs migrate --nibs-path <dataDir>` — migrating the store WHERE IT IS. The
-// layout step then moves it to `<project>/.nibs`, which is what makes the project
-// discoverable afterwards; telling the user to move the files by hand first only
-// produced a store whose `.nibs.yml` still named the emptied directory, and no
-// filesystem action can make a config VALUE equal `.nibs`.
+// `nibs migrate --nibs-path <dataDir>` — migrating the store WHERE IT IS, after
+// which the layout step moves it to `<project>/.nibs` and the project is
+// discoverable. Moving the files by hand first cannot converge: no filesystem
+// action makes a config VALUE equal `.nibs`.
 //
 // The guard's answer is THREE-WAY here as everywhere else. A declared directory
-// that could not be read gets neither reason clause below: both of them state a
-// definite fact about its contents, and both carry an instruction — move the files
-// out of it, remove the key that records where they are — that is destructive when
-// the fact is unknown.
+// that could not be read gets neither reason clause below: both state a definite
+// fact about its contents, and both carry an instruction — move the files out of
+// it, remove the key that records where they are — that is destructive when the
+// fact is unknown.
 //
 // The command is printed ONLY when the store-evidence guard would accept the
-// directory (hasLegacyStoreShape, the same predicate resolveStoreDir consults) —
-// otherwise this message would prescribe a command the tool refuses, and its only
-// other advice is the `nibs init` it calls harmful. `nibs.path` shapes the guard
-// deliberately does not accept — a value naming somewhere other than an immediate
-// subdirectory of the project, or a directory holding nothing nibs wrote — get the
-// manual remedy instead, which converges for every shape: removing the retired key
-// is what stops the relocation refusing over a directory it can no longer account
-// for.
+// directory (hasLegacyStoreShape, the same predicate resolveStoreDir consults),
+// so the message never prescribes a command the tool refuses. The `nibs.path`
+// shapes that guard does not accept — a value naming somewhere other than an
+// immediate subdirectory of the project, or a directory holding nothing nibs
+// wrote — get the manual remedy, which converges for every shape: removing the
+// retired key is what stops the relocation refusing over a directory it can no
+// longer account for.
 //
 // EVERY string here that came from the config crosses a boundary, and which one
-// depends on what the string is FOR. The declared VALUE is quoted evidence, so it
-// goes through sanitizeFileText — collapsed onto a line and bounded — and is
-// printed with %q. The resolved directory is a path the reader goes and looks at,
-// so it goes through sanitizeFilePath, which bounds it but leaves its spaces
-// alone: the value is joined onto the project directory, and a config may be a
-// megabyte, so an unbounded interpolation repeated that megabyte per site. The
-// path that appears as a COMMAND ARGUMENT gets shellArg — stripControlChars plus
-// shell quoting, unbounded, because truncating the one string the reader has to
-// run would corrupt it, and that branch is reached only for a directory the
-// filesystem could open.
+// depends on what the string is FOR. The declared VALUE is quoted evidence:
+// sanitizeFileText, collapsed onto a line and bounded, printed with %q. The
+// resolved directory is a path the reader goes and looks at: sanitizeFilePath,
+// which bounds it but leaves its spaces alone, since the value is joined onto the
+// project directory and a config may be a megabyte. The path that appears as a
+// COMMAND ARGUMENT gets shellArg — stripControlChars plus shell quoting,
+// unbounded, because truncating the one string the reader has to run would
+// corrupt it.
 //
-// What all three answer is the SEMANTIC channel, not the terminal one: a value
-// from a cloned repository's `.nibs.yml` sits in the same sentence as a command
-// the reader is told to run, and this CLI's stated primary consumer is an agent
-// primed to follow instructions. %q alone does NOT close it, and the claim that it
-// did was false in the exact way that mattered: %q's delimiter is the double
-// quote, the span's is the backtick, and %q escapes the first and never the
-// second. A value carrying a backtick therefore closed the span quoting it and
-// rendered as prose plus a runnable `nibs migrate --nibs-path /etc` — three times
-// in one message, once per interpolation, since the derived path and the command
-// argument carry the same bytes. The backtick is answered where every one of these
-// renderings passes: safetext.Strip substitutes it, so no config value can put a
-// delimiter into a message. %q stays for what it does do — bounding the value with
-// a visible pair of quotes so a reader can see where it ends.
+// All three answer the SEMANTIC channel, not the terminal one, and %q does not:
+// %q escapes the double quote, while the delimiter of the code span these values
+// land inside is the backtick. safetext.Strip substitutes the backtick — see
+// internal/safetext for why that is the boundary. %q stays for what it does do,
+// bounding the value with a visible pair of quotes.
 func preLayoutRemedy(legacy string) error {
 	projectDir := filepath.Dir(legacy)
 	target := filepath.Join(projectDir, store.DirName)
@@ -833,10 +807,8 @@ func preLayoutRemedy(legacy string) error {
 //   - the directory is named `.nibs` AND IS A REAL DIRECTORY — the name IS the
 //     marker store.FindStore recognizes, and an empty one is a legal freshly
 //     created store. A SYMLINK named `.nibs` is deliberately not covered: the
-//     name is what this clause trusts, and for a link the name and the directory
-//     it leads to are different things, so a committed `.nibs -> /outside` was
-//     bound as the store on every route and `nibs migrate` planned to sweep that
-//     tree into `<project>/.nibs`. Such a link falls through to the clauses
+//     name is all this clause trusts, and for a link the name and the directory
+//     it leads to are different things. Such a link falls through to the clauses
 //     below and is accepted only on the evidence they read, which is what keeps
 //     a deliberate `.nibs -> ~/sync/proj-nibs` working;
 //   - it holds a config.yml that PARSES as a nibs config: every config
@@ -846,30 +818,18 @@ func preLayoutRemedy(legacy string) error {
 //     deliberately put somewhere other than `.nibs`;
 //   - a pre-layout `.nibs.yml` beside it NAMES it through the retired
 //     `nibs.path` key — see hasLegacyStoreShape. That clause is what keeps a
-//     pre-layout store outside `.nibs` reachable by `nibs migrate`, the very
-//     population the migration exists to serve.
+//     pre-layout store outside `.nibs` reachable by `nibs migrate`.
 //
-// Deliberately NOT evidence, and each one was an accepted shape that resolved an
-// ordinary project directory as a store:
-//
-//   - a bare `data/` or `archive/` subdirectory. `data/` is a standard Hugo
-//     directory and `archive/` is unremarkable anywhere; a Hugo site root had
-//     its blog post moved into `data/` and rewritten as a nib render. Such a
-//     store DOES occur — `nibs init` creates the directories before it validates
-//     the prefix, so a rejected prefix leaves a config-less store behind (see
-//     cmd/init.go) — but that store is reached by re-running `nibs init`, and
-//     every store nibs creates or migrates to is named `.nibs`. That covers it
-//     under the name clause whenever `.nibs` is a real directory, which is what
-//     nibs itself makes — and nibs never makes one behind a link, because init
-//     refuses to create a store through one (refuseSymlinkedStoreDir). So a
-//     config-less `.nibs` link is not a store this tool left behind, and refusing
-//     it strands nothing;
-//   - a file merely NAMED config.yml, never parsed. The name is among the most
-//     common in software projects, and the check did not even exclude a
-//     DIRECTORY by that name;
-//   - "a `.nibs.yml` sits beside it and it holds some `*.md`". That accepted
-//     any docs/ or notes/ directory of an unmigrated project, and `nibs migrate`
-//     then deleted the project's real `.nibs.yml` and relocated it there.
+// Deliberately NOT evidence, because each resolves an ordinary project directory
+// as a store: a bare `data/` or `archive/` subdirectory (`data/` is a standard
+// Hugo directory); a file merely NAMED config.yml, never parsed; and "a
+// `.nibs.yml` sits beside it and it holds some `*.md`", which accepts any docs/
+// or notes/ directory of an unmigrated project. A config-less store DOES occur —
+// `nibs init` creates the directories before it validates the prefix — but it is
+// reached by re-running `nibs init`, and every store nibs creates or migrates to
+// is named `.nibs` and is never behind a link, because init refuses to create one
+// through a link (refuseSymlinkedStoreDir). So refusing a config-less `.nibs`
+// link strands nothing.
 //
 // The answer is THREE-WAY. An error means the evidence EXISTS but could not be
 // established — a config.yml over config.MaxConfigBytes, a `.nibs.yml` whose
@@ -1053,42 +1013,29 @@ func legacyDeclaredStorePath(dir string) (declared, resolved string, err error) 
 //
 // This is the CONTAINMENT half of hasLegacyStoreShape's parent-only rule, and the
 // rule is worth nothing without it. Every other comparison in this chain is
-// lexical (filepath.Dir, Abs, Clean), and a symlink satisfies "an immediate
-// subdirectory of the project" while pointing anywhere on the filesystem —
-// meanwhile the store walk OPENS its root, so it enumerates whatever the link
-// leads to. A repository shipping `.nibs.yml` (`path: store`) plus a committed
-// `store -> /somewhere/else` therefore got nibs to prescribe
-// `nibs migrate --nibs-path <repo>/store`, which moved that whole tree into
-// `<repo>/.nibs`, rewrote every front-mattered file in it as a nib render, and
-// deleted the repository's `.nibs.yml`.
+// lexical (filepath.Dir, Abs, Clean), so a symlink satisfies "an immediate
+// subdirectory of the project" while pointing anywhere on the filesystem — and
+// the store walk OPENS its root, so it enumerates whatever the link leads to. A
+// repository can therefore ship `.nibs.yml` (`path: store`) plus a committed
+// `store -> /somewhere/else` and have the relocation sweep that tree.
 //
 // A link that stays INSIDE the project is still accepted: this is a containment
 // test, not a ban on symlinks — a store reached through a link within the project
 // relocates correctly, because renaming the link moves the store nibs addresses.
-// A store on another volume reached by a link OUT of the project is refused, which
-// matches how the same store spelled as an absolute `nibs.path` has always been
+// A store on another volume reached by a link OUT of the project is refused,
+// matching how the same store spelled as an absolute `nibs.path` has always been
 // treated: the manual remedy noStoreFoundError prints converges for both.
 //
-// WINDOWS, measured rather than reasoned (the concern was that the two arguments
-// might normalize differently and make the containment check answer at random):
-//
-//   - CASE AND 8.3 SHORT NAMES ARE SAFE. filepath.EvalSymlinks upper-cases the
-//     drive letter and rewrites every component to its real on-disk spelling via
-//     FindFirstFile, so both arguments arrive canonical no matter how either was
-//     typed. A lower-cased drive, a lower-cased component, and a `PROJEC~1` alias
-//     all returned true, on either side or both.
-//   - UNC IS EXEMPT FROM THAT NORMALIZATION and therefore is NOT safe.
-//     normVolumeName returns the volume untouched when it is longer than two
-//     bytes, which every `\\server\share` is. Measured against a real share:
-//     EvalSymlinks(`\\localhost\C$\…`) and EvalSymlinks(`\\LOCALHOST\c$\…`) both
-//     succeed and both keep the case they were given, so a UNC parent and child
-//     that reached here from different origins answer FALSE for the same
-//     directory.
-//
-// The UNC direction is conservative — a false negative refuses and prints the
-// manual remedy, it does not authorize a relocation — which is why it is
-// documented here rather than papered over with a case-folding special case that
-// would have to guess at the remote volume's semantics.
+// WINDOWS: case and 8.3 short names are safe, because filepath.EvalSymlinks
+// upper-cases the drive letter and rewrites every component to its real on-disk
+// spelling via FindFirstFile, so both arguments arrive canonical however either
+// was typed. UNC IS EXEMPT FROM THAT NORMALIZATION and is therefore NOT safe:
+// normVolumeName returns the volume untouched when it is longer than two bytes,
+// which every `\\server\share` is, so a UNC parent and child that reached here
+// from different origins answer FALSE for the same directory. That direction is
+// conservative — a false negative refuses and prints the manual remedy, it does
+// not authorize a relocation — which is why it is documented rather than papered
+// over with a case-folding special case.
 func isRealImmediateChild(dir, parent string) (bool, error) {
 	realDir, err := filepath.EvalSymlinks(dir)
 	if err != nil {
@@ -1117,37 +1064,28 @@ func isRealImmediateChild(dir, parent string) (bool, error) {
 // the id comment on the first line inside the fence, then `version`, `title` and
 // `status`, the three keys renderFrontMatter emits unconditionally. The rule
 // itself lives in nibRenderFormat; one file anywhere under dir passing it is
-// enough.
-//
-// A single `status:` is not enough of a bar, because ordinary content reaches
-// it: note vaults and docs sites track a page's own state that way, so a
-// `notes/` directory renamed to `.nibs` has every file in it rewritten as a nib
-// render. The rendered shape is much harder to meet by accident — a
-// hand-authored header rarely opens with a comment — but it is still a SHAPE,
-// never provenance: anyone who knows the rule can write a file that passes, and
-// whoever authors `.nibs.yml` authors the .md files beside it. So against a
-// repository that CHOSE its `nibs.path` this proves nothing, and no further
-// raising of the bar would change that.
+// enough. A lone `status:` is not enough of a bar — note vaults and docs sites
+// track a page's own state that way — but the rendered shape is still a SHAPE
+// and never provenance: anyone who knows the rule can write a file that passes,
+// and whoever authors `.nibs.yml` authors the .md files beside it.
 //
 // isRealImmediateChild is what answers that case, and it is the reason this one
 // may stay this weak: the named directory has to resolve, symlinks and all, to a
 // real child of the project, so a hostile config reaches nothing outside the
 // checkout it ships in. Corroboration narrows which directories inside that
-// checkout it can name; containment is what bounds where they can be.
+// checkout it can name; containment bounds where they can be.
 //
 // Deliberately NOT keyed on the id matching the config's prefix and id length —
 // a project that changed its prefix keeps nibs named under the old one, and
 // refusing its real store would be worse than the risk this closes.
 //
 // An EMPTY directory is corroborated, and only an empty one: a store `nibs init`
-// created but never wrote to legitimately holds nothing, so requiring an artifact
-// there would refuse a real store. The exemption is keyed on os.ReadDir finding no
-// entries rather than on the walk finding no markdown, because what acceptance
-// authorizes is a whole-directory os.Rename plus deletion of the project's
-// `.nibs.yml` — a mutation that has nothing to do with file CONTENTS. An asset
-// directory holding only `style.css` and `img/logo.svg` can be renamed to
-// `.nibs` wholesale, and so can a note vault whose markdown all lives under
-// `.obsidian/` (the walk prunes dot directories, so it sees none).
+// created but never wrote to legitimately holds nothing. The exemption is keyed
+// on os.ReadDir finding no entries rather than on the walk finding no markdown,
+// because what acceptance authorizes is a whole-directory os.Rename plus deletion
+// of the project's `.nibs.yml` — a mutation that has nothing to do with file
+// CONTENTS, and one an asset directory or a vault whose markdown all sits under
+// `.obsidian/` would otherwise qualify for.
 //
 // A file whose header cannot be READ makes the answer UNDECIDED rather than
 // negative. layoutMovableFiles moves such a file into data/ precisely because the

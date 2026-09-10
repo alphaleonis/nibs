@@ -56,9 +56,8 @@ const closeQueueNameLimit = graph.QueueNameLimit
 // own remedies could clear would be unanswerable.
 //
 // Returns the disposition that ran (nil when none did) and nil when the close
-// may proceed; the escapes have then already run. The disposition is returned
-// as a record rather than as its rendered notice because it has to outlive this
-// call — the subject's own write comes after it and can still fail.
+// may proceed; the escapes have then already run. The disposition comes back as
+// a record — see closeDisposition for why it has to outlive this call.
 func closeQueueGate(ctx context.Context, cmd *cobra.Command, app *App, resolver *graph.Resolver, subject *nib.Nib) (*closeDisposition, error) {
 	// Cobra refuses the two together (MarkFlagsMutuallyExclusive in close.go's
 	// init), so exactly one of these can be true here.

@@ -235,8 +235,8 @@ the repair or what to do instead.`,
 			recipientBody := recipient.Body
 
 			// Current Focus answers "what is the latest progress here", so only a
-			// completion rewrites it — and it rewrites rather than appends, because
-			// the parent should show the latest progress, not accumulate history.
+			// completion rewrites it, because the parent should show the latest
+			// progress, not accumulate history.
 			// Setting work aside or abandoning it is not progress: rewriting the
 			// parent's focus for those would erase the record of the last real
 			// progress and leave the parent reading as though nothing had happened.

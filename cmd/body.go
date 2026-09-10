@@ -400,14 +400,10 @@ func echoCardWithWarning(cmd *cobra.Command, jsonMode bool, b *nib.Nib, r projec
 // This is the ONE place a text-match envelope is built. Every CLI surface that
 // builds a --json error envelope reaches it: `nibs body --replace-old` through
 // bodyMutationError, and `nibs query`'s batched bodyMod.replace through its
-// coded boundary (cmd/graphql.go) — the route cmd/prompt-full.tmpl sends agents
-// down for several replacements in one atomic write.
-//
-// One surface deliberately does not: cmd/serve.go's presenter stamps only the
-// codes it enumerates, so a bodyMod.replace refusal reaches a web client uncoded
-// and without a count. Unlike the hierarchy pair this mirrors, the TUI is not a
-// second exception — it writes no bodyMod at all, so it cannot raise this
-// refusal.
+// coded boundary (cmd/graphql.go). One surface deliberately does not:
+// cmd/serve.go's presenter stamps only the codes it enumerates, so a
+// bodyMod.replace refusal reaches a web client uncoded and without a count. The
+// TUI is not a second exception — it writes no bodyMod at all.
 //
 // A count of 0 is emitted, not omitted, which is what output.ErrorText's *int
 // buys: a bare int would be dropped by the field's omitempty, and an absent
@@ -417,8 +413,7 @@ func echoCardWithWarning(cmd *cobra.Command, jsonMode bool, b *nib.Nib, r projec
 // The 0-vs-everything-else split matches mutationErrCode's, so one refusal
 // classifies the same whichever surface raises it. Neither splits on N>1
 // specifically because a count of 1 cannot be constructed — nib.ReplaceOnce
-// raises the error only for a count that is not 1 — and agreeing on the same
-// boundary keeps the two from disagreeing about a value neither can see.
+// raises the error only for a count that is not 1.
 //
 // err is rendered as-is rather than the ReplaceMatchError's own message, so
 // whatever context the caller's text carries survives. Two cases need it: the

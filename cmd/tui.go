@@ -38,8 +38,8 @@ var tuiCmd = &cobra.Command{
 // a `nibs config set-prefix` or an areas rewrite under a live TUI is exactly as
 // broken as under a live serve, so the same warning has to reach it.
 //
-// run is a parameter rather than an inlined body because tui.Run blocks on a real
-// terminal, which would put the acquisition out of reach of every test.
+// run is a parameter because tui.Run blocks on a real terminal, which would put
+// the acquisition out of reach of every test.
 func runTUISession(app *App, run func() error) error {
 	holding, err := nibcore.AcquireServeLock(app.Core.Root())
 	if err != nil {

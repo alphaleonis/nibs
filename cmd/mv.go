@@ -132,9 +132,8 @@ no --parent (assign with 'nibs set <id> --milestone' instead).`,
 			hint := ""
 			if hasFirst {
 				// Two ids with --first set is overwhelmingly the typo rather than a
-				// real block move, so name the cause and not only the remedy: the old
-				// failure was expensive because it reported an argument count and
-				// pointed nowhere near the mistake.
+				// real block move, so name the cause and not only the remedy: an
+				// argument count alone points nowhere near the mistake.
 				hint = " (--first takes no anchor, so `nibs mv <id> --first <anchor>` reads as two ids" +
 					" — likely what happened here)"
 			}

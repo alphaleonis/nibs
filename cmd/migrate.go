@@ -2344,8 +2344,7 @@ type fmHeader struct {
 // type showing through, not a promise of the format, so requiring it would bet
 // on a default.
 //
-// A DESCRIPTION rather than inline conditionals because a second format is
-// coming: beans files carry no `version:`, so the required set is necessarily
+// A DESCRIPTION because a second format is coming: beans files carry no `version:`, so the required set is necessarily
 // per format and adding one must not force this predicate to be restructured.
 // One struct and one method, deliberately — not a registry, not a plugin system.
 type nibFileFormat struct {
