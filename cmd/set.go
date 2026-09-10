@@ -561,10 +561,11 @@ func setMutationError(jsonOutput bool, err error) error {
 // a not-found cause keeps its own class. That ordering is load-bearing for
 // OnDiskUnparseableError, the one classified type here with an Unwrap; it is
 // inert today because both of its construction sites carry an OS read error or a
-// YAML parse error. ETagMismatchError, ETagRequiredError, HierarchyError,
-// ReplaceMatchError and StoreRePrefixedError implement no Unwrap at all, so
-// neither sentinel can claim the conflict, hierarchy, text-match or re-prefix
-// branches either way, and their order among the concrete-type tests is inert.
+// YAML parse error. AreaEditIOError, ETagMismatchError, ETagRequiredError,
+// HierarchyError, ReplaceMatchError and StoreRePrefixedError implement no Unwrap
+// at all, so neither sentinel can claim the area-edit, conflict, hierarchy,
+// text-match or re-prefix branches either way, and their order among the
+// concrete-type tests is inert.
 //
 // Between the two sentinels the id-miss goes first: nib.ErrNotFound and
 // fs.ErrNotExist are unrelated values, so a chain carrying both is asserting two
