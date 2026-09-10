@@ -239,6 +239,57 @@ type Mutation {
   rather than infer it from the code.
   """
   reorderSiblings(siblingIds: [ID!]!, afterId: ID, beforeId: ID, first: Boolean, ifMatch: [ChildEtag!]): [Nib!]!
+
+  """
+  Rename the declared area at `path`, moving every nib assigned to it or to
+  anything below it onto the renamed path in the SAME critical section — the
+  member cascade and the `areas:` rewrite are one edit, so a concurrent one
+  cannot land between them and leave the members carrying a path the vocabulary
+  no longer declares.
+
+  A member assigned BELOW the renamed node keeps the remainder it carried:
+  renaming `web` to `platform` moves `web/ui` to `platform/ui`, because renaming
+  a parent moves its children's paths without changing their names.
+
+  Refused over an untouched store when `path` names no declared area, when
+  `newName` is the name the node already has, when it carries the '/' separator,
+  and when a sibling already answers to it. Every one of those lands before the
+  first nib is rewritten, which is what the plan-then-write split buys: a refusal
+  after the cascade would leave the members undeclared and every later write to
+  them refused for it.
+
+  Returns the whole Config rather than the edited node. `Config.areas` is
+  flattened in declaration order and a subtree is the maximal following run at
+  greater `depth`, so a client cannot splice one node into its copy correctly.
+  It is also the shape `configChanged` delivers, so a client re-renders from one
+  shape whether the edit was its own or another process's.
+  """
+  renameArea(input: RenameAreaInput!): Config!
+
+  """
+  Retire the declared area at `path` together with every area declared beneath
+  it — a subtree is what a node heads, and leaving its children behind would
+  declare paths with no parent.
+
+  REFUSED, naming them, while any nib is assigned at or below the node: a member
+  left carrying an undeclared path is write-refused from then on. The disposition
+  says what to do with those members instead. `moveTo` reassigns every one of
+  them ONTO that area — the remainder a member carried below the retiring node is
+  NOT preserved, since the target declares no such child — and `unassign: true`
+  clears their assignment.
+
+  The two are mutually exclusive. `unassign: false` reads as "no disposition"
+  rather than as a contradiction with `moveTo`.
+
+  A disposition named for an area nothing is assigned to is refused as well: a
+  silent no-op is the one answer a caller cannot tell apart from a real one. So
+  is a `moveTo` this store does not declare, or one declared at or below the node
+  being retired — that target is about to stop existing, so moving work into it
+  produces the very state the member refusal exists to prevent.
+
+  Returns the whole Config, for the reason renameArea does.
+  """
+  removeArea(input: RemoveAreaInput!): Config!
 }
 
 """
@@ -424,6 +475,42 @@ input BodyModification {
   Appended with blank line separator.
   """
   append: String
+}
+
+"""
+Input for renaming one declared area.
+"""
+input RenameAreaInput {
+  "Full path of the area to rename, e.g. \"web/ui\"."
+  path: String!
+  """
+  The node's new NAME — its own segment, never a path. A rename changes what a
+  node is called and never moves it between parents, so a value carrying the '/'
+  separator is refused rather than read as a move.
+  """
+  newName: String!
+}
+
+"""
+Input for retiring one declared area, and disposing of the nibs assigned at or
+below it.
+"""
+input RemoveAreaInput {
+  "Full path of the area to retire, e.g. \"web/legacy\". Its whole subtree goes with it."
+  path: String!
+  """
+  Reassign every member ONTO this declared area, rather than onto the path it
+  would have kept below the retiring node. Mutually exclusive with `unassign`,
+  refused when nothing is assigned at or below `path`, and refused for a target
+  declared at or below the area being retired.
+  """
+  moveTo: String
+  """
+  Clear every member's `area:`. Mutually exclusive with `moveTo`, and refused
+  when nothing is assigned at or below `path`. false is "no disposition", not a
+  contradiction.
+  """
+  unassign: Boolean
 }
 
 """

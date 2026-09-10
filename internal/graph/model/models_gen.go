@@ -456,6 +456,32 @@ type NibSort struct {
 type Query struct {
 }
 
+// Input for retiring one declared area, and disposing of the nibs assigned at or
+// below it.
+type RemoveAreaInput struct {
+	// Full path of the area to retire, e.g. "web/legacy". Its whole subtree goes with it.
+	Path string `json:"path"`
+	// Reassign every member ONTO this declared area, rather than onto the path it
+	// would have kept below the retiring node. Mutually exclusive with `unassign`,
+	// refused when nothing is assigned at or below `path`, and refused for a target
+	// declared at or below the area being retired.
+	MoveTo *string `json:"moveTo,omitempty"`
+	// Clear every member's `area:`. Mutually exclusive with `moveTo`, and refused
+	// when nothing is assigned at or below `path`. false is "no disposition", not a
+	// contradiction.
+	Unassign *bool `json:"unassign,omitempty"`
+}
+
+// Input for renaming one declared area.
+type RenameAreaInput struct {
+	// Full path of the area to rename, e.g. "web/ui".
+	Path string `json:"path"`
+	// The node's new NAME — its own segment, never a path. A rename changes what a
+	// node is called and never moves it between parents, so a value carrying the '/'
+	// separator is refused rather than read as a move.
+	NewName string `json:"newName"`
+}
+
 // A single text replacement operation.
 type ReplaceOperation struct {
 	// Text to find (must occur exactly once, cannot be empty)

@@ -537,6 +537,14 @@ func setMutationError(jsonOutput bool, err error) error {
 //     has retired every id this process holds — the new nib's parent and
 //     blockers among them — so the repair is again to re-read the store, and a
 //     misnamed create is exactly what the refusal exists to stop.
+//   - An area vocabulary edit that failed on the FILESYSTEM — the store's write
+//     lock, the re-read under it, a member nib's rewrite, or the areas.yml write
+//     — is a FILE_ERROR, the class `nibs area rename` and `nibs area rm` already
+//     give the same failure. Its CONTENT counterpart, config.AreaEditRefusal,
+//     deliberately gets no branch: it carries no Unwrap, so no sentinel below can
+//     claim it, and the caller's VALIDATION_ERROR fallback is the class those two
+//     commands report for it. Recognized through the concrete type, which is why
+//     graph.AreaEditIOError is typed.
 //
 // A SECONDARY id — a parent, a blocking or blocked-by target, a bulk-reorder
 // member or anchor — does NOT normally arrive as a sentinel: the graph layer
@@ -570,6 +578,10 @@ func mutationErrCode(err error) (string, bool) {
 	}
 	var rePrefixedErr *nibcore.StoreRePrefixedError
 	if errors.As(err, &rePrefixedErr) {
+		return output.ErrFileError, true
+	}
+	var areaEditErr *graph.AreaEditIOError
+	if errors.As(err, &areaEditErr) {
 		return output.ErrFileError, true
 	}
 	if isConflictError(err) {

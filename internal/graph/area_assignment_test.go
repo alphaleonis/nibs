@@ -35,7 +35,15 @@ func setupTestResolverWithAreas(t *testing.T) (*Resolver, *nibcore.Core) {
 	if err := core.Load(); err != nil {
 		t.Fatalf("failed to load core: %v", err)
 	}
-	return &Resolver{Reader: core, Writer: core, Validator: core, Blocking: core, Orderer: NewOrderer(core, core)}, core
+	return &Resolver{
+		Reader:     core,
+		Writer:     core,
+		Validator:  core,
+		Blocking:   core,
+		Subscriber: core,
+		Orderer:    NewOrderer(core, core),
+		AreaEditor: core,
+	}, core
 }
 
 func areaInput(path string) model.UpdateNibInput {

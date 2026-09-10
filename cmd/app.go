@@ -132,6 +132,7 @@ func (a *App) newResolver() *graph.Resolver {
 		Blocking:   a.Core,
 		Subscriber: a.Core,
 		Orderer:    graph.NewOrderer(a.Core, a.Core),
+		AreaEditor: a.Core,
 		Version:    version,
 	}
 }

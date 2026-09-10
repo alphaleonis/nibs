@@ -841,6 +841,16 @@ func (r *mutationResolver) ReorderSiblings(ctx context.Context, siblingIds []str
 	return r.reorderSiblingsImpl(siblingIds, afterID, beforeID, first, ifMatch)
 }
 
+// RenameArea is the resolver for the renameArea field.
+func (r *mutationResolver) RenameArea(ctx context.Context, input model.RenameAreaInput) (*model.Config, error) {
+	return r.renameAreaImpl(input)
+}
+
+// RemoveArea is the resolver for the removeArea field.
+func (r *mutationResolver) RemoveArea(ctx context.Context, input model.RemoveAreaInput) (*model.Config, error) {
+	return r.removeAreaImpl(input)
+}
+
 // Type is the resolver for the type field. The stored Nib keeps Type empty when
 // the file omits it (so the etag witnesses the on-disk bytes); this resolver
 // applies the presentation default so the non-nullable field always resolves a
@@ -1198,12 +1208,7 @@ func (r *queryResolver) Nibs(ctx context.Context, filter *model.NibFilter, sort 
 
 // Config is the resolver for the config field.
 func (r *queryResolver) Config(ctx context.Context) (*model.Config, error) {
-	cfg := r.Reader.Config()
-	return &model.Config{
-		ProjectName: cfg.GetProjectName(),
-		Prefix:      cfg.Nibs.Prefix,
-		Areas:       flattenAreas(r.Reader.Areas()),
-	}, nil
+	return configResult(r.Reader), nil
 }
 
 // UpdateStatus is the resolver for the updateStatus field. It is best-effort:
@@ -1278,14 +1283,8 @@ func (r *subscriptionResolver) ConfigChanged(ctx context.Context) (<-chan *model
 				if !ok {
 					return
 				}
-				cfg := r.Reader.Config()
-				event := &model.Config{
-					ProjectName: cfg.GetProjectName(),
-					Prefix:      cfg.Nibs.Prefix,
-					Areas:       flattenAreas(r.Reader.Areas()),
-				}
 				select {
-				case out <- event:
+				case out <- configResult(r.Reader):
 				case <-ctx.Done():
 					return
 				}

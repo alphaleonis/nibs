@@ -181,5 +181,40 @@ type NibSubscriber interface {
 	SubscribeAreas() (<-chan struct{}, func())
 }
 
+// AreaEditor provides the store-wide write path the area vocabulary mutations
+// need. It is a role of its own rather than more methods on NibWriter because it
+// is the one write here that spans MULTIPLE operations inside a single critical
+// section: the member cascade and the `areas:` rewrite have to be one, or a
+// concurrent edit lands between them and the loser's declaration is gone while
+// its cascade sits on disk.
+//
+// That is why the methods take proof-of-lock instead of acquiring per operation.
+// The store lock is a per-descriptor flock, so a resolver already holding it
+// deadlocks the process by calling any self-acquiring mutator —
+// NibWriter.Update among them (see nibcore.Core.RewriteAreaAssignments, which
+// also explains why an area cascade cannot go through Update at all).
+type AreaEditor interface {
+	// Root is the store directory the cross-process write lock is taken on.
+	Root() string
+	// Load re-reads the store — both the nibs and the vocabulary — and is called
+	// UNDER that lock: the snapshot this process started from may name files a
+	// concurrent `nibs config set-prefix` has since renamed, and the vocabulary a
+	// concurrent area edit has since reshaped.
+	Load() error
+	// Areas returns the vocabulary as of the last Load. Every decision an area
+	// edit makes comes from the one taken under the lock, never from a pre-lock
+	// read.
+	Areas() *config.Areas
+	// RewriteAreaAssignments rewrites the `area:` of every nib the rewrite
+	// function claims, returning the ids it wrote in id order. lock is
+	// proof-of-lock, not a request to take one.
+	RewriteAreaAssignments(lock *nibcore.StoreLock, rewrite func(area string) (string, bool)) ([]string, error)
+	// ReloadAreas re-reads the vocabulary this edit just wrote and ticks the
+	// areas subscribers, so the answer carries what was written and a
+	// configChanged subscriber wakes on the edit rather than on the watcher's
+	// debounce.
+	ReloadAreas()
+}
+
 // NibEvent represents a change to a nib (re-exported from nibcore).
 type NibEvent = nibcore.NibEvent
