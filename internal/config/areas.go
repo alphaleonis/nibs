@@ -101,7 +101,7 @@ func validateAreaNodes(areas []AreaConfig, parent string) error {
 			return fmt.Errorf("duplicate area %q; two siblings with one name make one path mean two nodes", path)
 		}
 		seen[name] = struct{}{}
-		if err := validateAreaColor(area.Color); err != nil {
+		if err := ValidateAreaColor(area.Color); err != nil {
 			return fmt.Errorf("area %q: %w", path, err)
 		}
 		if err := validateAreaNodes(area.Children, path); err != nil {
@@ -120,12 +120,16 @@ func areaLocation(parent string) string {
 	return fmt.Sprintf("under %q", parent)
 }
 
-// validateAreaColor checks a color's SHAPE — `#` plus 3, 4, 6 or 8 hex digits,
+// ValidateAreaColor checks a color's SHAPE — `#` plus 3, 4, 6 or 8 hex digits,
 // or a bare name of letters. The set of known color NAMES is not checked here:
 // it lives in internal/ui, which imports this package, and an unknown name
 // resolves to a muted fallback rather than failing. A malformed hex code has no
 // such fallback, and neither shape is something a user meant to write.
-func validateAreaColor(color string) error {
+//
+// It is exported for the reason ValidateNewAreaPath is: `nibs area add --color`
+// is answerable from the argument alone, so the CLI asks it before taking the
+// store's blocking write lock. Areas.Validate asks it again on load.
+func ValidateAreaColor(color string) error {
 	if color == "" {
 		return nil
 	}

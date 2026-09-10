@@ -765,11 +765,17 @@ func TestAreaRetireVocabularyWriteFailureTellsTheCallerToDropTheFlag(t *testing.
 // disk, both processes exiting 0. The probe therefore asks the question at the
 // only moment that settles it: while the config file is being renamed into
 // place, can anything else take the store's write lock?
+//
+// `add` cascades nothing, and is here because that is the reading which would
+// excuse it from the lock. The file it rewrites is the whole vocabulary either
+// way, so two concurrent adds lose one of the two declarations for exactly the
+// reason above, with no cascade anywhere in it.
 func TestAreaEditsHoldTheStoreLockAcrossTheVocabularyWrite(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
 	}{
+		{name: "declare", args: []string{"add", "platform"}},
 		{name: "rename", args: []string{"rename", "web", "frontend"}},
 		{name: "retire", args: []string{"rm", "auth", "--unassign"}},
 	}
@@ -843,12 +849,18 @@ func storeLockIsFree(t *testing.T, nibsPath string) bool {
 }
 
 // TestAreaVerbsRefuseAVocabularyTheyCannotAddress is finding #2 at the command
-// level. A node declared through a YAML alias or a merge key resolves for the
-// loaded model and is invisible to the file editor, so the config write can
-// never succeed — and it must therefore be refused BEFORE the cascade, with the
-// store left exactly as it was. Discovered afterwards it was permanent: the
-// members carried an undeclared path, every write to them was refused, and the
-// printed "rerun the same command" failed identically forever.
+// level. A vocabulary that inherits any of its content — through an anchor, an
+// alias or a merge key — resolves for the loaded model and is invisible to the
+// file editor, so the config write can never be made safely — and it must
+// therefore be refused BEFORE the cascade, with the store left exactly as it
+// was. Discovered afterwards it was permanent: the members carried an undeclared
+// path, every write to them was refused, and the printed "rerun the same
+// command" failed identically forever.
+//
+// `add` is here for the same reason as its two neighbours even though it
+// cascades nothing: all three go through one planner, so one refusal covers
+// them, and a verb that walked past it would be the fourth instance of a class
+// three rounds of per-site guards failed to close.
 func TestAreaVerbsRefuseAVocabularyTheyCannotAddress(t *testing.T) {
 	const aliased = `nibs:
     prefix: tnib-
@@ -901,9 +913,11 @@ extra: true
 		args    []string
 		wantMsg string
 	}{
-		{"rename a node declared through an alias", aliased, []string{"rename", "web/dashboard", "panel"}, "alias"},
-		{"retire a node declared through an alias", aliased, []string{"rm", "web/dashboard", "--unassign"}, "alias"},
-		{"rename a node named by a merge key", merged, []string{"rename", "web/dashboard", "panel"}, "merge key"},
+		{"rename a node declared through an alias", aliased, []string{"rename", "web/dashboard", "panel"}, "anchors, aliases or merge keys"},
+		{"retire a node declared through an alias", aliased, []string{"rm", "web/dashboard", "--unassign"}, "anchors, aliases or merge keys"},
+		{"declare an area beside an alias", aliased, []string{"add", "platform"}, "anchors, aliases or merge keys"},
+		{"rename a node named by a merge key", merged, []string{"rename", "web/dashboard", "panel"}, "anchors, aliases or merge keys"},
+		{"declare an area beside a merge key", merged, []string{"add", "platform"}, "anchors, aliases or merge keys"},
 		{"rename in a multi-document config", twoDocs, []string{"rename", "web", "frontend"}, "more than one YAML document"},
 		{"retire in a multi-document config", twoDocs, []string{"rm", "web", "--unassign"}, "more than one YAML document"},
 	}
@@ -1014,5 +1028,307 @@ func TestAreaEditNamesNoRestart(t *testing.T) {
 		if strings.Contains(out, unwanted) {
 			t.Errorf("output tells the caller to restart a serve that reloads the vocabulary on its own:\n%s", out)
 		}
+	}
+}
+
+// TestAreaAddDeclaresANewArea is the add verb's whole job: the node lands in
+// areas.yml with the description that says what belongs in it, and `--area`
+// takes the path from that moment on.
+func TestAreaAddDeclaresANewArea(t *testing.T) {
+	nibsPath := setupAreaVerbTest(t)
+
+	out, err := runArea(t, nibsPath, "add", "platform", "--description", "Build, release and tooling", "--color", "teal")
+	if err != nil {
+		t.Fatalf("area add: %v\nout: %s", err, out)
+	}
+	if !strings.Contains(out, "platform") {
+		t.Errorf("the summary does not name what it declared:\n%s", out)
+	}
+
+	vocab, err := config.LoadAreasFromStore(nibsPath)
+	if err != nil {
+		t.Fatalf("the edited vocabulary no longer loads: %v", err)
+	}
+	node := vocab.Get("platform")
+	if node == nil {
+		t.Fatalf("platform is not declared after the add: %v", vocab.Paths())
+	}
+	if node.Description != "Build, release and tooling" || node.Color != "teal" {
+		t.Errorf("the node stored %+v, want the description and color given", *node)
+	}
+
+	// The declaration is what makes the path assignable, which is the only
+	// reason to declare one.
+	if _, err := runRootWith(t, "--nibs-path", nibsPath, "set", "tnib-t031", "--area", "platform"); err != nil {
+		t.Fatalf("set --area onto the area just declared: %v", err)
+	}
+	if got := storedAreas(t, nibsPath)["tnib-t031"]; got != "platform" {
+		t.Errorf("area = %q, want the newly declared path", got)
+	}
+}
+
+// TestAreaAddNestsUnderADeclaredParent: the argument is the FULL path of the new
+// node, so the leaf lands under the node the rest of it names.
+func TestAreaAddNestsUnderADeclaredParent(t *testing.T) {
+	nibsPath := setupAreaVerbTest(t)
+
+	if out, err := runArea(t, nibsPath, "add", "web/settings", "--description", "Preferences"); err != nil {
+		t.Fatalf("area add: %v\nout: %s", err, out)
+	}
+	got := areaVocabulary(t, nibsPath)
+	if !slices.Contains(got, "web/settings") {
+		t.Errorf("web/settings is not declared: %v", got)
+	}
+	if slices.Contains(got, "settings") {
+		t.Errorf("the child was declared at the root as well: %v", got)
+	}
+}
+
+// TestAreaAddRefusesAPathAlreadyDeclared keeps the verb from reporting a
+// declaration it did not make, and from writing the duplicate that would make
+// one path mean two nodes.
+func TestAreaAddRefusesAPathAlreadyDeclared(t *testing.T) {
+	nibsPath := setupAreaVerbTest(t)
+	before := areaVocabulary(t, nibsPath)
+
+	_, err := runArea(t, nibsPath, "add", "web/dashboard")
+	if err == nil {
+		t.Fatal("expected a refusal")
+	}
+	if code := areaErrCode(t, err); code != output.ErrValidation {
+		t.Errorf("code = %q, want %q", code, output.ErrValidation)
+	}
+	if !strings.Contains(err.Error(), "already declares") {
+		t.Errorf("error = %q, want the already-declared refusal", err.Error())
+	}
+	if got := areaVocabulary(t, nibsPath); !slices.Equal(got, before) {
+		t.Errorf("the refused add changed the vocabulary: %v, want %v", got, before)
+	}
+}
+
+// TestAreaAddRefusesAnUndeclaredParent is the decision not to auto-create
+// intermediates, at the surface that would have done it: one typo would
+// otherwise mint two permanent areas, and the vocabulary is what authorizes an
+// `--area` value. The refusal has to name the parent and the command that
+// declares it, or the caller is left with nothing to run.
+func TestAreaAddRefusesAnUndeclaredParent(t *testing.T) {
+	nibsPath := setupAreaVerbTest(t)
+	before := areaVocabulary(t, nibsPath)
+
+	_, err := runArea(t, nibsPath, "add", "wbe/dashboard")
+	if err == nil {
+		t.Fatal("expected a refusal")
+	}
+	if code := areaErrCode(t, err); code != output.ErrValidation {
+		t.Errorf("code = %q, want %q", code, output.ErrValidation)
+	}
+	for _, want := range []string{"wbe", "nibs area add wbe"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want substring %q", err.Error(), want)
+		}
+	}
+	if got := areaVocabulary(t, nibsPath); !slices.Equal(got, before) {
+		t.Errorf("the refused add minted something: %v, want %v", got, before)
+	}
+
+	// The remedy the refusal prescribes is runnable, and it is what makes the
+	// original command work.
+	if out, err := runArea(t, nibsPath, "add", "wbe"); err != nil {
+		t.Fatalf("the prescribed remedy failed: %v\nout: %s", err, out)
+	}
+	if out, err := runArea(t, nibsPath, "add", "wbe/dashboard"); err != nil {
+		t.Fatalf("the rerun after the remedy failed: %v\nout: %s", err, out)
+	}
+}
+
+// TestAreaAddRefusesItsArgumentsBeforeTakingTheStoreLock is an ORDER guard, and
+// the wrong answer is a wait rather than a wrong message: the store's write lock
+// is a blocking flock with no timeout that prints nothing while it waits, so a
+// refusal the arguments alone answer, asked afterwards, leaves a typo silent for
+// as long as any other cooperating writer holds the store.
+//
+// The lock is held for the duration, so a command that asks for it does not
+// return at all — which is what the timer detects. It releases the lock so the
+// blocked command can finish rather than wedging the test binary.
+func TestAreaAddRefusesItsArgumentsBeforeTakingTheStoreLock(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "no path at all", args: []string{"add", ""}},
+		{name: "a path with an empty segment", args: []string{"add", "web//panel"}},
+		{name: "a name with trailing whitespace", args: []string{"add", "platform "}},
+		{name: "a color the vocabulary cannot hold", args: []string{"add", "platform", "--color", "#xyz"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nibsPath := setupAreaVerbTest(t)
+			lock, err := nibcore.AcquireStoreLock(nibsPath)
+			if err != nil {
+				t.Fatalf("the test could not hold the store lock: %v", err)
+			}
+			// Generous enough that a slow store load cannot be mistaken for a
+			// wait: on the correct path the timer is stopped before it fires and
+			// the value costs nothing.
+			timer := time.AfterFunc(5*time.Second, func() { _ = lock.Release() })
+
+			_, cmdErr := runArea(t, nibsPath, tt.args...)
+			if !timer.Stop() {
+				t.Fatalf("area %v waited for the store's write lock before refusing an argument answerable without it", tt.args)
+			}
+			_ = lock.Release()
+
+			if cmdErr == nil {
+				t.Fatalf("area %v: expected a refusal", tt.args)
+			}
+			if code := areaErrCode(t, cmdErr); code != output.ErrValidation {
+				t.Errorf("code = %q, want %q", code, output.ErrValidation)
+			}
+		})
+	}
+}
+
+// TestAreaAddBootstrapsAStoreDeclaringNoAreas: rename and rm refuse a store with
+// no vocabulary because there is no node for them to name. Add is the verb that
+// gets a project out of that state, so it must not refuse it.
+func TestAreaAddBootstrapsAStoreDeclaringNoAreas(t *testing.T) {
+	setupAreaVerbTest(t)
+	nibsPath := remedyStoreWithoutAreas(nil)(t)
+
+	if out, err := runArea(t, nibsPath, "add", "platform", "--description", "Build and release"); err != nil {
+		t.Fatalf("area add in a store declaring none: %v\nout: %s", err, out)
+	}
+	if got := areaVocabulary(t, nibsPath); !slices.Equal(got, []string{"platform"}) {
+		t.Errorf("vocabulary = %v, want just the area that was added", got)
+	}
+	// And the file it wrote is one `nibs area list` can read back.
+	out, err := runArea(t, nibsPath, "list")
+	if err != nil {
+		t.Fatalf("area list after the bootstrap: %v", err)
+	}
+	if !strings.Contains(out, "platform") || !strings.Contains(out, "Build and release") {
+		t.Errorf("the bootstrapped vocabulary does not list:\n%s", out)
+	}
+}
+
+// TestAreaAddBootstrapsAnAreasFileDeclaringNothing holds `nibs area add --help`
+// to its own sentence for the shapes an areas.yml is hand-authored in. Nothing
+// in the product writes a file declaring nothing — Areas.Save deletes it instead
+// — so every one of these was typed by someone, and writing the file before the
+// verb that populates it is an ordinary way to arrive here. The alternative
+// remedy for a refusal would be the counter-intuitive "delete the file first".
+func TestAreaAddBootstrapsAnAreasFileDeclaringNothing(t *testing.T) {
+	tests := []struct {
+		name     string
+		vocab    string
+		survives []string
+	}{
+		{name: "a zero-byte file", vocab: ""},
+		{
+			name:     "a comment-only file",
+			vocab:    "# The vocabulary, once we agree on one.\n",
+			survives: []string{"# The vocabulary, once we agree on one."},
+		},
+		{
+			name:     "other keys and no areas block",
+			vocab:    "# Where the work happens.\nfuture_key:\n    a_newer_nibs_wrote_this: true\n",
+			survives: []string{"# Where the work happens.", "a_newer_nibs_wrote_this: true"},
+		},
+		{
+			// The shape `nibs area list` prescribes to a store declaring none,
+			// written in its most natural minimal form — so this row is what
+			// keeps the product from refusing its own remedy.
+			name:     "an areas key with no value under it",
+			vocab:    "# Where the work happens.\nareas:\n",
+			survives: []string{"# Where the work happens."},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupAreaVerbTest(t)
+			nibsPath := remedyStoreWithAreasShape(tt.vocab)(t)
+
+			if out, err := runArea(t, nibsPath, "add", "platform", "--description", "Build and release"); err != nil {
+				t.Fatalf("area add against a vocabulary declaring nothing: %v\nout: %s", err, out)
+			}
+			if got := areaVocabulary(t, nibsPath); !slices.Equal(got, []string{"platform"}) {
+				t.Errorf("vocabulary = %v, want just the area that was added", got)
+			}
+			raw, err := os.ReadFile(filepath.Join(nibsPath, "areas.yml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range tt.survives {
+				if !strings.Contains(string(raw), want) {
+					t.Errorf("the bootstrap dropped %q:\n%s", want, raw)
+				}
+			}
+		})
+	}
+}
+
+// TestAreaAddJSONReportsTheSameShapeAsItsNeighbours keeps the verb inside the
+// --json contract the other area mutations answer in, since the audience for
+// this surface is an agent.
+func TestAreaAddJSONReportsTheSameShapeAsItsNeighbours(t *testing.T) {
+	nibsPath := setupAreaVerbTest(t)
+
+	out, err := runArea(t, nibsPath, "add", "platform", "--json")
+	if err != nil {
+		t.Fatalf("area add --json: %v\nout: %s", err, out)
+	}
+	var payload struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("unmarshal: %v\nraw: %s", err, out)
+	}
+	if !payload.Success {
+		t.Errorf("success = false: %s", out)
+	}
+	if !strings.Contains(payload.Message, "platform") {
+		t.Errorf("message = %q, want it to name what was declared", payload.Message)
+	}
+
+	// A refusal answers in the coded error envelope, the same as every other
+	// --json refusal.
+	_, err = runArea(t, nibsPath, "add", "platform", "--json")
+	if code := areaErrCode(t, err); code != output.ErrValidation {
+		t.Errorf("code = %q, want %q", code, output.ErrValidation)
+	}
+}
+
+// TestAreaAddAdoptsANibStrandedOnThatPath is the reason `add` rewrites no nibs,
+// stated the way it is actually true.
+//
+// "An area that does not exist has no members" is nearly right and not quite: a
+// nib can already CARRY the path, left there by a retire or a hand edit, and
+// every write to that nib is refused for it (Areas.ValidateStored). Declaring
+// the path is what repairs it, and the repair needs no rewrite at all — the
+// value the nib already holds is simply declared from that moment.
+func TestAreaAddAdoptsANibStrandedOnThatPath(t *testing.T) {
+	nibsPath := setupAreaVerbTest(t)
+	rewriteStoredArea(t, nibsPath, "tnib-b005", "web", "web/retired")
+
+	// The premise: the nib is stranded, so a write to it is refused.
+	if _, err := runRootWith(t, "--nibs-path", nibsPath, "set", "tnib-b005", "--priority", "high"); err == nil {
+		t.Fatal("a nib carrying an undeclared area must be write-refused; the repair below proves nothing otherwise")
+	}
+
+	if out, err := runArea(t, nibsPath, "add", "web/retired", "--description", "Kept for the record"); err != nil {
+		t.Fatalf("area add: %v\nout: %s", err, out)
+	}
+
+	// Nothing was rewritten, and the stranded nib is a member on the strength of
+	// the value it was already carrying.
+	if got := storedAreas(t, nibsPath)["tnib-b005"]; got != "web/retired" {
+		t.Errorf("area = %q, want the value the nib already carried", got)
+	}
+	if _, err := runRootWith(t, "--nibs-path", nibsPath, "set", "tnib-b005", "--priority", "high"); err != nil {
+		t.Errorf("the nib is still write-refused after its area was declared: %v", err)
+	}
+	if got := listAreaIDs(t, nibsPath, "web/retired"); !slices.Contains(got, "tnib-b005") {
+		t.Errorf("--area web/retired listed %v, want the adopted nib", got)
 	}
 }

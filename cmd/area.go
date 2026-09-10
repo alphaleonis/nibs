@@ -16,11 +16,14 @@ import (
 )
 
 var (
-	areaListJSON   bool
-	areaRenameJSON bool
-	areaRmJSON     bool
-	areaRmMoveTo   string
-	areaRmUnassign bool
+	areaListJSON       bool
+	areaAddJSON        bool
+	areaAddDescription string
+	areaAddColor       string
+	areaRenameJSON     bool
+	areaRmJSON         bool
+	areaRmMoveTo       string
+	areaRmUnassign     bool
 )
 
 var areaCmd = &cobra.Command{
@@ -31,10 +34,11 @@ priorities and estimates are fixed. They are declared as a nested ` + "`areas:`"
 in the store's areas.yml, and a nib is placed in one with ` + "`nibs new --area`" + ` or
 ` + "`nibs set --area`" + `.
 
-These verbs read that vocabulary and edit it in place. Both mutations rewrite the
-nibs assigned to what they touch, because a nib's area is a PATH: renaming a node
-moves every path below it, and retiring one leaves its members pointing at a path
-that no longer exists.`,
+These verbs read that vocabulary and edit it in place. The two that touch an area
+already declared also rewrite the nibs assigned to it, because a nib's area is a
+PATH: renaming a node moves every path below it, and retiring one leaves its
+members pointing at a path that no longer exists. Declaring a new one rewrites
+nothing — an area that does not exist yet has no members.`,
 	// Cobra auto-shows help when no subcommand is given — no RunE needed.
 }
 
@@ -48,6 +52,27 @@ A store that declares no areas is a normal store, not a broken one: the listing
 says so and exits 0.`,
 	Args: codedNoArgs(&areaListJSON),
 	RunE: runAreaList,
+}
+
+var areaAddCmd = &cobra.Command{
+	Use:   "add <path>",
+	Short: "Declare a new area, optionally nested under a declared one",
+	Long: `Declares a new area in the store's areas.yml.
+
+<path> is the FULL path of the new node, so ` + "`add web/dashboard`" + ` declares
+` + "`dashboard`" + ` under the already-declared ` + "`web`" + `. A parent the store does not
+declare is refused rather than created on the way, because the vocabulary is what
+authorizes an ` + "`--area`" + ` value and one typo would otherwise mint two areas.
+
+--description is what tells an agent which area new work belongs in, and is worth
+giving. A store that declares no areas yet gets its vocabulary from the first
+add, whether its areas.yml is missing or declares nothing.
+
+Unlike rename and rm, this verb rewrites no nibs. A nib left carrying the path by
+an earlier retire is repaired by the declaration itself, since the value it is
+already holding becomes a declared one.`,
+	Args: codedExactArgs(&areaAddJSON, 1),
+	RunE: runAreaAdd,
 }
 
 var areaRenameCmd = &cobra.Command{
@@ -91,6 +116,11 @@ more — which is what the error says at the time.`,
 
 func init() {
 	areaListCmd.Flags().BoolVar(&areaListJSON, "json", false, "Output as JSON")
+	areaAddCmd.Flags().BoolVar(&areaAddJSON, "json", false, "Output as JSON")
+	areaAddCmd.Flags().StringVar(&areaAddDescription, "description", "",
+		"What belongs in this area, for the agent choosing one")
+	areaAddCmd.Flags().StringVar(&areaAddColor, "color", "",
+		"Color the surfaces that display areas render this one in")
 	areaRenameCmd.Flags().BoolVar(&areaRenameJSON, "json", false, "Output as JSON")
 	areaRmCmd.Flags().BoolVar(&areaRmJSON, "json", false, "Output as JSON")
 	areaRmCmd.Flags().StringVar(&areaRmMoveTo, "move-to", "",
@@ -99,7 +129,7 @@ func init() {
 		"Drop the area assignment of every nib at or below the retiring area")
 	areaRmCmd.MarkFlagsMutuallyExclusive("move-to", "unassign")
 
-	areaCmd.AddCommand(areaListCmd, areaRenameCmd, areaRmCmd)
+	areaCmd.AddCommand(areaListCmd, areaAddCmd, areaRenameCmd, areaRmCmd)
 	rootCmd.AddCommand(areaCmd)
 }
 
@@ -198,6 +228,99 @@ func joinAreaPathForDisplay(parent, name string) string {
 		return name
 	}
 	return parent + config.AreaPathSeparator + name
+}
+
+// --- add -------------------------------------------------------------------
+
+func runAreaAdd(cmd *cobra.Command, args []string) error {
+	app := getApp(cmd)
+	path := args[0]
+	parent, _ := splitAreaPath(path)
+
+	// Answered BEFORE the lock, and printed straight away. AcquireStoreLock is a
+	// blocking flock with no timeout and prints nothing while it waits, so a
+	// question the arguments alone answer would otherwise make a typo sit silent
+	// for as long as any other cooperating writer holds the store. Unlike the
+	// rename's, none of these refusals speaks about a node the store declares —
+	// they judge the shape of the path and the color — so there is no vocabulary
+	// that could make one of them the wrong thing to say.
+	if err := validateAreaAddArgument(areaAddJSON, path, areaAddColor); err != nil {
+		return err
+	}
+
+	// Every decision below is made from areas, the vocabulary re-read under the
+	// lock, and never from app.Config() — see beginAreaEdit. The lock is owed
+	// even though nothing cascades: areas.yml is rewritten whole, so two
+	// concurrent adds without it lose one of the two declarations.
+	lock, areas, err := beginAreaEdit(app, areaAddJSON)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Release() }()
+
+	if areas.IsValid(path) {
+		return cmdError(areaAddJSON, output.ErrValidation,
+			"cannot declare area %s: this store already declares it, and two siblings with one name make one path mean two nodes",
+			quotedArea(path))
+	}
+	if parent != "" {
+		if areaRetiredWhileWaiting(app, areas, parent) {
+			return refuseAreaRetiredWhileWaiting(areaAddJSON, parent)
+		}
+		if err := requireDeclaredAreaParent(areas, path, parent); err != nil {
+			return err
+		}
+	}
+
+	edit, err := planAreaEdit(areaAddJSON, func() (*config.StoredAreaEdit, error) {
+		return config.PlanCreateStoredArea(areas.StoreDir(), path, areaAddDescription, areaAddColor)
+	})
+	if err != nil {
+		return err
+	}
+
+	staleLink, err := edit.Write()
+	if err != nil {
+		return cmdError(areaAddJSON, output.ErrFileError,
+			"area %s could not be declared: %s could not be updated: %v — nothing else was written, so the store is as it was; rerun `nibs area add %s` once that is fixed",
+			quotedArea(path), sanitizeFilePath(areas.Path()), err, config.RenderAreaPath(path))
+	}
+	return reportAreaEdit(app, areaAddJSON, fmt.Sprintf("Declared area %s", quotedArea(path)), staleLink, areas)
+}
+
+// validateAreaAddArgument refuses every add the arguments alone rule out: a path
+// no declared node could answer to, and a color the vocabulary could not hold.
+//
+// Both rules live in config and are called rather than copied, so there is one
+// definition of each to keep in step. Neither call is what keeps a broken
+// vocabulary off disk — config.PlanCreateStoredArea asks ValidateNewAreaPath
+// itself, and the reread of the edited document rejects the color — so what this
+// buys is WHEN the refusal is printed: see runAreaAdd.
+func validateAreaAddArgument(jsonMode bool, path, color string) error {
+	if err := config.ValidateNewAreaPath(path); err != nil {
+		return cmdError(jsonMode, output.ErrValidation, "%v", err)
+	}
+	if err := config.ValidateAreaColor(color); err != nil {
+		return cmdError(jsonMode, output.ErrValidation,
+			"cannot declare area %s: %v", quotedArea(path), err)
+	}
+	return nil
+}
+
+// requireDeclaredAreaParent refuses a nested add whose parent the store does not
+// declare, and names the command that declares it.
+//
+// requireDeclaredArea is not reused: its no-vocabulary branch sends the reader
+// to edit areas.yml by hand, which was the only remedy before this verb existed,
+// and its other branch speaks about a node to act ON rather than one to nest
+// under. Both directions here have the same answer, so they are one message.
+func requireDeclaredAreaParent(areas *config.Areas, path, parent string) error {
+	if areas.IsValid(parent) {
+		return nil
+	}
+	return cmdError(areaAddJSON, output.ErrValidation,
+		"cannot declare area %s: this store declares no area %s to nest it under, and a parent is never created on the way — declare it with `nibs area add %s` first, then rerun",
+		quotedArea(path), quotedArea(parent), config.RenderAreaPath(parent))
 }
 
 // --- rename ----------------------------------------------------------------
@@ -659,10 +782,10 @@ func refuseAreaRetiredWhileWaiting(jsonMode bool, path string) error {
 // The order is the fix for a partial failure a rerun could never repair. The
 // members are rewritten first so that a rerun finds fewer of them and finishes
 // the job — but that only works if the config edit's REMAINING failure modes are
-// transient. Two of them are not: a vocabulary declared through a YAML alias or
-// merge key resolves for the loaded model and is invisible to the file editor,
-// and a config holding a second YAML document cannot be rewritten from the first
-// one alone. Discovered after the cascade, either leaves the members carrying an
+// transient. Two of them are not: a vocabulary that inherits any of its content
+// — through an anchor, an alias or a merge key — resolves for the loaded model
+// and is invisible to the file editor, and a config holding a second YAML
+// document cannot be rewritten from the first one alone. Discovered after the cascade, either leaves the members carrying an
 // undeclared path — write-refused, with a printed remedy that fails identically
 // forever. Discovered here, they are a refusal over an untouched store.
 //
