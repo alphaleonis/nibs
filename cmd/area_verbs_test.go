@@ -330,6 +330,16 @@ func TestAreaRenameRefusals(t *testing.T) {
 			args: []string{"rename", "web", " frontend"},
 			want: []string{"whitespace"},
 		},
+		{
+			// A name past the bound an edit may write. The bound is not on what a
+			// store may HOLD — validateAreaNodes accepts any length on load — but
+			// on what a rename produces: an areas.yml over MaxConfigBytes is one
+			// Core.Load refuses before it walks the nibs, so no command can open
+			// the store afterwards.
+			name: "a name no store could read back",
+			args: []string{"rename", "web", strings.Repeat("x", 201)},
+			want: []string{"bounded at 200"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

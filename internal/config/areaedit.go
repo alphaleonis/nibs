@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/alphaleonis/nibs/internal/safetext"
 	"github.com/alphaleonis/nibs/internal/store"
@@ -66,9 +67,13 @@ func (e *StoredAreaEdit) Write() (staleLinkTarget string, err error) {
 // Renaming is a NAME edit, not a move, so the caller supplies a bare name and
 // this never re-parents anything. Whether the new name is one the vocabulary can
 // hold is the caller's refusal to make — `nibs area rename` has the better
-// message for it — but it is CHECKED here too, below, because the file this
+// message for it — but it is CHECKED here too, by ValidateAreaName and by the
+// re-read planStoredAreaEdit makes of its own output, because the file this
 // writes has to be one the loader can read.
 func PlanRenameStoredArea(storeDir, path, newName string) (*StoredAreaEdit, error) {
+	if err := ValidateAreaName(newName); err != nil {
+		return nil, err
+	}
 	return planStoredAreaEdit(storeDir, refuseMissingVocabulary, func(areas *yaml.Node) error {
 		found, err := findStoredArea(areas, path)
 		if err != nil {
@@ -392,6 +397,22 @@ func planStoredAreaEdit(storeDir string, missing missingVocabulary, edit func(ar
 	if err != nil {
 		return nil, err
 	}
+	// The file this WRITES is bounded the way the file it READ is. ReadConfigFile
+	// refuses anything over MaxConfigBytes, and Core.Load reads the vocabulary
+	// before the nibs and aborts on that refusal, so an areas.yml written past the
+	// cap is a store no command can open — this edit's own rerun included, which
+	// is what makes it repairable by hand alone.
+	//
+	// Asked of the rendered output rather than of the edit's arguments because
+	// this is a semantic-preserving RE-MARSHAL: indentation is normalized and
+	// quoting added, so a vocabulary already close to the cap crosses it on an
+	// edit that adds nothing at all. ValidateAreaName answers for the argument,
+	// where the message can name what to shorten.
+	if len(out) > MaxConfigBytes {
+		return nil, refuseAreaEdit(
+			"the edit would leave %s at %d bytes, past the %d-byte configuration limit, and a store whose areas.yml is over that limit cannot be opened by any command — declare fewer areas, or shorter names, then rerun",
+			path, len(out), MaxConfigBytes)
+	}
 	var edited Areas
 	if err := yaml.Unmarshal(out, &edited); err != nil {
 		return nil, refuseAreaEdit("the edit would leave %s unreadable: %v", path, err)
@@ -544,6 +565,55 @@ func ValidateNewAreaPath(path string) error {
 			return refuseAreaEdit("the area name %q has leading or trailing whitespace; an `area:` value would have to carry the same spaces to match it",
 				RenderAreaPath(segment))
 		}
+		// Only the length clause can fire: the two above have already answered
+		// for an empty or padded segment, in wording that names the whole path.
+		if err := ValidateAreaName(segment); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// maxAreaNameRunes bounds the length of a name an EDIT may write. It is
+// deliberately NOT a bound on what a store may HOLD: validateAreaNodes runs on
+// every load and is not tightened for exactly that reason (see the note there),
+// so a name already declared keeps loading whatever its length.
+//
+// The number is maxListedAreaRunes, the bound RenderAreaPath already applies to
+// every path a message echoes, so a name written at this cap is one a refusal
+// can still quote whole instead of eliding.
+const maxAreaNameRunes = maxListedAreaRunes
+
+// ValidateAreaName refuses a name an edit must not write, before the file is
+// even read. It is the rename's counterpart to ValidateNewAreaPath, which asks
+// it of every segment of a create's path.
+//
+// The LENGTH clause is the one this adds over the load-time rule, and it is
+// about the file the edit produces rather than about the name. A name arrives
+// here as caller-supplied text of no bounded length — the wire carries up to
+// cmd/serve.go's 4 MiB request body — while a config file is read through
+// ReadConfigFile, which refuses anything over MaxConfigBytes. Core.Load reads
+// the vocabulary before it walks the nibs and aborts on that refusal, so an
+// areas.yml written past the cap is a store no command can open, this edit's own
+// rerun included, repairable only by hand.
+//
+// It does not stand alone: a rename that adds nothing can still carry a
+// vocabulary already near the cap past it, since the re-marshal normalizes
+// indentation. planStoredAreaEdit measures its rendered output for that.
+func ValidateAreaName(name string) error {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return refuseAreaEdit("an area is declared under a name, and none was given")
+	}
+	if trimmed != name {
+		return refuseAreaEdit("the area name %q has leading or trailing whitespace; an `area:` value would have to carry the same spaces to match it",
+			RenderAreaPath(name))
+	}
+	// The name is not echoed: it is the thing that is too long, and a message
+	// quoting 200 runes of it says nothing the count does not.
+	if n := utf8.RuneCountInString(name); n > maxAreaNameRunes {
+		return refuseAreaEdit("the area name is %d characters long, and a declared name is bounded at %d — a longer one only writes an areas.yml no command could read back",
+			n, maxAreaNameRunes)
 	}
 	return nil
 }

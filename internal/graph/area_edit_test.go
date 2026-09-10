@@ -195,11 +195,16 @@ func TestRenameAreaRefusesASiblingNameBeforeTouchingAMember(t *testing.T) {
 	assertStoreUnchanged(t, before, core.Root())
 }
 
-// TestRenameAreaArgumentRefusals covers the two the arguments settle on their
+// TestRenameAreaArgumentRefusals covers the ones the arguments settle on their
 // own. A rename to the name the node already carries is a valid no-op WRITE as
 // far as the planner is concerned, so this resolver is what refuses it; a name
 // carrying the path separator is the planner's, since the edited vocabulary
 // would not load.
+//
+// The last row is the one this surface creates: the wire carries a name of any
+// length the request body holds, and a long enough one writes an areas.yml past
+// MaxConfigBytes — which Core.Load refuses before it walks the nibs, leaving a
+// store no command can open, this mutation included.
 func TestRenameAreaArgumentRefusals(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -209,6 +214,7 @@ func TestRenameAreaArgumentRefusals(t *testing.T) {
 		{name: "the name it already has", path: "web", newName: "web"},
 		{name: "a name carrying the separator", path: "web", newName: "platform/ui"},
 		{name: "a nested name carrying the separator", path: "web/ui", newName: "web/dashboard"},
+		{name: "a name no store could read back", path: "web", newName: strings.Repeat("x", 201)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

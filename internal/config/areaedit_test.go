@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1355,5 +1356,74 @@ func TestCreateStoredAreaKeepsEverythingElse(t *testing.T) {
 	want := []string{"auth", "api", "api/webhooks", "web", "web/dashboard", "infra"}
 	if got := loadAreaEditConfig(t, storeDir).Paths(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("Paths() = %v, want %v", got, want)
+	}
+}
+
+// TestStoredAreaEditRefusesANameNoStoreCouldReadBack is the write half of the
+// bound the read half has always had. ReadConfigFile refuses an areas.yml over
+// MaxConfigBytes and Core.Load reads the vocabulary before the nibs, so a name
+// long enough to carry the file past that limit leaves a store no command can
+// open — including the edit that would undo it. The bound is on what an EDIT may
+// write and not on what a store may hold: validateAreaNodes still accepts a name
+// of any length on load.
+func TestStoredAreaEditRefusesANameNoStoreCouldReadBack(t *testing.T) {
+	storeDir := writeAreaEditStore(t, areaEditFixture)
+
+	_, err := PlanRenameStoredArea(storeDir, "web", strings.Repeat("x", maxAreaNameRunes+1))
+	if err == nil {
+		t.Fatal("the planner accepted a name past the bound")
+	}
+	var refusal *AreaEditRefusal
+	if !errors.As(err, &refusal) {
+		t.Errorf("error = %v (%T), want an *AreaEditRefusal — the caller's argument, not the machine", err, err)
+	}
+	if !strings.Contains(err.Error(), "bounded at 200") {
+		t.Errorf("error = %q, want it to name the bound", err)
+	}
+	if got := readAreaEditStore(t, storeDir); got != areaEditFixture {
+		t.Errorf("a refused rename rewrote the file:\n%s", got)
+	}
+
+	// A name AT the bound is accepted, so the refusal above is the bound biting
+	// and not the planner refusing every long name it is handed.
+	if _, err := PlanRenameStoredArea(storeDir, "web", strings.Repeat("x", maxAreaNameRunes)); err != nil {
+		t.Errorf("a name at the bound was refused: %v", err)
+	}
+}
+
+// TestStoredAreaEditRefusesAnOutputPastTheConfigLimit is the same refusal
+// reached with no long argument at all. The edit is a semantic-preserving
+// RE-MARSHAL, so a vocabulary written with two-space indentation comes back with
+// four and grows by a fifth — enough for a file legally under MaxConfigBytes to
+// cross it on a rename that shortens the only name it touches.
+func TestStoredAreaEditRefusesAnOutputPastTheConfigLimit(t *testing.T) {
+	// Sized from the growth this re-marshal actually produces: 58,000 top-level
+	// nodes read as 858,909 bytes and render as 1,090,918, so the input clears
+	// the limit by 190 KiB and the output passes it by 42 KiB.
+	var b strings.Builder
+	b.WriteString("areas:\n")
+	for i := range 58000 {
+		fmt.Fprintf(&b, "- name: a%d\n", i)
+	}
+	b.WriteString("- name: web\n")
+	vocab := b.String()
+	if len(vocab) > MaxConfigBytes {
+		t.Fatalf("the fixture is %d bytes, past the %d-byte limit before any edit", len(vocab), MaxConfigBytes)
+	}
+	storeDir := writeAreaEditStore(t, vocab)
+
+	_, err := PlanRenameStoredArea(storeDir, "web", "ui")
+	if err == nil {
+		t.Fatal("the planner accepted an edit whose output no store could read back")
+	}
+	var refusal *AreaEditRefusal
+	if !errors.As(err, &refusal) {
+		t.Errorf("error = %v (%T), want an *AreaEditRefusal", err, err)
+	}
+	if !strings.Contains(err.Error(), "configuration limit") {
+		t.Errorf("error = %q, want it to name the limit it would pass", err)
+	}
+	if got := readAreaEditStore(t, storeDir); got != vocab {
+		t.Error("a refused rename rewrote the file")
 	}
 }
