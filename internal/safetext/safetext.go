@@ -1,5 +1,10 @@
 // Package safetext is the rendering boundary for text nibs did not write.
 //
+// CANONICAL INVARIANT (the untrusted-text rendering boundary, and what it does
+// NOT cover). This doc is its single authoritative statement; comments across
+// cmd, internal/config, internal/graph and internal/nibcore defer here rather
+// than re-derive it.
+//
 // File contents, filesystem paths and the parse errors that quote them all reach
 // stdout and stderr. A YAML double-quoted scalar can carry ESC (`\e`) and a
 // filename on Linux is arbitrary bytes, so echoing them raw lets a file paint

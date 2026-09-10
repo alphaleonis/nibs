@@ -15,6 +15,11 @@
 // module, so both internal/config and internal/nibcore can derive their paths
 // from the same definitions (nibcore imports config, so config must not import
 // nibcore).
+//
+// CANONICAL INVARIANT (the store layout, and the stdlib-only constraint that
+// keeps it importable). This doc is its single authoritative statement; comments
+// across cmd, internal/config, internal/fsutil and internal/nibcore defer here
+// rather than re-derive it.
 package store
 
 import (

@@ -27,6 +27,10 @@
 // The package sits below nibcontext, graph and cmd, and imports only
 // internal/nib — a consumer wanting a seam declares its own.
 //
+// CANONICAL INVARIANT (what belongs to a container, and the View's live-pointer
+// discipline). This doc is its single authoritative statement; comments in
+// internal/graph and cmd defer here rather than re-derive it.
+//
 // THE RULE FOR CONSUMERS: ask this package "what belongs to container X" rather
 // than re-deriving it from the raw `parent:` link. The rival walks listed above
 // each stayed self-consistent while disagreeing with the others, and the field

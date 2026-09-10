@@ -84,6 +84,10 @@ func reportErr(jsonMode bool, code string, err error) error {
 // mutation not-found — mutationErrCode carries its own sentinel test and
 // graphQLErrCode consults that one first, so no not-found cause reaches the
 // branch below by way of `nibs query`.
+//
+// CANONICAL INVARIANT (the read-path filter-failure error classes). This doc is
+// its single authoritative statement; the filter-error types in internal/graph
+// defer here rather than re-derive it.
 func filterTargetErrCode(err error) (string, bool) {
 	var unreadable *graph.FilterTargetUnreadableError
 	if errors.As(err, &unreadable) {

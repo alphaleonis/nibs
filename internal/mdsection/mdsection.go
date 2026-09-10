@@ -142,6 +142,9 @@ func Replace(body, heading, newContent string, matchLevel int) string {
 // heading was appended, false when an existing section was replaced in place. It
 // is the authoritative append-vs-replace signal — callers must not re-derive it
 // from a separate Find. The tuple is propagated straight from SetAtLevel.
+//
+// CANONICAL INVARIANT (the append-vs-replace signal). This doc is its single
+// authoritative statement; cmd/body.go defers here rather than re-derive it.
 func Set(body string, appendLevel int, heading, content string) (string, bool) {
 	return SetAtLevel(body, AnyLevel, appendLevel, heading, content)
 }

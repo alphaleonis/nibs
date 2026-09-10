@@ -106,6 +106,10 @@ func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 // flushed, and the empty string when it returns an error — an error means the
 // rename never ran, so there is no new entry to flush.
 //
+// CANONICAL INVARIANT (the deferred directory-sync debt). This doc is its single
+// authoritative statement; comments in internal/nibcore and internal/reprefix
+// defer here rather than re-derive it.
+//
 // THE WEAKER GUARANTEE: until the caller passes that directory to SyncDir,
 // the file's CONTENTS are durable (the temp is fsynced before the rename) but
 // its NAME may not survive a crash, so a recovery path keying on "the file is

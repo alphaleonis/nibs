@@ -97,6 +97,10 @@ func (l *StoreLock) Release() error {
 // the same root, and the two stop excluding each other the moment they disagree
 // on the key.
 //
+// CANONICAL INVARIANT (the per-descriptor flock rule). This doc is its single
+// authoritative statement; sibling comments across internal/nibcore,
+// internal/config and cmd defer here rather than re-derive it.
+//
 // WARNING: the flock is per-file-descriptor, so acquiring it twice in one
 // process deadlocks. Code running under this lock (the migration Core methods)
 // must not call mutators that take the per-operation lock themselves

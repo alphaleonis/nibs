@@ -4,6 +4,11 @@
 // which inherits up the structural parent chain) — as a TypeScript module the
 // web's test suite replays.
 //
+// CANONICAL INVARIANT (the Go-to-TS milestone-membership parity contract). This
+// doc is its single authoritative statement; the TypeScript mirror in
+// web/src/lib/membership.ts and its replay suite defer here rather than
+// re-derive it.
+//
 // The web has to apply those rules itself: `Nib.milestone` is reported VERBATIM
 // on the wire (schema.graphqls, and the field is autobound with no resolver of
 // its own), so a dangling or non-milestone assignment arrives at the client as
