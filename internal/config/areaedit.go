@@ -624,8 +624,11 @@ func ValidateNewAreaPath(path string) error {
 // so a name already declared keeps loading whatever its length.
 //
 // The number is maxListedAreaRunes, the bound RenderAreaPath already applies to
-// every path a message echoes, so a name written at this cap is one a refusal
-// can still quote whole instead of eliding.
+// every path a message echoes, so a name an edit may write is never unboundedly
+// longer than what a refusal about it can show. It is not a promise that every
+// echo is complete: a refusal quoting a nested PATH built from the name renders
+// the parent segments too, and RenderAreaPath elides what those push past the
+// bound.
 const maxAreaNameRunes = maxListedAreaRunes
 
 // ValidateAreaName refuses a name an edit must not write, before the file is

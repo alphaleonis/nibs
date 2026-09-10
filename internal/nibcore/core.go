@@ -1159,7 +1159,7 @@ func (c *Core) ValidateEnums(b *nib.Nib) error {
 // watcher picks BOTH up — where it used to take only the member rewrites and
 // refuse every later write to them against the vocabulary it read at startup.
 //
-// RewriteAreaAssignments, the cascade beside those edits, is
+// rewriteAreaAssignmentsLocked, the cascade beside those edits, is
 // deliberately not a caller of this method for the same reason a rename could
 // not go through Update at all: no single vocabulary declares both the value a
 // member is leaving and the one it is arriving at.

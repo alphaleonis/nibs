@@ -352,6 +352,13 @@ func (e *AreaEditIOError) Error() string {
 
 // describe names a phase for AreaEditIOError's own message. It is not a remedy
 // and names no command.
+//
+// EVERY ARM IS NAMED and there is no default one, so a phase added to the iota
+// block above is not silently described as the one that happens to sit last.
+// Each sentence here says what is already on disk, which is what decides whether
+// a rerun is the repair — lending one phase's sentence to another is a wrong
+// answer to that question, in the one error whose stated purpose is telling the
+// phases apart.
 func (p AreaEditPhase) describe() string {
 	switch p {
 	case AreaEditPhaseLock:
@@ -364,9 +371,10 @@ func (p AreaEditPhase) describe() string {
 		return "rewriting the nibs assigned to the area"
 	case AreaEditPhaseWrite:
 		return "writing the store's areas.yml"
-	default:
+	case AreaEditPhaseReload:
 		return "re-reading the areas.yml it had just written"
 	}
+	return fmt.Sprintf("in a phase of the edit this build cannot name (%d)", int(p))
 }
 
 // reloadAreasAfterEdit is Core.loadAreasLocked, indirected so a test can drive the
@@ -552,6 +560,18 @@ type areaPlan struct {
 //
 // It BLOCKS on the file lock rather than refusing, matching every other store
 // mutation: the other holder is another nibs process finishing one operation.
+//
+// THE COST IS READER AVAILABILITY, and it is paid deliberately. c.mu is held
+// from before the file lock is asked for until after the reload, so it spans an
+// untimed wait for another process, a walk of every nib file in the store, the
+// member cascade, the whole-file config write and the re-read. Get, All and
+// Search all read under c.mu, and a GraphQL query resolver reaches the store
+// through them, so under `nibs serve` a read blocks for the length of the edit —
+// a step beyond the single-nib mutators, none of which walks the store or
+// rewrites a config file under this lock. That
+// is the price of the paragraph above: narrowing the span is what would let two
+// edits interleave and lose one's declaration. Whether the availability can be
+// recovered without giving that up is nibs-8465.
 //
 // THE RE-READ IS WHY BLOCKING IS SAFE. Waiting means another process was
 // mid-write while this one held the state it started with. A concurrent

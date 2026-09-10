@@ -620,11 +620,6 @@ type stubAreaWriter struct {
 	warnings []string
 }
 
-func (s *stubAreaWriter) AddArea(string, string, string) (nibcore.AreaEditResult, error) {
-	s.calls++
-	return s.res, s.err
-}
-
 func (s *stubAreaWriter) RenameArea(string, string) (nibcore.AreaEditResult, error) {
 	s.calls++
 	return s.res, s.err

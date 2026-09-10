@@ -27,8 +27,8 @@ import (
 // of duplicating the store.
 //
 // CONCURRENCY: the caller holds BOTH c.mu and the store's cross-process write
-// lock, in that order, for the whole verb — editArea is the only caller and is
-// where that is arranged. Neither is acquired here. c.mu is not, because the
+// lock, in that order, for the whole verb — editArea is its only production
+// caller and is where that is arranged. Neither is acquired here. c.mu is not, because the
 // cascade is only one step of a critical section that spans the plan, the
 // cascade, the areas.yml write and the reload; the flock is not, because it is
 // per-descriptor and re-acquiring it in-process deadlocks.

@@ -193,13 +193,13 @@ type NibSubscriber interface {
 // each of which takes the store's in-process mutex — inverted the documented
 // order, and a concurrent updateNib deadlocked the whole server against it.
 //
-// It also has no hidden coupling to NibReader. Every answer the mutations give
-// comes out of the AreaEditResult the verb returns, including the vocabulary it
-// wrote, so a decorated or per-request Reader cannot silently disagree with it.
+// The VOCABULARY a mutation answers with comes out of the AreaEditResult the
+// verb returns rather than from a re-ask, so a decorated or per-request Reader
+// cannot silently disagree with the edit about what the store now declares. The
+// other two fields of that answer, projectName and prefix, do come from the
+// Reader — safely, because config.yml is fixed at construction and no area verb
+// touches it.
 type AreaWriter interface {
-	// AddArea declares a new area. It rewrites no nib: a nib may already carry
-	// the path, and declaring it is what un-refuses that nib's next write.
-	AddArea(path, description, color string) (nibcore.AreaEditResult, error)
 	// RenameArea renames a declared node, cascading to every nib assigned at or
 	// below it.
 	RenameArea(path, newName string) (nibcore.AreaEditResult, error)
