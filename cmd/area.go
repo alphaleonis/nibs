@@ -684,7 +684,7 @@ func areaDeclaredAtStartup(app *App, path string) bool {
 //
 // It names no live `nibs serve`, unlike `nibs config set-prefix` beside it. A
 // server watches the store's areas.yml and reloads it, so this edit reaches one
-// on its own — the restart that used to be owed here is not owed any more.
+// on its own and owes no restart.
 func reportAreaEdit(jsonMode bool, msg string, res nibcore.AreaEditResult) error {
 	if res.StaleLinkTarget != "" {
 		file := sanitizeFilePath(res.Areas.Path())

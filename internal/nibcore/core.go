@@ -168,8 +168,8 @@ type Core struct {
 	// a file that IS on disk but is not answerable through the store — a skipped
 	// unparseable file, and the loser of an id collision — so neither is
 	// recoverable from c.nibs afterwards. Retaining them is what lets
-	// CheckAllLinks report what previously reached only logWarn's stderr, which
-	// no production code redirects.
+	// CheckAllLinks report what otherwise reaches only logWarn's stderr, which no
+	// production code redirects.
 	unparseableFiles []UnparseableFile
 	duplicateIDs     []DuplicateID
 
@@ -429,10 +429,10 @@ func (e *AreasLoadError) Error() string { return e.Cause.Error() }
 
 func (e *AreasLoadError) Unwrap() error { return e.Cause }
 
-// Load reads all nibs from disk into memory. It NEVER writes: every load-time
-// normalization that used to persist (the v0→v1 blocking migration, the
-// `priority: deferred` write-back) is retired in favor of the explicit
-// `nibs migrate` command. The CLI's pre-run gate refuses other commands while
+// Load reads all nibs from disk into memory. It NEVER writes: the load-time
+// normalizations that would otherwise persist (the v0→v1 blocking migration, the
+// `priority: deferred` write-back) belong to the explicit `nibs migrate`
+// command. The CLI's pre-run gate refuses other commands while
 // a migration is pending, so AT STARTUP a legacy shape reaching a loaded
 // store is only ever observed by migrate itself — but the gate fires once per
 // process: a legacy file arriving through the watcher into a live serve (a
@@ -1160,8 +1160,8 @@ func (c *Core) ValidateEnums(b *nib.Nib) error {
 // That reload is what makes `nibs area rename` and `nibs area rm` reach a live
 // `nibs serve` at all. They rewrite the members, then the store's areas.yml
 // (config.PlanRenameStoredArea / config.PlanRemoveStoredArea), and the server's
-// watcher picks BOTH up — where it used to take only the member rewrites and
-// refuse every later write to them against the vocabulary it read at startup.
+// watcher picks BOTH up. Taking only the member rewrites leaves the server
+// refusing every later write to them against the vocabulary it read at startup.
 //
 // rewriteAreaAssignmentsLocked, the cascade beside those edits, is
 // deliberately not a caller of this method for the same reason a rename could
@@ -1461,11 +1461,11 @@ func (c *Core) Create(b *nib.Nib) error {
 //
 // Absence is read off the LOAD, via Config.LoadedFromFile, and never off a stat
 // of this function's own. Load answers a missing file with an empty config and a
-// nil error, so a separate stat used to carry the absence decision — and the two
+// nil error, so a separate stat could carry the absence decision — but the two
 // syscalls are not the same observation: a config.yml removed between them (an
-// ordinary `git -C .nibs checkout` unlinks and rewrites it) passed the stat,
-// read as absent, and arrived at the comparison below declaring the empty
-// prefix. Every create in that window refused, naming a re-prefix to "" that
+// ordinary `git -C .nibs checkout` unlinks and rewrites it) passes the stat,
+// reads as absent, and arrives at the comparison below declaring the empty
+// prefix. Every create in that window then refuses, naming a re-prefix to "" that
 // never happened. One read, one answer, and no window between them.
 //
 // A config that DECLARES no prefix is not a re-prefix either, whether that is a
@@ -1534,8 +1534,8 @@ func (c *Core) mintingVocabulary() (string, int, error) {
 // keys, whitespace). loadNib keeps
 // the stored Nib's Type/Priority empty when the file omits them (the "task"/
 // "normal" defaults are applied only at the consumption boundary via
-// nib.EffectiveType()/EffectivePriority()), so a priority/type-less file no longer
-// diverges from its in-memory nib.ETag(). A hand-authored file omitting
+// nib.EffectiveType()/EffectivePriority()), so a priority/type-less file does not
+// diverge from its in-memory nib.ETag(). A hand-authored file omitting
 // created_at/updated_at does not either — computeStoredETag reconciles the stamps
 // loadNib synthesized for it (see reconcileLoaderDerived). Used by bulk-reorder pre-validation
 // to check optimistic concurrency without a write. Returns ErrNotFound when the

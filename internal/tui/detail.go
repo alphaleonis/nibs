@@ -232,8 +232,8 @@ func (m detailModel) linksBox() string {
 	rows := m.linkRows()
 	filtering := l.FilterState() == list.Filtering
 	if filtering {
-		// The filter input is drawn into the row the title used to hold, so the
-		// box grows by it — and only for as long as there is a query to read.
+		// The filter input takes over the title's row, so the box grows by it —
+		// and only for as long as there is a query to read.
 		rows++
 	}
 	l.SetShowFilter(filtering)

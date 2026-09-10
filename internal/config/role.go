@@ -1,11 +1,10 @@
 package config
 
 // Role classifies a status by what it means for the work's lifecycle. It is
-// the single axis behind three questions that used to be three independent
-// flags — "is this nib finished", "does this blocker still count" and "can
-// this nib be picked up" — and it adds a fourth the flags could not ask:
-// whether closed work counts as done (RoleDone) or left the scope entirely
-// (RoleDropped). Progress arithmetic keys on that distinction instead of on
+// the single axis behind three questions — "is this nib finished", "does this
+// blocker still count" and "can this nib be picked up" — plus a fourth that
+// three independent flags could not ask: whether closed work counts as done
+// (RoleDone) or left the scope entirely (RoleDropped). Progress arithmetic keys on that distinction instead of on
 // the literal status names.
 //
 // Every role IS one legal combination of the three derived predicates, so the

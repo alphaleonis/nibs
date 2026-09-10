@@ -122,10 +122,10 @@ no --parent (assign with 'nibs set <id> --milestone' instead).`,
 
 		// A block move announces itself, like the two multi-nib regimes beside it:
 		// --children-of selects the full-reorder mode and --queue the queue scope.
-		// This one used to be entered by argument COUNT alone, which is what let a
-		// mistyped single move become a block move — `--first` is a bool and takes no
-		// anchor, so `nibs mv <id> --first <anchor>` parses as two positional ids and
-		// reorders a nib the caller never named. Flag position cannot be recovered
+		// Entering it by argument COUNT alone lets a mistyped single move become a
+		// block move — `--first` is a bool and takes no anchor, so
+		// `nibs mv <id> --first <anchor>` parses as two positional ids and reorders
+		// a nib the caller never named. Flag position cannot be recovered
 		// after parsing (`mv a b --first` and `mv a --first b` reach this function
 		// identically), so arity is the only place the intent can be asked for.
 		if len(args) >= 2 && !childrenOfSet && !mvBlock {

@@ -336,7 +336,7 @@ func (e *MilestoneReleasedError) Error() string {
 // exactly where assigning it fails — and `nibs close` offers --unassign-open as
 // the remedy for this class and for no other (cmd/close_queue.go's refusal
 // diagnosis). Recognizing the class by message text would make that advice a
-// guess, which is what it used to be.
+// guess.
 //
 // It deliberately carries no Unwrap: there is no cause underneath, and
 // mutationErrCode's trailing nib.ErrNotFound test must not be able to claim it.

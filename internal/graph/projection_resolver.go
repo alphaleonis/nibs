@@ -103,10 +103,9 @@ func (p *projectionResolver) ChildCount(id string) int {
 // resolvers that hand nibs to gqlgen: Status is not mutated in place on a
 // stored pointer (status changes go through Update, which installs a fresh
 // pointer), and this method returns a computed progress.Rollup value, so no
-// pointer escapes to async marshaling. No snapshot/clone is needed. As of the
-// pyei copy-on-write change no non-Path field is mutated in place on a
-// published stored pointer; only Path is (see NibReader.GetSnapshot for the
-// full contract).
+// pointer escapes to async marshaling. No snapshot/clone is needed: no non-Path
+// field is mutated in place on a published stored pointer, only Path is (see
+// NibReader.GetSnapshot for the full contract).
 func (p *projectionResolver) Progress(id string) any {
 	members := p.membershipView().DirectMembers(id)
 	statuses := make([]string, len(members))

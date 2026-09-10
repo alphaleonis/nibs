@@ -19,9 +19,9 @@ import (
 // through NormalizeID first. The forward resolvers normalize such an id when they
 // follow it, but the reverse traversals (findIncomingLinksInMap,
 // isBlockingInMap) and the cycle passes (FindCyclesInMap,
-// findPathToTargetInMap) walk exact map keys, so a short-form link used to
-// resolve from the nib holding it and be invisible from the other end — and a
-// short-form parent cycle went undetected while the forward resolver looped
+// findPathToTargetInMap) walk exact map keys, so an un-normalized short-form
+// link resolves from the nib holding it and is invisible from the other end —
+// and a short-form parent cycle goes undetected while the forward resolver loops
 // through it.
 //
 // Rather than teach each of those traversals to normalize (a lookup per edge on
