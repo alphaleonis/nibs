@@ -317,11 +317,11 @@ type rootFieldOutcome struct {
 // non-null (Nib!, Boolean!, [Nib!]!), so one failed root field nullifies the
 // object that holds them all and resp.Data arrives as the literal `null` —
 // gqlgen's _Mutation returns graphql.Null once out.Invalids > 0. There is no
-// per-alias survivor in the data to read. The document, by contrast, still lists
-// every root field the operation asked for, and graphql.CollectFields resolves
-// it exactly as the executor did: same fragment expansion, same @skip/@include
-// handling, same response keys, same order. A field @skip'd out never executed
-// and is correctly absent from both.
+// per-alias survivor in the data to read. The document still lists every root
+// field the operation asked for, and graphql.CollectFields resolves it exactly
+// as the executor did: same fragment expansion, same @skip/@include handling,
+// same response keys, same order. A field @skip'd out never executed and is
+// correctly absent from both.
 //
 // WHY ERROR PATHS ARE THE FAILURE SIGNAL. gqlgen presents every resolver error
 // as gqlerror.WrapPath(graphql.GetPath(ctx), err), so Path[0] is the failing
@@ -333,11 +333,9 @@ type rootFieldOutcome struct {
 // The committed claim is deliberately conservative: a root field is called
 // committed only when NO error anywhere beneath it was reported. An error at
 // path ["u1","children"] means the updateNib DID commit and only its nested read
-// failed, yet u1 is reported as failed. Splitting on path depth would move it,
-// at the cost of asserting a write landed on the strength of an inference about
-// where gqlgen rooted the error. Understating what committed leaves a caller no
-// worse off than a bare refusal; overstating it would tell an agent not to
-// resend something it must.
+// failed, yet u1 is reported as failed. Understating what committed leaves a
+// caller no worse off than a bare refusal; overstating it would tell an agent
+// not to resend something it must.
 //
 // An error that cannot be attributed to a root key at all — an empty path, or a
 // list index where an object key belongs — makes the whole split unsound, since
@@ -347,7 +345,7 @@ type rootFieldOutcome struct {
 // Ordering is the document's, which for root mutation fields is also the
 // execution order (the serial _Mutation loop). It deliberately does not follow
 // resp.Errors, whose order is not stable for root QUERY fields — see
-// graphQLResponseCode — though the mutation gate above already excludes those.
+// graphQLResponseCode.
 func classifyRootFields(opCtx *graphql.OperationContext, errs gqlerror.List) rootFieldOutcome {
 	// A query commits nothing, so a resolved root field there is not a write to
 	// warn about.
@@ -389,24 +387,23 @@ func classifyRootFields(opCtx *graphql.OperationContext, errs gqlerror.List) roo
 // it is appended to the rendered message and otherwise inert. Nothing about the
 // envelope, the code or the exit status changes when it is populated — the point
 // is to say WHAT LANDED inside the refusal the caller already gets, not to
-// soften the refusal. An empty committed list adds nothing at all, which is what
-// keeps the common path — one root field, one error, nothing committed — free of
-// a "0 succeeded" clause.
+// soften it. An empty committed list adds nothing at all, which keeps the common
+// path — one root field, one error, nothing committed — free of a "0 succeeded"
+// clause.
 //
 // The failed names ride along only when there is a committed name beside them,
 // because attribution is what the caller cannot reconstruct on a PARTIAL batch:
 // a field missing from the succeeded list may be missing because it failed or
 // because @skip removed it, and those demand different responses. With nothing
-// committed there is no partial outcome to attribute — either every root field
-// failed, or the response supports no attribution at all — and the bare refusal
+// committed there is no partial outcome to attribute, and the bare refusal
 // already says so.
 //
 // It is appended to the FINISHED message rather than woven into the per-error
-// text, and that placement is load-bearing twice over: dedup keys on each
-// error's own Message, and graphQLResponseCode scans the errors themselves, so
-// neither can see this text. Prefixing each message with its alias would have
-// defeated the dedup outright, since the N identical sentences one nested
-// refusal raises would then differ by alias.
+// text, and that placement is load-bearing: dedup keys on each error's own
+// Message and graphQLResponseCode scans the errors themselves, so neither can
+// see this text — where prefixing each message with its alias would defeat the
+// dedup outright, since the N identical sentences one nested refusal raises
+// would then differ by alias.
 //
 // Repeated messages are collapsed to their first occurrence. One refused filter
 // inside a nested resolver raises its own error per matched parent — a single
@@ -417,20 +414,17 @@ func classifyRootFields(opCtx *graphql.OperationContext, errs gqlerror.List) roo
 // still reads in the order gqlgen reported it.
 //
 // The structured code rides along on the returned *output.CodedError because it
-// can only be read from the gqlerror.List, which does not outlive this call —
-// see graphQLResponseCode for how a response's code is decided. Err carries the
-// response's ONE classified failure when it has exactly one, so a caller can
-// errors.As down to it for a repair hint (the current etag on a conflict); it is
-// nil when the response holds no classified failure or several, because then no
-// single cause could be attributed to it. See soleClassifiedErr.
+// can only be read from the gqlerror.List, which does not outlive this call.
+// Err carries the response's ONE classified failure when it has exactly one, so
+// a caller can errors.As down to it for a repair hint (the current etag on a
+// conflict); it is nil when the response holds no classified failure or several.
 //
 // Code and Err are decided by two different rules — agreement among all errors
 // versus exactly one classified error — so the response's code is passed into
 // soleClassifiedErr to reconcile them: Err is set only when the cause's own
-// class IS Code. That is the invariant the two fields are read under. A caller
-// that finds an *nibcore.ETagMismatchError under Err therefore knows the whole
-// response is a CONFLICT, and cannot mint a retry token for a response that
-// reports something else.
+// class IS Code. That is the invariant the two fields are read under, and it is
+// what stops a caller minting a retry token for a response reporting something
+// else.
 func formatGraphQLErrors(errs gqlerror.List, outcome rootFieldOutcome) error {
 	if len(errs) == 0 {
 		return nil

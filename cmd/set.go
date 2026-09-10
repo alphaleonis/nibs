@@ -484,115 +484,41 @@ func setMutationError(jsonOutput bool, err error) error {
 // mutationError so the direct commands and `nibs query` classify one mutation
 // failure identically — the query path reaches it through graphQLErrCode.
 //
-//   - An on-disk file that cannot be certified (corrupt/unreadable) is a
-//     FILE_ERROR, not a retryable CONFLICT: the file must be repaired by hand —
-//     retrying cannot resolve it. The error message already spells this out;
-//     stopping (non-zero exit) is the correct behavior per the AI-agent
-//     "stop on error" contract.
-//   - A reconcilable ETag conflict is CONFLICT, the "409 → re-read and retry"
-//     class.
-//   - An illegal parent link — a child type under a parent type the hierarchy
-//     rule forbids — is HIERARCHY. It shares exit 2 with the VALIDATION_ERROR
-//     fallback, so what the code buys is not the exit but the allowedParentTypes
-//     repair hint the envelope carries with it (see hierarchyError), and the
-//     ability to tell a rule violation from a malformed argument. Sharing an
-//     exit is safe for a batched `nibs query` response because
-//     graphQLResponseCode compares exit statuses, not code strings.
-//   - An assignment axis a nib's type refuses — a milestone given a `milestone:`
-//     or an `area:` — is VALIDATION_ERROR, the class it already reports on every
-//     surface that supplies the fallback. Naming it here is what makes `nibs new`
-//     agree with them: create's own fallback is FILE_ERROR, which would send an
-//     agent to inspect the filesystem for a bad argument pair. Recognized through
-//     the concrete type rather than the message, which is the whole reason
-//     nibtypes.AxisError is typed.
-//   - A surgical body-replace whose search text did not match exactly once is
-//     TEXT_NOT_FOUND (zero matches) or TEXT_AMBIGUOUS (more than one). Both share
-//     exit 2 with the VALIDATION_ERROR fallback, so as with HIERARCHY what the
-//     codes buy is not the exit but the occurrences count the envelope carries
-//     with them (see textMatchError) and the ability to tell "your text was not
-//     there" from "your text was ambiguous" — two refusals with different
-//     repairs. `nibs body --replace-old` and the batched bodyMod.replace a
-//     `nibs query` runs raise the same failure, so both report the same code.
-//   - A mutation whose SUBJECT id no nib answers to is NOT_FOUND (exit 3), the
-//     class every id-resolving command already reports. `nibs set`, `close` and
-//     `body` resolve the id up front and reach here with it only in the delete
-//     race between that check and their write; `nibs mv` has no such pre-check,
-//     so GetForUpdate's bare nib.ErrNotFound arrives here on any unknown id and
-//     would otherwise ride the caller's VALIDATION_ERROR fallback — exit 2, a
-//     claim that the caller's INPUT was malformed rather than that the id does
-//     not exist. Recognized through the sentinel rather than a concrete type,
-//     which is the same channel cmd/serve.go's presenter keys on, so the CLI and
-//     the HTTP server classify one missing nib the same way.
-//   - A write whose target FILE is not there is a FILE_ERROR, joining the
-//     unparseable case above under "the filesystem is not what the store
-//     believes". Core.Update replaces a nib's file rather than creating one, so a
-//     path that went stale under a loaded process — `nibs config set-prefix`
-//     renames every file in the store — refuses with fs.ErrNotExist instead of
-//     leaving a second copy of the nib at the retired name. The repair is to
-//     re-read the store (after a set-prefix the nib's own id has changed too),
-//     which is the opposite of what the VALIDATION_ERROR fallback's "bad input"
-//     would send an agent to do.
-//   - A CREATE whose store was re-prefixed while it waited for that same write
-//     lock is the other half of that refusal, and shares its class: the rename
-//     has retired every id this process holds — the new nib's parent and
-//     blockers among them — so the repair is again to re-read the store, and a
-//     misnamed create is exactly what the refusal exists to stop.
-//   - An area vocabulary edit that failed on the FILESYSTEM — the store's write
-//     lock, the re-read under it, a member nib's rewrite, the areas.yml write, or
-//     the re-read of the file it just wrote — is a FILE_ERROR, the class
-//     `nibs area rename` and `nibs area rm` already give the same failure. Its
-//     CONTENT counterpart, config.AreaEditRefusal, deliberately gets no branch: it
-//     carries no Unwrap, so no sentinel below can claim it, and the caller's
-//     VALIDATION_ERROR fallback is the class those two commands report for it.
-//     Recognized through the concrete type, which is why nibcore.AreaEditIOError
-//     is typed.
-//   - An area named in an edit that ANOTHER nibs process retired or renamed while
-//     this one waited for the store's write lock, and an areas.yml that vanished
-//     the same way, join it. Neither is bad input — the argument was true when it
-//     was given — so both are the same "the store is not what it should be" class
-//     the two commands give them, which is what keeps the wire and the CLI from
-//     classifying one event two ways.
-//
-// A SECONDARY id — a parent, a blocking or blocked-by target, a bulk-reorder
-// member or anchor — does NOT normally arrive as a sentinel: the graph layer
-// refuses an unknown one with a non-wrapping fmt.Errorf formatting the id as %s
-// (internal/graph/resolver.go, schema.resolvers.go, bulkreorder.go), so nothing
-// errors.Is can see survives and it stays validation-class. The exception is the
-// same delete race as above — updateTargetClone re-fetches a blocking target
-// after its existence check and wraps that miss with %w — which is exactly the
-// case worth calling NOT_FOUND. So "unknown id" splits across two exit statuses
-// on that line, and it splits the SAME way for `nibs query` and for the direct
-// commands, which is what parity requires.
-//
-// The two sentinel tests run LAST so a concrete-typed failure that also carries
-// a not-found cause keeps its own class. That ordering is load-bearing for
-// OnDiskUnparseableError, the one classified type here with an Unwrap; it is
-// inert today because both of its construction sites carry an OS read error or a
-// YAML parse error. AreaEditIOError, AreaRetiredWhileWaitingError,
-// AreaVocabularyVanishedError, ETagMismatchError, ETagRequiredError,
-// HierarchyError, ReplaceMatchError and StoreRePrefixedError implement no Unwrap
-// at all, so neither sentinel can claim the area-edit, conflict, hierarchy,
-// text-match or re-prefix branches either way, and their order among the
-// concrete-type tests is inert.
-//
-// Between the two sentinels the id-miss goes first: nib.ErrNotFound and
-// fs.ErrNotExist are unrelated values, so a chain carrying both is asserting two
-// things at once, and "no nib answers to this id" is the one an agent can act
-// on. Testing the file miss second means it claims only a chain with no id-miss
-// in it.
+// Every branch below states the class it assigns and why it earns one; the two
+// ordering constraints are stated at the branches they bind.
 func mutationErrCode(err error) (string, bool) {
+	// An on-disk file that cannot be certified is a FILE_ERROR, not a retryable
+	// CONFLICT: the file must be repaired by hand and retrying cannot resolve it.
+	// Stopping on it is the AI-agent "stop on error" contract.
 	var unparseableErr *nibcore.OnDiskUnparseableError
 	if errors.As(err, &unparseableErr) {
 		return output.ErrFileError, true
 	}
+	// A CREATE whose store was re-prefixed while it waited for the write lock: the
+	// rename has retired every id this process holds — the new nib's parent and
+	// blockers among them — so the repair is to re-read the store, and a misnamed
+	// create is what the refusal exists to stop.
 	var rePrefixedErr *nibcore.StoreRePrefixedError
 	if errors.As(err, &rePrefixedErr) {
 		return output.ErrFileError, true
 	}
+	// An area vocabulary edit that failed on the FILESYSTEM — the write lock, the
+	// re-read under it, a member nib's rewrite, the areas.yml write, or the re-read
+	// of the file it just wrote — takes the class `nibs area rename` and
+	// `nibs area rm` already give it. Its CONTENT counterpart,
+	// config.AreaEditRefusal, deliberately gets no branch: it carries no Unwrap, so
+	// no sentinel below can claim it, and the caller's VALIDATION_ERROR fallback is
+	// what those two commands report for it. Recognized through the concrete type,
+	// which is why nibcore.AreaEditIOError is typed.
 	var areaEditErr *nibcore.AreaEditIOError
 	if errors.As(err, &areaEditErr) {
 		return output.ErrFileError, true
 	}
+	// An area another nibs process retired or renamed while this one waited for the
+	// write lock, and an areas.yml that vanished the same way, join it. Neither is
+	// bad input — the argument was true when it was given — so both take the same
+	// "the store is not what it should be" class, which keeps the wire and the CLI
+	// from classifying one event two ways.
 	var areaRetiredErr *nibcore.AreaRetiredWhileWaitingError
 	if errors.As(err, &areaRetiredErr) {
 		return output.ErrFileError, true
@@ -601,13 +527,26 @@ func mutationErrCode(err error) (string, bool) {
 	if errors.As(err, &areaVanishedErr) {
 		return output.ErrFileError, true
 	}
+	// A reconcilable ETag conflict: the "409 → re-read and retry" class.
 	if isConflictError(err) {
 		return output.ErrConflict, true
 	}
+	// An illegal parent link shares exit 2 with the VALIDATION_ERROR fallback, so
+	// what the code buys is not the exit but the allowedParentTypes repair hint the
+	// envelope carries with it (see hierarchyError), and the ability to tell a rule
+	// violation from a malformed argument. Sharing an exit is safe for a batched
+	// `nibs query` response because graphQLResponseCode compares exit statuses, not
+	// code strings.
 	var hierarchyErr *nibtypes.HierarchyError
 	if errors.As(err, &hierarchyErr) {
 		return output.ErrHierarchy, true
 	}
+	// An assignment axis a nib's type refuses — a milestone given a `milestone:` or
+	// an `area:`. Naming it here is what makes `nibs new` agree with the surfaces
+	// that supply the fallback: create's own fallback is FILE_ERROR, which would
+	// send an agent to inspect the filesystem for a bad argument pair. Recognized
+	// through the concrete type rather than the message, which is the whole reason
+	// nibtypes.AxisError is typed.
 	var axisErr *nibtypes.AxisError
 	if errors.As(err, &axisErr) {
 		return output.ErrValidation, true
@@ -620,6 +559,13 @@ func mutationErrCode(err error) (string, bool) {
 	if errors.Is(err, nib.ErrIDNotFilename) || errors.Is(err, nib.ErrIDNotRoundTrip) {
 		return output.ErrValidation, true
 	}
+	// A surgical body-replace whose search text did not match exactly once. Both
+	// codes share exit 2 with the fallback, so what they buy is the occurrences
+	// count the envelope carries with them (see textMatchError) and the ability to
+	// tell "your text was not there" from "your text was ambiguous" — two refusals
+	// with different repairs. `nibs body --replace-old` and the batched
+	// bodyMod.replace a `nibs query` runs raise the same failure, so both report
+	// the same code.
 	var matchErr *nib.ReplaceMatchError
 	if errors.As(err, &matchErr) {
 		if matchErr.Count == 0 {
@@ -627,9 +573,44 @@ func mutationErrCode(err error) (string, bool) {
 		}
 		return output.ErrTextAmbiguous, true
 	}
+	// ORDERING: the two sentinel tests run LAST so a concrete-typed failure that
+	// also carries a not-found cause keeps its own class. That binds
+	// OnDiskUnparseableError, the one classified type above with an Unwrap; every
+	// other implements none, so their order among themselves is inert.
+	//
+	// A mutation whose SUBJECT id no nib answers to is NOT_FOUND, the class every
+	// id-resolving command already reports. `nibs set`, `close` and `body` resolve
+	// the id up front and reach here with it only in the delete race between that
+	// check and their write; `nibs mv` has no such pre-check, so GetForUpdate's
+	// bare nib.ErrNotFound arrives on any unknown id and would otherwise ride the
+	// VALIDATION_ERROR fallback — a claim that the caller's INPUT was malformed
+	// rather than that the id does not exist. Recognized through the sentinel, the
+	// same channel cmd/serve.go's presenter keys on.
+	//
+	// A SECONDARY id — a parent, a blocking or blocked-by target, a bulk-reorder
+	// member or anchor — does NOT normally arrive as a sentinel: the graph layer
+	// refuses an unknown one with a non-wrapping fmt.Errorf formatting the id as %s
+	// (internal/graph/resolver.go, schema.resolvers.go, bulkreorder.go), so nothing
+	// errors.Is can see survives and it stays validation-class. The exception is
+	// the same delete race — updateTargetClone re-fetches a blocking target after
+	// its existence check and wraps that miss with %w — which is exactly the case
+	// worth calling NOT_FOUND.
 	if errors.Is(err, nib.ErrNotFound) {
 		return output.ErrNotFound, true
 	}
+	// The id-miss goes first because nib.ErrNotFound and fs.ErrNotExist are
+	// unrelated values: a chain carrying both asserts two things at once, and "no
+	// nib answers to this id" is the one an agent can act on. Testing the file miss
+	// second means it claims only a chain with no id-miss in it.
+	//
+	// A write whose target FILE is not there joins the unparseable case above under
+	// "the filesystem is not what the store believes". Core.Update replaces a nib's
+	// file rather than creating one, so a path that went stale under a loaded
+	// process — `nibs config set-prefix` renames every file in the store — refuses
+	// with fs.ErrNotExist instead of leaving a second copy of the nib at the retired
+	// name. The repair is to re-read the store (after a set-prefix the nib's own id
+	// has changed too), the opposite of what the fallback's "bad input" would send
+	// an agent to do.
 	if errors.Is(err, fs.ErrNotExist) {
 		return output.ErrFileError, true
 	}
