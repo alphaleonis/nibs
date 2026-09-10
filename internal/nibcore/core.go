@@ -1408,30 +1408,19 @@ func (c *Core) Create(b *nib.Nib) error {
 // than a stale label. Called with c.mu and the write lock held, so nothing can
 // supersede the value between this read and the file the create writes.
 //
-// Drawing under the re-read prefix instead is why a divergence is REFUSED rather
-// than followed. c.nibs is keyed by the ids this process loaded, every one of
-// them retired by the rename, so a draw in the new id space is checked against
-// an index that holds nothing of it: Create's collision guard and its redraw
-// loop (nibs-kafe) go blind exactly there, and a draw landing on a renamed nib
-// leaves a second file claiming its id — or, when the slug matches too, renames
-// over it and destroys it. The rest of the create is stale in the same way: the
-// parent, blocking and anchor ids the caller named are the retired spellings,
-// and canonicalizeLinksInMap resolves this nib's links under the retired prefix.
-// It is the same answer set-prefix gives when its own plan stops fitting the
-// store it took the lock over.
-//
-// Re-anchoring the predicate on the INDEX rather than the config — refusing only
-// while c.nibs still holds ids under the retired prefix, so a watcher that
-// observes the renames clears it — was considered and rejected. The staleness a
-// re-prefix leaves is process-wide, not create-local: Get, GetSnapshot and
-// NormalizeID all resolve a short id by prepending c.config.Nibs.Prefix, so a
-// holder whose index has moved to the new prefix while its config has not
-// answers `nibs show aaaa` with not-found and resolves no parent the caller
-// names. Self-healing the draw would leave that process minting correctly named
-// nibs into a store it can no longer address, which is a quieter wrongness than
-// the refusal rather than a smaller one. Whoever can act on it is told so
-// instead — see StoreRePrefixedError.LongLived, and the note runSetPrefix prints
-// to the operator who caused it.
+// A divergence is REFUSED rather than followed, because the staleness a
+// re-prefix leaves is process-wide and not create-local. c.nibs is keyed by the
+// ids this process loaded, every one of them retired by the rename, so a draw in
+// the new id space is checked against an index that holds nothing of it:
+// Create's collision guard and its redraw loop go blind exactly there, and a
+// draw landing on a renamed nib leaves a second file claiming its id — or, when
+// the slug matches too, renames over it and destroys it. The parent, blocking
+// and anchor ids the caller named are the retired spellings, and Get, GetSnapshot
+// and NormalizeID all still prepend the loaded prefix. Self-healing the draw
+// would leave this process minting correctly named nibs into a store it can no
+// longer address, which is a quieter wrongness rather than a smaller one.
+// Whoever can act on it is told instead — see StoreRePrefixedError.LongLived,
+// and the note runSetPrefix prints to the operator who caused it.
 //
 // Only a MINTED id comes through here — a caller-supplied one is checked against
 // the same stale index, unchanged by this, because there the caller named the id
@@ -1473,18 +1462,15 @@ func (c *Core) Create(b *nib.Nib) error {
 // this field renames a file: `nibs config set-prefix` appends the separator dash
 // to its argument and validates the result against reprefix.ValidatePrefix,
 // which requires at least one character plus that dash. So an empty declared
-// prefix retires no id, c.nibs is still keyed the way this process loaded it,
-// and the loaded prefix stands. (A hand-rename paired with a hand-edited config
-// could reach the same state honestly; this whole re-read is scoped to what
-// set-prefix does under the lock, and a hand-moved store is outside it.)
+// prefix retires no id and the loaded prefix stands. (A hand-rename paired with a
+// hand-edited config could reach the same state honestly; this re-read is scoped
+// to what set-prefix does under the lock.)
 //
 // A config that EXISTS but cannot be read or parsed also leaves them in place,
 // with a warning. A failed read is evidence of nothing — least of all that the
 // prefix changed — while the loaded copy is the vocabulary the rest of this
 // create is already validating against, so falling back keeps one create
-// coherent. Refusing would trade a misnaming the read failure gives no reason to
-// expect for a hard failure of the most-used command in the CLI on a transient
-// error.
+// coherent.
 //
 // A Core holding NO config adopts the stored vocabulary rather than refusing,
 // because it has no loaded prefix to have diverged FROM: the local prefix is

@@ -8,6 +8,25 @@ import (
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
+// requireStoreLock validates a migration method's proof-of-lock token: it
+// must be non-nil, not yet released, and acquired for THIS core's store. Each
+// check makes the claim the token stands for true — nil never held the lock,
+// a released token no longer holds it, and a token for another store holds
+// the wrong one. Any of the three passing would run the method's whole-store
+// read-modify-write with no cross-process exclusion, silently.
+func (c *Core) requireStoreLock(method string, lock *StoreLock) error {
+	if lock == nil {
+		return fmt.Errorf("%s requires the store-wide lock: pass the *StoreLock from AcquireStoreLock", method)
+	}
+	if lock.released {
+		return fmt.Errorf("%s was passed an already-released *StoreLock; re-acquire it via AcquireStoreLock", method)
+	}
+	if lock.lockPath != c.lockPath {
+		return fmt.Errorf("%s was passed a *StoreLock for a different store; acquire it via AcquireStoreLock(%q)", method, c.root)
+	}
+	return nil
+}
+
 // MigrateV0ToV1 converts every v0 nib in the store to v1: each v0 nib's legacy
 // dual-side `blocking:` edges are transferred onto the targets' blocked_by,
 // its own Blocking field is cleared, and its Version is stamped 1 — then every
@@ -28,45 +47,25 @@ import (
 // (blocking cleared, version stamped). A crash anywhere leaves every
 // not-yet-stamped source still v0, and the re-run redoes its transfers
 // (AddBlockedBy dedups) before stamping — including chains and cycles of
-// v0→v0 edges, where a target is a source too. A single sorted-id pass had a
-// real crash window here: a source sorting before its target persisted the
-// stamp before the edge, and the re-run then reported the store fully
-// migrated with the edge gone.
+// v0→v0 edges, where a target is a source too. A single sorted-id pass leaves
+// a real crash window: a source sorting before its target persists the stamp
+// before the edge, and the re-run then reports the store fully migrated with
+// the edge gone.
 //
 // Blocking targets are looked up by exact id: Load's canonicalization pass has
 // already resolved short-form spellings, so a target that still resolves to
 // nothing genuinely does not exist — the edge is dropped with a warning, as a
 // data repair the migration cannot invent an answer for.
 //
-// Concurrency: lock is PROOF-OF-LOCK — the *StoreLock the caller received
-// from AcquireStoreLock, held for the whole run. The method validates the
-// proof (this store's lock, not yet released — see requireStoreLock) but
-// consumes nothing else from it; it exists so this precondition lives in the
-// signature instead of a comment, because the method cannot defend itself —
-// the flock is per-descriptor, so re-acquiring it in-process deadlocks,
-// which is also why this method must NOT take the per-operation write lock. Mutations are copy-on-write (clone, persist, reinstall)
-// per the canonical live-pointer invariant (see NibReader.GetSnapshot in
+// CONCURRENCY: lock is PROOF-OF-LOCK — the *StoreLock the caller received from
+// AcquireStoreLock, held for the whole run. The method validates the proof (see
+// requireStoreLock) but consumes nothing else from it; it is a parameter so the
+// precondition lives in the signature, because the method cannot defend itself:
+// the flock is per-descriptor (see flock.go), which is also why this method must
+// NOT take the per-operation write lock. Mutations are copy-on-write per the
+// canonical live-pointer invariant (see NibReader.GetSnapshot in
 // internal/graph/interfaces.go), even though a migration Core is a scoped
 // throwaway that publishes no pointers.
-// requireStoreLock validates a migration method's proof-of-lock token: it
-// must be non-nil, not yet released, and acquired for THIS core's store. Each
-// check makes the claim the token stands for true — nil never held the lock,
-// a released token no longer holds it, and a token for another store holds
-// the wrong one. Any of the three passing would run the method's whole-store
-// read-modify-write with no cross-process exclusion, silently.
-func (c *Core) requireStoreLock(method string, lock *StoreLock) error {
-	if lock == nil {
-		return fmt.Errorf("%s requires the store-wide lock: pass the *StoreLock from AcquireStoreLock", method)
-	}
-	if lock.released {
-		return fmt.Errorf("%s was passed an already-released *StoreLock; re-acquire it via AcquireStoreLock", method)
-	}
-	if lock.lockPath != c.lockPath {
-		return fmt.Errorf("%s was passed a *StoreLock for a different store; acquire it via AcquireStoreLock(%q)", method, c.root)
-	}
-	return nil
-}
-
 func (c *Core) MigrateV0ToV1(lock *StoreLock) (int, error) {
 	if err := c.requireStoreLock("MigrateV0ToV1", lock); err != nil {
 		return 0, err
