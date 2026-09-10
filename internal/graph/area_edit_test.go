@@ -551,3 +551,64 @@ func TestAreaEditNamesTheHalfOfTheReloadThatFailed(t *testing.T) {
 		})
 	}
 }
+
+// areaEditorReloadFailure is the AreaEditor role over a real store with the
+// re-read of the file the edit just WROTE made to fail. Every other step —
+// including both writes — is the store's own, so the edit really does land
+// before the failure under test.
+type areaEditorReloadFailure struct {
+	*nibcore.Core
+	err error
+}
+
+func (e areaEditorReloadFailure) ReloadAreas() error { return e.err }
+
+// TestAreaMutationsReportAFailedReload: Core keeps the vocabulary it could read
+// when a reload fails, and that is the one the edit replaced — so a mutation
+// that ignored the failure would answer with the pre-edit vocabulary and report
+// success, which renders in a client as the edit not having happened.
+func TestAreaMutationsReportAFailedReload(t *testing.T) {
+	unassign := true
+	tests := []struct {
+		name string
+		call func(*Resolver) (*model.Config, error)
+	}{
+		{
+			name: "rename",
+			call: func(r *Resolver) (*model.Config, error) {
+				return r.Mutation().RenameArea(context.Background(), model.RenameAreaInput{Path: "web", NewName: "platform"})
+			},
+		},
+		{
+			name: "retire",
+			call: func(r *Resolver) (*model.Config, error) {
+				return r.Mutation().RemoveArea(context.Background(), model.RemoveAreaInput{Path: "web", Unassign: &unassign})
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resolver, core := setupTestResolverWithAreas(t)
+			mustCreate(t, core, &nib.Nib{ID: "rl1", Title: "Member", Type: "task", Status: "todo", Area: "web"})
+			resolver.AreaEditor = areaEditorReloadFailure{Core: core, err: errors.New("areas.yml went missing")}
+
+			cfg, err := tt.call(resolver)
+			if err == nil {
+				t.Fatalf("the mutation reported success and answered with %v", pathsOf(cfg.Areas))
+			}
+			var ioErr *AreaEditIOError
+			if !errors.As(err, &ioErr) {
+				t.Errorf("error = %v (%T), want the IO class", err, err)
+			}
+			if !strings.Contains(err.Error(), "nothing to rerun") {
+				t.Errorf("error = %q, want it to say the edit needs no rerun", err.Error())
+			}
+
+			// The edit itself landed, which is what makes "nothing to rerun" the
+			// right remedy: this is a stale reader, not a half-written store.
+			if stored := storedAreasFile(t, core.Root()); strings.Contains(stored, "name: web") {
+				t.Errorf("the edit did not reach disk, so the failure under test is not the reload:\n%s", stored)
+			}
+		})
+	}
+}

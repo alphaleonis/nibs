@@ -212,8 +212,11 @@ type AreaEditor interface {
 	// ReloadAreas re-reads the vocabulary this edit just wrote and ticks the
 	// areas subscribers, so the answer carries what was written and a
 	// configChanged subscriber wakes on the edit rather than on the watcher's
-	// debounce.
-	ReloadAreas()
+	// debounce. A failure to read the file back must be REPORTED rather than
+	// swallowed: the implementation keeps the vocabulary it already had, which is
+	// the one the edit replaced, so a caller that ignored this would answer with
+	// the pre-edit vocabulary and call the edit a success.
+	ReloadAreas() error
 }
 
 // NibEvent represents a change to a nib (re-exported from nibcore).

@@ -177,3 +177,35 @@ func writeNibFileFor(t *testing.T, core *Core, b *nib.Nib) error {
 	}
 	return os.WriteFile(filepath.Join(core.Root(), filepath.FromSlash(b.Path)), rendered, 0o644)
 }
+
+// TestReloadAreasReportsAFileItCannotRead is the writer's half of the same
+// refusal TestWatcherKeepsTheLastGoodVocabularyOnAMalformedWrite pins for the
+// watcher: the vocabulary already loaded is kept either way, and the difference
+// is who is told. A writer that has just replaced the file has a caller waiting,
+// and answering it from the vocabulary this call could not replace is how an
+// edit reports success while showing the state before it.
+func TestReloadAreasReportsAFileItCannotRead(t *testing.T) {
+	core, nibsDir := setupAreasCore(t)
+	writeStoreAreas(t, nibsDir, "areas:\n    - name: web\n")
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	writeStoreAreas(t, nibsDir, "areas:\n    - name: web\n    - name: web\n")
+	if err := core.ReloadAreas(); err == nil {
+		t.Fatal("ReloadAreas accepted a vocabulary the loader refuses")
+	}
+	if !core.Areas().IsValid("web") {
+		t.Error("the refused reload replaced the vocabulary already loaded")
+	}
+
+	// And a readable file still reloads, so the error above is the refusal and
+	// not this method reporting one for every call.
+	writeStoreAreas(t, nibsDir, "areas:\n    - name: platform\n")
+	if err := core.ReloadAreas(); err != nil {
+		t.Fatalf("ReloadAreas over a good file: %v", err)
+	}
+	if !core.Areas().IsValid("platform") {
+		t.Error("the vocabulary was not reloaded")
+	}
+}

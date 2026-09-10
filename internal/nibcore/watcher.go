@@ -217,8 +217,24 @@ func (c *Core) SubscribeAreas() (<-chan struct{}, func()) {
 // It is idempotent with that later watcher reload rather than racing it:
 // reloadAreas installs nothing and ticks nobody when the vocabulary it read
 // equals the one already loaded, so whichever of the two runs second is a no-op.
-func (c *Core) ReloadAreas() {
-	c.reloadAreas()
+//
+// The read failure the watcher's path swallows is RETURNED here, and the two
+// callers need opposite answers for the same reason. A file event has nobody to
+// report to and another event will come; a writer that has just replaced the
+// file and cannot read it back would otherwise answer its caller with the
+// vocabulary it replaced, and call that success.
+func (c *Core) ReloadAreas() error {
+	return c.reloadAreas()
+}
+
+// watchReloadAreas is the watcher's reload: the vocabulary already loaded is
+// kept on a failure (see reloadAreas), and since the reload is driven by file
+// events, repairing the file installs it with no further prompting. So the fault
+// is warned about and nothing else is owed.
+func (c *Core) watchReloadAreas() {
+	if err := c.reloadAreas(); err != nil {
+		c.logWarn("keeping the areas vocabulary already loaded: %v", err)
+	}
 }
 
 // reloadAreas re-reads the store's areas.yml and installs it, ticking every
@@ -228,19 +244,17 @@ func (c *Core) ReloadAreas() {
 // an empty tree on a malformed file would make every `area:` in the store
 // undeclared at once and refuse every write to every assigned nib — strictly
 // worse than the staleness a reload exists to remove. The last good vocabulary
-// is kept and the fault warned about, and because the reload is driven by file
-// events, repairing the file installs it with no further prompting.
+// is kept, and the failure is the caller's to dispose of.
 //
 // An unchanged file ticks nobody: an editor that rewrites areas.yml byte for
 // byte, or a `touch`, must not wake every browser holding the view.
-func (c *Core) reloadAreas() {
+func (c *Core) reloadAreas() error {
 	areas, err := config.LoadAreasFromStore(c.root)
 	if err != nil {
-		c.logWarn("keeping the areas vocabulary already loaded: %v", err)
-		return
+		return err
 	}
 	if areas.Equal(c.areas.Load()) {
-		return
+		return nil
 	}
 	c.areas.Store(areas)
 
@@ -253,6 +267,7 @@ func (c *Core) reloadAreas() {
 			// Subscriber is slow, drop the tick.
 		}
 	}
+	return nil
 }
 
 // isAreasFile reports whether an event path is the store's own areas.yml —
@@ -487,7 +502,7 @@ func (c *Core) watchLoop(watcher *fsnotify.Watcher, done <-chan struct{}) {
 				if areasTimer != nil {
 					areasTimer.Stop()
 				}
-				areasTimer = time.AfterFunc(debounceDelay, c.reloadAreas)
+				areasTimer = time.AfterFunc(debounceDelay, c.watchReloadAreas)
 				continue
 			}
 

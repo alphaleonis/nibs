@@ -285,7 +285,9 @@ func (r *mutationResolver) renameAreaImpl(input model.RenameAreaInput) (*model.C
 			config.RenderAreaPath(input.Path))
 	}
 
-	r.AreaEditor.ReloadAreas()
+	if err := r.AreaEditor.ReloadAreas(); err != nil {
+		return nil, areaVocabularyReloadFailure(err)
+	}
 	return configResult(r.Reader), nil
 }
 
@@ -343,8 +345,26 @@ func (r *mutationResolver) removeAreaImpl(input model.RemoveAreaInput) (*model.C
 		return nil, areaRetireWriteFailure(input.Path, disposition, len(written), err)
 	}
 
-	r.AreaEditor.ReloadAreas()
+	if err := r.AreaEditor.ReloadAreas(); err != nil {
+		return nil, areaVocabularyReloadFailure(err)
+	}
 	return configResult(r.Reader), nil
+}
+
+// areaVocabularyReloadFailure reports an edit whose two writes both landed and
+// whose re-read of the file it just wrote then failed.
+//
+// It is the one IO failure here with nothing to rerun: the members are written
+// and so is the vocabulary, so disk holds the finished edit. What is wrong is in
+// THIS process, which keeps the vocabulary it could still read (see
+// nibcore.Core.reloadAreas) — the one the edit replaced. Reporting it is what
+// keeps the alternative off the wire: answering with that vocabulary and calling
+// the mutation a success, which renders in a client as the edit not having
+// happened.
+func areaVocabularyReloadFailure(cause error) error {
+	return areaEditIOError(cause,
+		"both halves of this edit landed on disk, and re-reading the vocabulary it just wrote then failed: %v — there is nothing to rerun; until that file can be read again this store answers from the vocabulary as it was before the edit",
+		cause)
 }
 
 // areaRetireWriteFailure reports a retire whose members are disposed of and
