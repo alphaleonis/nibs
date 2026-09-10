@@ -172,6 +172,36 @@ func TestRenameAreaRefusesAnUndeclaredPath(t *testing.T) {
 	assertStoreUnchanged(t, before, core.Root())
 }
 
+// TestRemoveAreaRefusesAnUndeclaredPath is TestRenameAreaRefusesAnUndeclaredPath
+// for the other verb. The two mutations ask requireDeclaredArea the same
+// question and neither planner can word the answer: the refusal names the
+// declared set, which is the repair.
+func TestRemoveAreaRefusesAnUndeclaredPath(t *testing.T) {
+	resolver, core := setupTestResolverWithAreas(t)
+	mustCreate(t, core, &nib.Nib{ID: "rund1", Title: "Member", Type: "task", Status: "todo", Area: "web"})
+	before := storeSnapshot(t, core.Root())
+
+	_, err := resolver.Mutation().RemoveArea(context.Background(), model.RemoveAreaInput{Path: "nosuch"})
+	if err == nil {
+		t.Fatal("RemoveArea accepted a path the store does not declare")
+	}
+	var ioErr *AreaEditIOError
+	if errors.As(err, &ioErr) {
+		t.Errorf("an undeclared path is a validation-class refusal, got the IO class: %v", err)
+	}
+	for _, want := range []string{"nosuch", "web/dashboard"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want substring %q", err.Error(), want)
+		}
+	}
+	// Asked BEFORE the member set is read, which is what keeps the answer from
+	// being "nothing is assigned at or below it" about an area that is not there.
+	if strings.Contains(err.Error(), "nothing is assigned") {
+		t.Errorf("error = %q, want it to refuse the path rather than speak about its members", err.Error())
+	}
+	assertStoreUnchanged(t, before, core.Root())
+}
+
 // TestRenameAreaRefusesASiblingNameBeforeTouchingAMember is the plan/write
 // split's whole purpose, asserted where it is observable: the collision is a
 // refusal the planner makes, and planning runs BEFORE the cascade, so the store
@@ -384,10 +414,13 @@ func TestRemoveAreaDispositionRefusals(t *testing.T) {
 			want:    []string{"web/ui", "unassign"},
 		},
 		{
+			// Both fields are "web", so "web" alone would pass on almost any
+			// error this input could produce: the phrase is what says WHICH
+			// refusal landed.
 			name:    "moveTo names the area being retired",
 			members: map[string]string{"dr4": "web"},
 			input:   model.RemoveAreaInput{Path: "web", MoveTo: strptr("web")},
-			want:    []string{"web"},
+			want:    []string{"web", "name an area outside it"},
 		},
 	}
 
