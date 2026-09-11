@@ -287,6 +287,38 @@ func (e *AreaMoveTargetWithinError) Error() string {
 		config.RenderAreaPath(e.Target), config.RenderAreaPath(e.Path))
 }
 
+// AreaMembersArrivedError refuses the vocabulary write of an edit that would
+// leave work on a path the write stops declaring: a nib assigned at or below
+// Path was on disk when the edit read the store for the LAST time, and the
+// cascade — which walks the nibs this process holds — never saw it.
+//
+// The route is a writer outside this process landing a `.md` file after
+// editArea's re-read: a `git pull` in .nibs is the routine one here.
+//
+// REFUSING IS THE RECOVERABLE DIRECTION: the vocabulary still declares Path, so
+// the rerun decides from the store as it then stands, and both surfaces
+// prescribe it. Writing through is the state the confirming re-read in editArea
+// exists to prevent, reported as a success.
+type AreaMembersArrivedError struct {
+	Path string
+	// Members is the ids assigned at or below Path when the edit last read the
+	// store — the set the vocabulary write would have stranded.
+	Members []string
+	// Written is what the cascade had already rewritten. Those writes are
+	// durable, so a surface that reports this refusal as "nothing happened" is
+	// wrong about a rename, whose members now carry the new path.
+	Written []string
+	// NewPath is a rename's new path and is empty for a retire. The vocabulary
+	// still declares the old one, so every write to Written is refused until the
+	// rerun — the half of this refusal's cost a surface has to say out loud.
+	NewPath string
+}
+
+func (e *AreaMembersArrivedError) Error() string {
+	return fmt.Sprintf("%d nib(s) are assigned at or below area %q and this edit did not see them when it read the store",
+		len(e.Members), config.RenderAreaPath(e.Path))
+}
+
 // AreaEditPhase is where in one area edit a filesystem failure landed. It is
 // what selects the sentence a surface prints, because the phases differ in what
 // is already on disk and therefore in whether a rerun is the repair.
@@ -296,12 +328,14 @@ const (
 	// AreaEditPhaseLock is the store's cross-process write lock; the two load
 	// phases are the re-read under it, split because Load reads the vocabulary
 	// and then walks the nibs and those are different files with different
-	// repairs; AreaEditPhaseCascade is a member rewrite; AreaEditPhaseWrite the
+	// repairs; AreaEditPhaseCascade is a member rewrite; AreaEditPhaseConfirm the
+	// re-read that decides AreaMembersArrivedError; AreaEditPhaseWrite the
 	// areas.yml write; AreaEditPhaseReload the re-read of the file just written.
 	AreaEditPhaseLock AreaEditPhase = iota
 	AreaEditPhaseLoadVocabulary
 	AreaEditPhaseLoadNibs
 	AreaEditPhaseCascade
+	AreaEditPhaseConfirm
 	AreaEditPhaseWrite
 	AreaEditPhaseReload
 )
@@ -369,6 +403,8 @@ func (p AreaEditPhase) describe() string {
 		return "re-reading the store's nibs under its write lock"
 	case AreaEditPhaseCascade:
 		return "rewriting the nibs assigned to the area"
+	case AreaEditPhaseConfirm:
+		return "re-reading the store's nibs to confirm the vocabulary write strands none of them"
 	case AreaEditPhaseWrite:
 		return "writing the store's areas.yml"
 	case AreaEditPhaseReload:
@@ -385,6 +421,14 @@ func (p AreaEditPhase) describe() string {
 // the bytes that are read back. It follows fsutil.RenameFn's shape: a seam owned
 // by the package that declares it.
 var reloadAreasAfterEdit = (*Core).loadAreasLocked
+
+// reloadNibsBeforeAreaWrite is Core.loadFromDisk, indirected so a test can act
+// inside the window that re-read exists to close: a writer outside this process
+// landing a nib file after the plan's re-read. The seam is the re-read ITSELF
+// rather than a hook beside it, so a test cannot demonstrate the refusal against
+// an edit that never looks. It follows fsutil.RenameFn's shape: a seam owned by
+// the package that declares it.
+var reloadNibsBeforeAreaWrite = (*Core).loadFromDisk
 
 // AddArea declares a new area at path, with the description and color it is
 // given, and returns the vocabulary as it then stands.
@@ -458,6 +502,7 @@ func (c *Core) RenameArea(path, newName string) (AreaEditResult, error) {
 		return areaPlan{
 			path:    path,
 			newPath: newPath,
+			emptied: path,
 			edit:    edit,
 			members: c.areaMembersLocked(now, path),
 			rewrite: func(area string) (string, bool) {
@@ -516,6 +561,7 @@ func (c *Core) RemoveArea(path string, disposition AreaDisposition) (AreaEditRes
 		target := disposition.MoveTo
 		return areaPlan{
 			path:          path,
+			emptied:       path,
 			edit:          edit,
 			members:       members,
 			disposition:   disposition,
@@ -530,8 +576,13 @@ func (c *Core) RemoveArea(path string, disposition AreaDisposition) (AreaEditRes
 // areaPlan is what one verb decided under the lock: the config edit to write,
 // the member cascade to run before it, and the facts the result reports.
 type areaPlan struct {
-	path          string
-	newPath       string
+	path    string
+	newPath string
+	// emptied is the area path this edit stops declaring — a retired node, or a
+	// rename's old path — so nothing may be assigned at or below it once the
+	// vocabulary write lands. Empty for a verb that declares without retiring,
+	// which strands nothing and therefore has nothing to confirm.
+	emptied       string
 	edit          *config.StoredAreaEdit
 	members       []string
 	disposition   AreaDisposition
@@ -543,8 +594,8 @@ type areaPlan struct {
 
 // editArea is the one critical section every area verb runs in: c.mu, then the
 // store's cross-process write lock, then the re-read under both, then plan,
-// cascade, write and reload — with both locks held throughout and released only
-// on the way out.
+// cascade, confirm, write and reload — with both locks held throughout and
+// released only on the way out.
 //
 // THE LOCK ORDER IS THE POINT: c.mu then the file lock, as acquireWriteLock
 // states canonically and every other Core mutator obeys. Taking them the other
@@ -563,13 +614,15 @@ type areaPlan struct {
 //
 // THE COST IS READER AVAILABILITY, and it is paid deliberately. c.mu is held
 // from before the file lock is asked for until after the reload, so it spans an
-// untimed wait for another process, a walk of every nib file in the store, the
-// member cascade, the whole-file config write and the re-read. Get, All and
-// Search all read under c.mu, so under `nibs serve` a read blocks for the length
-// of the edit — a step beyond the single-nib mutators. That is the price of the
-// paragraph above: narrowing the span is what lets two edits interleave and lose
-// one's declaration. Whether the availability can be recovered without giving
-// that up is nibs-8465.
+// untimed wait for another process, every load of the store this edit runs
+// under the lock — a load walks every nib file, rebuilds the mention index and,
+// where a search index is live, re-indexes every nib — the member cascade, the
+// whole-file config write and the re-read. Get, All and Search all read under
+// c.mu, so under `nibs serve` a read blocks for the length of the edit — a step
+// beyond the single-nib mutators. That is the price of the paragraph above:
+// narrowing the span is what lets two edits interleave and lose one's
+// declaration. Whether the availability can be recovered without giving that up
+// is nibs-8465.
 //
 // THE RE-READ IS WHY BLOCKING IS SAFE. Waiting means another process was
 // mid-write while this one held the state it started with. A concurrent
@@ -627,6 +680,26 @@ func (c *Core) editArea(path string, plan func(before, now *config.Areas) (areaP
 			return AreaEditResult{}, &AreaEditIOError{
 				Phase: AreaEditPhaseCascade, Path: p.path, NewPath: p.newPath, File: now.Path(),
 				Disposition: p.disposition, Written: written, Members: p.members, Cause: err,
+			}
+		}
+	}
+
+	// THE MEMBERSHIP QUESTION IS ASKED AGAIN, from disk, as late as it can be.
+	// The plan answered it from the nibs this process holds, and the store's
+	// write lock is a contract between nibs processes — it does not hold off a
+	// `git pull` in .nibs. A file landing after the re-read above is in no set
+	// the cascade walked, so the write below would retire a declaration that file
+	// still carries, and every later write to it would be refused for it.
+	if p.emptied != "" {
+		if err := reloadNibsBeforeAreaWrite(c); err != nil {
+			return AreaEditResult{}, &AreaEditIOError{
+				Phase: AreaEditPhaseConfirm, Path: p.path, NewPath: p.newPath, File: now.Path(),
+				Disposition: p.disposition, Written: written, Members: p.members, Cause: err,
+			}
+		}
+		if left := c.areaMembersLocked(now, p.emptied); len(left) > 0 {
+			return AreaEditResult{}, &AreaMembersArrivedError{
+				Path: p.emptied, Members: left, Written: written, NewPath: p.newPath,
 			}
 		}
 	}

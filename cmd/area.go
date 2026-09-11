@@ -547,6 +547,13 @@ func areaRetireRefusal(path string, err error) error {
 				"%s %d of the %s assigned at or below area %s, then %v — %s is still declared and those writes are persisted; rerun the same command to finish it, since a nib already disposed of is no longer a member and the rerun starts where this stopped",
 				areaDispositionVerb(ioErr.Disposition), len(ioErr.Written), areaNibCount(len(ioErr.Members)),
 				quotedArea(ioErr.Path), ioErr.Cause, quotedArea(ioErr.Path))
+		case nibcore.AreaEditPhaseConfirm:
+			// A retire that named a disposition is past its cascade here, which
+			// its own sentence has to report. A retire that named none rewrote
+			// nothing, and the shared arm words that case.
+			if ioErr.Disposition.Kind != nibcore.AreaDispositionNone {
+				return areaRetireConfirmFailure(ioErr)
+			}
 		case nibcore.AreaEditPhaseWrite:
 			return areaRetireWriteFailure(ioErr)
 		}
@@ -574,6 +581,18 @@ func areaRetireWriteFailure(e *nibcore.AreaEditIOError) error {
 		"%s %s from area %s, then %s could not be updated: %v — %s is still declared and those writes are persisted; rerun WITHOUT %s to retire it, which is what finishes the job now that nothing is assigned below it",
 		areaDispositionVerb(e.Disposition), areaNibCount(len(e.Written)), quotedArea(e.Path),
 		sanitizeFilePath(e.File), e.Cause, quotedArea(e.Path), areaDispositionFlag(e.Disposition))
+}
+
+// areaRetireConfirmFailure reports a retire whose disposition completed and
+// whose confirming re-read then failed. Every member this edit saw is disposed
+// of, so it prescribes the rerun areaRetireWriteFailure does — but promises no
+// outcome, because the re-read that would have established the area is empty is
+// the one that failed: a nib that arrived in that window refuses that rerun.
+func areaRetireConfirmFailure(e *nibcore.AreaEditIOError) error {
+	return cmdError(areaRmJSON, output.ErrFileError,
+		"%s %s from area %s, then re-reading this store's nibs to confirm that nothing is assigned at or below it failed: %v — %s is still declared and those writes are persisted; rerun WITHOUT %s once that is fixed, which decides from the store as it then stands",
+		areaDispositionVerb(e.Disposition), areaNibCount(len(e.Written)), quotedArea(e.Path),
+		e.Cause, quotedArea(e.Path), areaDispositionFlag(e.Disposition))
 }
 
 // --- shared ----------------------------------------------------------------
@@ -627,6 +646,14 @@ func areaEditRefusal(jsonMode bool, err error, verb string) error {
 			"nothing was written: this store's areas vocabulary could not be read under its write lock — %s does not exist; restore it before editing the areas it declares",
 			sanitizeFilePath(vanished.File))
 	}
+	var arrived *nibcore.AreaMembersArrivedError
+	if errors.As(err, &arrived) {
+		return cmdError(jsonMode, output.ErrFileError,
+			"the vocabulary was left as it was: this command did not see %s assigned at or below area %s (%s%s) when it read the store — a writer that does not take the store's lock landed it, a `git pull` in the store being the usual one; %srerun the same command, which decides from the store as it now stands%s",
+			areaNibCount(len(arrived.Members)), quotedArea(arrived.Path),
+			strings.Join(namedIDs(arrived.Members), ", "), moreThanNamed(len(arrived.Members)),
+			areaCascadePersisted(len(arrived.Written)), areaCascadeStranded(arrived.NewPath, len(arrived.Written)))
+	}
 	var ioErr *nibcore.AreaEditIOError
 	if errors.As(err, &ioErr) {
 		switch ioErr.Phase {
@@ -639,6 +666,14 @@ func areaEditRefusal(jsonMode bool, err error, verb string) error {
 		case nibcore.AreaEditPhaseLoadNibs:
 			return cmdError(jsonMode, output.ErrFileError,
 				"nothing was written: re-reading this store's nibs under its write lock failed: %v", ioErr.Cause)
+		case nibcore.AreaEditPhaseConfirm:
+			// The cascade is durable and the vocabulary is not written, which is
+			// the state the arrival refusal above describes — so it carries the
+			// same stranded-member clause rather than the persisted clause alone.
+			return cmdError(jsonMode, output.ErrFileError,
+				"the vocabulary was left as it was: re-reading this store's nibs to confirm that nothing is assigned at or below area %s failed: %v — %srerun the same command once that is fixed%s",
+				quotedArea(ioErr.Path), ioErr.Cause, areaCascadePersisted(len(ioErr.Written)),
+				areaCascadeStranded(ioErr.NewPath, len(ioErr.Written)))
 		case nibcore.AreaEditPhaseReload:
 			return cmdError(jsonMode, output.ErrFileError,
 				"both halves of this edit landed on disk, and re-reading the vocabulary it just wrote then failed: %v — there is nothing to rerun; until that file can be read again this store answers from the vocabulary as it was before the edit",
@@ -734,6 +769,28 @@ func areaNibsAre(n int) string {
 		return "1 nib is"
 	}
 	return fmt.Sprintf("%d nibs are", n)
+}
+
+// areaCascadePersisted names what an edit had already written, for the refusals
+// raised after the cascade. Its rationale is in internal/graph/area_edit.go,
+// whose copy this is.
+func areaCascadePersisted(n int) string {
+	switch n {
+	case 0:
+		return ""
+	case 1:
+		return "the nib it had already rewritten is persisted, so "
+	}
+	return fmt.Sprintf("the %d nibs it had already rewritten are persisted, so ", n)
+}
+
+// areaCascadeStranded says what that clause otherwise reads as reassurance
+// about. Its rationale is in internal/graph/area_edit.go, whose copy this is.
+func areaCascadeStranded(newPath string, written int) string {
+	if newPath == "" || written == 0 {
+		return ""
+	}
+	return " — until that rerun those nibs carry an undeclared path, so every write to them is refused"
 }
 
 // areaDeclaredCount renders the tally of DECLARATIONS a retire took with the

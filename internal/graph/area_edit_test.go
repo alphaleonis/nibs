@@ -717,6 +717,56 @@ func TestAreaMutationsWordEveryIOPhase(t *testing.T) {
 			unwanted: []string{"unassign", "moveTo", "persisted"},
 		},
 		{
+			// The one phase whose sentence must NOT say "nothing was written":
+			// the cascade is already durable by then, and a rename's members are
+			// sitting on a path the vocabulary does not declare yet.
+			name: "the confirming re-read before the vocabulary write",
+			err: &nibcore.AreaEditIOError{
+				Phase: nibcore.AreaEditPhaseConfirm, Path: "web", NewPath: "platform",
+				Written: []string{"a", "b"}, Members: []string{"a", "b"}, Cause: cause,
+			},
+			want: []string{"the vocabulary was left as it was", "2 nibs it had already rewritten are persisted", "rerun the same mutation",
+				"every write to them is refused"},
+			unwanted: []string{"nothing was written"},
+		},
+		{
+			// A retire that named none rewrote nothing, so the shared arm words
+			// it: there is no disposition to report as done, no field to drop,
+			// and nothing sitting on an undeclared path.
+			name: "the confirming re-read, with no disposition",
+			err: &nibcore.AreaEditIOError{
+				Phase: nibcore.AreaEditPhaseConfirm, Path: "web", Cause: cause,
+			},
+			retire:   true,
+			want:     []string{"the vocabulary was left as it was", "rerun the same mutation once that is fixed"},
+			unwanted: []string{"rerun WITHOUT", "unassign", "moveTo", "persisted", "every write to them is refused"},
+		},
+		{
+			// A retire that carried a disposition is past its cascade here too,
+			// so it needs the rerun the write phase prescribes: with every
+			// member disposed of, rerunning with the field is refused.
+			name: "the confirming re-read, after a disposition",
+			err: &nibcore.AreaEditIOError{
+				Phase: nibcore.AreaEditPhaseConfirm, Path: "web",
+				Disposition: nibcore.UnassignAreaMembers(),
+				Written:     []string{"a", "b"}, Members: []string{"a", "b"}, Cause: cause,
+			},
+			retire:   true,
+			want:     []string{"unassigned 2 nibs", "rerun WITHOUT unassign"},
+			unwanted: []string{"rerun the same mutation", "now that nothing is assigned"},
+		},
+		{
+			name: "the confirming re-read, after a reassignment",
+			err: &nibcore.AreaEditIOError{
+				Phase: nibcore.AreaEditPhaseConfirm, Path: "web",
+				Disposition: nibcore.MoveAreaMembersTo("auth"),
+				Written:     []string{"a", "b"}, Members: []string{"a", "b"}, Cause: cause,
+			},
+			retire:   true,
+			want:     []string{"reassigned 2 nibs", "rerun WITHOUT moveTo"},
+			unwanted: []string{"rerun the same mutation", "now that nothing is assigned"},
+		},
+		{
 			name: "the re-read of the file it just wrote",
 			err: &nibcore.AreaEditIOError{
 				Phase: nibcore.AreaEditPhaseReload, Path: "web", Cause: cause,
@@ -757,6 +807,91 @@ func TestAreaMutationsWordEveryIOPhase(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestAreaMutationsWordANibThatArrivedUnderTheArea pins the sentence for the
+// refusal that is not a failure: the store gained work under the area while the
+// edit ran, so the vocabulary was left declaring it.
+//
+// Both verbs reach it through the shared ladder, and both must keep the concrete
+// type — cmd/set.go's mutationErrCode classifies `nibs query` on it, and the
+// caller's argument was fine, so a validation fallback would blame the wrong
+// party.
+func TestAreaMutationsWordANibThatArrivedUnderTheArea(t *testing.T) {
+	calls := []struct {
+		name string
+		// newPath is what nibcore sets on a rename's refusal and leaves empty on
+		// a retire's, and it is what selects the clause below.
+		newPath string
+		call    func(*Resolver) error
+	}{
+		{"rename", "platform", func(r *Resolver) error {
+			_, err := r.Mutation().RenameArea(context.Background(),
+				model.RenameAreaInput{Path: "web", NewName: "platform"})
+			return err
+		}},
+		{"retire", "", func(r *Resolver) error {
+			_, err := r.Mutation().RemoveArea(context.Background(), model.RemoveAreaInput{Path: "web"})
+			return err
+		}},
+	}
+	// A retire of an area nothing was assigned to cascades nothing, so the clause
+	// naming what is persisted has to be ABSENT rather than zero — and absent
+	// without leaving the gap it sat in.
+	cascades := []struct {
+		name     string
+		written  []string
+		want     []string
+		unwanted []string
+	}{
+		{
+			name:    "after a cascade",
+			written: []string{"nibs-a2"},
+			want:    []string{"the nib it had already rewritten is persisted, so rerun"},
+		},
+		{
+			name:     "with nothing cascaded",
+			want:     []string{"usual one; rerun the same mutation"},
+			unwanted: []string{"rewritten", "  "},
+		},
+	}
+	for _, tt := range calls {
+		for _, c := range cascades {
+			t.Run(tt.name+", "+c.name, func(t *testing.T) {
+				resolver, _ := setupTestResolverWithAreas(t)
+				resolver.AreaWriter = &stubAreaWriter{err: &nibcore.AreaMembersArrivedError{
+					Path: "web", Members: []string{"nibs-a1"}, Written: c.written, NewPath: tt.newPath,
+				}}
+
+				err := tt.call(resolver)
+				if err == nil {
+					t.Fatal("the mutation reported success over an edit that would have stranded a nib")
+				}
+				var got *nibcore.AreaMembersArrivedError
+				if !errors.As(err, &got) {
+					t.Fatalf("error = %v (%T), want the arrival class so `nibs query` exits 5", err, err)
+				}
+				want := append([]string{"the vocabulary was left as it was", `area "web"`, "nibs-a1"}, c.want...)
+				for _, w := range want {
+					if !strings.Contains(err.Error(), w) {
+						t.Errorf("error = %q, want substring %q", err.Error(), w)
+					}
+				}
+				for _, u := range c.unwanted {
+					if strings.Contains(err.Error(), u) {
+						t.Errorf("error = %q, want it not to carry %q", err.Error(), u)
+					}
+				}
+				// "persisted" reads as reassurance for a rename, whose cascaded
+				// members are on a path the vocabulary does not declare until the
+				// rerun. Nothing else strands one, so nothing else says it.
+				stranded := tt.newPath != "" && len(c.written) > 0
+				if got := strings.Contains(err.Error(), "every write to them is refused"); got != stranded {
+					t.Errorf("error = %q, carries the stranded-member clause = %v, want %v", err.Error(), got, stranded)
+				}
+			})
+		}
 	}
 }
 
