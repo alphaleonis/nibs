@@ -14,6 +14,24 @@ import (
 // decide whether the remedy is "stop the other process" or "fix the filesystem".
 var ErrStoreServed = errors.New("another nibs process holds this store")
 
+// asStoreServed states the lock layer's contention signal in this interlock's
+// vocabulary. Both sides of it refuse rather than wait, so contention is the
+// answer they report — where the store's write lock waits for the same signal.
+func asStoreServed(err error) error {
+	if errors.Is(err, errLockHeld) {
+		return ErrStoreServed
+	}
+	return err
+}
+
+// acquireFileLockExclusiveNB is the interlock's exclusive side: one try at the
+// file it is given, with contention reported the way its shared sibling reports
+// it. Nothing here is per-platform, because acquireFileLockTry is.
+func acquireFileLockExclusiveNB(path string) (func() error, error) {
+	release, err := acquireFileLockTry(path)
+	return release, asStoreServed(err)
+}
+
 // serveLockPath is the per-machine path of the SERVE-lifetime lock for the store
 // at root, derived exactly like writeLockPath and deliberately a different file.
 //

@@ -1,6 +1,8 @@
 package nibcore
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -178,5 +180,123 @@ func TestUpdateAcquiresWriteLock(t *testing.T) {
 	}
 	if got.Title != "Updated" {
 		t.Fatalf("Title = %q, want Updated", got.Title)
+	}
+}
+
+// TestAcquireFileLockWaitingWaitsForTheHolderToRelease proves the cancellable
+// acquire is a WAIT rather than a try: while another descriptor holds the lock
+// it returns nothing at all, and it takes the lock once that holder releases.
+//
+// It is also the guard on the contention split. acquireFileLockTry answers
+// contention with errLockHeld, which this loop reads as "poll again" and the
+// serve interlock reads as ErrStoreServed; map contention to anything else and
+// the first select below fires with that error instead.
+func TestAcquireFileLockWaitingWaitsForTheHolderToRelease(t *testing.T) {
+	lockPath := filepath.Join(t.TempDir(), "test.lock")
+	held, err := acquireFileLock(lockPath)
+	if err != nil {
+		t.Fatalf("holding the lock: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	got := make(chan error, 1)
+	go func() {
+		release, err := acquireFileLockWaiting(ctx, lockPath)
+		if err == nil {
+			err = release()
+		}
+		got <- err
+	}()
+
+	select {
+	case err := <-got:
+		t.Fatalf("the wait returned %v while another descriptor held the lock", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	if err := held(); err != nil {
+		t.Fatalf("releasing the lock: %v", err)
+	}
+	select {
+	case err := <-got:
+		if err != nil {
+			t.Fatalf("the wait after the release: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the wait never took the lock after the holder released it")
+	}
+}
+
+// TestAcquireFileLockWaitingEndsWithItsContext is the cancellable half: a wait
+// for a lock nobody releases ends when the caller's context does, and says so
+// in a value that unwraps to the context error.
+func TestAcquireFileLockWaitingEndsWithItsContext(t *testing.T) {
+	tests := []struct {
+		name string
+		ctx  func(t *testing.T) context.Context
+		want error
+	}{
+		{
+			name: "canceled while waiting",
+			ctx: func(t *testing.T) context.Context {
+				ctx, cancel := context.WithCancel(context.Background())
+				t.Cleanup(cancel)
+				time.AfterFunc(50*time.Millisecond, cancel)
+				return ctx
+			},
+			want: context.Canceled,
+		},
+		{
+			name: "its deadline passes while waiting",
+			ctx: func(t *testing.T) context.Context {
+				ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+				t.Cleanup(cancel)
+				return ctx
+			},
+			want: context.DeadlineExceeded,
+		},
+		{
+			name: "already over before the first try",
+			ctx: func(t *testing.T) context.Context {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				return ctx
+			},
+			want: context.Canceled,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lockPath := filepath.Join(t.TempDir(), "test.lock")
+			held, err := acquireFileLock(lockPath)
+			if err != nil {
+				t.Fatalf("holding the lock: %v", err)
+			}
+			defer func() { _ = held() }()
+
+			done := make(chan error, 1)
+			go func() {
+				release, err := acquireFileLockWaiting(tt.ctx(t), lockPath)
+				if err == nil {
+					_ = release()
+					err = errors.New("the wait took a lock another descriptor holds")
+				}
+				done <- err
+			}()
+
+			select {
+			case err := <-done:
+				var ended *StoreLockWaitEndedError
+				if !errors.As(err, &ended) {
+					t.Fatalf("error = %v (%T), want *StoreLockWaitEndedError", err, err)
+				}
+				if !errors.Is(err, tt.want) {
+					t.Errorf("error = %v, want it to unwrap to %v", err, tt.want)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("the wait outlived the context that was supposed to end it")
+			}
+		})
 	}
 }

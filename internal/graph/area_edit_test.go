@@ -620,12 +620,12 @@ type stubAreaWriter struct {
 	warnings []string
 }
 
-func (s *stubAreaWriter) RenameArea(string, string) (nibcore.AreaEditResult, error) {
+func (s *stubAreaWriter) RenameArea(context.Context, string, string) (nibcore.AreaEditResult, error) {
 	s.calls++
 	return s.res, s.err
 }
 
-func (s *stubAreaWriter) RemoveArea(string, nibcore.AreaDisposition) (nibcore.AreaEditResult, error) {
+func (s *stubAreaWriter) RemoveArea(context.Context, string, nibcore.AreaDisposition) (nibcore.AreaEditResult, error) {
 	s.calls++
 	return s.res, s.err
 }
@@ -651,9 +651,23 @@ func TestAreaMutationsWordEveryIOPhase(t *testing.T) {
 		unwanted []string
 	}{
 		{
-			name: "the write lock",
-			err:  &nibcore.AreaEditIOError{Phase: nibcore.AreaEditPhaseLock, Cause: cause},
-			want: []string{"write lock could not be taken", "disk on fire"},
+			name:     "the write lock",
+			err:      &nibcore.AreaEditIOError{Phase: nibcore.AreaEditPhaseLock, Cause: cause},
+			want:     []string{"write lock could not be taken", "disk on fire"},
+			unwanted: []string{"still waiting"},
+		},
+		{
+			// The same phase, and a different sentence, because nothing failed:
+			// the lock was another writer's and this request ended before it was
+			// free. Rerunning is the whole remedy, so the filesystem wording
+			// above — which reads as a broken store — must not answer for it.
+			name: "the write lock, waited for until the request ended",
+			err: &nibcore.AreaEditIOError{
+				Phase: nibcore.AreaEditPhaseLock,
+				Cause: &nibcore.StoreLockWaitEndedError{Waited: 1500 * time.Millisecond, Cause: context.Canceled},
+			},
+			want:     []string{"nothing was written", "1.5s", "still waiting for the store's write lock", "rerun the same mutation"},
+			unwanted: []string{"could not be taken"},
 		},
 		{
 			name:     "the vocabulary half of the re-read",
@@ -897,8 +911,8 @@ func TestAreaMutationsWordANibThatArrivedUnderTheArea(t *testing.T) {
 
 // TestAreaMutationsAnswerArgumentsWithoutTheStore is finding #5's first half: a
 // question the arguments alone answer must not sit behind the store's write
-// lock, which is a blocking flock with no timeout that says nothing while it
-// waits. The stub's call count is the assertion — the store is never reached.
+// lock, a wait with no deadline that says nothing while it lasts. The stub's
+// call count is the assertion — the store is never reached.
 func TestAreaMutationsAnswerArgumentsWithoutTheStore(t *testing.T) {
 	unassign := true
 	tests := []struct {

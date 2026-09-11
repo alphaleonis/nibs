@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -13,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -929,4 +932,89 @@ func waitForHTTPReady(t *testing.T, url string, timeout time.Duration) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("server not ready at %s within %s", url, timeout)
+}
+
+// TestServedAreaEditStopsWaitingWhenTheClientGoesAway is the served half of the
+// cancellable lock wait, over the real transport: an area edit parked on the
+// store's write lock is abandoned when the client that asked for it disconnects.
+//
+// It is what the context threading is FOR, and the two halves below are one
+// test on purpose. The first shows the canceled request's edit never lands even
+// after the lock it was waiting for is free; the second sends the identical
+// mutation and requires it to land, so "the vocabulary is unchanged" cannot pass
+// by the request having been malformed all along.
+//
+// net/http is what supplies the cancellation: a client disconnect cancels the
+// handler's request context (WriteTimeout and Server.Shutdown do not — measured,
+// see the commit that added this).
+func TestServedAreaEditStopsWaitingWhenTheClientGoesAway(t *testing.T) {
+	nibsPath := setupAreaCLITest(t)
+	app := staleAreaApp(t, nibsPath)
+	srv := httptest.NewServer(newServeMux(app, nil))
+	defer srv.Close()
+
+	const mutation = `{"query":"mutation { renameArea(input: {path: \"web\", newName: \"platform\"}) { prefix } }"}`
+	post := func(ctx context.Context) error {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL+"/graphql", strings.NewReader(mutation))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = resp.Body.Close() }()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(body), `"errors"`) {
+			return fmt.Errorf("the mutation was refused: %s", body)
+		}
+		return nil
+	}
+
+	lock, err := nibcore.AcquireStoreLock(nibsPath)
+	if err != nil {
+		t.Fatalf("holding the store's write lock: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	served := make(chan error, 1)
+	go func() { served <- post(ctx) }()
+
+	select {
+	case err := <-served:
+		t.Fatalf("the mutation answered %v while the store's write lock was held", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	cancel()
+	select {
+	case err := <-served:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("the disconnected request returned %v, want context.Canceled", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the client is still waiting for a request it canceled")
+	}
+
+	if err := lock.Release(); err != nil {
+		t.Fatalf("releasing the store's write lock: %v", err)
+	}
+	// Long enough for the abandoned edit to have taken the freed lock and
+	// finished, had it still been waiting for it.
+	time.Sleep(500 * time.Millisecond)
+	if got := areaVocabulary(t, nibsPath); !slices.Contains(got, "web") {
+		t.Errorf("vocabulary = %v, want web still declared: the edit outlived the request that asked for it", got)
+	}
+
+	if err := post(context.Background()); err != nil {
+		t.Fatalf("the same mutation, uncanceled: %v", err)
+	}
+	if got := areaVocabulary(t, nibsPath); !slices.Contains(got, "platform") {
+		t.Errorf("vocabulary = %v, want platform declared", got)
+	}
 }

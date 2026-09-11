@@ -775,10 +775,10 @@ func TestAreaEditsCascadeThroughAreasDeclaredUnderTheLock(t *testing.T) {
 }
 
 // A refusal the two arguments alone decide must not queue behind the store's
-// write lock. AcquireStoreLock is a blocking flock with no timeout and prints
-// nothing while it waits, so `nibs area rename web ""` behind a long-running
-// writer sat silent for the whole of that writer's run before printing an error
-// about the empty string it was handed.
+// write lock. That wait has no deadline and prints nothing while it lasts, so
+// `nibs area rename web ""` behind a long-running writer sat silent for the
+// whole of that writer's run before printing an error about the empty string it
+// was handed.
 //
 // The lock is held for the length of each case, so a check that moved back under
 // it does not fail an assertion — it never returns, and the deadline below is
@@ -1078,6 +1078,97 @@ func TestAreaEditRefusesAPathRetiredUnderTheLock(t *testing.T) {
 				if got := areaOf(t, nibsPath, id); got != "" {
 					t.Errorf("%s area = %q, want it left unassigned by the racing retire", id, got)
 				}
+			}
+		})
+	}
+}
+
+// TestAreaEditsStopWaitingForTheStoreLockWhenTheCommandEnds is the CLI half of
+// the cancellable lock wait, and it is an ORDER guard the way its neighbour
+// above is: the wrong answer is a command that never returns.
+//
+// Each verb is driven directly so the context under test is the one the command
+// carries — `nibs` itself never cancels one, so a verb that reached for
+// context.Background() instead would look identical in every other test and
+// would sit here until the deadline below fires.
+func TestAreaEditsStopWaitingForTheStoreLockWhenTheCommandEnds(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(ctx context.Context, app *App) error
+	}{
+		{
+			name: "declare",
+			run: func(ctx context.Context, app *App) error {
+				areaAddCmd.SetContext(withApp(ctx, app))
+				return runAreaAdd(areaAddCmd, []string{"platform"})
+			},
+		},
+		{
+			name: "rename",
+			run: func(ctx context.Context, app *App) error {
+				areaRenameCmd.SetContext(withApp(ctx, app))
+				return runAreaRename(areaRenameCmd, []string{"web", "frontend"})
+			},
+		},
+		{
+			name: "retire",
+			run: func(ctx context.Context, app *App) error {
+				areaRmCmd.SetContext(withApp(ctx, app))
+				return runAreaRm(areaRmCmd, []string{"web"})
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nibsPath := setupAreaCLITest(t)
+			app := staleAreaApp(t, nibsPath)
+
+			lock, err := nibcore.AcquireStoreLock(nibsPath)
+			if err != nil {
+				t.Fatalf("holding the store's write lock: %v", err)
+			}
+			defer func() { _ = lock.Release() }()
+
+			resetCommandTreeFlags(rootCmd)
+			t.Cleanup(func() {
+				resetCommandTreeFlags(rootCmd)
+				areaAddCmd.SetContext(context.Background())
+				areaRenameCmd.SetContext(context.Background())
+				areaRmCmd.SetContext(context.Background())
+			})
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- tt.run(ctx, app) }()
+
+			select {
+			case err := <-done:
+				t.Fatalf("the verb returned %v while the store's write lock was held", err)
+			case <-time.After(150 * time.Millisecond):
+			}
+
+			cancel()
+			select {
+			case err := <-done:
+				if err == nil {
+					t.Fatal("the verb reported success over an edit that never held the store's write lock")
+				}
+				if code := areaErrCode(t, err); code != output.ErrFileError {
+					t.Errorf("code = %q, want %q — a wait that was cut short is rerunnable, not bad input", code, output.ErrFileError)
+				}
+				for _, want := range []string{"nothing was written", "still waiting for the store's write lock", "rerun it"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("error = %q, want substring %q", err.Error(), want)
+					}
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("the verb was still waiting for the store's write lock after its context was canceled")
+			}
+
+			if got := areaVocabulary(t, nibsPath); !slices.Contains(got, "web") {
+				t.Errorf("vocabulary = %v, want it untouched by an edit that never held the lock", got)
 			}
 		})
 	}

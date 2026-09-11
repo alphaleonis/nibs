@@ -591,10 +591,10 @@ func PlanCreateStoredArea(storeDir, path, description, color string) (*StoredAre
 // unusable, and names a node by its position in a block the caller never wrote.
 //
 // It is exported so `nibs area add` can ask it BEFORE taking the store's write
-// lock, which is a blocking flock with no timeout that prints nothing while it
-// waits: a question the argument alone answers must not sit silent behind
-// another writer. PlanCreateStoredArea asks it again regardless — the planner is
-// the API, and a caller reaching it directly gets the same refusal.
+// lock, a wait with no deadline that prints nothing while it lasts: a question
+// the argument alone answers must not sit silent behind another writer.
+// PlanCreateStoredArea asks it again regardless — the planner is the API, and a
+// caller reaching it directly gets the same refusal.
 func ValidateNewAreaPath(path string) error {
 	if path == "" {
 		return refuseAreaEdit("an area is declared at a path, and none was given")

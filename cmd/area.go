@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/alphaleonis/nibs/internal/config"
@@ -235,13 +236,13 @@ func runAreaAdd(cmd *cobra.Command, args []string) error {
 	app := getApp(cmd)
 	path := args[0]
 
-	// Answered BEFORE the call, and printed straight away. The store's write
-	// lock is a blocking flock with no timeout and prints nothing while it
-	// waits, so a question the arguments alone answer would otherwise make a
-	// typo sit silent for as long as any other cooperating writer holds the
-	// store. Unlike the rename's, none of these refusals speaks about a node the
-	// store declares — they judge the shape of the path and the color — so there
-	// is no vocabulary that could make one of them the wrong thing to say.
+	// Answered BEFORE the call, and printed straight away. Waiting for the
+	// store's write lock has no deadline and prints nothing while it waits, so a
+	// question the arguments alone answer would otherwise make a typo sit silent
+	// for as long as any other cooperating writer holds the store. Unlike the
+	// rename's, none of these refusals speaks about a node the store declares —
+	// they judge the shape of the path and the color — so there is no vocabulary
+	// that could make one of them the wrong thing to say.
 	if err := validateAreaAddArgument(areaAddJSON, path, areaAddColor); err != nil {
 		return err
 	}
@@ -252,7 +253,7 @@ func runAreaAdd(cmd *cobra.Command, args []string) error {
 	// areas.yml is rewritten whole, so two concurrent adds without it lose one
 	// of the two declarations — and every decision it makes comes from the
 	// vocabulary re-read under it, never from app.Config().
-	res, err := app.Core.AddArea(path, areaAddDescription, areaAddColor)
+	res, err := app.Core.AddArea(cmd.Context(), path, areaAddDescription, areaAddColor)
 	if err != nil {
 		return areaAddRefusal(path, err)
 	}
@@ -315,10 +316,10 @@ func runAreaRename(cmd *cobra.Command, args []string) error {
 	parent, oldName := splitAreaPath(path)
 
 	// Answered BEFORE the call, because the two arguments alone answer it and no
-	// vocabulary can change that answer. The store's write lock is a blocking
-	// flock with no timeout and prints nothing while it waits, so asking a pure
-	// argument question afterwards makes a typo sit silent for as long as any
-	// other cooperating writer holds the store — a whole `nibs migrate` run.
+	// vocabulary can change that answer. Waiting for the store's write lock has
+	// no deadline and prints nothing while it waits, so asking a pure argument
+	// question afterwards makes a typo sit silent for as long as any other
+	// cooperating writer holds the store — a whole `nibs migrate` run.
 	//
 	// PRINTING it early is the separate question, and the startup snapshot
 	// settles it. Two of these refusals speak about the node at `path` — one
@@ -339,7 +340,7 @@ func runAreaRename(cmd *cobra.Command, args []string) error {
 		return argErr
 	}
 
-	res, err := app.Core.RenameArea(path, newName)
+	res, err := app.Core.RenameArea(cmd.Context(), path, newName)
 	if err != nil {
 		return areaRenameRefusal(argErr, err)
 	}
@@ -486,7 +487,7 @@ func runAreaRm(cmd *cobra.Command, args []string) error {
 		disposition = nibcore.UnassignAreaMembers()
 	}
 
-	res, err := app.Core.RemoveArea(path, disposition)
+	res, err := app.Core.RemoveArea(cmd.Context(), path, disposition)
 	if err != nil {
 		return areaRetireRefusal(path, err)
 	}
@@ -658,6 +659,12 @@ func areaEditRefusal(jsonMode bool, err error, verb string) error {
 	if errors.As(err, &ioErr) {
 		switch ioErr.Phase {
 		case nibcore.AreaEditPhaseLock:
+			var waitEnded *nibcore.StoreLockWaitEndedError
+			if errors.As(ioErr.Cause, &waitEnded) {
+				return cmdError(jsonMode, output.ErrFileError,
+					"nothing was written: this command was stopped after %s, while it was still waiting for the store's write lock — rerun it, which decides from the store as it then stands",
+					waitEnded.Waited.Round(time.Millisecond))
+			}
 			return cmdError(jsonMode, output.ErrFileError,
 				"this store's write lock could not be taken, and an areas edit rewrites both the nibs and the vocabulary so it must hold one: %v", ioErr.Cause)
 		case nibcore.AreaEditPhaseLoadVocabulary:

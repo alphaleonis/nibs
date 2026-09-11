@@ -1281,8 +1281,8 @@ func TestAreaAddRefusesAnUndeclaredParent(t *testing.T) {
 }
 
 // TestAreaAddRefusesItsArgumentsBeforeTakingTheStoreLock is an ORDER guard, and
-// the wrong answer is a wait rather than a wrong message: the store's write lock
-// is a blocking flock with no timeout that prints nothing while it waits, so a
+// the wrong answer is a wait rather than a wrong message: waiting for the
+// store's write lock has no deadline and prints nothing while it lasts, so a
 // refusal the arguments alone answer, asked afterwards, leaves a typo silent for
 // as long as any other cooperating writer holds the store.
 //

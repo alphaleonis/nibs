@@ -842,12 +842,12 @@ func (r *mutationResolver) ReorderSiblings(ctx context.Context, siblingIds []str
 
 // RenameArea is the resolver for the renameArea field.
 func (r *mutationResolver) RenameArea(ctx context.Context, input model.RenameAreaInput) (*model.Config, error) {
-	return r.renameAreaImpl(input)
+	return r.renameAreaImpl(ctx, input)
 }
 
 // RemoveArea is the resolver for the removeArea field.
 func (r *mutationResolver) RemoveArea(ctx context.Context, input model.RemoveAreaInput) (*model.Config, error) {
-	return r.removeAreaImpl(input)
+	return r.removeAreaImpl(ctx, input)
 }
 
 // Type is the resolver for the type field. The stored Nib keeps Type empty when

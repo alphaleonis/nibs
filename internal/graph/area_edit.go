@@ -1,9 +1,11 @@
 package graph
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph/model"
@@ -38,19 +40,20 @@ import (
 
 // renameAreaImpl renames the declared node at input.Path, cascading to every nib
 // assigned at or below it.
-func (r *mutationResolver) renameAreaImpl(input model.RenameAreaInput) (*model.Config, error) {
+func (r *mutationResolver) renameAreaImpl(ctx context.Context, input model.RenameAreaInput) (*model.Config, error) {
 	// Answered BEFORE the call, because the two arguments alone answer it and no
-	// vocabulary can change that answer. The store's write lock is a blocking
-	// flock with no timeout, so a pure argument question asked underneath it
-	// makes a malformed request sit silent for as long as any other cooperating
-	// writer holds the store — a whole `nibs migrate` run. None of this is what
-	// keeps a bad name off disk: the store refuses every one of them under the
-	// lock, in wording about the FILE rather than about the argument.
+	// vocabulary can change that answer. Waiting for the store's write lock has
+	// no deadline — only this request's own end stops it — so a pure argument
+	// question asked underneath it makes a malformed request sit silent for as
+	// long as any other cooperating writer holds the store, which is a whole
+	// `nibs config set-prefix` run. None of this is what keeps a bad name off
+	// disk: the store refuses every one of them under the lock, in wording about
+	// the FILE rather than about the argument.
 	if err := validateAreaRenameArgument(input.NewName); err != nil {
 		return nil, err
 	}
 
-	res, err := r.AreaWriter.RenameArea(input.Path, input.NewName)
+	res, err := r.AreaWriter.RenameArea(ctx, input.Path, input.NewName)
 	if err != nil {
 		return nil, wordAreaRenameFailure(err)
 	}
@@ -61,13 +64,13 @@ func (r *mutationResolver) renameAreaImpl(input model.RenameAreaInput) (*model.C
 // removeAreaImpl retires the declared node at input.Path together with the
 // subtree it heads, disposing of every nib assigned at or below it as the input
 // says.
-func (r *mutationResolver) removeAreaImpl(input model.RemoveAreaInput) (*model.Config, error) {
+func (r *mutationResolver) removeAreaImpl(ctx context.Context, input model.RemoveAreaInput) (*model.Config, error) {
 	disposition, err := areaDisposition(input)
 	if err != nil {
 		return nil, err
 	}
 
-	res, err := r.AreaWriter.RemoveArea(input.Path, disposition)
+	res, err := r.AreaWriter.RemoveArea(ctx, input.Path, disposition)
 	if err != nil {
 		return nil, wordAreaRetireFailure(err)
 	}
@@ -240,6 +243,12 @@ func wordAreaEditFailure(err error, verb string) error {
 	if errors.As(err, &ioErr) {
 		switch ioErr.Phase {
 		case nibcore.AreaEditPhaseLock:
+			var waitEnded *nibcore.StoreLockWaitEndedError
+			if errors.As(ioErr.Cause, &waitEnded) {
+				return wordAreaRefusal(ioErr,
+					"nothing was written: this request ended after %s, while this edit was still waiting for the store's write lock — rerun the same mutation, which decides from the store as it then stands",
+					waitEnded.Waited.Round(time.Millisecond))
+			}
 			return wordAreaRefusal(ioErr,
 				"this store's write lock could not be taken, and an areas edit rewrites both the nibs and the vocabulary so it must hold one: %v", ioErr.Cause)
 		case nibcore.AreaEditPhaseLoadVocabulary:

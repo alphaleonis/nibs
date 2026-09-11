@@ -1,6 +1,7 @@
 package nibcore
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -285,7 +286,7 @@ func TestARefusedAreaEditTicksTheVocabularyItInstalled(t *testing.T) {
 	// what makes the retire below refuse: the path it names is gone.
 	writeStoreAreas(t, nibsDir, "areas:\n    - name: ops\n")
 
-	if _, err := core.RemoveArea("web", AreaDisposition{}); err == nil {
+	if _, err := core.RemoveArea(context.Background(), "web", AreaDisposition{}); err == nil {
 		t.Fatal("retiring an area this store no longer declares was accepted")
 	}
 	if !core.Areas().IsValid("ops") {

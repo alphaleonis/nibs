@@ -1,6 +1,7 @@
 package nibcore
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -442,9 +443,9 @@ var reloadNibsBeforeAreaWrite = (*Core).loadFromDisk
 // and config.ValidateAreaColor answer from the arguments alone, so asking them
 // out here is what keeps a typo from sitting silent behind another writer's lock.
 // The planner asks them again regardless.
-func (c *Core) AddArea(path, description, color string) (AreaEditResult, error) {
+func (c *Core) AddArea(ctx context.Context, path, description, color string) (AreaEditResult, error) {
 	parent, _ := splitAreaPath(path)
-	return c.editArea(path, func(before, now *config.Areas) (areaPlan, error) {
+	return c.editArea(ctx, path, func(before, now *config.Areas) (areaPlan, error) {
 		if now.IsValid(path) {
 			return areaPlan{}, &AreaAlreadyDeclaredError{Path: path}
 		}
@@ -471,8 +472,8 @@ func (c *Core) AddArea(path, description, color string) (AreaEditResult, error) 
 // verbatim, and a member assigned BELOW the renamed node keeps the remainder it
 // carried, because renaming a parent moves its children's paths without changing
 // their names.
-func (c *Core) RenameArea(path, newName string) (AreaEditResult, error) {
-	return c.editArea(path, func(before, now *config.Areas) (areaPlan, error) {
+func (c *Core) RenameArea(ctx context.Context, path, newName string) (AreaEditResult, error) {
+	return c.editArea(ctx, path, func(before, now *config.Areas) (areaPlan, error) {
 		if err := requireDeclaredArea(before, now, path, AreaPathRenamed); err != nil {
 			return areaPlan{}, err
 		}
@@ -521,8 +522,8 @@ func (c *Core) RenameArea(path, newName string) (AreaEditResult, error) {
 // Every member lands ON a move target rather than keeping the remainder it
 // carried below the retiring node: the target declares no such child, so
 // preserving it would move each member to another undeclared path.
-func (c *Core) RemoveArea(path string, disposition AreaDisposition) (AreaEditResult, error) {
-	return c.editArea(path, func(before, now *config.Areas) (areaPlan, error) {
+func (c *Core) RemoveArea(ctx context.Context, path string, disposition AreaDisposition) (AreaEditResult, error) {
+	return c.editArea(ctx, path, func(before, now *config.Areas) (areaPlan, error) {
 		if err := requireDeclaredArea(before, now, path, AreaPathRetired); err != nil {
 			return areaPlan{}, err
 		}
@@ -609,12 +610,13 @@ type areaPlan struct {
 // cascade sits on disk. Both callers report success, so nothing ever says to
 // rerun, and the members it moved are write-refused from then on.
 //
-// It BLOCKS on the file lock rather than refusing, matching every other store
+// It WAITS for the file lock rather than refusing, matching every other store
 // mutation: the other holder is another nibs process finishing one operation.
+// Only ctx ends that wait — acquireWriteLockContext says why no deadline can.
 //
 // THE COST IS READER AVAILABILITY, and it is paid deliberately. c.mu is held
-// from before the file lock is asked for until after the reload, so it spans an
-// untimed wait for another process, every load of the store this edit runs
+// from before the file lock is asked for until after the reload, so it spans a
+// wait for another process, every load of the store this edit runs
 // under the lock — a load walks every nib file, rebuilds the mention index and,
 // where a search index is live, re-indexes every nib — the member cascade, the
 // whole-file config write and the re-read. Get, All and Search all read under
@@ -642,13 +644,13 @@ type areaPlan struct {
 // loaded: an area edit is a cascading rewrite of the store, planning it is about
 // to read that very file anyway, and refusing here leaves the store untouched
 // where a fallback would decide from state with no evidence it is still current.
-func (c *Core) editArea(path string, plan func(before, now *config.Areas) (areaPlan, error)) (AreaEditResult, error) {
+func (c *Core) editArea(ctx context.Context, path string, plan func(before, now *config.Areas) (areaPlan, error)) (AreaEditResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	before := c.Areas()
 
-	release, err := c.acquireWriteLock()
+	release, err := c.acquireWriteLockContext(ctx)
 	if err != nil {
 		return AreaEditResult{}, &AreaEditIOError{Phase: AreaEditPhaseLock, Path: path, File: c.layout.AreasPath(), Cause: err}
 	}
