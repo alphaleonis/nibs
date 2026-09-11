@@ -615,16 +615,16 @@ type areaPlan struct {
 // Only ctx ends that wait — acquireWriteLockContext says why no deadline can.
 //
 // THE COST IS READER AVAILABILITY, and it is paid deliberately. c.mu is held
-// from before the file lock is asked for until after the reload, so it spans a
-// wait for another process, every load of the store this edit runs
-// under the lock — a load walks every nib file, rebuilds the mention index and,
-// where a search index is live, re-indexes every nib — the member cascade, the
-// whole-file config write and the re-read. Get, All and Search all read under
-// c.mu, so under `nibs serve` a read blocks for the length of the edit — a step
-// beyond the single-nib mutators. That is the price of the paragraph above:
-// narrowing the span is what lets two edits interleave and lose one's
-// declaration. Whether the availability can be recovered without giving that up
-// is nibs-8465.
+// from before the file lock is asked for until after the reload, so the span
+// covers a wait for another process, the member cascade, the whole-file config
+// write and — twice, for a verb that renames or retires, the confirming re-read
+// below being the second — a load of every nib in the store. Get, All and
+// Search all read under c.mu, so under `nibs serve` a read blocks for all of
+// it. The SHAPE is every Core mutator's, each taking c.mu and then the file
+// lock; only the LENGTH is this verb's, and what fills it is those loads — a
+// load walks every nib file, rebuilds the mention index and, where a search
+// index is live, re-indexes every nib. Narrowing the span is what lets two
+// edits interleave and lose one's declaration, which is why it stays.
 //
 // THE RE-READ IS WHY BLOCKING IS SAFE. Waiting means another process was
 // mid-write while this one held the state it started with. A concurrent
