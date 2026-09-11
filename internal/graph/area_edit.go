@@ -1,9 +1,11 @@
 package graph
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph/model"
@@ -13,9 +15,10 @@ import (
 
 // The area vocabulary mutations. Both are message formatters over
 // nibcore.Core's area verbs: the verb itself — the locks, the re-read under
-// them, the plan, the member cascade, the areas.yml write and the reload — lives
-// in nibcore, whole, because there is one lock order and a surface that reached
-// into Core step by step could not obey it (see nibcore.editArea).
+// them, the plan, the member cascade, the confirming re-read, the areas.yml
+// write and the reload — lives in nibcore, whole, because there is one lock
+// order and a surface that reached into Core step by step could not obey it
+// (see nibcore.editArea).
 //
 // What stays here is what only this surface knows: the argument-shape questions
 // the wire can ask before any lock is taken, and the wording of every refusal.
@@ -31,25 +34,28 @@ import (
 // no business knowing where the store sits on disk — an absolute path there
 // discloses the operating-system username and the project layout.
 //
-// The exception is an IO failure's Cause: an operating-system error embeds the
-// path it failed on, and that is reachable only from a store that is already
-// broken. Redacting it is a boundary of its own and is not this one.
+// The exception is an IO failure's Cause, which embeds the path the operating
+// system failed on. That one is answered at the SERVED boundary instead — see
+// servedErrorPresenter in cmd/serve_pathscrub.go — because `nibs query` runs
+// this same package in-process and an operator repairing a broken store needs
+// the path.
 
 // renameAreaImpl renames the declared node at input.Path, cascading to every nib
 // assigned at or below it.
-func (r *mutationResolver) renameAreaImpl(input model.RenameAreaInput) (*model.Config, error) {
+func (r *mutationResolver) renameAreaImpl(ctx context.Context, input model.RenameAreaInput) (*model.Config, error) {
 	// Answered BEFORE the call, because the two arguments alone answer it and no
-	// vocabulary can change that answer. The store's write lock is a blocking
-	// flock with no timeout, so a pure argument question asked underneath it
-	// makes a malformed request sit silent for as long as any other cooperating
-	// writer holds the store — a whole `nibs migrate` run. None of this is what
-	// keeps a bad name off disk: the store refuses every one of them under the
-	// lock, in wording about the FILE rather than about the argument.
+	// vocabulary can change that answer. Waiting for the store's write lock has
+	// no deadline — only this request's own end stops it — so a pure argument
+	// question asked underneath it makes a malformed request sit silent for as
+	// long as any other cooperating writer holds the store, which is a whole
+	// `nibs config set-prefix` run. None of this is what keeps a bad name off
+	// disk: the store refuses every one of them under the lock, in wording about
+	// the FILE rather than about the argument.
 	if err := validateAreaRenameArgument(input.NewName); err != nil {
 		return nil, err
 	}
 
-	res, err := r.AreaWriter.RenameArea(input.Path, input.NewName)
+	res, err := r.AreaWriter.RenameArea(ctx, input.Path, input.NewName)
 	if err != nil {
 		return nil, wordAreaRenameFailure(err)
 	}
@@ -60,13 +66,13 @@ func (r *mutationResolver) renameAreaImpl(input model.RenameAreaInput) (*model.C
 // removeAreaImpl retires the declared node at input.Path together with the
 // subtree it heads, disposing of every nib assigned at or below it as the input
 // says.
-func (r *mutationResolver) removeAreaImpl(input model.RemoveAreaInput) (*model.Config, error) {
+func (r *mutationResolver) removeAreaImpl(ctx context.Context, input model.RemoveAreaInput) (*model.Config, error) {
 	disposition, err := areaDisposition(input)
 	if err != nil {
 		return nil, err
 	}
 
-	res, err := r.AreaWriter.RemoveArea(input.Path, disposition)
+	res, err := r.AreaWriter.RemoveArea(ctx, input.Path, disposition)
 	if err != nil {
 		return nil, wordAreaRetireFailure(err)
 	}
@@ -193,6 +199,13 @@ func wordAreaRetireFailure(err error) error {
 				"%s %d of the %s assigned at or below area %q, then %v — %q is still declared and those writes are persisted; rerun the same mutation to finish it, since a nib already disposed of is no longer a member and the rerun starts where this stopped",
 				areaDispositionVerb(ioErr.Disposition), len(ioErr.Written), areaNibCount(len(ioErr.Members)),
 				config.RenderAreaPath(ioErr.Path), ioErr.Cause, config.RenderAreaPath(ioErr.Path))
+		case nibcore.AreaEditPhaseConfirm:
+			// A retire that named a disposition is past its cascade here, which
+			// its own sentence has to report. A retire that named none rewrote
+			// nothing, and the shared arm words that case.
+			if ioErr.Disposition.Kind != nibcore.AreaDispositionNone {
+				return areaRetireConfirmFailure(ioErr)
+			}
 		case nibcore.AreaEditPhaseWrite:
 			return areaRetireWriteFailure(ioErr)
 		}
@@ -220,10 +233,24 @@ func wordAreaEditFailure(err error, verb string) error {
 	if errors.As(err, &vanished) {
 		return wordAreaRefusal(err, "nothing was written: this store's areas vocabulary could not be read under its write lock — the file does not exist; restore it before editing the areas it declares")
 	}
+	var arrived *nibcore.AreaMembersArrivedError
+	if errors.As(err, &arrived) {
+		return wordAreaRefusal(err,
+			"the vocabulary was left as it was: this edit did not see %s assigned at or below area %q (%s) when it read the store — a writer that does not take the store's lock landed it, a `git pull` in the store being the usual one; %srerun the same mutation, which decides from the store as it now stands%s",
+			areaNibCount(len(arrived.Members)), config.RenderAreaPath(arrived.Path),
+			namedMembers(arrived.Members), areaCascadePersisted(len(arrived.Written)),
+			areaCascadeStranded(arrived.NewPath, len(arrived.Written)))
+	}
 	var ioErr *nibcore.AreaEditIOError
 	if errors.As(err, &ioErr) {
 		switch ioErr.Phase {
 		case nibcore.AreaEditPhaseLock:
+			var waitEnded *nibcore.StoreLockWaitEndedError
+			if errors.As(ioErr.Cause, &waitEnded) {
+				return wordAreaRefusal(ioErr,
+					"nothing was written: this request ended after %s, while this edit was still waiting for the store's write lock — rerun the same mutation, which decides from the store as it then stands",
+					waitEnded.Waited.Round(time.Millisecond))
+			}
 			return wordAreaRefusal(ioErr,
 				"this store's write lock could not be taken, and an areas edit rewrites both the nibs and the vocabulary so it must hold one: %v", ioErr.Cause)
 		case nibcore.AreaEditPhaseLoadVocabulary:
@@ -232,6 +259,14 @@ func wordAreaEditFailure(err error, verb string) error {
 		case nibcore.AreaEditPhaseLoadNibs:
 			return wordAreaRefusal(ioErr,
 				"nothing was written: re-reading this store's nibs under its write lock failed: %v", ioErr.Cause)
+		case nibcore.AreaEditPhaseConfirm:
+			// The cascade is durable and the vocabulary is not written, which is
+			// the state the arrival refusal above describes — so it carries the
+			// same stranded-member clause rather than the persisted clause alone.
+			return wordAreaRefusal(ioErr,
+				"the vocabulary was left as it was: re-reading this store's nibs to confirm that nothing is assigned at or below area %q failed: %v — %srerun the same mutation once that is fixed%s",
+				config.RenderAreaPath(ioErr.Path), ioErr.Cause, areaCascadePersisted(len(ioErr.Written)),
+				areaCascadeStranded(ioErr.NewPath, len(ioErr.Written)))
 		case nibcore.AreaEditPhaseReload:
 			// The one IO failure with nothing to rerun: both writes landed, so
 			// disk holds the finished edit. What is wrong is in THIS process,
@@ -283,6 +318,18 @@ func areaRetireWriteFailure(e *nibcore.AreaEditIOError) error {
 	}
 	return wordAreaRefusal(e,
 		"%s %s from area %q, then the store's areas.yml could not be updated: %v — %q is still declared and those writes are persisted; rerun WITHOUT %s to retire it, which is what finishes the job now that nothing is assigned below it",
+		areaDispositionVerb(e.Disposition), areaNibCount(len(e.Written)), config.RenderAreaPath(e.Path), e.Cause,
+		config.RenderAreaPath(e.Path), areaDispositionField(e.Disposition))
+}
+
+// areaRetireConfirmFailure reports a retire whose disposition completed and
+// whose confirming re-read then failed. Every member this edit saw is disposed
+// of, so it prescribes the rerun areaRetireWriteFailure does — but promises no
+// outcome, because the re-read that would have established the area is empty is
+// the one that failed: a nib that arrived in that window refuses that rerun.
+func areaRetireConfirmFailure(e *nibcore.AreaEditIOError) error {
+	return wordAreaRefusal(e,
+		"%s %s from area %q, then re-reading this store's nibs to confirm that nothing is assigned at or below it failed: %v — %q is still declared and those writes are persisted; rerun WITHOUT %s once that is fixed, which decides from the store as it then stands",
 		areaDispositionVerb(e.Disposition), areaNibCount(len(e.Written)), config.RenderAreaPath(e.Path), e.Cause,
 		config.RenderAreaPath(e.Path), areaDispositionField(e.Disposition))
 }
@@ -380,6 +427,35 @@ func areaNibsAre(n int) string {
 		return "1 nib is"
 	}
 	return fmt.Sprintf("%d nibs are", n)
+}
+
+// areaCascadePersisted names what an edit had already written, for the refusals
+// raised after the cascade. It is empty when the cascade wrote nothing, so the
+// sentence carrying it never reports a rewrite that did not happen — which is
+// why it ends in its own separator rather than the format string holding one.
+func areaCascadePersisted(n int) string {
+	switch n {
+	case 0:
+		return ""
+	case 1:
+		return "the nib it had already rewritten is persisted, so "
+	}
+	return fmt.Sprintf("the %d nibs it had already rewritten are persisted, so ", n)
+}
+
+// areaCascadeStranded says what the persisted clause otherwise reads as
+// reassurance about: a rename's cascaded members sit on the new path while the
+// vocabulary still declares the old one. A retire's land on a declared path or
+// on none, so it renders nothing.
+//
+// It takes the two facts rather than an error because every refusal raised
+// between the cascade and the vocabulary write leaves that same state — a nib
+// that arrived under the area, and a confirming re-read that failed.
+func areaCascadeStranded(newPath string, written int) string {
+	if newPath == "" || written == 0 {
+		return ""
+	}
+	return " — until that rerun those nibs carry an undeclared path, so every write to them is refused"
 }
 
 // areaNibCount renders the tally these messages carry ("1 nib" / "3 nibs"), so

@@ -1,10 +1,14 @@
 package nibcore
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // writeLockPath returns a stable, per-machine path for the advisory write lock
@@ -23,7 +27,14 @@ func writeLockPath(root string) string {
 		abs = root
 	}
 	sum := sha256.Sum256([]byte(abs))
-	return filepath.Join(os.TempDir(), "nibs-write-"+hex.EncodeToString(sum[:8])+".lock")
+	return filepath.Join(lockDir(), "nibs-write-"+hex.EncodeToString(sum[:8])+".lock")
+}
+
+// lockDir is the directory every nibs lock file goes in — this one and
+// servelock.go's. Both derive from it, which is what lets Core.LockDir answer
+// for the whole set from the one path a Core records.
+func lockDir() string {
+	return os.TempDir()
 }
 
 // StoreLock is proof of holding the store-wide advisory write lock returned
@@ -112,4 +123,83 @@ func AcquireStoreLock(nibsRoot string) (*StoreLock, error) {
 		return nil, err
 	}
 	return &StoreLock{release: release, lockPath: lockPath}, nil
+}
+
+// errLockHeld is the lock layer's contention signal: another descriptor holds
+// the file, which is not a filesystem failure and has no remedy in common with
+// one. It stays unexported, and each waiter states it in its own vocabulary —
+// the serve interlock as ErrStoreServed (a process to stop), the cancellable
+// wait below as another poll.
+var errLockHeld = errors.New("another descriptor holds this lock file")
+
+// How long acquireFileLockWaiting sleeps between tries, doubling from the first
+// up to the cap, so a lock freed while nobody else wants it goes unnoticed for at
+// most that long. Against continuous contenders there is no such bound: a poller
+// takes the lock only when it samples a free window, where the kernel queue it
+// replaces would have given it a turn.
+const (
+	storeLockFirstRetry = 1 * time.Millisecond
+	storeLockMaxRetry   = 50 * time.Millisecond
+)
+
+// StoreLockWaitEndedError reports a wait for the store's cross-process write
+// lock that ended before the lock was free, because the caller's context was
+// canceled or its deadline passed. Nothing was locked, so nothing was written.
+//
+// It unwraps to that context error, so errors.Is reaches context.Canceled and
+// context.DeadlineExceeded.
+type StoreLockWaitEndedError struct {
+	// Waited is how long the wait lasted. A caller deciding whether to rerun
+	// reads it as what a rerun would cost: the same holder is usually still
+	// there.
+	Waited time.Duration
+	Cause  error
+}
+
+func (e *StoreLockWaitEndedError) Error() string {
+	return fmt.Sprintf("the wait for this store's write lock ended after %s: %v",
+		e.Waited.Round(time.Millisecond), e.Cause)
+}
+
+func (e *StoreLockWaitEndedError) Unwrap() error { return e.Cause }
+
+// acquireFileLockWaiting waits for the exclusive lock at path the way
+// acquireFileLock does, but gives up when ctx ends, returning
+// *StoreLockWaitEndedError and no lock.
+//
+// It polls the non-blocking primitive rather than building on the blocking one.
+// That call takes no deadline on either platform, so abandoning it means leaving
+// a goroutine on it — one holding an open descriptor for the rest of the wait,
+// which then takes the lock for a caller that has gone. Polling leaves an
+// abandoned wait at zero descriptors and zero goroutines, which is what makes it
+// safe to abandon one per canceled request.
+//
+// A context that can never be canceled takes the blocking primitive instead:
+// there is nothing for a poll loop to notice, and that wait is what every other
+// store mutation — none of which takes a context — already does.
+func acquireFileLockWaiting(ctx context.Context, path string) (func() error, error) {
+	if ctx.Done() == nil {
+		return acquireFileLock(path)
+	}
+
+	started := time.Now()
+	delay := storeLockFirstRetry
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, &StoreLockWaitEndedError{Waited: time.Since(started), Cause: err}
+		}
+		release, err := acquireFileLockTry(path)
+		if !errors.Is(err, errLockHeld) {
+			return release, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, &StoreLockWaitEndedError{Waited: time.Since(started), Cause: ctx.Err()}
+		case <-timer.C:
+		}
+		delay = min(2*delay, storeLockMaxRetry)
+		timer.Reset(delay)
+	}
 }

@@ -39,16 +39,20 @@ func acquireFileLock(path string) (func() error, error) {
 	}, nil
 }
 
-// acquireFileLockShared and acquireFileLockExclusiveNB are the serve interlock's
-// two sides (see servelock.go). Both are NON-BLOCKING — LOCK_NB — and report
-// contention as ErrStoreServed so the caller can tell "the other process holds
-// it" from "the filesystem failed", which are different remedies.
-func acquireFileLockShared(path string) (func() error, error) {
-	return acquireFileLockNB(path, unix.LOCK_SH)
+// acquireFileLockTry takes the same exclusive lock acquireFileLock waits for,
+// in ONE try: it reports contention as errLockHeld rather than waiting for it.
+// It is what acquireFileLockWaiting polls and what the serve interlock's
+// exclusive side is built from.
+func acquireFileLockTry(path string) (func() error, error) {
+	return acquireFileLockNB(path, unix.LOCK_EX)
 }
 
-func acquireFileLockExclusiveNB(path string) (func() error, error) {
-	return acquireFileLockNB(path, unix.LOCK_EX)
+// acquireFileLockShared is the serve interlock's shared side (see servelock.go),
+// non-blocking like its exclusive sibling and speaking that lock's vocabulary
+// for contention.
+func acquireFileLockShared(path string) (func() error, error) {
+	release, err := acquireFileLockNB(path, unix.LOCK_SH)
+	return release, asStoreServed(err)
 }
 
 func acquireFileLockNB(path string, how int) (func() error, error) {
@@ -61,7 +65,7 @@ func acquireFileLockNB(path string, how int) (func() error, error) {
 		// EWOULDBLOCK and EAGAIN are the same value on Linux but distinct
 		// constants elsewhere, so both are tested rather than one assumed.
 		if errors.Is(err, unix.EWOULDBLOCK) || errors.Is(err, unix.EAGAIN) {
-			return nil, ErrStoreServed
+			return nil, errLockHeld
 		}
 		return nil, fmt.Errorf("acquiring lock: %w", err)
 	}

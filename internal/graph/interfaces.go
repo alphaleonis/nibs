@@ -1,6 +1,8 @@
 package graph
 
 import (
+	"context"
+
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
@@ -202,11 +204,13 @@ type NibSubscriber interface {
 // touches it.
 type AreaWriter interface {
 	// RenameArea renames a declared node, cascading to every nib assigned at or
-	// below it.
-	RenameArea(path, newName string) (nibcore.AreaEditResult, error)
+	// below it. ctx ends the verb's wait for the store's write lock — the one
+	// step that waits on another process.
+	RenameArea(ctx context.Context, path, newName string) (nibcore.AreaEditResult, error)
 	// RemoveArea retires a declared node and the subtree it heads, disposing of
-	// every nib assigned at or below it as disposition says.
-	RemoveArea(path string, disposition nibcore.AreaDisposition) (nibcore.AreaEditResult, error)
+	// every nib assigned at or below it as disposition says. ctx does the same
+	// here.
+	RemoveArea(ctx context.Context, path string, disposition nibcore.AreaDisposition) (nibcore.AreaEditResult, error)
 	// Warn reports a note about an edit to the store's warning sink — where a
 	// running `nibs serve` operator reads. It is how a warning an edit owes
 	// reaches somebody when the answer's own shape has no room for one.

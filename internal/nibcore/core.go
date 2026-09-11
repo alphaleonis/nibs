@@ -4,6 +4,7 @@ package nibcore
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -266,7 +267,24 @@ func New(root string, cfg *config.Config) *Core {
 // authoritative statement; sibling comments across internal/nibcore defer here
 // rather than re-derive it.
 func (c *Core) acquireWriteLock() (func() error, error) {
-	return acquireFileLock(c.lockPath)
+	return c.acquireWriteLockContext(context.Background())
+}
+
+// acquireWriteLockContext is acquireWriteLock for a caller that can be told to
+// stop waiting — a served mutation whose client went away. The lock order and
+// the per-operation span are that doc's; what this adds is an end to the wait
+// FOR the lock, which is unbounded by design: the holder may be a `nibs migrate`
+// sitting on its own confirmation prompt, or a `nibs config set-prefix` renaming
+// every file in the store, so no fixed deadline can tell a stuck lock from a
+// legitimate one. The caller's context is what supplies a bound, and a context
+// that carries none waits exactly as acquireWriteLock always has.
+//
+// Cancellation reaches the wait for the FILE lock only. c.mu is a plain mutex
+// every mutator takes first, and the others wait for the file lock under it with
+// a context carrying no end — so an edit still queued on c.mu behind one of them
+// cannot be told to stop until that one is done.
+func (c *Core) acquireWriteLockContext(ctx context.Context) (func() error, error) {
+	return acquireFileLockWaiting(ctx, c.lockPath)
 }
 
 // SetWarnWriter sets the writer for warning messages.
@@ -392,6 +410,16 @@ func (c *Core) logWarn(format string, args ...any) {
 // Root returns the absolute path to the .nibs directory.
 func (c *Core) Root() string {
 	return c.root
+}
+
+// LockDir is the directory holding the lock files this store's mutations open.
+// It is exported for `nibs serve`, whose error scrub has to know where the lock
+// lives to keep a failure to open it from naming that directory (see
+// newStorePathScrubber in cmd/serve_pathscrub.go). Deriving it from c.lockPath
+// rather than asking the OS for its temp directory a second time is what stops
+// the scrub from pointing somewhere the lock is not.
+func (c *Core) LockDir() string {
+	return filepath.Dir(c.lockPath)
 }
 
 // Config returns the configuration.

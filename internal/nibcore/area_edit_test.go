@@ -1,12 +1,14 @@
 package nibcore
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/fsutil"
@@ -50,7 +52,7 @@ func TestAreaVerbsReportWhatTheyDid(t *testing.T) {
 	t.Run("rename", func(t *testing.T) {
 		core, nibsDir := areaVerbCore(t)
 
-		res, err := core.RenameArea("web", "platform")
+		res, err := core.RenameArea(context.Background(), "web", "platform")
 		if err != nil {
 			t.Fatalf("RenameArea: %v", err)
 		}
@@ -85,7 +87,7 @@ func TestAreaVerbsReportWhatTheyDid(t *testing.T) {
 	t.Run("retire", func(t *testing.T) {
 		core, _ := areaVerbCore(t)
 
-		res, err := core.RemoveArea("web", MoveAreaMembersTo("auth"))
+		res, err := core.RemoveArea(context.Background(), "web", MoveAreaMembersTo("auth"))
 		if err != nil {
 			t.Fatalf("RemoveArea: %v", err)
 		}
@@ -110,7 +112,7 @@ func TestAreaVerbsReportWhatTheyDid(t *testing.T) {
 	t.Run("add", func(t *testing.T) {
 		core, _ := areaVerbCore(t)
 
-		res, err := core.AddArea("web/reports", "Charts", "teal")
+		res, err := core.AddArea(context.Background(), "web/reports", "Charts", "teal")
 		if err != nil {
 			t.Fatalf("AddArea: %v", err)
 		}
@@ -143,7 +145,7 @@ func TestAreaEditNamesTheHalfOfTheReReadThatFailed(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		_, err := core.RenameArea("web", "platform")
+		_, err := core.RenameArea(context.Background(), "web", "platform")
 		var ioErr *AreaEditIOError
 		if !errors.As(err, &ioErr) {
 			t.Fatalf("error = %v (%T), want an *AreaEditIOError", err, err)
@@ -168,7 +170,7 @@ func TestAreaEditNamesTheHalfOfTheReReadThatFailed(t *testing.T) {
 			testskip.Unavailable(t, testskip.UnreadablePaths, "this process reads a mode-000 directory anyway (running as root?)")
 		}
 
-		_, err := core.RenameArea("web", "platform")
+		_, err := core.RenameArea(context.Background(), "web", "platform")
 		var ioErr *AreaEditIOError
 		if !errors.As(err, &ioErr) {
 			t.Fatalf("error = %v (%T), want an *AreaEditIOError", err, err)
@@ -196,7 +198,7 @@ func TestAreaEditReportsAFailedReload(t *testing.T) {
 	reloadAreasAfterEdit = func(*Core) error { return errors.New("areas.yml went missing") }
 	t.Cleanup(func() { reloadAreasAfterEdit = restore })
 
-	_, err := core.RenameArea("web", "platform")
+	_, err := core.RenameArea(context.Background(), "web", "platform")
 	var ioErr *AreaEditIOError
 	if !errors.As(err, &ioErr) {
 		t.Fatalf("error = %v (%T), want an *AreaEditIOError", err, err)
@@ -237,7 +239,7 @@ func TestAreaEditReportsAReplacedSymlink(t *testing.T) {
 		testskip.SymlinkUnavailable(t, err)
 	}
 
-	res, err := core.RenameArea("web", "platform")
+	res, err := core.RenameArea(context.Background(), "web", "platform")
 	if err != nil {
 		t.Fatalf("RenameArea: %v", err)
 	}
@@ -246,7 +248,7 @@ func TestAreaEditReportsAReplacedSymlink(t *testing.T) {
 	}
 	// And an ordinary edit reports nothing, so the field above is the replacement
 	// and not a value every edit carries.
-	plain, err := core.RenameArea("platform", "web")
+	plain, err := core.RenameArea(context.Background(), "platform", "web")
 	if err != nil {
 		t.Fatalf("RenameArea back: %v", err)
 	}
@@ -269,7 +271,7 @@ func TestAreaEditRefusalsCarryTheirFacts(t *testing.T) {
 	}{
 		{
 			name: "renaming a path the store does not declare",
-			call: func(c *Core) error { _, err := c.RenameArea("nosuch", "platform"); return err },
+			call: func(c *Core) error { _, err := c.RenameArea(context.Background(), "nosuch", "platform"); return err },
 			want: func(t *testing.T, err error) {
 				var e *AreaUndeclaredError
 				if !errors.As(err, &e) {
@@ -287,7 +289,7 @@ func TestAreaEditRefusalsCarryTheirFacts(t *testing.T) {
 		},
 		{
 			name: "renaming to the name it already has",
-			call: func(c *Core) error { _, err := c.RenameArea("web", "web"); return err },
+			call: func(c *Core) error { _, err := c.RenameArea(context.Background(), "web", "web"); return err },
 			want: func(t *testing.T, err error) {
 				var e *AreaNameUnchangedError
 				if !errors.As(err, &e) {
@@ -300,7 +302,7 @@ func TestAreaEditRefusalsCarryTheirFacts(t *testing.T) {
 		},
 		{
 			name: "renaming onto a name a sibling holds",
-			call: func(c *Core) error { _, err := c.RenameArea("web/dashboard", "ui"); return err },
+			call: func(c *Core) error { _, err := c.RenameArea(context.Background(), "web/dashboard", "ui"); return err },
 			want: func(t *testing.T, err error) {
 				var e *AreaNameTakenError
 				if !errors.As(err, &e) {
@@ -315,7 +317,10 @@ func TestAreaEditRefusalsCarryTheirFacts(t *testing.T) {
 		},
 		{
 			name: "retiring an area work is assigned to",
-			call: func(c *Core) error { _, err := c.RemoveArea("web", AreaDisposition{}); return err },
+			call: func(c *Core) error {
+				_, err := c.RemoveArea(context.Background(), "web", AreaDisposition{})
+				return err
+			},
 			want: func(t *testing.T, err error) {
 				var e *AreaMembersPresentError
 				if !errors.As(err, &e) {
@@ -328,7 +333,10 @@ func TestAreaEditRefusalsCarryTheirFacts(t *testing.T) {
 		},
 		{
 			name: "disposing of members an area does not have",
-			call: func(c *Core) error { _, err := c.RemoveArea("web/dashboard", UnassignAreaMembers()); return err },
+			call: func(c *Core) error {
+				_, err := c.RemoveArea(context.Background(), "web/dashboard", UnassignAreaMembers())
+				return err
+			},
 			want: func(t *testing.T, err error) {
 				var e *AreaDispositionEmptyError
 				if !errors.As(err, &e) {
@@ -343,7 +351,10 @@ func TestAreaEditRefusalsCarryTheirFacts(t *testing.T) {
 		},
 		{
 			name: "moving members into the subtree being retired",
-			call: func(c *Core) error { _, err := c.RemoveArea("web", MoveAreaMembersTo("web/ui")); return err },
+			call: func(c *Core) error {
+				_, err := c.RemoveArea(context.Background(), "web", MoveAreaMembersTo("web/ui"))
+				return err
+			},
 			want: func(t *testing.T, err error) {
 				var e *AreaMoveTargetWithinError
 				if !errors.As(err, &e) {
@@ -356,7 +367,10 @@ func TestAreaEditRefusalsCarryTheirFacts(t *testing.T) {
 		},
 		{
 			name: "moving members to an area the store does not declare",
-			call: func(c *Core) error { _, err := c.RemoveArea("web", MoveAreaMembersTo("nosuch")); return err },
+			call: func(c *Core) error {
+				_, err := c.RemoveArea(context.Background(), "web", MoveAreaMembersTo("nosuch"))
+				return err
+			},
 			want: func(t *testing.T, err error) {
 				var e *AreaUndeclaredError
 				if !errors.As(err, &e) {
@@ -371,7 +385,7 @@ func TestAreaEditRefusalsCarryTheirFacts(t *testing.T) {
 		},
 		{
 			name: "declaring an area the store already declares",
-			call: func(c *Core) error { _, err := c.AddArea("web/ui", "", ""); return err },
+			call: func(c *Core) error { _, err := c.AddArea(context.Background(), "web/ui", "", ""); return err },
 			want: func(t *testing.T, err error) {
 				var e *AreaAlreadyDeclaredError
 				if !errors.As(err, &e) {
@@ -384,7 +398,7 @@ func TestAreaEditRefusalsCarryTheirFacts(t *testing.T) {
 		},
 		{
 			name: "declaring an area under a parent the store does not declare",
-			call: func(c *Core) error { _, err := c.AddArea("nosuch/child", "", ""); return err },
+			call: func(c *Core) error { _, err := c.AddArea(context.Background(), "nosuch/child", "", ""); return err },
 			want: func(t *testing.T, err error) {
 				var e *AreaParentUndeclaredError
 				if !errors.As(err, &e) {
@@ -397,7 +411,7 @@ func TestAreaEditRefusalsCarryTheirFacts(t *testing.T) {
 		},
 		{
 			name: "a name the edited vocabulary could not hold",
-			call: func(c *Core) error { _, err := c.RenameArea("web", "  "); return err },
+			call: func(c *Core) error { _, err := c.RenameArea(context.Background(), "web", "  "); return err },
 			want: func(t *testing.T, err error) {
 				// The planner's own refusal, passed through unwrapped: it is about
 				// the file's CONTENT, which is the class every surface reports it
@@ -456,17 +470,23 @@ func TestAreaEditTellsARetiredPathApartFromOneThatNeverExisted(t *testing.T) {
 	}{
 		{
 			name: "the node being retired",
-			call: func(c *Core) error { _, err := c.RemoveArea("auth", UnassignAreaMembers()); return err },
+			call: func(c *Core) error {
+				_, err := c.RemoveArea(context.Background(), "auth", UnassignAreaMembers())
+				return err
+			},
 			role: AreaPathRetired,
 		},
 		{
 			name: "the node being renamed",
-			call: func(c *Core) error { _, err := c.RenameArea("auth", "identity"); return err },
+			call: func(c *Core) error { _, err := c.RenameArea(context.Background(), "auth", "identity"); return err },
 			role: AreaPathRenamed,
 		},
 		{
 			name: "a move target",
-			call: func(c *Core) error { _, err := c.RemoveArea("web", MoveAreaMembersTo("auth")); return err },
+			call: func(c *Core) error {
+				_, err := c.RemoveArea(context.Background(), "web", MoveAreaMembersTo("auth"))
+				return err
+			},
 			role: AreaPathMoveTarget,
 		},
 	}
@@ -511,7 +531,7 @@ func TestAreaEditRefusesAVanishedVocabulary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := core.RenameArea("web", "platform")
+	_, err := core.RenameArea(context.Background(), "web", "platform")
 	var vanished *AreaVocabularyVanishedError
 	if !errors.As(err, &vanished) {
 		t.Fatalf("error = %v (%T), want *AreaVocabularyVanishedError", err, err)
@@ -523,7 +543,7 @@ func TestAreaEditRefusesAVanishedVocabulary(t *testing.T) {
 	// A store that never had one: the same empty vocabulary, and the ordinary
 	// refusal, whose "declares no areas" is both the true cause and the remedy.
 	fresh, _ := setupTestCore(t)
-	_, err = fresh.RenameArea("web", "platform")
+	_, err = fresh.RenameArea(context.Background(), "web", "platform")
 	var undeclared *AreaUndeclaredError
 	if !errors.As(err, &undeclared) {
 		t.Fatalf("error = %v (%T), want *AreaUndeclaredError over a store that never declared one", err, err)
@@ -553,7 +573,7 @@ func TestAreaEditPartialFailureIsRerunnable(t *testing.T) {
 	}
 	t.Cleanup(func() { fsutil.RenameFn = restore })
 
-	_, err := core.RenameArea("web", "platform")
+	_, err := core.RenameArea(context.Background(), "web", "platform")
 	var ioErr *AreaEditIOError
 	if !errors.As(err, &ioErr) {
 		t.Fatalf("error = %v (%T), want an *AreaEditIOError", err, err)
@@ -573,7 +593,7 @@ func TestAreaEditPartialFailureIsRerunnable(t *testing.T) {
 	}
 
 	fsutil.RenameFn = restore
-	res, err := core.RenameArea("web", "platform")
+	res, err := core.RenameArea(context.Background(), "web", "platform")
 	if err != nil {
 		t.Fatalf("the rerun the message prescribes failed: %v", err)
 	}
@@ -586,5 +606,384 @@ func TestAreaEditPartialFailureIsRerunnable(t *testing.T) {
 		if b, _ := core.Get(id); b.Area != want {
 			t.Errorf("%s area = %q, want %q", id, b.Area, want)
 		}
+	}
+}
+
+// landNibOnDisk writes a nib file straight into the store's data directory, the
+// way a `git pull` in .nibs does: nothing in this process is told, so the store
+// learns of it only by reading the directory again.
+func landNibOnDisk(t *testing.T, nibsDir, id, area string) {
+	t.Helper()
+	b := &nib.Nib{
+		ID: id, Version: nib.CurrentVersion, Title: "Arrived " + id,
+		Status: "todo", Type: "task", Area: area, Path: "data/" + id + ".md",
+	}
+	rendered, err := b.Render()
+	if err != nil {
+		t.Fatalf("rendering %s: %v", id, err)
+	}
+	if err := os.WriteFile(filepath.Join(nibsDir, filepath.FromSlash(b.Path)), rendered, 0o644); err != nil {
+		t.Fatalf("landing %s: %v", id, err)
+	}
+}
+
+// TestAreaEditRefusesToStrandANibThatArrived: a verb decides an area's
+// membership from the nibs this process holds, and the store's write lock keeps
+// out another nibs process but not a `git pull` in .nibs. A file landing after
+// the plan's re-read is in no set the cascade walked, so a vocabulary write that
+// went ahead would retire a declaration that file still carries — and every
+// write to the nib is refused from then on, with both surfaces reporting
+// success and nothing saying to rerun.
+//
+// The arrival is timed by fsutil.RenameFn, which fires as the cascade renames
+// its first member into place: strictly after the plan's re-read and strictly
+// before the vocabulary write, with nothing slept on or polled for.
+func TestAreaEditRefusesToStrandANibThatArrived(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(*Core) (AreaEditResult, error)
+		// area is what the arrived nib carries once the rerun has finished the
+		// job the first run refused.
+		area string
+		// cascaded is the area the refused edit left nibs-ae02 — the member
+		// BELOW the node the verb was given — carrying, and it is what decides
+		// stranded: the vocabulary declares "auth" and accepts the cleared value,
+		// and does not declare "platform/ui" until the rerun.
+		cascaded string
+		// stranded is whether the refusal leaves the members the cascade already
+		// rewrote unwritable.
+		stranded bool
+	}{
+		{
+			name:     "rename",
+			edit:     func(c *Core) (AreaEditResult, error) { return c.RenameArea(context.Background(), "web", "platform") },
+			area:     "platform",
+			cascaded: "platform/ui",
+			stranded: true,
+		},
+		{
+			name: "retire, unassigning",
+			edit: func(c *Core) (AreaEditResult, error) {
+				return c.RemoveArea(context.Background(), "web", UnassignAreaMembers())
+			},
+			area: "",
+		},
+		{
+			// The row the cleared value cannot carry: a moved member keeps a
+			// non-empty area, so the write below answers from the vocabulary
+			// rather than from the empty-path fast path both validators take.
+			name: "retire, moving members",
+			edit: func(c *Core) (AreaEditResult, error) {
+				return c.RemoveArea(context.Background(), "web", MoveAreaMembersTo("auth"))
+			},
+			area:     "auth",
+			cascaded: "auth",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			core, nibsDir := areaVerbCore(t)
+
+			restore := fsutil.RenameFn
+			landed := false
+			fsutil.RenameFn = func(oldpath, newpath string) error {
+				if !landed && strings.HasSuffix(newpath, ".md") {
+					landed = true
+					landNibOnDisk(t, nibsDir, "nibs-ae04", "web")
+				}
+				return restore(oldpath, newpath)
+			}
+			t.Cleanup(func() { fsutil.RenameFn = restore })
+
+			_, err := tt.edit(core)
+			if !landed {
+				t.Fatal("no nib arrived inside the window, so this proves nothing")
+			}
+			var arrived *AreaMembersArrivedError
+			if !errors.As(err, &arrived) {
+				t.Fatalf("error = %v (%T), want an *AreaMembersArrivedError", err, err)
+			}
+			if want := []string{"nibs-ae04"}; !slices.Equal(arrived.Members, want) {
+				t.Errorf("Members = %v, want %v — the set the vocabulary write would have stranded", arrived.Members, want)
+			}
+			if want := []string{"nibs-ae01", "nibs-ae02"}; !slices.Equal(arrived.Written, want) {
+				t.Errorf("Written = %v, want %v — the cascade's writes are durable and a surface must be able to say so", arrived.Written, want)
+			}
+
+			// The recoverable half: the declaration is still on disk, so the nib
+			// that arrived under it is still writable.
+			if stored := storedAreasOf(t, nibsDir); !strings.Contains(stored, "name: web") {
+				t.Fatalf("the refused edit rewrote the vocabulary anyway:\n%s", stored)
+			}
+			b, err := core.Get("nibs-ae04")
+			if err != nil {
+				t.Fatalf("the refusing edit did not install the nib it read: %v", err)
+			}
+			b.Title = "Still writable"
+			if err := core.Update(b, nil); err != nil {
+				t.Errorf("Update of the arrived nib = %v, want nil: refusing is only the better answer if it leaves the area declared", err)
+			}
+
+			// The half it costs, which NewPath is what a surface says it with: a
+			// rename's cascaded members are on a path nothing declares until the
+			// rerun, so every write to them is refused meanwhile.
+			if (arrived.NewPath != "") != tt.stranded {
+				t.Errorf("NewPath = %q, want it set only where the cascade left its members undeclared", arrived.NewPath)
+			}
+			moved, err := core.Get("nibs-ae02")
+			if err != nil {
+				t.Fatalf("Get of a cascaded member: %v", err)
+			}
+			if moved.Area != tt.cascaded {
+				t.Errorf("the cascade left nibs-ae02 on %q, want %q", moved.Area, tt.cascaded)
+			}
+			moved.Title = "Cascaded"
+			if err := core.Update(moved, nil); (err != nil) != tt.stranded {
+				t.Errorf("Update of a cascaded member = %v, want refused = %v", err, tt.stranded)
+			}
+
+			fsutil.RenameFn = restore
+			if _, err := tt.edit(core); err != nil {
+				t.Fatalf("the rerun failed: %v", err)
+			}
+			for id, want := range map[string]string{
+				"nibs-ae01": tt.area, "nibs-ae02": tt.cascaded, "nibs-ae04": tt.area, "nibs-ae03": "auth"} {
+				if got, _ := core.Get(id); got.Area != want {
+					t.Errorf("%s area = %q after the rerun, want %q", id, got.Area, want)
+				}
+			}
+		})
+	}
+}
+
+// TestARetireWithNoMembersConfirmsBeforeItWrites is the same refusal for the
+// shape that cascades nothing: `web` has no members when the plan reads it, so
+// no nib is rewritten and no rename fires between that read and the vocabulary
+// write. The arrival is landed through the confirming re-read itself, which is
+// the only event left in the window — and an edit that did not look would not
+// call it.
+func TestARetireWithNoMembersConfirmsBeforeItWrites(t *testing.T) {
+	core, nibsDir := setupAreaCore(t)
+
+	restore := reloadNibsBeforeAreaWrite
+	landed := false
+	reloadNibsBeforeAreaWrite = func(c *Core) error {
+		if !landed {
+			landed = true
+			landNibOnDisk(t, nibsDir, "nibs-ae04", "web")
+		}
+		return restore(c)
+	}
+	t.Cleanup(func() { reloadNibsBeforeAreaWrite = restore })
+
+	_, err := core.RemoveArea(context.Background(), "web", AreaDisposition{})
+	if !landed {
+		t.Fatal("the edit never re-read the store, so nothing arrived inside the window")
+	}
+	var arrived *AreaMembersArrivedError
+	if !errors.As(err, &arrived) {
+		t.Fatalf("error = %v (%T), want an *AreaMembersArrivedError", err, err)
+	}
+	if len(arrived.Written) != 0 {
+		t.Errorf("Written = %v, want none: an empty area has no members to rewrite", arrived.Written)
+	}
+	if stored := storedAreasOf(t, nibsDir); !strings.Contains(stored, "name: web") {
+		t.Errorf("the refused retire rewrote the vocabulary anyway:\n%s", stored)
+	}
+
+	// The rerun now sees the arrival as an ordinary member, which is the refusal
+	// a caller can act on: a retire with no disposition for work that exists.
+	_, err = core.RemoveArea(context.Background(), "web", AreaDisposition{})
+	var present *AreaMembersPresentError
+	if !errors.As(err, &present) {
+		t.Fatalf("the rerun's error = %v (%T), want an *AreaMembersPresentError", err, err)
+	}
+}
+
+// TestAreaEditReportsAFailedConfirmation: the confirming re-read is a walk of
+// every nib file in the store, so it can fail on the filesystem like the first
+// one — but by then the cascade is durable and the vocabulary is not written, so
+// it is neither of the phases that already have a sentence.
+//
+// The rows are the two shapes the surfaces have to word it in, and the fields
+// are what they word it FROM: a rename past its cascade, and a retire of an area
+// nothing is assigned to — which is the only retire admitted without a
+// disposition, so it reaches this phase having rewritten nothing.
+func TestAreaEditReportsAFailedConfirmation(t *testing.T) {
+	tests := []struct {
+		name    string
+		edit    func(*Core) (AreaEditResult, error)
+		newPath string
+		written []string
+		// declared is the vocabulary line the refused edit must have left alone.
+		declared string
+	}{
+		{
+			name:     "a rename",
+			edit:     func(c *Core) (AreaEditResult, error) { return c.RenameArea(context.Background(), "web", "platform") },
+			newPath:  "platform",
+			written:  []string{"nibs-ae01", "nibs-ae02"},
+			declared: "name: web",
+		},
+		{
+			name: "a retire with no disposition",
+			edit: func(c *Core) (AreaEditResult, error) {
+				return c.RemoveArea(context.Background(), "web/dashboard", AreaDisposition{})
+			},
+			declared: "name: dashboard",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			core, nibsDir := areaVerbCore(t)
+
+			restore := reloadNibsBeforeAreaWrite
+			reloadNibsBeforeAreaWrite = func(*Core) error { return errors.New("the store went unreadable") }
+			t.Cleanup(func() { reloadNibsBeforeAreaWrite = restore })
+
+			_, err := tt.edit(core)
+			var ioErr *AreaEditIOError
+			if !errors.As(err, &ioErr) {
+				t.Fatalf("error = %v (%T), want an *AreaEditIOError", err, err)
+			}
+			if ioErr.Phase != AreaEditPhaseConfirm {
+				t.Errorf("Phase = %d, want AreaEditPhaseConfirm", ioErr.Phase)
+			}
+			if ioErr.NewPath != tt.newPath {
+				t.Errorf("NewPath = %q, want %q", ioErr.NewPath, tt.newPath)
+			}
+			if !slices.Equal(ioErr.Written, tt.written) {
+				t.Errorf("Written = %v, want %v", ioErr.Written, tt.written)
+			}
+			if ioErr.Disposition.Kind != AreaDispositionNone {
+				t.Errorf("Disposition.Kind = %v, want none — neither row named one", ioErr.Disposition.Kind)
+			}
+			if stored := storedAreasOf(t, nibsDir); !strings.Contains(stored, tt.declared) {
+				t.Errorf("the vocabulary was rewritten by an edit that could not confirm it:\n%s", stored)
+			}
+		})
+	}
+}
+
+// TestAreaEditStopsWaitingForTheStoreLockWhenItsContextEnds is the whole point
+// of the verbs taking a context: the wait for the store's write lock is the one
+// unbounded step in an area edit, and a caller that has gone away can now end it.
+//
+// The wait itself is asserted first — an edit that refused instead of waiting
+// would pass a cancellation check while having lost the behavior every store
+// mutation depends on. Nothing may be written either way: the cascade and the
+// vocabulary write both live under the lock this edit never took.
+func TestAreaEditStopsWaitingForTheStoreLockWhenItsContextEnds(t *testing.T) {
+	core, nibsDir := areaVerbCore(t)
+	before := storedAreasOf(t, nibsDir)
+
+	// A second descriptor on the same lock file, which is what another nibs
+	// process holding this store looks like from here.
+	held, err := acquireFileLock(core.lockPath)
+	if err != nil {
+		t.Fatalf("holding the store's write lock: %v", err)
+	}
+	defer func() { _ = held() }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := core.RenameArea(ctx, "web", "platform")
+		done <- err
+	}()
+
+	const waited = 150 * time.Millisecond
+	select {
+	case err := <-done:
+		t.Fatalf("the edit returned %v while the store's write lock was held elsewhere", err)
+	case <-time.After(waited):
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		var ioErr *AreaEditIOError
+		if !errors.As(err, &ioErr) {
+			t.Fatalf("error = %v (%T), want the IO class so the surfaces report it as rerunnable", err, err)
+		}
+		if ioErr.Phase != AreaEditPhaseLock {
+			t.Errorf("Phase = %d, want AreaEditPhaseLock (%d)", ioErr.Phase, AreaEditPhaseLock)
+		}
+		var ended *StoreLockWaitEndedError
+		if !errors.As(ioErr.Cause, &ended) {
+			t.Fatalf("Cause = %v (%T), want *StoreLockWaitEndedError", ioErr.Cause, ioErr.Cause)
+		}
+		if !errors.Is(ended, context.Canceled) {
+			t.Errorf("Cause = %v, want it to unwrap to context.Canceled", ended)
+		}
+		if ended.Waited < waited {
+			t.Errorf("Waited = %s, want at least %s — the edit must have waited for the lock, not refused on sight",
+				ended.Waited, waited)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the edit was still waiting for the store's write lock after its context was canceled")
+	}
+
+	if after := storedAreasOf(t, nibsDir); after != before {
+		t.Errorf("the vocabulary was rewritten by an edit that never held the lock:\n%s", after)
+	}
+	if b, err := core.Get("nibs-ae01"); err != nil || b.Area != "web" {
+		t.Errorf("nibs-ae01 area = %q (err %v), want it left on web", b.Area, err)
+	}
+}
+
+// TestAreaEditRefusesAContextAlreadyOver pins the other end of the same rule: a
+// verb handed a context that is already over does not start a cascading rewrite
+// of the store for a caller that is no longer there. It takes no lock, so the
+// next edit finds one free.
+func TestAreaEditRefusesAContextAlreadyOver(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(ctx context.Context, c *Core) error
+	}{
+		{
+			name: "declare",
+			edit: func(ctx context.Context, c *Core) error { _, err := c.AddArea(ctx, "platform", "", ""); return err },
+		},
+		{
+			name: "rename",
+			edit: func(ctx context.Context, c *Core) error { _, err := c.RenameArea(ctx, "web", "platform"); return err },
+		},
+		{
+			name: "retire",
+			edit: func(ctx context.Context, c *Core) error {
+				_, err := c.RemoveArea(ctx, "web", UnassignAreaMembers())
+				return err
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			core, nibsDir := areaVerbCore(t)
+			before := storedAreasOf(t, nibsDir)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+
+			err := tt.edit(ctx, core)
+			var ioErr *AreaEditIOError
+			if !errors.As(err, &ioErr) || ioErr.Phase != AreaEditPhaseLock {
+				t.Fatalf("error = %v (%T), want an AreaEditIOError at the lock phase", err, err)
+			}
+			if !errors.Is(ioErr.Cause, context.Canceled) {
+				t.Errorf("Cause = %v, want it to unwrap to context.Canceled", ioErr.Cause)
+			}
+			if after := storedAreasOf(t, nibsDir); after != before {
+				t.Errorf("the vocabulary was rewritten by a refused edit:\n%s", after)
+			}
+			release, err := acquireFileLockTry(core.lockPath)
+			if err != nil {
+				t.Fatalf("the store's write lock is not free after a refused edit: %v", err)
+			}
+			if err := release(); err != nil {
+				t.Fatalf("releasing the probe lock: %v", err)
+			}
+		})
 	}
 }

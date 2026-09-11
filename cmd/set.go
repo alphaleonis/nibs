@@ -503,13 +503,14 @@ func mutationErrCode(err error) (string, bool) {
 		return output.ErrFileError, true
 	}
 	// An area vocabulary edit that failed on the FILESYSTEM — the write lock, the
-	// re-read under it, a member nib's rewrite, the areas.yml write, or the re-read
-	// of the file it just wrote — takes the class `nibs area rename` and
-	// `nibs area rm` already give it. Its CONTENT counterpart,
-	// config.AreaEditRefusal, deliberately gets no branch: it carries no Unwrap, so
-	// no sentinel below can claim it, and the caller's VALIDATION_ERROR fallback is
-	// what those two commands report for it. Recognized through the concrete type,
-	// which is why nibcore.AreaEditIOError is typed.
+	// re-read under it, a member nib's rewrite, the re-read that confirms the write
+	// strands nothing, the areas.yml write, or the re-read of the file it just
+	// wrote — takes the class `nibs area rename` and `nibs area rm` already give
+	// it. Its CONTENT counterpart, config.AreaEditRefusal, deliberately gets no
+	// branch: it carries no Unwrap, so no sentinel below can claim it, and the
+	// caller's VALIDATION_ERROR fallback is what those two commands report for it.
+	// Recognized through the concrete type, which is why nibcore.AreaEditIOError is
+	// typed.
 	var areaEditErr *nibcore.AreaEditIOError
 	if errors.As(err, &areaEditErr) {
 		return output.ErrFileError, true
@@ -525,6 +526,14 @@ func mutationErrCode(err error) (string, bool) {
 	}
 	var areaVanishedErr *nibcore.AreaVocabularyVanishedError
 	if errors.As(err, &areaVanishedErr) {
+		return output.ErrFileError, true
+	}
+	// And so does a nib that arrived under a path an area edit was about to stop
+	// declaring — a retired node, or a rename's old path — for the same reason:
+	// the caller's argument was fine and the store moved, so a rerun is what
+	// decides from what is there now.
+	var areaArrivedErr *nibcore.AreaMembersArrivedError
+	if errors.As(err, &areaArrivedErr) {
 		return output.ErrFileError, true
 	}
 	// A reconcilable ETag conflict: the "409 → re-read and retry" class.

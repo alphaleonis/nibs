@@ -1,6 +1,7 @@
 package nibcore
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -322,7 +323,7 @@ func freezeGuardCases() []freezeGuardCase {
 			newCore: setupAreaCore,
 			setup:   publishAreaMember,
 			mutate: func(t *testing.T, c *Core, _ string) {
-				if _, err := c.RenameArea("web", "platform"); err != nil {
+				if _, err := c.RenameArea(context.Background(), "web", "platform"); err != nil {
 					t.Fatalf("RenameArea: %v", err)
 				}
 			},
@@ -333,7 +334,7 @@ func freezeGuardCases() []freezeGuardCase {
 			newCore: setupAreaCore,
 			setup:   publishAreaMember,
 			mutate: func(t *testing.T, c *Core, _ string) {
-				if _, err := c.RemoveArea("web", MoveAreaMembersTo("auth")); err != nil {
+				if _, err := c.RemoveArea(context.Background(), "web", MoveAreaMembersTo("auth")); err != nil {
 					t.Fatalf("RemoveArea: %v", err)
 				}
 			},
@@ -348,7 +349,7 @@ func freezeGuardCases() []freezeGuardCase {
 			newCore: setupAreaCore,
 			setup:   publishAreaMember,
 			mutate: func(t *testing.T, c *Core, _ string) {
-				if _, err := c.AddArea("platform", "", ""); err != nil {
+				if _, err := c.AddArea(context.Background(), "platform", "", ""); err != nil {
 					t.Fatalf("AddArea: %v", err)
 				}
 			},
@@ -631,6 +632,7 @@ func TestCoreMutators_FreezePartition(t *testing.T) {
 		"IsBlocking":         true,
 		"Load":               true,
 		"LoadDiagnostics":    true,
+		"LockDir":            true,
 		"NormalizeID":        true,
 		"Warn":               true,
 		"Root":               true,

@@ -13,8 +13,10 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/fsutil"
+	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/output"
+	"github.com/alphaleonis/nibs/internal/testskip"
 	"github.com/alphaleonis/nibs/testdata/fixtures"
 )
 
@@ -766,6 +768,98 @@ func TestAreaRetireVocabularyWriteFailureTellsTheCallerToDropTheFlag(t *testing.
 	}
 }
 
+// TestAreaRetireConfirmFailureTellsTheCallerToDropTheFlag is the write-failure
+// claim one phase earlier, for the store this test builds: nothing arrives in
+// the confirm's window, so the cascade has emptied the member set, rerunning
+// WITH the flag is refused and dropping it finishes the job. The sentence
+// promises no outcome beyond deciding from the store, because the re-read that
+// would have established the emptiness is the one that failed.
+func TestAreaRetireConfirmFailureTellsTheCallerToDropTheFlag(t *testing.T) {
+	tests := []struct {
+		name  string
+		args  []string
+		flag  string
+		after string
+	}{
+		{name: "unassign", args: []string{"rm", "auth", "--unassign"}, flag: "--unassign", after: ""},
+		{name: "move-to", args: []string{"rm", "auth", "--move-to", "docs"}, flag: "--move-to", after: "docs"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nibsPath := setupAreaVerbTest(t)
+
+			// An unreadable directory under data/ fails the nib walk. It is made
+			// unreadable by the cascade's first rename, which puts it strictly
+			// after the re-read that planned the edit and strictly before the
+			// confirming one.
+			deep := filepath.Join(nibsPath, "data", "deep")
+			if err := os.MkdirAll(deep, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(deep, 0o755) })
+			if err := os.Chmod(deep, 0); err != nil {
+				testskip.Unavailable(t, testskip.UnreadablePaths, "os.Chmod(deep, 0): %v", err)
+			}
+			if _, err := os.ReadDir(deep); err == nil {
+				testskip.Unavailable(t, testskip.UnreadablePaths, "this process reads a mode-000 directory anyway (running as root?)")
+			}
+			if err := os.Chmod(deep, 0o755); err != nil {
+				t.Fatal(err)
+			}
+
+			orig := fsutil.RenameFn
+			blocked := false
+			fsutil.RenameFn = func(oldpath, newpath string) error {
+				err := orig(oldpath, newpath)
+				if err == nil && !blocked && strings.HasSuffix(newpath, ".md") {
+					blocked = true
+					err = os.Chmod(deep, 0)
+				}
+				return err
+			}
+			t.Cleanup(func() { fsutil.RenameFn = orig })
+
+			out, err := runArea(t, nibsPath, tt.args...)
+			if !blocked {
+				t.Fatal("no nib was rewritten, so the confirming re-read was never the failing phase")
+			}
+			if err == nil {
+				t.Fatalf("expected the confirming re-read to fail: %s", out)
+			}
+			if want := "rerun WITHOUT " + tt.flag; !strings.Contains(err.Error(), want) {
+				t.Errorf("error = %q, want substring %q", err.Error(), want)
+			}
+			if strings.Contains(err.Error(), "rerun the same command") {
+				t.Errorf("error = %q, want it not to prescribe a rerun the empty member set refuses", err.Error())
+			}
+			if strings.Contains(err.Error(), "now that nothing is assigned") {
+				t.Errorf("error = %q, want it not to guarantee an emptiness the failed re-read never established", err.Error())
+			}
+			if got := areaVocabulary(t, nibsPath); !slices.Contains(got, "auth") {
+				t.Errorf("the declaration was written by an edit that could not confirm it: %v", got)
+			}
+			for _, id := range []string{"tnib-b002", "tnib-f002"} {
+				if got := storedAreas(t, nibsPath)[id]; got != tt.after {
+					t.Fatalf("the disposition did not complete: %s = %q, want %q", id, got, tt.after)
+				}
+			}
+
+			if err := os.Chmod(deep, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := runArea(t, nibsPath, tt.args...); err == nil {
+				t.Error("rerunning WITH the flag must be refused for an empty member set, which is why the message says WITHOUT")
+			}
+			if out, err := runArea(t, nibsPath, "rm", "auth"); err != nil {
+				t.Fatalf("the rerun the message prescribes must finish the job: %v\nout: %s", err, out)
+			}
+			if got := areaVocabulary(t, nibsPath); slices.Contains(got, "auth") {
+				t.Errorf("auth is still declared: %v", got)
+			}
+		})
+	}
+}
+
 // TestAreaEditsHoldTheStoreLockAcrossTheVocabularyWrite is finding #1 as a test.
 //
 // The cascade and the `areas:` rewrite are two halves of one edit, and the
@@ -997,6 +1091,41 @@ func TestAreaRetireWriteFailureWithNoDispositionSaysWhatHappened(t *testing.T) {
 	}
 }
 
+// TestAreaRetireConfirmFailureWithNoDispositionSaysWhatHappened is the claim
+// above one phase earlier. Retiring an EMPTY area needs no disposition, so the
+// cascade rewrote nothing and the confirming re-read's failure must not report a
+// disposition as having run, nor tell the caller to drop a flag they never
+// passed — it is the shared arm's sentence, not the retire-specific one.
+//
+// The refusal is worded directly rather than driven through a store: a retire
+// with no disposition is admitted only for an area nothing is assigned to, so
+// the cascade rewrites nothing and the first member rename — the seam the
+// confirm-phase tests here time their fault by — never fires.
+func TestAreaRetireConfirmFailureWithNoDispositionSaysWhatHappened(t *testing.T) {
+	resetCommandTreeFlags(rootCmd)
+	t.Cleanup(func() { resetCommandTreeFlags(rootCmd) })
+
+	err := areaRetireRefusal("infra", &nibcore.AreaEditIOError{
+		Phase: nibcore.AreaEditPhaseConfirm, Path: "infra", Cause: errors.New("disk on fire"),
+	})
+	if err == nil {
+		t.Fatal("the ladder let a failed retire through")
+	}
+	for _, unwanted := range []string{"--unassign", "--move-to", "unassigned", "reassigned", "persisted"} {
+		if strings.Contains(err.Error(), unwanted) {
+			t.Errorf("error = %q, want no mention of %q — no disposition was named and none ran", err.Error(), unwanted)
+		}
+	}
+	for _, want := range []string{"the vocabulary was left as it was", "rerun the same command once that is fixed"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want substring %q", err.Error(), want)
+		}
+	}
+	if code := areaErrCode(t, err); code != output.ErrFileError {
+		t.Errorf("code = %q, want %q — the store went unreadable, which is not bad input", code, output.ErrFileError)
+	}
+}
+
 // TestAreaRmHelpAgreesWithTheRerunItPrescribes keeps finding #4 from coming
 // back: the long help used to promise that rerunning the SAME command finishes
 // a partial run, which TestAreaRetireVocabularyWriteFailureTellsTheCallerToDropTheFlag
@@ -1152,8 +1281,8 @@ func TestAreaAddRefusesAnUndeclaredParent(t *testing.T) {
 }
 
 // TestAreaAddRefusesItsArgumentsBeforeTakingTheStoreLock is an ORDER guard, and
-// the wrong answer is a wait rather than a wrong message: the store's write lock
-// is a blocking flock with no timeout that prints nothing while it waits, so a
+// the wrong answer is a wait rather than a wrong message: waiting for the
+// store's write lock has no deadline and prints nothing while it lasts, so a
 // refusal the arguments alone answer, asked afterwards, leaves a typo silent for
 // as long as any other cooperating writer holds the store.
 //
@@ -1340,5 +1469,216 @@ func TestAreaAddAdoptsANibStrandedOnThatPath(t *testing.T) {
 	}
 	if got := listAreaIDs(t, nibsPath, "web/retired"); !slices.Contains(got, "tnib-b005") {
 		t.Errorf("--area web/retired listed %v, want the adopted nib", got)
+	}
+}
+
+// TestAreaRenameRefusesToStrandANibThatArrived is the arrival refusal end to
+// end: nibcore's decision, this surface's sentence, and the exit class that says
+// the store moved rather than that the arguments were wrong.
+//
+// A command decides an area's membership from the nibs it loaded, and the
+// store's write lock keeps out another nibs process but not a `git pull` in
+// .nibs — the documented way nib files arrive in this project. One landing after
+// the command re-read the store is in no set the cascade walked, so a rename
+// that went ahead would leave it carrying a path the vocabulary no longer
+// declares, with every later write to it refused and exit 0 reported here.
+func TestAreaRenameRefusesToStrandANibThatArrived(t *testing.T) {
+	nibsPath := setupAreaVerbTest(t)
+
+	// Timed by the cascade's first rename: strictly after the command's re-read
+	// of the store and strictly before the vocabulary write.
+	orig := fsutil.RenameFn
+	landed := false
+	fsutil.RenameFn = func(oldpath, newpath string) error {
+		if !landed && strings.HasSuffix(newpath, ".md") {
+			landed = true
+			arrival := &nib.Nib{
+				ID: "tnib-zz99", Version: nib.CurrentVersion, Title: "Pulled in mid-rename",
+				Status: "todo", Type: "task", Priority: "normal", Area: "web",
+			}
+			rendered, err := arrival.Render()
+			if err != nil {
+				t.Fatalf("rendering the arrival: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(nibsPath, "data", "tnib-zz99.md"), rendered, 0o644); err != nil {
+				t.Fatalf("landing the arrival: %v", err)
+			}
+		}
+		return orig(oldpath, newpath)
+	}
+	t.Cleanup(func() { fsutil.RenameFn = orig })
+
+	_, err := runArea(t, nibsPath, "rename", "web", "frontend")
+	if !landed {
+		t.Fatal("no nib arrived inside the window, so this proves nothing")
+	}
+	if err == nil {
+		t.Fatal("the rename reported success over a nib it stranded")
+	}
+	if code := areaErrCode(t, err); code != output.ErrFileError {
+		t.Errorf("code = %q (exit %d), want %q (exit %d) — the store moved under the command, which is not bad input",
+			code, output.ExitCode(code), output.ErrFileError, output.ExitCode(output.ErrFileError))
+	}
+	for _, want := range []string{"tnib-zz99", "did not see 1 nib assigned at or below", "rerun the same command", "persisted",
+		"every write to them is refused"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want substring %q", err.Error(), want)
+		}
+	}
+	if got := areaVocabulary(t, nibsPath); !slices.Contains(got, "web") {
+		t.Fatalf("the refused rename retired the area the arrival carries: %v", got)
+	}
+	// What that last clause claims, run: the cascade moved this member to
+	// `frontend`, which the vocabulary does not declare until the rerun.
+	_, err = runRootWith(t, "--nibs-path", nibsPath, "set", "tnib-b005", "--title", "Blocked")
+	if err == nil || !strings.Contains(err.Error(), `invalid area "frontend"`) {
+		t.Errorf("a write to a cascaded member = %v, want it refused for the undeclared path the cascade gave it", err)
+	}
+
+	fsutil.RenameFn = orig
+	if out, err := runArea(t, nibsPath, "rename", "web", "frontend"); err != nil {
+		t.Fatalf("the rerun the message prescribes must finish the job: %v\nout: %s", err, out)
+	}
+	areas := storedAreas(t, nibsPath)
+	for id, want := range map[string]string{"tnib-zz99": "frontend", "tnib-b005": "frontend", "tnib-f008": "frontend/dashboard"} {
+		if areas[id] != want {
+			t.Errorf("%s area = %q after the rerun, want %q", id, areas[id], want)
+		}
+	}
+}
+
+// TestAreaRefusalsCarryTheStrandedClauseOnlyWhereItIsTrue pins the condition
+// areaCascadeStranded branches on, at both of its call sites.
+//
+// The clause is what stops "those writes are persisted" reading as reassurance,
+// and it is true only where the cascade rewrote members onto a path the
+// vocabulary does not declare yet — a rename that got as far as writing one. A
+// retire's members land on a declared path or on none, and a cascade that wrote
+// nothing stranded nothing, so saying it there would be false.
+//
+// The refusals are worded directly because both reach the ladder from the same
+// window — between the cascade and the vocabulary write — and what is under test
+// is the sentence rather than the edit that produced it.
+func TestAreaRefusalsCarryTheStrandedClauseOnlyWhereItIsTrue(t *testing.T) {
+	resetCommandTreeFlags(rootCmd)
+	t.Cleanup(func() { resetCommandTreeFlags(rootCmd) })
+
+	edits := []struct {
+		name    string
+		verb    string
+		newPath string
+		written []string
+	}{
+		{name: "a rename that rewrote members", verb: "rename", newPath: "frontend", written: []string{"tnib-b005", "tnib-f008"}},
+		{name: "a rename that rewrote none", verb: "rename", newPath: "frontend"},
+		{name: "a retire that rewrote members", verb: "retire", written: []string{"tnib-b005", "tnib-f008"}},
+		{name: "a retire that rewrote none", verb: "retire"},
+	}
+	refusals := []struct {
+		name string
+		err  func(newPath string, written []string) error
+	}{
+		{"a nib that arrived under the area", func(newPath string, written []string) error {
+			return &nibcore.AreaMembersArrivedError{
+				Path: "web", Members: []string{"tnib-zz99"}, Written: written, NewPath: newPath,
+			}
+		}},
+		{"a confirming re-read that failed", func(newPath string, written []string) error {
+			return &nibcore.AreaEditIOError{
+				Phase: nibcore.AreaEditPhaseConfirm, Path: "web", NewPath: newPath,
+				Written: written, Cause: errors.New("disk on fire"),
+			}
+		}},
+	}
+	for _, r := range refusals {
+		for _, e := range edits {
+			t.Run(r.name+", "+e.name, func(t *testing.T) {
+				err := areaEditRefusal(false, r.err(e.newPath, e.written), e.verb)
+				if err == nil {
+					t.Fatal("the ladder let a refused edit through")
+				}
+				stranded := e.newPath != "" && len(e.written) > 0
+				if got := strings.Contains(err.Error(), "every write to them is refused"); got != stranded {
+					t.Errorf("error = %q, carries the stranded-member clause = %v, want %v", err.Error(), got, stranded)
+				}
+			})
+		}
+	}
+}
+
+// TestAreaRenameConfirmFailureSaysWhatItStranded is the cell above as an edit
+// rather than a sentence: a rename whose cascade landed and whose confirming
+// re-read then failed leaves the members on a path the vocabulary does not
+// declare, which is the same on-disk state a nib arriving under the area
+// produces. The clause is executed rather than only asserted — the write it says
+// is refused is run, before and after the rerun it prescribes.
+func TestAreaRenameConfirmFailureSaysWhatItStranded(t *testing.T) {
+	nibsPath := setupAreaVerbTest(t)
+
+	// An unreadable directory under data/ fails the nib walk. It is made
+	// unreadable by the cascade's first rename, which puts it strictly after the
+	// re-read that planned the edit and strictly before the confirming one.
+	deep := filepath.Join(nibsPath, "data", "deep")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(deep, 0o755) })
+	if err := os.Chmod(deep, 0); err != nil {
+		testskip.Unavailable(t, testskip.UnreadablePaths, "os.Chmod(deep, 0): %v", err)
+	}
+	if _, err := os.ReadDir(deep); err == nil {
+		testskip.Unavailable(t, testskip.UnreadablePaths, "this process reads a mode-000 directory anyway (running as root?)")
+	}
+	if err := os.Chmod(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	orig := fsutil.RenameFn
+	blocked := false
+	fsutil.RenameFn = func(oldpath, newpath string) error {
+		err := orig(oldpath, newpath)
+		if err == nil && !blocked && strings.HasSuffix(newpath, ".md") {
+			blocked = true
+			err = os.Chmod(deep, 0)
+		}
+		return err
+	}
+	t.Cleanup(func() { fsutil.RenameFn = orig })
+
+	out, err := runArea(t, nibsPath, "rename", "web", "frontend")
+	if !blocked {
+		t.Fatal("no nib was rewritten, so the confirming re-read was never the failing phase")
+	}
+	if err == nil {
+		t.Fatalf("expected the confirming re-read to fail: %s", out)
+	}
+	fsutil.RenameFn = orig
+	if err := os.Chmod(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"the vocabulary was left as it was", "persisted", "rerun the same command",
+		"every write to them is refused"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want substring %q", err.Error(), want)
+		}
+	}
+	if got := areaVocabulary(t, nibsPath); !slices.Contains(got, "web") {
+		t.Fatalf("the vocabulary was rewritten by an edit that could not confirm it: %v", got)
+	}
+	if got := storedAreas(t, nibsPath)["tnib-b005"]; got != "frontend" {
+		t.Fatalf("tnib-b005 = %q, want the cascade's writes durable", got)
+	}
+
+	// What the last clause claims, run: the cascade moved this member to
+	// `frontend`, which the vocabulary does not declare until the rerun.
+	if _, err := runRootWith(t, "--nibs-path", nibsPath, "set", "tnib-b005", "--title", "Blocked"); err == nil ||
+		!strings.Contains(err.Error(), `invalid area "frontend"`) {
+		t.Errorf("a write to a cascaded member = %v, want it refused for the undeclared path the cascade gave it", err)
+	}
+	if out, err := runArea(t, nibsPath, "rename", "web", "frontend"); err != nil {
+		t.Fatalf("the rerun the message prescribes must finish the job: %v\nout: %s", err, out)
+	}
+	if _, err := runRootWith(t, "--nibs-path", nibsPath, "set", "tnib-b005", "--title", "Unblocked"); err != nil {
+		t.Errorf("a write to the same member after the rerun = %v, want it accepted: the clause says \"until that rerun\"", err)
 	}
 }

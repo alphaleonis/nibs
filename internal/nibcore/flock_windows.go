@@ -40,20 +40,22 @@ func acquireFileLock(path string) (func() error, error) {
 	}, nil
 }
 
-// acquireFileLockShared and acquireFileLockExclusiveNB mirror the unix pair (see
-// servelock.go). LOCKFILE_FAIL_IMMEDIATELY makes both non-blocking; omitting
+// acquireFileLockTry and acquireFileLockShared mirror the unix pair (see
+// flock_unix.go). LOCKFILE_FAIL_IMMEDIATELY makes both non-blocking; omitting
 // LOCKFILE_EXCLUSIVE_LOCK is what makes a lock shared.
 //
 // [Unverified] on Windows — not testable on this machine. ERROR_LOCK_VIOLATION is
 // what LockFileEx documents for a lock it declined to wait for, and it is mapped
-// to ErrStoreServed so the caller reports "stop the other process" rather than a
-// filesystem failure.
-func acquireFileLockShared(path string) (func() error, error) {
-	return acquireFileLockNB(path, windows.LOCKFILE_FAIL_IMMEDIATELY)
+// to errLockHeld so a caller reports "another holder" rather than a filesystem
+// failure. The cancellable wait polls this, so a build where that mapping is
+// wrong refuses an area edit instead of waiting for the lock — it does not hang.
+func acquireFileLockTry(path string) (func() error, error) {
+	return acquireFileLockNB(path, windows.LOCKFILE_FAIL_IMMEDIATELY|windows.LOCKFILE_EXCLUSIVE_LOCK)
 }
 
-func acquireFileLockExclusiveNB(path string) (func() error, error) {
-	return acquireFileLockNB(path, windows.LOCKFILE_FAIL_IMMEDIATELY|windows.LOCKFILE_EXCLUSIVE_LOCK)
+func acquireFileLockShared(path string) (func() error, error) {
+	release, err := acquireFileLockNB(path, windows.LOCKFILE_FAIL_IMMEDIATELY)
+	return release, asStoreServed(err)
 }
 
 func acquireFileLockNB(path string, flags uint32) (func() error, error) {
@@ -66,7 +68,7 @@ func acquireFileLockNB(path string, flags uint32) (func() error, error) {
 	if err := windows.LockFileEx(handle, flags, 0, 0xFFFFFFFF, 0xFFFFFFFF, overlapped); err != nil {
 		_ = f.Close()
 		if errors.Is(err, windows.ERROR_LOCK_VIOLATION) {
-			return nil, ErrStoreServed
+			return nil, errLockHeld
 		}
 		return nil, fmt.Errorf("acquiring lock: %w", err)
 	}

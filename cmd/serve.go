@@ -462,7 +462,7 @@ func newGraphQLHandler(app *App, wsPingPong time.Duration) http.Handler {
 	srv.AddTransport(transport.Websocket{
 		PingPongInterval: wsPingPong,
 	})
-	srv.SetErrorPresenter(etagErrorPresenter)
+	srv.SetErrorPresenter(servedErrorPresenter(app.Core.Root(), app.Core.LockDir()))
 	srv.AroundOperations(recursionBoundAroundOperations(recursiveTypeNames(es.Schema())))
 	srv.AroundOperations(requestCacheAroundOperations)
 	srv.AroundOperations(queueInversionAroundOperations)
@@ -470,9 +470,10 @@ func newGraphQLHandler(app *App, wsPingPong time.Duration) http.Handler {
 	return srv
 }
 
-// etagErrorPresenter is the gqlgen error presenter that attaches a stable,
-// machine-readable extensions.code to the failures the web client must route
-// structurally rather than by prose:
+// etagErrorPresenter is the code-tagging half of the presenter `nibs serve`
+// installs (servedErrorPresenter wraps it and scrubs the message). It attaches a
+// stable, machine-readable extensions.code to the failures the web client must
+// route structurally rather than by prose:
 //
 //   - "ETAG_MISMATCH" on ONLY the typed *nibcore.ETagMismatchError — the
 //     reconcilable optimistic-concurrency conflict the web client routes into
