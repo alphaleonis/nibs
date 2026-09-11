@@ -62,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`nibs config set-prefix` renames each nib through an atomic write**, instead of a shared temp name with no fsync.
 - **A backtick in a config value can no longer break out of the code span a refusal renders it in**, where the rest of the value became prose addressed to the reader carrying a command of its own choosing.
 - **A config file that is not a regular file is refused**, instead of a named pipe or socket at that path blocking the command indefinitely.
+- **A served GraphQL error no longer names the store's path** — a broken store disclosed its absolute location, and the operating-system username in it, to any client `nibs serve` answers; the CLI still names the file an operator needs to repair it.
 - **The web UI now notices a live connection that dies without closing**, such as going offline or waking from sleep, instead of holding an apparently-healthy socket and serving a stale view indefinitely.
 - **The server now notices a live-updates client that vanishes without closing** and reclaims its connection, instead of holding it until the OS TCP timeout.
 - **Bulk status and priority changes from the web table now carry the same concurrency guard as the detail panel**, instead of silently overwriting a nib that changed after the table loaded it.
