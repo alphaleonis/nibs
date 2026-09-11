@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"os"
 	"path/filepath"
 )
 
@@ -45,7 +44,7 @@ func serveLockPath(root string) string {
 		abs = root
 	}
 	sum := sha256.Sum256([]byte(abs))
-	return filepath.Join(os.TempDir(), "nibs-serve-"+hex.EncodeToString(sum[:8])+".lock")
+	return filepath.Join(lockDir(), "nibs-serve-"+hex.EncodeToString(sum[:8])+".lock")
 }
 
 // ServeLock is proof of holding one side of the serve interlock, released via

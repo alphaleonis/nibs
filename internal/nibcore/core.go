@@ -412,6 +412,16 @@ func (c *Core) Root() string {
 	return c.root
 }
 
+// LockDir is the directory holding the lock files this store's mutations open.
+// It is exported for `nibs serve`, whose error scrub has to know where the lock
+// lives to keep a failure to open it from naming that directory (see
+// newStorePathScrubber in cmd/serve_pathscrub.go). Deriving it from c.lockPath
+// rather than asking the OS for its temp directory a second time is what stops
+// the scrub from pointing somewhere the lock is not.
+func (c *Core) LockDir() string {
+	return filepath.Dir(c.lockPath)
+}
+
 // Config returns the configuration.
 func (c *Core) Config() *config.Config {
 	return c.config

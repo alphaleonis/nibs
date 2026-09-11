@@ -27,7 +27,14 @@ func writeLockPath(root string) string {
 		abs = root
 	}
 	sum := sha256.Sum256([]byte(abs))
-	return filepath.Join(os.TempDir(), "nibs-write-"+hex.EncodeToString(sum[:8])+".lock")
+	return filepath.Join(lockDir(), "nibs-write-"+hex.EncodeToString(sum[:8])+".lock")
+}
+
+// lockDir is the directory every nibs lock file goes in — this one and
+// servelock.go's. Both derive from it, which is what lets Core.LockDir answer
+// for the whole set from the one path a Core records.
+func lockDir() string {
+	return os.TempDir()
 }
 
 // StoreLock is proof of holding the store-wide advisory write lock returned

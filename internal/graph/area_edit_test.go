@@ -1039,9 +1039,9 @@ func TestAreaMutationReportsAReplacedSymlink(t *testing.T) {
 // was clean.
 //
 // What it does NOT cover is an IO failure's Cause: an operating-system error
-// embeds the path it failed on, and redacting that is a separate boundary from
-// this one. Those messages are reachable only from a store that is already
-// broken.
+// embeds the path it failed on, and that path is removed at the served boundary
+// rather than here, so the in-process CLI keeps it (servedErrorPresenter in
+// cmd/serve_pathscrub.go).
 func TestAreaMutationsNameNoPath(t *testing.T) {
 	unassign := true
 	tests := []struct {

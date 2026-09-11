@@ -34,9 +34,11 @@ import (
 // no business knowing where the store sits on disk — an absolute path there
 // discloses the operating-system username and the project layout.
 //
-// The exception is an IO failure's Cause: an operating-system error embeds the
-// path it failed on, and that is reachable only from a store that is already
-// broken. Redacting it is a boundary of its own and is not this one.
+// The exception is an IO failure's Cause, which embeds the path the operating
+// system failed on. That one is answered at the SERVED boundary instead — see
+// servedErrorPresenter in cmd/serve_pathscrub.go — because `nibs query` runs
+// this same package in-process and an operator repairing a broken store needs
+// the path.
 
 // renameAreaImpl renames the declared node at input.Path, cascading to every nib
 // assigned at or below it.
