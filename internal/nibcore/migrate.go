@@ -8,12 +8,10 @@ import (
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
-// requireStoreLock validates a migration method's proof-of-lock token: it
-// must be non-nil, not yet released, and acquired for THIS core's store. Each
-// check makes the claim the token stands for true — nil never held the lock,
-// a released token no longer holds it, and a token for another store holds
-// the wrong one. Any of the three passing would run the method's whole-store
-// read-modify-write with no cross-process exclusion, silently.
+// requireStoreLock validates a migration method's proof-of-lock token: it must
+// be non-nil, not yet released, and acquired for THIS core's store. Without all
+// three, the method's whole-store read-modify-write runs with no cross-process
+// exclusion.
 func (c *Core) requireStoreLock(method string, lock *StoreLock) error {
 	if lock == nil {
 		return fmt.Errorf("%s requires the store-wide lock: pass the *StoreLock from AcquireStoreLock", method)
@@ -32,30 +30,22 @@ func (c *Core) requireStoreLock(method string, lock *StoreLock) error {
 // its own Blocking field is cleared, and its Version is stamped 1 — then every
 // changed nib is persisted. Returns the number of v0 nibs converted.
 //
-// The conversion is explicit rather than silent: it runs only under
-// `nibs migrate`, on a store that already loaded cleanly (the command gates on
-// LoadDiagnostics first), and it is FAIL-LOUD — the first persistence failure
-// aborts with an error rather than logging and continuing.
+// Fail-loud: the first persistence failure aborts with an error.
 //
-// Persistence is TWO-PHASE, and the split is what makes a crashed run
-// resumable. The version stamp is the step's per-file completion record (v0
-// detection keys on it), while the transferred edge lives in a DIFFERENT file
-// — so the invariant is: no source may stamp v1 before every edge it is
-// transferring has been persisted on its target. Phase 1 writes the targets'
-// additive blocked_by transfers (targets keep whatever version/blocking they
-// had — a v0 target stays detectably v0); phase 2 rewrites the sources
-// (blocking cleared, version stamped). A crash anywhere leaves every
-// not-yet-stamped source still v0, and the re-run redoes its transfers
-// (AddBlockedBy dedups) before stamping — including chains and cycles of
-// v0→v0 edges, where a target is a source too. A single sorted-id pass leaves
-// a real crash window: a source sorting before its target persists the stamp
-// before the edge, and the re-run then reports the store fully migrated with
-// the edge gone.
+// Persistence is TWO-PHASE so a crashed run is resumable. The version stamp is
+// the step's per-file completion record (v0 detection keys on it), while the
+// transferred edge lives in a DIFFERENT file — so the invariant is: no source
+// may stamp v1 before every edge it is transferring has been persisted on its
+// target. Phase 1 writes the targets' additive blocked_by transfers (targets
+// keep whatever version/blocking they had — a v0 target stays detectably v0);
+// phase 2 rewrites the sources (blocking cleared, version stamped). A crash
+// anywhere leaves every not-yet-stamped source still v0, and the re-run redoes
+// its transfers (AddBlockedBy dedups) before stamping — including chains and
+// cycles of v0→v0 edges, where a target is a source too.
 //
-// Blocking targets are looked up by exact id: Load's canonicalization pass has
+// Blocking targets are looked up by exact id: Load's canonicalization has
 // already resolved short-form spellings, so a target that still resolves to
-// nothing genuinely does not exist — the edge is dropped with a warning, as a
-// data repair the migration cannot invent an answer for.
+// nothing does not exist.
 //
 // CONCURRENCY: lock is PROOF-OF-LOCK — the *StoreLock the caller received from
 // AcquireStoreLock, held for the whole run. The method validates the proof (see
@@ -74,8 +64,7 @@ func (c *Core) MigrateV0ToV1(lock *StoreLock) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Deterministic id order so warnings and any failure point are stable from
-	// run to run (map iteration order is not).
+	// Sorted so warnings and any failure point are stable across runs.
 	v0IDs := make([]string, 0)
 	for id, b := range c.nibs {
 		if b.Version < 1 {
@@ -96,8 +85,7 @@ func (c *Core) MigrateV0ToV1(lock *StoreLock) (int, error) {
 	}
 
 	// Phase 1: transfer every edge onto its target and persist ONLY those
-	// additive changes. Sources are read but not modified, so a crash in this
-	// phase leaves every source detectably v0.
+	// additive changes, leaving every source detectably v0.
 	targets := make(map[string]*nib.Nib)
 	for _, id := range v0IDs {
 		for _, targetID := range c.nibs[id].Blocking {
@@ -135,23 +123,19 @@ func (c *Core) MigrateV0ToV1(lock *StoreLock) (int, error) {
 // preserves its relative rank — do not "tidy" this to "normal", which would
 // silently re-rank legacy nibs upward.
 //
-// It deliberately does NOT stamp version: 1 on a still-v0 file it touches.
-// The version stamp is MigrateV0ToV1's completion record: stamping from here
-// would mark a v0 file's `blocking:` edges migrated without transferring them,
-// and — because v0 detection keys on the version — nothing would ever return
-// to finish the job (the edge silently vanishes from every view). Leaving the
-// file at v0 is safe: Render emits the version verbatim, so the rewritten file
-// carries `version: 0` and stays detectably v0 (absent or 0 both mean legacy),
-// letting the v0 step complete it on the same or any later run. See
+// It does NOT stamp version: 1 on a still-v0 file it touches. The version
+// stamp is MigrateV0ToV1's completion record: stamping from here would mark a
+// v0 file's `blocking:` edges migrated without transferring them, and — because
+// v0 detection keys on the version — nothing would ever return to finish the
+// job. Render emits the version verbatim, so the rewritten file carries
+// `version: 0` and stays detectably v0 (absent or 0 both mean legacy). See
 // migrationSteps in cmd/migrate.go for the chain-wide statement of this
 // invariant.
 //
 // This is the priority-deferred migration step's engine, sharing
-// MigrateV0ToV1's contract: fail-loud persistence (first error aborts),
-// idempotent per nib (a rewritten file no longer matches), copy-on-write
-// staging, and NO per-operation write lock — lock is the caller's
-// proof-of-lock token from AcquireStoreLock (see MigrateV0ToV1's concurrency
-// note for why the precondition is a parameter).
+// MigrateV0ToV1's contract: fail-loud persistence, copy-on-write staging, and
+// NO per-operation write lock — lock is the caller's proof-of-lock token from
+// AcquireStoreLock (see MigrateV0ToV1's concurrency note).
 func (c *Core) NormalizeLegacyPriorities(lock *StoreLock) (int, error) {
 	if err := c.requireStoreLock("NormalizeLegacyPriorities", lock); err != nil {
 		return 0, err
@@ -180,37 +164,30 @@ func (c *Core) NormalizeLegacyPriorities(lock *StoreLock) (int, error) {
 // MigrateV1ToV2 converts every v1 nib in the store to v2: a nib whose resolved
 // direct parent is milestone-typed moves onto the assignment axis — Milestone
 // set to that parent's id, MilestoneOrder to the nib's Order (the milestone's
-// child set WAS its queue, so the sibling position carries over) — with the
-// milestone parent and its order cleared, and every converted nib's Version
-// stamped 2. Returns the number of v1 nibs converted.
+// child set WAS its queue) — with the milestone parent and its order cleared,
+// and every converted nib's Version stamped 2. Returns the number of v1 nibs
+// converted.
 //
-// A nib already carrying an assignment keeps it (and its MilestoneOrder): the
-// hand-authored field is the newer axis speaking, and inventing a different
-// answer would silently reschedule the nib. The milestone parent is still
-// cleared — the parent axis is decomposition only from v2 on — and the
-// collision is warned about, like the dropped-edge warning in MigrateV0ToV1.
+// A nib already carrying an assignment keeps it and its MilestoneOrder;
+// overwriting would silently reschedule the nib. Its milestone parent is
+// cleared regardless — the parent axis is decomposition only from v2 on.
 //
 // A milestone-typed nib under a milestone parent (an illegal nest) gets no
 // assignment: v1 membership never enqueued the nest, so writing `milestone:`
-// here would invent membership. The illegal parent stays as it is — this
-// migration cannot repair it, and hierarchy is validated only on write
-// paths today (a hierarchy scan in `nibs check` is tracked separately).
+// here would invent membership. The illegal parent is left as it is; `nibs
+// check` reports it.
 //
-// Parents are resolved by exact id against the loaded store, exactly as the
-// membership reads resolve them: Load's canonicalization has already resolved
-// short-form spellings, so a parent that resolves to nothing is no parent and
-// the nib stays on the parent axis as written.
+// Parents are resolved by exact id: Load's canonicalization has already
+// resolved short-form spellings.
 //
-// A still-v0 nib is deliberately left byte-identical: the version stamp is
-// MigrateV0ToV1's completion record (see NormalizeLegacyPriorities for the
-// chain-wide statement), and the chain runs the v0 step first, so by the time
-// this step applies no v0 nib remains.
+// A still-v0 nib is left byte-identical: the version stamp is MigrateV0ToV1's
+// completion record, and the chain runs the v0 step first, so no v0 nib remains
+// by the time this step applies.
 //
 // This is the v2-axes migration step's engine, sharing MigrateV0ToV1's
-// contract: fail-loud persistence (first error aborts), idempotent per nib (a
-// v2 nib no longer matches), copy-on-write staging, and NO per-operation write
-// lock — lock is the caller's proof-of-lock token from AcquireStoreLock (see
-// MigrateV0ToV1's concurrency note for why the precondition is a parameter).
+// contract: fail-loud persistence, copy-on-write staging, and NO per-operation
+// write lock — lock is the caller's proof-of-lock token from AcquireStoreLock
+// (see MigrateV0ToV1's concurrency note).
 func (c *Core) MigrateV1ToV2(lock *StoreLock) (int, error) {
 	if err := c.requireStoreLock("MigrateV1ToV2", lock); err != nil {
 		return 0, err
@@ -219,8 +196,7 @@ func (c *Core) MigrateV1ToV2(lock *StoreLock) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Deterministic id order so warnings and any failure point are stable from
-	// run to run (map iteration order is not).
+	// Sorted so warnings and any failure point are stable across runs.
 	v1IDs := make([]string, 0)
 	for id, b := range c.nibs {
 		if b.Version == 1 {
@@ -241,9 +217,8 @@ func (c *Core) MigrateV1ToV2(lock *StoreLock) (int, error) {
 				cl.Milestone = p.ID
 				cl.MilestoneOrder = b.Order
 			}
-			// Order positioned the nib among the cleared parent's children — a
-			// group it just left — so it is cleared with the parent rather than
-			// left to place the nib among the roots at a meaningless position.
+			// Order positioned the nib among the parent's children, so it is
+			// cleared with the parent.
 			cl.Parent = ""
 			cl.Order = ""
 		}
@@ -260,8 +235,8 @@ func (c *Core) MigrateV1ToV2(lock *StoreLock) (int, error) {
 // persistClonesLocked writes each staged clone to disk in deterministic id
 // order and reinstalls it under c.nibs — the copy-on-write commit shared by
 // the migration methods. Fail-loud: the first write error aborts, naming the
-// nib; already-persisted clones stay installed (correct: memory matches what
-// disk now holds), and a re-run resumes from the files still unconverted.
+// nib; already-persisted clones stay installed, so memory matches what disk now
+// holds and a re-run resumes from the files still unconverted.
 // Must be called with c.mu held.
 func (c *Core) persistClonesLocked(dirty map[string]*nib.Nib, what string) error {
 	ids := make([]string, 0, len(dirty))

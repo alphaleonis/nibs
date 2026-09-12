@@ -5,17 +5,15 @@ import (
 )
 
 // DetectCycleInMap checks if adding a link from fromID to toID would create a cycle.
-// Checks for blocked_by and parent link types.
 // Returns the cycle path if a cycle would be created, nil otherwise.
 // This is a pure function that operates on a map of nibs without locking.
 func DetectCycleInMap(nibs map[string]*nib.Nib, fromID, linkType, toID string) []string {
-	// Only check hierarchical link types
 	if linkType != "blocked_by" && linkType != "parent" {
 		return nil
 	}
 
-	// Adding edge: fromID -> toID
-	// Check if there's already a path from toID back to fromID
+	// Adding fromID -> toID closes a cycle if a path from toID back to fromID
+	// already exists.
 	visited := make(map[string]bool)
 	path := []string{fromID, toID}
 
@@ -47,7 +45,6 @@ func findPathToTargetInMap(nibs map[string]*nib.Nib, current, target, linkType s
 		return nil
 	}
 
-	// Get targets based on link type
 	var targets []string
 	switch linkType {
 	case "parent":
@@ -74,14 +71,13 @@ func findPathToTargetInMap(nibs map[string]*nib.Nib, current, target, linkType s
 func findIncomingLinksInMap(nibs map[string]*nib.Nib, targetID string) []nib.IncomingLink {
 	var result []nib.IncomingLink
 	for _, b := range nibs {
-		// Check parent link
 		if b.Parent == targetID {
 			result = append(result, nib.IncomingLink{
 				FromNib:  b,
 				LinkType: "parent",
 			})
 		}
-		// Check blocked_by links (if A has blocked_by B, then B links to A)
+		// A has blocked_by B, so B links to A.
 		for _, blocker := range b.BlockedBy {
 			if blocker == targetID {
 				result = append(result, nib.IncomingLink{
@@ -103,39 +99,31 @@ func (c *Core) FindIncomingLinks(targetID string) []nib.IncomingLink {
 }
 
 // releasesDependentsPredicate returns the "does this blocker still count" test
-// the pure map functions need. Deliberately not the closed-status test: a
-// deferred nib is closed but still blocks, because the set-aside work is coming
-// back and its dependency is unsatisfied. The definition lives in config
-// (Config.StatusReleasesDependents) and is threaded in rather than duplicated
-// here, so nibcore has no status list of its own.
+// the pure map functions need. Not the closed-status test: a deferred nib is
+// closed and still blocks.
 //
 // c.config may be nil — cmd/init.go builds such a Core, as do several tests in
 // this package. Binding and calling StatusReleasesDependents on a nil *Config
 // is safe because it answers from the package-level config.DefaultStatuses and
-// never dereferences its receiver; TestCoreReleasesDependentsPredicate/
-// config-less pins that. If status data ever moves onto the Config value, this
-// becomes a nil dereference and New should normalize a nil config instead.
+// never dereferences its receiver. If status data moves onto the Config value,
+// this becomes a nil dereference and New must normalize a nil config instead.
 func (c *Core) releasesDependentsPredicate() func(string) bool {
 	return c.config.StatusReleasesDependents
 }
 
-// closedStatusPredicate returns the "is this nib finished" test, the other of
-// the two role questions a pure map function can need. Its nil-config safety is
-// releasesDependentsPredicate's, for the same reason: Config.IsClosedStatus
-// answers from the package-level config.DefaultStatuses and never dereferences
-// its receiver.
+// closedStatusPredicate returns the "is this nib finished" test. A nil c.config
+// is safe for the reason releasesDependentsPredicate gives.
 //
-// The two are never interchangeable — deferred is closed and still blocks — so
-// a caller needing both takes both rather than deriving one from the other.
+// The two predicates are not interchangeable — deferred is closed and still
+// blocks — so take both when both are needed.
 func (c *Core) closedStatusPredicate() func(string) bool {
 	return c.config.IsClosedStatus
 }
 
 // isBlockedInMap returns true if the nib with the given ID is blocked by any
-// nib whose status has not released its dependents. releasesDependents is that
-// predicate, and configPrefix the id-resolution prefix, both supplied by the
-// caller because this is a pure function that operates on a map of nibs without
-// locking and so cannot reach the project config itself.
+// nib whose status has not released its dependents. This is a pure function that
+// operates on a map of nibs without locking, so releasesDependents and
+// configPrefix come from the caller.
 func isBlockedInMap(nibs map[string]*nib.Nib, nibID, configPrefix string, releasesDependents func(string) bool) bool {
 	return len(findActiveBlockersInMap(nibs, nibID, configPrefix, releasesDependents)) > 0
 }
@@ -150,20 +138,23 @@ func (c *Core) IsBlocked(nibID string) bool {
 }
 
 // isBlockingInMap returns true if the nib with the given ID is actively blocking
-// any nib. The nib itself must not have released its dependents to be
-// considered actively blocking, and a dependent that has been released no
-// longer counts as blocked — so both sides use the same predicate and the two
-// directions of an edge always agree. Computed from other nibs' blockedBy
-// fields. releasesDependents is supplied by the caller because this is a pure
-// function that operates on a map of nibs without locking and so cannot reach
-// the project config itself.
+// any nib: neither it nor the dependent may be in a status that releases
+// dependents. Computed from other nibs' blockedBy fields, whose entries are
+// matched to nibID EXACTLY.
+//
+// It is not the mirror of isBlockedInMap, which never consults the subject's own
+// status and resolves short-form blocker ids through normalizeIDInMap. A
+// released dependent, or a short-form link no canonicalization sweep has
+// reached, makes the two directions of one edge disagree.
+//
+// This is a pure function that operates on a map of nibs without locking, so
+// releasesDependents comes from the caller.
 func isBlockingInMap(nibs map[string]*nib.Nib, nibID string, releasesDependents func(string) bool) bool {
 	b, ok := nibs[nibID]
 	if !ok || releasesDependents(b.Status) {
 		return false
 	}
 
-	// Check other nibs that list this nib in their blocked_by
 	for _, other := range nibs {
 		if releasesDependents(other.Status) {
 			continue
@@ -187,33 +178,17 @@ func (c *Core) IsBlocking(nibID string) bool {
 	return isBlockingInMap(c.nibs, nibID, c.releasesDependentsPredicate())
 }
 
-// findActiveBlockersInMap returns all nibs that are actively blocking the given
-// nib. A blocker is "active" unless its status released its dependents, per the
-// caller-supplied predicate — this is a pure function that operates on a map of
-// nibs without locking and so cannot reach the project config itself. Note this
-// is narrower than "not closed": a deferred blocker is closed and still active.
-// Single-side storage: only reads from the nib's blockedBy field.
+// findActiveBlockersInMap returns the nibs actively blocking the given nib:
+// those its blockedBy names whose status has not released its dependents, per
+// the caller-supplied predicate. Single-side storage — only the nib's blockedBy
+// field is read. This is a pure function that operates on a map of nibs without
+// locking, so releasesDependents and configPrefix come from the caller.
 //
-// Each blockedBy entry is resolved through normalizeIDInMap, so a hand-edited
-// nib naming its blocker by short id finds it — the same exact-then-prefixed
-// rule Core.Get applies, which is how the projected `ready` field reaches its
-// blockers. configPrefix is threaded in for the same reason releasesDependents
-// is: the function cannot reach the config. Resolution stays two map lookups at
-// worst plus the one that fetches the blocker, and never scans.
-//
-// The loader now canonicalizes stored ids (canonicalize.go), so in practice
-// every entry arriving here is already full and the resolution is a single
-// exact hit. It is kept because this is a pure map function with no such
-// guarantee of its own: a caller assembling a map by hand, or Core.Create
-// invoked directly with a short id, still reaches it.
-//
-// nibID itself is looked up exactly, not normalized: it names the subject, and
-// every production call arrives through Core.IsBlocked carrying an id read off
-// a stored nib (the graph blocked-filter predicate and the TUI row builders).
-// The exported Core.FindActiveBlockers reaches here too and normalizes no more
-// than IsBlocked does; it simply has no production caller today. Either entry
-// point answers "not blocked" for a short subject id, so a caller holding one
-// should resolve it with Core.NormalizeID first.
+// Each blockedBy entry is resolved through normalizeIDInMap (the exact-then-
+// prefixed rule Core.Get applies), so a short-form entry in a map no sweep has
+// canonicalized still finds its blocker. nibID itself is looked up exactly,
+// never normalized: this and Core.IsBlocked both answer "not blocked" for a
+// short subject id, so resolve one through Core.NormalizeID first.
 func findActiveBlockersInMap(nibs map[string]*nib.Nib, nibID, configPrefix string, releasesDependents func(string) bool) []*nib.Nib {
 	b, ok := nibs[nibID]
 	if !ok {

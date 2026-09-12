@@ -10,12 +10,10 @@ import (
 // becomes O(matches) instead of O(N × body-length). Not safe for concurrent
 // use; callers hold Core.mu.
 //
-// The index stores tokens as the raw text after the `#` sigil, not as
-// resolved target IDs. That keeps late-bound targets working naturally:
-// a source may mention a token that does not resolve to any nib at index
-// time; when such a nib is later created, InboundSources for its ID (or
-// short form) simply starts returning the source — no reconciliation pass
-// is needed.
+// Tokens are stored as the raw text after the `#` sigil, never as resolved
+// target IDs: a token that resolves to no nib at index time is still recorded,
+// and InboundSources returns its source as soon as that nib is created — no
+// reconciliation pass.
 type mentionIndex struct {
 	// outbound maps source ID -> deduped raw mention tokens in body order.
 	outbound map[string][]string
@@ -30,13 +28,9 @@ func newMentionIndex() *mentionIndex {
 	}
 }
 
-// Add parses body via nib.ExtractMentionTokens and records the source's
-// mention tokens. If a prior record exists for the source, it is cleared
-// first — callers that only want the "additive" semantics should check
-// outbound membership themselves before calling.
+// Add records the mention tokens in body for sourceID, replacing any record it
+// already had.
 func (m *mentionIndex) Add(sourceID, body string) {
-	// Defensive: if a prior entry existed, drop it first so inbound stays
-	// consistent.
 	if _, exists := m.outbound[sourceID]; exists {
 		m.Remove(sourceID)
 	}
@@ -76,15 +70,13 @@ func (m *mentionIndex) Remove(sourceID string) {
 	}
 }
 
-// Replace is Remove followed by Add. Callers don't need to track whether
-// the source already existed.
+// Replace is Remove followed by Add.
 func (m *mentionIndex) Replace(sourceID, body string) {
 	m.Remove(sourceID)
 	m.Add(sourceID, body)
 }
 
 // Rebuild clears the index and re-populates it from the given nib map.
-// Reads only the Body field; no Core dependency.
 func (m *mentionIndex) Rebuild(nibs map[string]*nib.Nib) {
 	m.outbound = make(map[string][]string, len(nibs))
 	m.inbound = make(map[string]map[string]struct{})
@@ -99,7 +91,7 @@ func (m *mentionIndex) Rebuild(nibs map[string]*nib.Nib) {
 // OutboundTokens returns the deduped mention tokens recorded for sourceID
 // in body order. Returns nil when the source has no mentions (or is unknown).
 // The returned slice is a fresh copy — callers may retain or modify it
-// freely without corrupting the index. Symmetric with InboundSources.
+// freely without corrupting the index.
 func (m *mentionIndex) OutboundTokens(sourceID string) []string {
 	return append([]string(nil), m.outbound[sourceID]...)
 }

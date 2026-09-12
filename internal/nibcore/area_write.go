@@ -10,22 +10,14 @@ import (
 // rewriteAreaAssignmentsLocked rewrites the `area:` of every nib for which
 // rewrite returns a replacement, and returns the ids it wrote, in id order.
 //
-// It is the cascade half of a rename and a retire: renaming a declared node
-// moves the paths of every nib assigned to it or to anything below it, and
-// retiring one has to dispose of its members before the declaration can go. Both
-// are bulk writes, so they go through one fsutil.DirSyncBatch — one directory
-// flush per DIRECTORY, and deferred, because an aborted cascade has already
-// committed every rename before the failure and still owes those entries a
-// flush.
+// It is the cascade half of a rename and a retire.
 //
 // THE WRITE IS THE NON-CREATING ONE (updateOnDiskDeferDirSync), and this is the
 // statement RemoveLinksTo's identical sweep defers to. Every target is a nib
-// already on disk, so a path the sweep cannot find is a path that went stale —
-// and a creating write answers that by writing the nib back under its pre-rename
-// name, leaving the store one file heavier under a prefix its config no longer
-// declares. The write lock is what keeps a stale path from arising; the refusal
-// is what makes a caller that lost it fail loudly instead of duplicating the
-// store.
+// already on disk, so a path this sweep cannot find is stale and the write
+// fails. A creating write would answer it by writing the nib back under its
+// pre-rename name, leaving the store one file heavier under a prefix its config
+// no longer declares.
 //
 // CONCURRENCY: the caller holds BOTH c.mu and the store's cross-process write
 // lock, in that order, for the whole verb — editArea is its only production
@@ -35,26 +27,23 @@ import (
 // per-descriptor (see flock.go).
 //
 // The span matters, not just the exclusion. The config write that follows the
-// cascade is a read-modify-write of the whole `areas:` block, and the two have
-// to be inside one critical section or a concurrent edit of another node is
-// lost — last writer wins, both cascades persist, both callers report success.
-// That is the state the members are then permanently write-refused in, and
-// nothing prints a reason to rerun.
+// cascade is a read-modify-write of the whole `areas:` block; split the two
+// across separate critical sections and a concurrent edit of another node is
+// lost — last writer wins, both cascades persist, both callers report success,
+// and the members stay write-refused with nothing printing a reason to rerun.
 //
-// IT DOES NOT GO THROUGH Update, and cannot. Update re-checks the `area:` the
-// nib will carry against the declared vocabulary (ValidateArea), and a rename
-// has no vocabulary that declares both ends: write the config first and every
-// member's stored value is undeclared, write the members first and their new one
-// is. So this path validates nothing about areas and the CALLER owes the check —
-// it holds the declared tree on both sides of the edit, which is the only place
-// that judgment can be made.
+// IT DOES NOT GO THROUGH Update, and cannot: Update re-checks the `area:` the
+// nib will carry against the declared vocabulary, and no vocabulary declares
+// both ends of a rename (see Core.ValidateArea). So this path validates nothing
+// about areas; the caller makes that judgment, holding the declared tree on both
+// sides of the edit.
 //
-// ORDER IS BY ID, and it is a contract rather than a tidiness: the caller's
-// partial-failure message names the nib that refused, and a loop that stopped
-// wherever a Go map happened to iterate would name a different one on every run.
+// ORDER IS BY ID, and it is a contract: the caller's partial-failure message
+// names the nib that refused, and a loop stopping wherever a Go map happened to
+// iterate would name a different one on every run.
 //
-// The rewrite function is called UNDER c.mu with one nib's stored area, and must
-// return (new value, true) to claim it — the empty string being the legal value
+// The rewrite function is called UNDER c.mu with one nib's stored area, and
+// returns (new value, true) to claim it — the empty string being the legal value
 // that clears an assignment. It must not call back into Core, which would
 // deadlock, and it is asked only about nibs that carry an area at all.
 //

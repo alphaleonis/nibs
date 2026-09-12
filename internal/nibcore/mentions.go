@@ -1,10 +1,9 @@
 package nibcore
 
 // The token-keyed reverse-mention index that backs Core.FindMentions /
-// Core.FindMentionedBy lives in mention_index.go. The pure functions
-// FindMentionsInMap / FindMentionedByInMap below remain as oracles — they
-// operate on a map without any index, so they can be used to differentially
-// verify the indexed Core methods in tests.
+// Core.FindMentionedBy lives in mention_index.go. FindMentionsInMap /
+// FindMentionedByInMap below answer the same questions from a map with no index,
+// and the tests use them as oracles to differentially verify the Core methods.
 
 import (
 	"sort"
@@ -13,36 +12,18 @@ import (
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
-// normalizeIDInMap is the single source of truth for the exact-match →
-// prefix-prepended ID resolution rule shared by Core.NormalizeID,
-// Core.normalizeIDForLookupLocked, and the mention-resolution call sites in
-// FindMentionsInMap / FindMentionedByInMap.
-//
-// Returns the full ID and true if the id resolves via either an exact map
-// key or by prepending configPrefix; otherwise ("", false).
+// normalizeIDInMap resolves an id by exact map key first, then by prepending
+// configPrefix. Returns the full ID and true on either hit, otherwise
+// ("", false). Resolve short ids through this, not by prepending by hand.
 //
 // Pure function operating on the given map without locking. Callers passing
 // a Core.nibs map must hold Core.mu.RLock for the duration of the call.
 //
-// nib.NewID always prepends the configured prefix, so nothing this program
-// CREATES can put a bare token and its prefixed form in the map at once. The
-// loader can: nib.ParseFilename derives a bare id from any filename that does
-// not carry the prefix, so a hand-added or imported `e1.md` sitting next to
-// `nibs-e1.md` makes the ordering below user-visible — `e1` names the bare nib,
-// and the prefixed twin is reachable only by its full id.
-//
-// That makes what an id resolves to a property of the current key set. The store
-// copes by re-resolving stored link ids on every removal (Core.Delete and the
-// watcher's removal branch) and on every id arriving through the watcher — see
-// canonicalize.go, in particular removalCanRebindLinksLocked for the removal
-// that unmasks a prefixed twin.
-//
-// Core.Create is the gap: it inserts a key without re-resolving, and because it
-// inserts BEFORE the watcher sees the file, the watcher's arrival sweep does not
-// fire for it either. A dangling link whose prefixed form equals a newly created
-// id therefore keeps its bare spelling while this function answers with the new
-// nib. Reachable only when a generated id collides that way, so it is recorded
-// rather than closed — do not read the coverage above as universal.
+// A bare token and its prefixed twin can both be map keys: nib.NewID always
+// prepends the prefix, but nib.ParseFilename derives a bare id from a filename
+// carrying none, so a hand-added `e1.md` can sit beside `nibs-e1.md`. The exact
+// match wins, which makes what an id resolves to a property of the current key
+// set (see canonicalize.go).
 func normalizeIDInMap(nibs map[string]*nib.Nib, id, configPrefix string) (string, bool) {
 	if _, ok := nibs[id]; ok {
 		return id, true
@@ -120,8 +101,7 @@ func FindMentionedByInMap(nibs map[string]*nib.Nib, targetID, configPrefix strin
 			}
 		}
 	}
-	// Map iteration order is randomized — sort by ID so callers see a
-	// stable, deterministic result across repeated invocations.
+	// Map iteration order is randomized.
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
@@ -131,9 +111,8 @@ func FindMentionedByInMap(nibs map[string]*nib.Nib, targetID, configPrefix strin
 // and preserve first-appearance order. Short IDs are normalized via the
 // same exact-match-then-prefix-prepended rule as Core.Get / Core.NormalizeID.
 //
-// The outbound list of raw mention tokens is served from the reverse-mention
-// index (populated at Load and maintained by Create/Update/Delete + the
-// watcher), so no body re-parse happens here.
+// The outbound tokens come from the reverse-mention index, so no body is
+// re-parsed here.
 func (c *Core) FindMentions(fromID string) []*nib.Nib {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -166,10 +145,7 @@ func (c *Core) FindMentions(fromID string) []*nib.Nib {
 // resolving to targetID. Results are deduplicated, exclude self-references,
 // and are returned sorted by ID for deterministic ordering.
 //
-// Served from the reverse-mention index: for each token form that can
-// resolve to the target (full ID; plus the short form if the full ID
-// carries the configured prefix), we union the inbound source sets instead
-// of re-parsing every body in the store.
+// Served from the reverse-mention index, so no body is re-parsed here.
 func (c *Core) FindMentionedBy(targetID string) []*nib.Nib {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -177,9 +153,8 @@ func (c *Core) FindMentionedBy(targetID string) []*nib.Nib {
 	if !ok {
 		return nil
 	}
-	// A source's body might carry either the full-form token ("nibs-abc")
-	// or the short-form token ("abc") — both resolve to the same target,
-	// so the inbound lookup must union both sets.
+	// A body may carry the full-form token ("nibs-abc") or the short form
+	// ("abc"); both resolve to the target, so union both inbound sets.
 	tokens := []string{fullID}
 	prefix := c.configPrefix()
 	if prefix != "" && strings.HasPrefix(fullID, prefix) {
@@ -217,9 +192,7 @@ func (c *Core) FindMentionedBy(targetID string) []*nib.Nib {
 }
 
 // normalizeIDForLookupLocked mirrors Core.NormalizeID but assumes the caller
-// already holds c.mu. Returns (fullID, true) if the ID resolves via exact
-// match or prefix prepending, otherwise ("", false). Delegates to the
-// shared normalizeIDInMap helper so resolution logic stays in one place.
+// already holds c.mu.
 func (c *Core) normalizeIDForLookupLocked(id string) (string, bool) {
 	return normalizeIDInMap(c.nibs, id, c.configPrefix())
 }

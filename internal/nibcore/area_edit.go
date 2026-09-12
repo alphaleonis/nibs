@@ -13,34 +13,24 @@ import (
 // The area-vocabulary verbs: declaring an area, renaming one, and retiring one
 // together with the nibs assigned to it.
 //
-// They live HERE, whole, rather than in the CLI and the GraphQL resolver,
-// because each is a critical section that spans both of this store's locks and
-// there is exactly one order they may be taken in. acquireWriteLock states it:
-// the lock order is always c.mu then the cross-process file lock. A surface that
-// took the file lock first and then reached back into Core for the vocabulary,
-// the member set and the cascade — each of which takes c.mu — inverted that
-// order, and a concurrent Update (c.mu held, parked on the file lock) then
-// deadlocked the process for good: c.mu is never released, so every read wedges
-// too, and the file lock's descriptor is never closed, so every other nibs
-// process on the machine blocks as well.
+// They live HERE, whole: each is a critical section spanning both of this
+// store's locks, and acquireWriteLock states the order canonically — c.mu, then
+// the cross-process file lock. A surface that took the file lock first and then
+// reached back into Core for the vocabulary, the member set or the cascade —
+// each of which takes c.mu — deadlocks against a concurrent Update holding c.mu
+// and parked on the file lock, wedging every reader in this process and every
+// other nibs process on the machine. No area surface touches either lock; keep
+// it that way.
 //
-// Owning the verb is what fixes that BY CONSTRUCTION rather than by convention:
-// no surface touches either lock, so no surface can order them wrongly, and
-// there is no lock-holding obligation left for a proof-of-lock parameter to
-// encode.
-//
-// What the surfaces keep is the wording. Every refusal below carries FIELDS and
-// no prescription: `nibs area rm --unassign` and `unassign: true` are the same
-// refusal spoken to two different readers, and a sentence naming either belongs
-// to the surface that has that reader.
+// Every refusal below carries FIELDS and no prescription: a sentence naming
+// `nibs area rm --unassign` or `unassign: true` belongs to the surface that has
+// that reader.
 
 // AreaDispositionKind is what a retire was told to do with the nibs assigned at
 // or below the area it is retiring.
 //
-// None is a legal answer rather than a missing one — an area nothing is assigned
-// to needs no disposition — and it is a THIRD case, not the absence of a move
-// target. Deriving the wording from a `move bool` made the no-disposition branch
-// describe an unassignment that never ran.
+// None is a THIRD case, not the absence of a move target: an area nothing is
+// assigned to needs no disposition.
 type AreaDispositionKind int
 
 const (
@@ -50,24 +40,18 @@ const (
 )
 
 // AreaDisposition is one retire's disposition together with the target a move
-// names. The zero value is "none", so a caller that was given no disposition
-// passes nothing.
+// names. The zero value is "none", so a caller given no disposition passes
+// nothing.
 //
-// The two are one value because they are mutually exclusive, and a type that
-// cannot express the contradiction is what spares
-// every surface from having to refuse it under the store's write lock. Each
-// surface still refuses its own spelling of the contradiction — Cobra's
-// MarkFlagsMutuallyExclusive, the resolver's own check — before it calls here.
+// Build one with MoveAreaMembersTo or UnassignAreaMembers: RemoveArea writes
+// MoveTo onto every member whatever Kind says, so an unassign carrying a
+// non-empty MoveTo silently moves them instead.
 type AreaDisposition struct {
 	Kind AreaDispositionKind
-	// MoveTo is the area a move reassigns members to. It is meaningful only for
-	// AreaDispositionMove, and an unassign's cleared value is "" by the same
-	// token: the empty string IS the legal cleared assignment.
+	// MoveTo is the area a move reassigns members to; "" clears the assignment.
 	MoveTo string
 }
 
-// MoveAreaMembersTo disposes of a retire's members by reassigning them to
-// target; UnassignAreaMembers drops their assignment instead.
 func MoveAreaMembersTo(target string) AreaDisposition {
 	return AreaDisposition{Kind: AreaDispositionMove, MoveTo: target}
 }
@@ -77,40 +61,33 @@ func UnassignAreaMembers() AreaDisposition {
 }
 
 // AreaEditResult is what one completed area edit did, for a surface to report.
-//
-// Areas is the vocabulary the edit WROTE, re-read from disk under the same lock,
-// so a caller answering with it answers with what it just produced rather than
-// with whatever the store happens to hold by the time it renders.
 type AreaEditResult struct {
+	// Areas is the vocabulary the edit WROTE, re-read from disk under the same
+	// lock.
 	Areas *config.Areas
 	// Members is the set the verb acted on, read BEFORE the cascade: after a
-	// partial failure the set has already shrunk, so a count taken then would
-	// understate what the run set out to do.
+	// partial failure the set has already shrunk.
 	Members []string
 	// Written is the ids the cascade actually rewrote, in id order.
 	Written []string
 	// NewPath is the path the renamed node answers to now. Empty for the other
 	// two verbs.
 	NewPath string
-	// DeclaredBelow is how many areas were declared BENEATH a retired node,
-	// which the retire took with it. It counts declarations, not nibs.
+	// DeclaredBelow is how many areas were declared BENEATH a retired node and
+	// went with it. It counts declarations, not nibs.
 	DeclaredBelow int
 	// StaleLinkTarget is set when the areas.yml this edit replaced was a
 	// SYMLINK: the atomic write leaves a regular file in its place, and the old
-	// target still declares the pre-edit vocabulary. Whoever manages that target
-	// will restore it, so a surface that drops this reports success over an edit
-	// that is about to be undone.
+	// target still declares the pre-edit vocabulary. Report it — restoring that
+	// link undoes this edit.
 	StaleLinkTarget string
 }
 
-// AreaPathRole says which of an edit's path arguments a refusal is about. A
-// surface words the refusal from it; nibcore carries no sentence naming a verb.
+// AreaPathRole says which of an edit's path arguments a refusal is about, for a
+// surface to word the refusal from.
 type AreaPathRole int
 
 const (
-	// AreaPathRenamed is the node a rename names, AreaPathRetired the node a
-	// retire names, AreaPathMoveTarget a retire's reassignment target, and
-	// AreaPathParent the declared node a new area is nested under.
 	AreaPathRenamed AreaPathRole = iota
 	AreaPathRetired
 	AreaPathMoveTarget
@@ -118,12 +95,6 @@ const (
 )
 
 // AreaUndeclaredError refuses a path this store's vocabulary does not declare.
-//
-// It carries the vocabulary rather than a rendering of it because the two
-// directions are separate sentences — "must be one of" followed by nothing reads
-// as a bug in nibs, where the real answer is that this project has never
-// declared a vocabulary, which is a config edit and not a different argument —
-// and each surface has its own remedy for the second.
 type AreaUndeclaredError struct {
 	Path  string
 	Role  AreaPathRole
@@ -143,18 +114,10 @@ func (e *AreaUndeclaredError) Error() string {
 // write lock — what another nibs process finishing a retire or a rename while
 // this edit waited for that lock leaves behind.
 //
-// The comparison is made for ONE purpose: to word a refusal. Every decision the
-// verb makes comes from the vocabulary the store declares now, and this only
-// tells a caller whose argument was true when they gave it apart from one who
-// named a path that never existed — so a wrong answer costs a sentence and never
-// a write. StoreRePrefixedError carries its Loaded prefix on the same terms.
-//
-// WHAT "BEFORE" MEANS DIFFERS BY PROCESS, and the surfaces word it accordingly.
-// A one-shot CLI process loads the store once and never reloads it, so the
-// earlier vocabulary is literally the one it read at startup. A serve process
-// reloads on every areas.yml event, so its earlier vocabulary is only "the one
-// this store last read" — a tighter baseline, not the same claim. Nothing here
-// asserts either; the field is the fact, and the sentence is the surface's.
+// Every decision the verb makes comes from the vocabulary the store declares
+// NOW; this only words the refusal. How far back "had loaded" reaches differs by
+// process — a one-shot CLI read it at startup, a serve process re-reads on every
+// areas.yml event — so the sentence is the surface's.
 type AreaRetiredWhileWaitingError struct {
 	Path string
 	Role AreaPathRole
@@ -168,18 +131,11 @@ func (e *AreaRetiredWhileWaitingError) Error() string {
 // AreaVocabularyVanishedError reports an areas.yml that existed when this store
 // was last read and does not exist now.
 //
-// It takes BOTH halves to say the file vanished, and only that shape is refused.
-// Absence is carried in the vocabulary itself rather than re-observed on the
-// path, the same way mintingVocabulary carries it: config.LoadAreas answers a
-// MISSING file with an empty vocabulary and a nil error, so a file that vanished
-// under a waiting edit is indistinguishable from a concurrent retire having
-// taken every node — which is what AreaRetiredWhileWaitingError would then name.
-// A store that never had an areas.yml reaches the same empty vocabulary and is a
-// legitimate shape, so it falls through to AreaUndeclaredError, whose "declares
-// no areas" is both the true cause and the reachable remedy.
+// Both halves of the check are needed — loaded from a file before, not loaded
+// from one now — because config.LoadAreas answers a MISSING file with an empty
+// vocabulary and a nil error: a store that never had one looks the same.
 type AreaVocabularyVanishedError struct {
-	// File is the areas.yml that is gone. A surface that may name a path names
-	// this one; one that may not says only that the file is gone.
+	// File is the areas.yml that is gone. Error() never renders it.
 	File string
 }
 
@@ -189,9 +145,8 @@ func (e *AreaVocabularyVanishedError) Error() string {
 
 // AreaNameUnchangedError refuses renaming a node to the name it already has.
 //
-// The planner ACCEPTS this one: the result is a valid vocabulary, so it hands
-// back an edit and the file is rewritten with nothing changed about what it
-// declares — an answer a caller cannot tell apart from a real rename.
+// The planner ACCEPTS this one: it hands back an edit and the file is rewritten
+// with nothing changed about what it declares.
 type AreaNameUnchangedError struct {
 	Path string
 	Name string
@@ -204,12 +159,11 @@ func (e *AreaNameUnchangedError) Error() string {
 // AreaNameTakenError refuses a rename onto a name a sibling already holds.
 //
 // The planner's revalidation refuses the same edit, but only as "duplicate
-// area", which describes the file rather than the argument. Asked here, the
-// refusal can name the sibling that is in the way.
+// area". Asked here, the refusal names the sibling that is in the way.
 type AreaNameTakenError struct {
 	Path    string
 	NewName string
-	// Sibling is the path the new name would collide with — the parent's, with
+	// Sibling is the path the new name would collide with: the parent's, with
 	// NewName as its last segment.
 	Sibling string
 }
@@ -219,7 +173,7 @@ func (e *AreaNameTakenError) Error() string {
 }
 
 // AreaAlreadyDeclaredError refuses declaring an area at a path the store already
-// declares: two siblings with one name make one path mean two nodes.
+// declares.
 type AreaAlreadyDeclaredError struct{ Path string }
 
 func (e *AreaAlreadyDeclaredError) Error() string {
@@ -228,10 +182,6 @@ func (e *AreaAlreadyDeclaredError) Error() string {
 
 // AreaParentUndeclaredError refuses a nested declaration whose parent the store
 // does not declare. A parent is never created on the way.
-//
-// It is separate from AreaUndeclaredError because that one speaks about a node
-// to act ON, where this speaks about one to nest UNDER, and the two have
-// different remedies.
 type AreaParentUndeclaredError struct {
 	Path   string
 	Parent string
@@ -243,9 +193,9 @@ func (e *AreaParentUndeclaredError) Error() string {
 }
 
 // AreaMembersPresentError refuses retiring an area work is still assigned to
-// with no disposition for that work: retiring it would leave every member
-// carrying a path the vocabulary no longer declares, and every later write to
-// them refused for it.
+// with no disposition for that work: the members would be left carrying a path
+// the vocabulary no longer declares, and every later write to them refused for
+// it.
 type AreaMembersPresentError struct {
 	Path    string
 	Members []string
@@ -257,13 +207,10 @@ func (e *AreaMembersPresentError) Error() string {
 }
 
 // AreaDispositionEmptyError refuses a disposition that has nothing to act on.
-// Letting it succeed would report members disposed of when there were none, and
-// a silent no-op is the one answer a caller cannot tell apart from a real one.
 //
-// It is reachable two ways: by naming a disposition for an area nothing is
-// assigned to, and by rerunning after a cascade completed and the config write
-// did not. Dropping the disposition retires the area from either state, which is
-// what both surfaces prescribe.
+// It is reachable two ways: naming a disposition for an area nothing is assigned
+// to, and rerunning after a cascade completed and the config write did not.
+// Dropping the disposition retires the area from either state.
 type AreaDispositionEmptyError struct {
 	Path        string
 	Disposition AreaDisposition
@@ -275,9 +222,7 @@ func (e *AreaDispositionEmptyError) Error() string {
 }
 
 // AreaMoveTargetWithinError refuses reassigning members INTO the subtree being
-// retired: the target is about to stop existing, so the move would leave that
-// work carrying a path the vocabulary no longer declares — the state the member
-// refusal exists to prevent, reached through the remedy for it.
+// retired: the target is about to stop existing, so the move would strand them.
 type AreaMoveTargetWithinError struct {
 	Target string
 	Path   string
@@ -291,27 +236,22 @@ func (e *AreaMoveTargetWithinError) Error() string {
 // AreaMembersArrivedError refuses the vocabulary write of an edit that would
 // leave work on a path the write stops declaring: a nib assigned at or below
 // Path was on disk when the edit read the store for the LAST time, and the
-// cascade — which walks the nibs this process holds — never saw it.
+// cascade — which walks the nibs this process holds — never saw it. The route
+// is a writer outside this process landing a `.md` file after editArea's
+// re-read; a `git pull` in .nibs is the routine one.
 //
-// The route is a writer outside this process landing a `.md` file after
-// editArea's re-read: a `git pull` in .nibs is the routine one here.
-//
-// REFUSING IS THE RECOVERABLE DIRECTION: the vocabulary still declares Path, so
-// the rerun decides from the store as it then stands, and both surfaces
-// prescribe it. Writing through is the state the confirming re-read in editArea
-// exists to prevent, reported as a success.
+// The vocabulary still declares Path, so a rerun decides from the store as it
+// then stands. That is the remedy both surfaces prescribe.
 type AreaMembersArrivedError struct {
 	Path string
 	// Members is the ids assigned at or below Path when the edit last read the
 	// store — the set the vocabulary write would have stranded.
 	Members []string
 	// Written is what the cascade had already rewritten. Those writes are
-	// durable, so a surface that reports this refusal as "nothing happened" is
-	// wrong about a rename, whose members now carry the new path.
+	// durable: after a rename the members already carry the new path.
 	Written []string
-	// NewPath is a rename's new path and is empty for a retire. The vocabulary
-	// still declares the old one, so every write to Written is refused until the
-	// rerun — the half of this refusal's cost a surface has to say out loud.
+	// NewPath is a rename's new path, empty for a retire. The vocabulary still
+	// declares the old one, so every write to Written is refused until the rerun.
 	NewPath string
 }
 
@@ -320,22 +260,17 @@ func (e *AreaMembersArrivedError) Error() string {
 		len(e.Members), config.RenderAreaPath(e.Path))
 }
 
-// AreaEditPhase is where in one area edit a filesystem failure landed. It is
-// what selects the sentence a surface prints, because the phases differ in what
-// is already on disk and therefore in whether a rerun is the repair.
+// AreaEditPhase is where in one area edit a filesystem failure landed. The
+// phases differ in what is already on disk, and so in whether a rerun is the
+// repair.
 type AreaEditPhase int
 
 const (
-	// AreaEditPhaseLock is the store's cross-process write lock; the two load
-	// phases are the re-read under it, split because Load reads the vocabulary
-	// and then walks the nibs and those are different files with different
-	// repairs; AreaEditPhaseCascade is a member rewrite; AreaEditPhaseConfirm the
-	// re-read that decides AreaMembersArrivedError; AreaEditPhaseWrite the
-	// areas.yml write; AreaEditPhaseReload the re-read of the file just written.
 	AreaEditPhaseLock AreaEditPhase = iota
 	AreaEditPhaseLoadVocabulary
 	AreaEditPhaseLoadNibs
 	AreaEditPhaseCascade
+	// AreaEditPhaseConfirm is the re-read that decides AreaMembersArrivedError.
 	AreaEditPhaseConfirm
 	AreaEditPhaseWrite
 	AreaEditPhaseReload
@@ -343,24 +278,16 @@ const (
 
 // AreaEditIOError reports that an area vocabulary edit failed on the
 // FILESYSTEM, as opposed to config.AreaEditRefusal, which is about the file's
-// CONTENT. The two have different audiences and different repairs: a refusal is
-// the caller's argument to fix and nothing about it is repaired by rerunning,
-// where this one is the machine's and a rerun often is the repair. That is the
-// split `nibs area rename` and `nibs area rm` report as exit 5 versus exit 2,
+// CONTENT: a rerun often repairs this one and never repairs a refusal. That is
+// the exit 5 versus exit 2 split `nibs area rename` and `nibs area rm` report,
 // and cmd/set.go's mutationErrCode maps this type so `nibs query` agrees.
 //
-// It implements NO Unwrap, and that is deliberate rather than an omission: the
-// causes it carries are whatever the operating system and the config loader
-// handed back, and exposing them to errors.Is would let any classifier keyed on
-// a sentinel claim this error and answer for it. Cause stays inspectable as a
-// field.
-//
-// Error() is a plain statement of the fields, carrying no prescription — a rerun
-// is a `nibs area rm` to one caller and a mutation to another, and neither
-// sentence belongs here. Each surface words its own from those fields. One that
-// must ALSO stay classifiable — the GraphQL resolver, whose answer cmd/set.go
-// maps to an exit status — wraps this error inside its sentence, which works
-// because the wrapper unwraps to this type and this type unwraps to nothing.
+// It implements no Unwrap: the causes it carries are whatever the operating
+// system and the config loader handed back, and errors.Is over them would let a
+// classifier keyed on a sentinel answer for this error. Cause stays inspectable
+// as a field. A surface that must stay classifiable wraps this error inside its
+// own sentence, which works because the wrapper unwraps to this type and this
+// type unwraps to nothing.
 type AreaEditIOError struct {
 	Phase AreaEditPhase
 	// Path is the area the verb was acting on, NewPath the one a rename was
@@ -368,14 +295,12 @@ type AreaEditIOError struct {
 	Path        string
 	NewPath     string
 	Disposition AreaDisposition
-	// File is the store's areas.yml, for a surface whose reader owns the
-	// directory it sits in. Error never renders it, for the reason
-	// config.AreaEditRefusal never renders its own: these sentences reach an
-	// HTTP client that has no business knowing where the store is on disk.
+	// File is the store's areas.yml. Error() never renders it — these sentences
+	// reach an HTTP client — so a surface whose reader owns that directory is
+	// the one that may name it.
 	File string
-	// Written is what the cascade had rewritten when the failure landed, and
-	// Members the set it set out to rewrite. A partial-failure sentence needs
-	// both: the first is what is persisted, the second what the run was for.
+	// Written is what the cascade had rewritten when the failure landed; Members
+	// the set it set out to rewrite.
 	Written []string
 	Members []string
 	Cause   error
@@ -385,15 +310,11 @@ func (e *AreaEditIOError) Error() string {
 	return fmt.Sprintf("this area edit failed while %s: %v", e.Phase.describe(), e.Cause)
 }
 
-// describe names a phase for AreaEditIOError's own message. It is not a remedy
-// and names no command.
+// describe names a phase for AreaEditIOError's own message.
 //
-// EVERY ARM IS NAMED and there is no default one, so a phase added to the iota
-// block above is not silently described as the one that happens to sit last.
-// Each sentence here says what is already on disk, which is what decides whether
-// a rerun is the repair — lending one phase's sentence to another is a wrong
-// answer to that question, in the one error whose stated purpose is telling the
-// phases apart.
+// Every arm is named and there is no default one: a phase added to the iota
+// block falls to the "cannot name" string below rather than borrowing the last
+// arm's sentence.
 func (p AreaEditPhase) describe() string {
 	switch p {
 	case AreaEditPhaseLock:
@@ -414,35 +335,27 @@ func (p AreaEditPhase) describe() string {
 	return fmt.Sprintf("in a phase of the edit this build cannot name (%d)", int(p))
 }
 
-// reloadAreasAfterEdit is Core.loadAreasLocked, indirected so a test can drive the
-// one IO phase the filesystem will not produce on demand: the edit's own re-read
-// of the file it has just written failing. Every other phase has a real fault to
-// inject — fsutil.RenameFn for the two writes, an unreadable store for the
-// re-read — and this one has none, because the bytes that were just written are
-// the bytes that are read back. It follows fsutil.RenameFn's shape: a seam owned
-// by the package that declares it.
+// reloadAreasAfterEdit is Core.loadAreasLocked, indirected so a test can fail
+// the edit's re-read of the file it has just written — the one IO phase with no
+// real fault to inject.
 var reloadAreasAfterEdit = (*Core).loadAreasLocked
 
-// reloadNibsBeforeAreaWrite is Core.loadFromDisk, indirected so a test can act
-// inside the window that re-read exists to close: a writer outside this process
-// landing a nib file after the plan's re-read. The seam is the re-read ITSELF
-// rather than a hook beside it, so a test cannot demonstrate the refusal against
-// an edit that never looks. It follows fsutil.RenameFn's shape: a seam owned by
-// the package that declares it.
+// reloadNibsBeforeAreaWrite is Core.loadFromDisk, indirected so a test can land
+// a nib file inside the window this re-read exists to close. The seam is the
+// re-read ITSELF, so a test cannot demonstrate the refusal against an edit that
+// never looks.
 var reloadNibsBeforeAreaWrite = (*Core).loadFromDisk
 
-// AddArea declares a new area at path, with the description and color it is
-// given, and returns the vocabulary as it then stands.
+// AddArea declares a new area at path and returns the vocabulary as it then
+// stands.
 //
-// It rewrites no nib, and the reason is narrower than "a new area has no
-// members": a nib may already CARRY the path, left on it by a retire or a hand
-// edit, and every write to that nib is refused until the vocabulary declares it
-// again. Declaring it IS that repair, and the repair rewrites nothing.
+// It rewrites no nib, even though a nib may already CARRY the path — left on it
+// by a retire or a hand edit, with every write to that nib refused until the
+// vocabulary declares the path again. Declaring it is that repair.
 //
-// The path's SHAPE is the caller's to judge before calling — config.ValidateNewAreaPath
-// and config.ValidateAreaColor answer from the arguments alone, so asking them
-// out here is what keeps a typo from sitting silent behind another writer's lock.
-// The planner asks them again regardless.
+// Judge the path's SHAPE before calling: config.ValidateNewAreaPath and
+// config.ValidateAreaColor answer from the arguments alone, so a typo need not
+// wait behind another writer's lock. The planner asks them again regardless.
 func (c *Core) AddArea(ctx context.Context, path, description, color string) (AreaEditResult, error) {
 	parent, _ := splitAreaPath(path)
 	return c.editArea(ctx, path, func(before, now *config.Areas) (areaPlan, error) {
@@ -468,19 +381,16 @@ func (c *Core) AddArea(ctx context.Context, path, description, color string) (Ar
 // RenameArea renames the declared node at path to newName, cascading to every
 // nib assigned at or below it.
 //
-// A rename is a NAME edit and never a move: the parent segments carry over
-// verbatim, and a member assigned BELOW the renamed node keeps the remainder it
-// carried, because renaming a parent moves its children's paths without changing
-// their names.
+// newName is a bare name: the parent segments carry over verbatim, and a member
+// assigned BELOW the renamed node keeps the remainder it carried.
 func (c *Core) RenameArea(ctx context.Context, path, newName string) (AreaEditResult, error) {
 	return c.editArea(ctx, path, func(before, now *config.Areas) (areaPlan, error) {
 		if err := requireDeclaredArea(before, now, path, AreaPathRenamed); err != nil {
 			return areaPlan{}, err
 		}
 		parent, oldName := splitAreaPath(path)
-		// Asked after the path is known to be declared because it SPEAKS about
-		// the node at path: over an undeclared one it would assert something
-		// about a node that is not there.
+		// Asked after the path is known to be declared: over an undeclared one,
+		// "already named" would describe a node that is not there.
 		if newName == oldName {
 			return areaPlan{}, &AreaNameUnchangedError{Path: path, Name: newName}
 		}
@@ -488,12 +398,10 @@ func (c *Core) RenameArea(ctx context.Context, path, newName string) (AreaEditRe
 			return areaPlan{}, &AreaNameTakenError{Path: path, NewName: newName, Sibling: sibling}
 		}
 
-		// The config edit is resolved BEFORE the first nib is touched. A member
+		// The config edit is resolved BEFORE the first nib is touched: a member
 		// rewrite is durable the moment it lands, so a refusal that could only
-		// fire after the cascade would leave the members carrying a path the
-		// vocabulary does not declare, and every later write to them refused for
-		// it. Planning first moves every refusal the editor can make to before
-		// that point, where it leaves the store untouched.
+		// fire after the cascade would strand every member. Planning first moves
+		// every refusal the editor can make to before that point.
 		edit, err := config.PlanRenameStoredArea(now.StoreDir(), path, newName)
 		if err != nil {
 			return areaPlan{}, err
@@ -519,9 +427,8 @@ func (c *Core) RenameArea(ctx context.Context, path, newName string) (AreaEditRe
 // RemoveArea retires the declared node at path together with the subtree it
 // heads, disposing of every nib assigned at or below it as disposition says.
 //
-// Every member lands ON a move target rather than keeping the remainder it
-// carried below the retiring node: the target declares no such child, so
-// preserving it would move each member to another undeclared path.
+// Every member lands ON the move target; the remainder it carried below the
+// retiring node is dropped.
 func (c *Core) RemoveArea(ctx context.Context, path string, disposition AreaDisposition) (AreaEditResult, error) {
 	return c.editArea(ctx, path, func(before, now *config.Areas) (areaPlan, error) {
 		if err := requireDeclaredArea(before, now, path, AreaPathRetired); err != nil {
@@ -529,11 +436,9 @@ func (c *Core) RemoveArea(ctx context.Context, path string, disposition AreaDisp
 		}
 
 		// BOTH questions about a move target are asked of the vocabulary re-read
-		// under the lock, because the target is exactly as perishable as the node
-		// being retired: a concurrent retire of the target finishing while this
-		// edit waited leaves it declared in any earlier snapshot and gone from the
-		// store, and the reassignment then walks every member into the state the
-		// member refusal exists to prevent.
+		// under the lock: the target is as perishable as the node being retired,
+		// and a concurrent retire of it finishing while this edit waited would
+		// leave every member reassigned to a path the store no longer declares.
 		if disposition.Kind == AreaDispositionMove {
 			if err := requireDeclaredArea(before, now, disposition.MoveTo, AreaPathMoveTarget); err != nil {
 				return areaPlan{}, err
@@ -558,7 +463,6 @@ func (c *Core) RemoveArea(ctx context.Context, path string, disposition AreaDisp
 			return areaPlan{}, err
 		}
 
-		// MoveTo is "" for an unassign, which is the legal cleared value.
 		target := disposition.MoveTo
 		return areaPlan{
 			path:          path,
@@ -580,16 +484,15 @@ type areaPlan struct {
 	path    string
 	newPath string
 	// emptied is the area path this edit stops declaring — a retired node, or a
-	// rename's old path — so nothing may be assigned at or below it once the
-	// vocabulary write lands. Empty for a verb that declares without retiring,
-	// which strands nothing and therefore has nothing to confirm.
+	// rename's old path. Nothing may be assigned at or below it once the
+	// vocabulary write lands. Empty for a verb that declares without retiring.
 	emptied       string
 	edit          *config.StoredAreaEdit
 	members       []string
 	disposition   AreaDisposition
 	declaredBelow int
-	// rewrite claims the members this verb cascades through. Nil for a verb that
-	// cascades nothing.
+	// rewrite claims the members this verb cascades through; nil for a verb that
+	// cascades none.
 	rewrite func(area string) (string, bool)
 }
 
@@ -598,52 +501,43 @@ type areaPlan struct {
 // cascade, confirm, write and reload — with both locks held throughout and
 // released only on the way out.
 //
-// THE LOCK ORDER IS THE POINT: c.mu then the file lock, as acquireWriteLock
-// states canonically and every other Core mutator obeys. Taking them the other
-// way round deadlocks against an ordinary concurrent Update.
+// THE LOCK ORDER IS c.mu THEN THE FILE LOCK, as acquireWriteLock states
+// canonically and every other Core mutator obeys. Taking them the other way
+// round deadlocks against an ordinary concurrent Update.
 //
-// BOTH HALVES OF THE EDIT ARE ONE CRITICAL SECTION, and that is the point too.
-// The member cascade and the `areas:` rewrite are read-modify-writes of shared
-// state, and the second rewrites the whole file. Split across two critical
-// sections, two concurrent edits interleave: each reads the pre-edit config, each
-// writes the whole file back, and the loser's declaration is gone while its
-// cascade sits on disk. Both callers report success, so nothing ever says to
-// rerun, and the members it moved are write-refused from then on.
+// BOTH HALVES OF THE EDIT ARE ONE CRITICAL SECTION. The member cascade and the
+// `areas:` rewrite are read-modify-writes of shared state, and the second
+// rewrites the whole file. Split across two critical sections, two concurrent
+// edits interleave: each reads the pre-edit config, each writes the whole file
+// back, and the loser's declaration is gone while its cascade sits on disk. Both
+// callers report success, so nothing ever says to rerun, and the members it
+// moved are write-refused from then on.
 //
 // It WAITS for the file lock rather than refusing, matching every other store
 // mutation: the other holder is another nibs process finishing one operation.
 // Only ctx ends that wait — acquireWriteLockContext says why no deadline can.
 //
-// THE COST IS READER AVAILABILITY, and it is paid deliberately. c.mu is held
-// from before the file lock is asked for until after the reload, so the span
-// covers a wait for another process, the member cascade, the whole-file config
-// write and — twice, for a verb that renames or retires, the confirming re-read
-// below being the second — a load of every nib in the store. Get, All and
-// Search all read under c.mu, so under `nibs serve` a read blocks for all of
-// it. The SHAPE is every Core mutator's, each taking c.mu and then the file
-// lock; only the LENGTH is this verb's, and what fills it is those loads — a
-// load walks every nib file, rebuilds the mention index and, where a search
-// index is live, re-indexes every nib. Narrowing the span is what lets two
-// edits interleave and lose one's declaration, which is why it stays.
+// THE COST IS READER AVAILABILITY. c.mu is held from before the file lock is
+// asked for until after the reload — a wait for another process, the cascade,
+// the config write and two full store loads for a rename or a retire — and Get,
+// All and Search all read under it, so under `nibs serve` a read blocks for all
+// of it. Do not narrow the span: that is what lets two edits interleave and lose
+// one's declaration.
 //
 // THE RE-READ IS WHY BLOCKING IS SAFE. Waiting means another process was
-// mid-write while this one held the state it started with. A concurrent
-// `nibs config set-prefix` renames every file in the store, so a cascade over the
-// old paths would write each member back under its pre-rename name; and a
+// mid-write while this one held the state it started with: a concurrent
+// `nibs config set-prefix` renames every file in the store, so a cascade over
+// the old paths would write each member back under its pre-rename name, and a
 // concurrent area edit reshapes the very tree the membership question is asked
-// over, so a member sitting on a path this process never loaded would answer "not
-// a member" and be left on it after the node above it is renamed or retired away.
-// Reading the store again HERE is what makes both ordinary events.
+// over. Reading the store again HERE is what makes both ordinary events.
 //
-// The vocabulary is the ONE part of a store's configuration a reload may replace,
-// and it is replaced here: it lives behind an atomic pointer precisely so a
-// reload cannot race the off-lock readers. Everything in config.yml is left alone
-// and stays fixed at construction.
+// The vocabulary is the ONE part of a store's configuration a reload may
+// replace, and it is replaced here: it lives behind an atomic pointer so a
+// reload cannot race the off-lock readers. Everything in config.yml stays fixed
+// at construction.
 //
-// A failure to re-read is a REFUSAL rather than a fallback to what was already
-// loaded: an area edit is a cascading rewrite of the store, planning it is about
-// to read that very file anyway, and refusing here leaves the store untouched
-// where a fallback would decide from state with no evidence it is still current.
+// A failure to re-read is a REFUSAL, never a fallback to the vocabulary already
+// loaded.
 func (c *Core) editArea(ctx context.Context, path string, plan func(before, now *config.Areas) (areaPlan, error)) (AreaEditResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -691,7 +585,7 @@ func (c *Core) editArea(ctx context.Context, path string, plan func(before, now 
 	// write lock is a contract between nibs processes — it does not hold off a
 	// `git pull` in .nibs. A file landing after the re-read above is in no set
 	// the cascade walked, so the write below would retire a declaration that file
-	// still carries, and every later write to it would be refused for it.
+	// still carries.
 	if p.emptied != "" {
 		if err := reloadNibsBeforeAreaWrite(c); err != nil {
 			return AreaEditResult{}, &AreaEditIOError{
@@ -716,11 +610,10 @@ func (c *Core) editArea(ctx context.Context, path string, plan func(before, now 
 
 	// Re-read under the same lock so the result carries the vocabulary this edit
 	// wrote, and so an areas subscriber in this process wakes on the edit rather
-	// than on the watcher's debounce. loadAreasLocked keeps the vocabulary it could
-	// still read when the file cannot be read back, which is the one the edit
-	// replaced — so ignoring the failure would answer with the pre-edit
-	// vocabulary and call the edit a success. The subscriber tick it makes takes
-	// subMu under c.mu, which is the established order.
+	// than on the watcher's debounce. loadAreasLocked keeps the pre-edit
+	// vocabulary when the file cannot be read back, so ignoring the failure would
+	// report success over it. The subscriber tick it makes takes subMu under
+	// c.mu, which is the established order.
 	if err := reloadAreasAfterEdit(c); err != nil {
 		return AreaEditResult{}, &AreaEditIOError{
 			Phase: AreaEditPhaseReload, Path: p.path, NewPath: p.newPath, File: now.Path(),
@@ -739,9 +632,8 @@ func (c *Core) editArea(ctx context.Context, path string, plan func(before, now 
 }
 
 // requireDeclaredArea refuses a path the store's vocabulary does not declare,
-// telling apart a path that WAS declared when this store was last read — which
-// another process retired or renamed while this edit waited for the lock — from
-// one that never existed.
+// telling apart one that WAS declared when this store was last read from one
+// that never existed.
 func requireDeclaredArea(before, now *config.Areas, path string, role AreaPathRole) error {
 	if path != "" && now.IsValid(path) {
 		return nil
@@ -753,8 +645,7 @@ func requireDeclaredArea(before, now *config.Areas, path string, role AreaPathRo
 }
 
 // areaMembersLocked returns the ids of every nib assigned at or below path, in
-// id order — the set a retire refuses over and a rename cascades through, read
-// the same way rewriteAreaAssignmentsLocked reads it.
+// id order, read the same way rewriteAreaAssignmentsLocked reads it.
 //
 // The stored pointers are read into plain strings immediately, per the
 // live-pointer discipline: nothing here holds one across the writes that follow.
@@ -781,9 +672,8 @@ func countDeclaredBelow(areas *config.Areas, path string) int {
 	return n
 }
 
-// splitAreaPath separates a path into the path of its parent (empty at the top
-// level) and the node's own name — the half a rename replaces. joinAreaPath is
-// its inverse.
+// splitAreaPath separates a path into its parent's path (empty at the top level)
+// and the node's own name. joinAreaPath is its inverse.
 func splitAreaPath(path string) (parent, name string) {
 	i := strings.LastIndex(path, config.AreaPathSeparator)
 	if i < 0 {

@@ -12,9 +12,8 @@ import (
 
 // acquireFileLock blocks until it holds an exclusive advisory lock (flock LOCK_EX)
 // on the file at path, creating the file if needed, then returns a release func
-// that drops the lock and closes the descriptor. Advisory locks only constrain
-// other cooperating callers (every nibs process), which is sufficient here — a
-// non-nibs writer is still caught by the on-disk etag check on the next mutation.
+// that drops the lock and closes the descriptor. Advisory: only cooperating
+// callers (every nibs process) are constrained.
 func acquireFileLock(path string) (func() error, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
@@ -39,17 +38,13 @@ func acquireFileLock(path string) (func() error, error) {
 	}, nil
 }
 
-// acquireFileLockTry takes the same exclusive lock acquireFileLock waits for,
-// in ONE try: it reports contention as errLockHeld rather than waiting for it.
-// It is what acquireFileLockWaiting polls and what the serve interlock's
-// exclusive side is built from.
+// acquireFileLockTry takes the same exclusive lock acquireFileLock waits for, in
+// ONE try, reporting contention as errLockHeld.
 func acquireFileLockTry(path string) (func() error, error) {
 	return acquireFileLockNB(path, unix.LOCK_EX)
 }
 
-// acquireFileLockShared is the serve interlock's shared side (see servelock.go),
-// non-blocking like its exclusive sibling and speaking that lock's vocabulary
-// for contention.
+// acquireFileLockShared is the serve interlock's shared side (see servelock.go).
 func acquireFileLockShared(path string) (func() error, error) {
 	release, err := acquireFileLockNB(path, unix.LOCK_SH)
 	return release, asStoreServed(err)

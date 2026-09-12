@@ -12,8 +12,7 @@ import (
 
 // acquireFileLock blocks until it holds an exclusive lock on the whole file at
 // path (creating it if needed) via LockFileEx, then returns a release func that
-// unlocks and closes the handle. Mirrors the unix flock implementation so the
-// per-operation write lock behaves identically across platforms.
+// unlocks and closes the handle. Mirrors flock_unix.go.
 func acquireFileLock(path string) (func() error, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
@@ -42,13 +41,12 @@ func acquireFileLock(path string) (func() error, error) {
 
 // acquireFileLockTry and acquireFileLockShared mirror the unix pair (see
 // flock_unix.go). LOCKFILE_FAIL_IMMEDIATELY makes both non-blocking; omitting
-// LOCKFILE_EXCLUSIVE_LOCK is what makes a lock shared.
+// LOCKFILE_EXCLUSIVE_LOCK makes the lock shared.
 //
 // [Unverified] on Windows — not testable on this machine. ERROR_LOCK_VIOLATION is
-// what LockFileEx documents for a lock it declined to wait for, and it is mapped
-// to errLockHeld so a caller reports "another holder" rather than a filesystem
-// failure. The cancellable wait polls this, so a build where that mapping is
-// wrong refuses an area edit instead of waiting for the lock — it does not hang.
+// what LockFileEx documents for a lock it declined to wait for. If that is
+// wrong, an area edit is refused instead of waiting for the lock — it does not
+// hang.
 func acquireFileLockTry(path string) (func() error, error) {
 	return acquireFileLockNB(path, windows.LOCKFILE_FAIL_IMMEDIATELY|windows.LOCKFILE_EXCLUSIVE_LOCK)
 }

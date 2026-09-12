@@ -22,21 +22,17 @@ type EventType int
 const (
 	// EventCreated indicates a new nib was created.
 	EventCreated EventType = iota
-	// EventUpdated indicates an existing nib changed in place: its content was
-	// modified while it stayed live at the same location. A move OUT of the
-	// archive is reported separately as EventUnarchived, not as an update.
+	// EventUpdated indicates an existing nib changed in place. A move OUT of the
+	// archive is reported as EventUnarchived, not as an update.
 	EventUpdated
 	// EventDeleted indicates a nib was deleted.
 	EventDeleted
-	// EventArchived indicates a nib was moved into the archive directory. The
-	// nib still exists — it lives at its new archive path and remains readable
-	// and updatable — so this is distinct from EventDeleted.
+	// EventArchived indicates a nib was moved into the archive directory. The nib
+	// still exists at its new archive path — distinct from EventDeleted.
 	EventArchived
-	// EventUnarchived indicates a nib was moved OUT of the archive directory back
-	// to the main data directory. The nib stays live in the store (its Path is
-	// rewritten to the main location); this is the inverse of EventArchived and is
-	// distinct from EventUpdated so a viewer can clear an "archived" banner rather
-	// than treat the move as an in-place content edit.
+	// EventUnarchived indicates a nib was moved OUT of the archive back to the
+	// data directory. The nib stays live with its Path rewritten; distinct from
+	// EventUpdated so a viewer can clear an "archived" banner.
 	EventUnarchived
 )
 
@@ -65,17 +61,15 @@ type NibEvent struct {
 	NibID string    // Always set, useful for Deleted when Nib is nil
 }
 
-// subscription represents a subscriber to nib events.
 type subscription struct {
 	ch chan []NibEvent
 	id uint64
 }
 
 // Subscribe creates a new PAYLOAD subscription to nib change events. It returns
-// the event channel and an unsubscribe function; callers should defer the
-// unsubscribe. Callers that only need to know THAT something changed (not what)
-// should use SubscribeSignal instead — it skips the per-change clone described
-// below.
+// the event channel and an unsubscribe function; defer the unsubscribe. Use
+// SubscribeSignal instead when you only need to know THAT something changed — it
+// skips the per-change clone.
 //
 // The channel receives batches of events after debouncing. Internal state is
 // committed before events are delivered: once an event arrives, Get/All already
@@ -85,10 +79,9 @@ type subscription struct {
 // time, so a payload's fields never change after delivery even when the store
 // later mutates that nib in place (e.g. Archive/Unarchive rewriting Path). Trust
 // the payload: re-reading the store is neither required nor, for a removal
-// event, possible — a deleted nib is gone from the store, so the payload is the
-// only record of it.
+// event, possible — a deleted nib is gone from the store.
 //
-// Sharp edges callers must account for:
+// Sharp edges:
 //
 //   - Events are dropped under backpressure. fanOut sends non-blocking on a
 //     channel buffered at 16, so once 16 batches back up for a subscriber,
@@ -100,14 +93,12 @@ type subscription struct {
 //   - A change that produces no events notifies nobody. fanOut early-returns on
 //     an empty batch, so an unparseable filename, a Remove for an untracked id,
 //     or a loadNib error surfaces to no subscriber.
-//   - StopWatching closes and drops every subscriber channel (payload and
-//     signal-only alike). Consumers must handle the channel close, and the
-//     unsubscribe returned here becomes a no-op afterwards (the subscription is
-//     already gone from the map).
+//   - StopWatching closes every subscriber channel (payload and signal alike)
+//     and drops the subscription, after which the unsubscribe returned here
+//     no-ops. Handle the channel close.
 //   - Subscribing while nothing is watched registers silently and never
 //     delivers. Subscribe does not check c.watching, and cmd/serve.go treats a
-//     watcher start failure as non-fatal, so a server can run with subscribers
-//     attached to a watcher that never started.
+//     watcher start failure as non-fatal.
 func (c *Core) Subscribe() (<-chan []NibEvent, func()) {
 	c.subMu.Lock()
 	defer c.subMu.Unlock()
@@ -136,11 +127,11 @@ func (c *Core) Subscribe() (<-chan []NibEvent, func()) {
 
 // SubscribeSignal creates a SIGNAL-ONLY subscription: a struct{} tick whenever a
 // debounced change is published, with no payload. It returns an unsubscribe
-// function; callers should defer it.
+// function; defer it.
 //
 // Use it when you re-read the store on every notification — it never causes the
-// per-nib clone payload subscribers pay for. Delivery, drop-under-backpressure
-// and StopWatching-closes-the-channel semantics match Subscribe.
+// per-nib clone. Delivery, drop-under-backpressure and
+// StopWatching-closes-the-channel semantics match Subscribe.
 func (c *Core) SubscribeSignal() (<-chan struct{}, func()) {
 	c.subMu.Lock()
 	defer c.subMu.Unlock()
@@ -163,9 +154,9 @@ func (c *Core) SubscribeSignal() (<-chan struct{}, func()) {
 
 // SubscribeAreas creates a subscription to VOCABULARY changes: the channel
 // receives a tick whenever the store's areas.yml is reloaded into a vocabulary
-// that differs from the one it replaces — which happens when someone edits it,
-// and at no other time. Delivery, drop-under-backpressure and
-// StopWatching-closes-the-channel semantics match SubscribeSignal.
+// that differs from the one it replaces, and at no other time. Delivery,
+// drop-under-backpressure and StopWatching-closes-the-channel semantics match
+// SubscribeSignal.
 func (c *Core) SubscribeAreas() (<-chan struct{}, func()) {
 	c.subMu.Lock()
 	defer c.subMu.Unlock()
@@ -188,7 +179,7 @@ func (c *Core) SubscribeAreas() (<-chan struct{}, func()) {
 
 // watchReloadAreas is the watcher's reload. A failure keeps the vocabulary
 // already loaded (see loadAreasLocked) and another file event will come when the
-// file is repaired, so a warning is all that is owed.
+// file is repaired.
 //
 // It takes c.mu because the install is a read-compare-swap and an area edit is
 // the other writer. Off that lock this timer can read the pre-edit file, be
@@ -213,16 +204,12 @@ func (c *Core) watchReloadAreas() {
 // move the vocabulary and tell nobody, and the next reload, finding it already
 // equal, would tick nobody either.
 //
-// The error it RETURNS is the caller's to dispose of, and callers differ: the
-// watcher swallows it while an area edit reports it (watchReloadAreas, editArea).
-// A file event has nobody to report to and another will come; an edit that has
-// just replaced the file and cannot read it back must not answer with the
-// vocabulary it replaced and call that success.
+// The error it returns is the caller's to dispose of, and callers differ: the
+// watcher swallows it to a warning, an area edit reports it.
 //
 // A vocabulary the loader refuses does NOT replace the one in place. Swapping in
 // an empty tree on a malformed file would make every `area:` undeclared at once
-// and refuse every write to every assigned nib — worse than the staleness a
-// reload exists to remove.
+// and refuse every write to every assigned nib.
 //
 // An unchanged file ticks nobody, so an editor that rewrites areas.yml byte for
 // byte does not wake every browser holding the view. That decides the TICK, not
@@ -271,17 +258,16 @@ func (c *Core) hasPayloadSubscribers() bool {
 // fanOut delivers a change batch to subscribers (non-blocking). Slow subscribers
 // have the batch dropped rather than blocking others.
 //
-// payloadsCloned tells fanOut whether handleChanges actually cloned every
-// event's Nib. It is load-bearing for correctness, not a mere optimization flag:
-// when it is false the events still carry LIVE c.nibs pointers (the clone loop
-// was skipped because no payload subscriber was attached at the decision point),
-// so those events MUST NOT reach any payload subscriber — handing a live pointer
-// out off-lock is the y5nb race. Signal-only subscribers carry no payload, so
-// they always get a bare tick regardless.
+// payloadsCloned tells fanOut whether handleChanges actually cloned every event's
+// Nib. It is load-bearing for correctness, not an optimization flag: when it is
+// false the events still carry LIVE c.nibs pointers (the clone loop was skipped
+// because no payload subscriber was attached at the decision point), so those
+// events MUST NOT reach any payload subscriber. Signal-only subscribers carry no
+// payload and always get a bare tick.
 //
 // Payload subscribers therefore receive the batch only when payloadsCloned is
-// true; one that attached after the (false) decision is dropped for this batch
-// (see Subscribe). Dropping is safe; delivering the uncloned batch would not be.
+// true; one that attached after the (false) decision is dropped for this batch.
+// Dropping is safe; delivering the uncloned batch would not be.
 func (c *Core) fanOut(events []NibEvent, payloadsCloned bool) {
 	if len(events) == 0 {
 		return
@@ -312,19 +298,18 @@ func (c *Core) fanOut(events []NibEvent, payloadsCloned bool) {
 // Use Subscribe() to receive the resulting nib change events via a channel.
 // Calling it while already watching is a no-op.
 //
-// The watched set is the store's own directories (store.Layout.WatchableDirs:
-// the root plus data/ and archive/ where they exist) plus any subdirectories
-// under them, on a best-effort basis. The ROOT is watched even though it holds
-// no nib files: a data/ or archive/ directory created after the watch starts
+// The watched set is the store root, data/ and archive/ where they exist
+// (store.Layout.WatchableDirs), plus every subdirectory under data/ and
+// archive/, on a best-effort basis. The ROOT is watched even though it holds no
+// nib files: a data/ or archive/ directory created after the watch starts
 // arrives as a create event there, and watchLoop adds the new directory to the
-// watch rather than leaving it a blind spot for the watcher's lifetime.
-// Incremental updates still mean a change the watcher never observes stays
-// stale until the next full Load.
+// watch. Incremental updates still mean a change the watcher never observes
+// stays stale until the next full Load.
 func (c *Core) StartWatching() error {
 	c.mu.Lock()
 	// Set before anything below can fail: asking to watch is what marks this
-	// process as one that outlives a command, and a watch that failed to start
-	// does not make it short-lived — see Core.longLived.
+	// process long-lived, and a failed start does not make it short-lived (see
+	// Core.longLived).
 	c.longLived = true
 	if c.watching {
 		c.mu.Unlock()
@@ -343,13 +328,10 @@ func (c *Core) StartWatching() error {
 		return err
 	}
 
-	// Watch the store's content directories and anything nested under them
-	// (best effort — don't fail if any can't be watched).
-	//
-	// Enumerated through WalkStoreDirs so the watched set and the set the scans
-	// read share ONE definition of what is inside the store. A bare walk here
-	// registered watches inside `.git` and `.obsidian`, and handleChanges then
-	// loaded nib-shaped files from directories no scan would ever read.
+	// Watch the content directories and anything nested under them, best effort.
+	// Enumerate through WalkStoreDirs, not a bare walk: the watched set and the
+	// set the scans read must share one definition of what is inside the store,
+	// or handleChanges loads nib-shaped files from `.git` and `.obsidian`.
 	for _, dir := range c.layout.WatchableDirs() {
 		if dir == c.root {
 			continue // added above, and its failure is fatal
@@ -370,7 +352,6 @@ func (c *Core) StartWatching() error {
 	c.done = done
 	c.mu.Unlock()
 
-	// Start the watcher goroutine
 	go c.watchLoop(watcher, done)
 
 	return nil
@@ -418,11 +399,9 @@ func (c *Core) unwatchLocked() error {
 
 // watchLoop processes filesystem events with debouncing until done is closed.
 //
-// done is a parameter rather than a read of c.done because the loop must be
-// bound to the watch it was started for. StartWatching installs a new c.done on
-// every restart, so a loop selecting on the field would see the successor's
-// open channel and run forever — holding its fsnotify watcher and descriptors
-// open past the StopWatching that was meant to release them.
+// done is a parameter, never a read of c.done: StartWatching installs a fresh
+// c.done on every restart, so a loop selecting on the field would latch onto the
+// successor's open channel and run forever, holding its fsnotify watcher open.
 func (c *Core) watchLoop(watcher *fsnotify.Watcher, done <-chan struct{}) {
 	defer func() { _ = watcher.Close() }()
 
@@ -447,31 +426,25 @@ func (c *Core) watchLoop(watcher *fsnotify.Watcher, done <-chan struct{}) {
 				return
 			}
 
-			// A DIRECTORY appearing inside the store has to join the watch.
-			// data/ and archive/ are created on demand — by `nibs migrate`, by
-			// the first archive, by a `git pull` in the store repo — and a
-			// directory that appears after the watch started would otherwise
-			// stay a permanent blind spot: every nib file inside it is
-			// invisible for the rest of the process's life.
+			// A DIRECTORY appearing inside the store joins the watch. data/ and
+			// archive/ are created on demand, and one that appears after the
+			// watch started would otherwise stay a permanent blind spot: every
+			// nib file inside it is invisible for the rest of the process's life.
 			if event.Op&fsnotify.Create != 0 && c.isStoreSubdir(event.Name) {
 				_ = watcher.Add(event.Name)
-				// Fall through: a directory is never a .md file, so the .md
-				// filter below drops it. Files that landed inside it before
-				// the watch was added are picked up by the next full Load.
+				// No continue: a directory is never a .md file, so the filter
+				// below drops it. Files already inside it wait for the next Load.
 			}
 
 			// The store's areas.yml is the one non-.md file a live process must
 			// not miss: it is the vocabulary every `area:` is judged against, and
-			// an external `nibs area rename` rewrites it. It gets its own
-			// debounce rather than joining pendingChanges because it is not a nib
-			// and handleChanges has nothing to do with it — and its own timer so
+			// an external `nibs area rename` rewrites it. It gets its own timer, so
 			// a busy nib batch never delays it, nor it them.
 			//
-			// Debounced at all because an editor that writes in place (rather
-			// than through the temp-file-and-rename every nibs writer uses) can
-			// fire a Write event on a half-written file. A reload that reads one
-			// is refused and keeps the vocabulary already loaded, so the cost of
-			// losing that race is a warning and not a wrong vocabulary.
+			// Debounced because an editor that writes in place (rather than
+			// through the temp-file-and-rename every nibs writer uses) can fire a
+			// Write event on a half-written file; a reload that reads one is
+			// refused and keeps the vocabulary already loaded.
 			if c.isAreasFile(event.Name) {
 				if areasTimer != nil {
 					areasTimer.Stop()
@@ -480,7 +453,6 @@ func (c *Core) watchLoop(watcher *fsnotify.Watcher, done <-chan struct{}) {
 				continue
 			}
 
-			// Only care about .md files within the store's directory tree
 			if !strings.HasSuffix(event.Name, ".md") {
 				continue
 			}
@@ -540,49 +512,35 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 
 	var events []NibEvent
 
-	// One batch's warning allowance, shared by every per-file diagnostic in the
-	// loop below. A debounce window holds whatever changed at once — a `git pull`
-	// in the separate .nibs repository is the event that makes that the whole
-	// store — so an unbounded stream here reaches a long-lived serve's stderr the
-	// way loadFromDisk's reached every command's (see warnBudget).
+	// One batch's warning allowance, shared by every per-file diagnostic below. A
+	// debounce window can hold the whole store at once (a `git pull` in the
+	// separate .nibs repository), so the stream needs a bound (see warnBudget).
 	warns := &warnBudget{c: c}
 
 	// Whether this batch changed the set of stored ids in a way that can re-point
 	// a link held by a nib the batch never touched, which widens the
 	// canonicalization pass below from this batch's own nibs to the whole store.
-	// Two shapes do that, and only those two:
-	//
-	//   - An id ARRIVING that was not in the store before. A short-form link
-	//     written before the nib it names was unresolvable at load and correctly
-	//     left verbatim; only the target's arrival can resolve it.
-	//   - A bare-token id LEAVING while its prefixed twin remains. Resolution
-	//     tries an exact map key before the prefix-prepended form, so a link
-	//     stored with the bare spelling starts answering for the twin instead.
-	//
-	// A batch that only edits existing nibs pays the cheap touched-only pass.
+	// The two shapes that do it are enumerated on
+	// canonicalizeLinksAfterBatchLocked (canonicalize.go).
 	var scanAll bool
 
 	for path, op := range changes {
 		filename := filepath.Base(path)
-		// Intentionally ignore the parse error: an unparseable filename yields
-		// id="", which no-ops every downstream c.nibs[id] / c.mentionIdx.Remove(id)
-		// lookup — the malformed path simply falls out of the handler as a silent
-		// skip. Widening this to surface the error would require a scheme for
-		// reporting watcher-level errors that today's callers don't expect.
+		// Ignore the parse error: an unparseable filename yields id="", which
+		// no-ops every downstream c.nibs[id] lookup, so the malformed path falls
+		// out of the handler as a silent skip.
 		id, _ := nib.ParseFilename(filename, c.configPrefix())
 
 		// Handle removes/renames, but only where the file really is gone from this
 		// path. A removal bit on a path that still holds a file is not a removal at
-		// all, and must fall through to the create/write handling below.
+		// all and falls through to the create/write handling below.
 		//
-		// This is the common case on Windows, not a corner: every nib write commits
-		// through AtomicWriteFile, i.e. a rename over the existing file, and
-		// ReadDirectoryChangesW reports that replacing rename on the TARGET path as
-		// REMOVE followed by CREATE. Both halves land in one debounce window and
-		// watchLoop ORs them into a single op, so an ordinary external edit arrives
-		// here as Remove|Create on a file that exists. Swallowing the entry on the
-		// removal branch dropped the edit entirely, leaving the TUI and web UI stale
-		// until a full reload (nibs-oakc).
+		// On Windows this is the common case, not a corner: nib writes commit by
+		// renaming a temp file over the target, and ReadDirectoryChangesW reports
+		// that replacing rename on the TARGET path as REMOVE followed by CREATE.
+		// Both halves land in one debounce window and watchLoop ORs them into a
+		// single op, so an ordinary external edit arrives here as Remove|Create on
+		// a file that exists.
 		if (op&fsnotify.Remove != 0 || op&fsnotify.Rename != 0) && !c.fileExists(path) {
 			stored, exists := c.nibs[id]
 			if !exists {
@@ -596,18 +554,14 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 			// stored.Path is authoritative only for a move THIS process made:
 			// Archive/Unarchive/LoadAndUnarchive rewrite it under the lock this
 			// handler takes. Any other mover (the CLI against a running server, a
-			// pull in the separate .nibs repo) leaves it stale, so keying the
-			// decision off it misreports the move. Both halves of a move — the
-			// rename at the old path and the create at the new one — land in one
-			// debounce batch that iterates as a Go map, so which half updates the
-			// store first is not stable run to run. Reading only on-disk facts,
-			// which are identical whichever half runs first, removes that
-			// dependence entirely.
+			// pull in the separate .nibs repo) leaves it stale. Both halves of a
+			// move — the rename at the old path and the create at the new one —
+			// land in one debounce batch that iterates as a Go map, so which half
+			// updates the store first is not stable run to run.
 			fromArchive := c.isArchivedAbsPath(path)
 
 			// Moved INTO the archive: the file left a main path and now exists at
-			// archive/<basename>, by any mover. Emitting archived requires the
-			// archive file to exist, so a misdetection cannot strand a phantom.
+			// archive/<basename>, by any mover.
 			if !fromArchive {
 				archiveRel := c.layout.ArchiveRel(filename)
 				if c.fileExists(filepath.Join(c.root, archiveRel)) {
@@ -622,11 +576,9 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 				}
 			}
 
-			// Moved OUT of the archive. The nib is NOT gone — keep it at its new
-			// path and report EventUnarchived, the distinct inverse of
-			// EventArchived so a viewer can clear an "archived" banner rather than
-			// treat it as an in-place edit (nibs-2fgz). Evicting would drop a live
-			// nib whose file is on disk.
+			// Moved OUT of the archive. The nib is NOT gone: keep it at its new
+			// path and report EventUnarchived. Evicting would drop a live nib
+			// whose file is on disk.
 			if fromArchive {
 				mainRel := c.layout.DataRel(filename)
 				if c.fileExists(filepath.Join(c.root, mainRel)) {
@@ -641,12 +593,11 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 				}
 			}
 
-			// Same-id slug rename: the file left `path`, but a file whose parsed id
-			// equals this id lives elsewhere. A slug rename changes the basename
-			// (nibs-x--old-slug.md -> nibs-x--new-slug.md), so neither basename check
-			// above matched, yet nib.ParseFilename yields the same id for both. The
-			// nib is NOT gone: point it at the new location, re-derive its Slug, and
-			// report an update.
+			// Same-id slug rename: the file left `path`, but findRelPathByID still
+			// finds one carrying this id (nibs-x--old-slug.md ->
+			// nibs-x--new-slug.md, so neither basename check above matched). Point
+			// the nib at the new location, re-derive its Slug, and report an
+			// update.
 			//
 			// Copy-on-write: this changes Slug, a NON-Path field, so it must land on
 			// a FRESH pointer — mutating Slug in place would let an off-lock reader
@@ -666,16 +617,12 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 				continue
 			}
 
-			// Genuinely gone: a real deletion, or a delete of an already-archived
-			// nib (the file that vanished is the very one stored.Path pointed at,
-			// and it exists at neither the archive nor the main location now).
+			// Genuinely gone: none of the checks above found the file.
 			delete(c.nibs, id)
 
 			// Evaluated per removal against the store as it stands, so a batch
 			// deleting BOTH spellings of one id can set this from an intermediate
-			// state the final map no longer justifies. Harmless: the sweep
-			// re-resolves against the post-batch map, so a spurious widening costs
-			// one pass and rewrites nothing.
+			// state. Harmless: the sweep re-resolves against the post-batch map.
 			//
 			// The opposite direction cannot happen: the only key INSERTION in this
 			// loop is the create/write branch below, which sets scanAll itself
@@ -686,10 +633,8 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 				scanAll = true
 			}
 
-			// Drop from reverse-mention index.
 			c.mentionIdx.Remove(id)
 
-			// Update search index
 			if c.searchIndex != nil {
 				if err := c.searchIndex.DeleteNib(id); err != nil {
 					warns.warn("failed to remove nib %s from search index: %v", id, err)
@@ -707,21 +652,19 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 		if op&fsnotify.Create != 0 || op&fsnotify.Write != 0 {
 			// Read-only: a write here would race an external writer (git checkout,
 			// editor, second instance), dirty the .nibs git tree, and fire a
-			// spurious self-write event. A legacy-shaped file loads exactly as
-			// written; rewriting it is `nibs migrate`'s job.
+			// spurious self-write event. A legacy-shaped file loads as written;
+			// rewriting it is `nibs migrate`'s job.
 			newNib, err := c.loadNib(path)
 			if err != nil {
 				warns.warn("failed to load nib from %s: %v", path, err)
 				continue
 			}
 
-			// One visible breadcrumb when the arriving file carries a shape
-			// only `nibs migrate` (or a newer nibs) may rewrite. The pre-run
-			// migration gate fired once at process start, so this ingress is
-			// the one path a legacy or newer file takes into a LIVE store —
-			// it loads as written (see above) and every query observes it
-			// until migrate runs, which without this line happens with no
-			// signal anywhere.
+			// One visible breadcrumb when the arriving file carries a shape only
+			// `nibs migrate` (or a newer nibs) may rewrite: the pre-run migration
+			// gate fired at process start, so this ingress is the one path a
+			// legacy or newer file takes into a LIVE store.
+			//
 			// "Legacy shape" restates the migration chain's detection
 			// (migrationSteps in cmd/migrate.go): below-current version for the
 			// version-keyed steps, plus each value-keyed step's own condition. A
@@ -735,17 +678,13 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 			}
 
 			// Two files parsing to one id, the arrival half. The load walk warns
-			// about this from what it sees on disk; here the store is the only
-			// witness to the file already answering for the id, and the arriving
-			// file wins whichever it was — so without this line a live serve
-			// swapped one for the other with nothing on stderr, and which one won
-			// depended on the debounce batch's map iteration order.
+			// from what it sees on disk; here the store is the only witness to the
+			// file already answering for the id, and the arriving file wins.
 			//
-			// A batch holding BOTH files of a pair can warn twice, naming opposite
-			// shadow directions. That is two real swaps narrated in the order they
-			// happened, not a contradiction, and the last line always names the file
-			// the store ends up answering with — collapsing the pair to the first
-			// line would name a file that lost.
+			// A batch holding BOTH files of a pair warns twice, naming opposite
+			// shadow directions: two real swaps in the order they happened. Do not
+			// collapse the pair to the first line — the last line names the file
+			// the store ends up answering with.
 			existing, existed := c.nibs[newNib.ID]
 			if existed && c.arrivingShadowsStored(newNib.Path, existing.Path) {
 				warns.warn("duplicate nib id %q on disk: %s shadows %s (the arriving file wins; resolve the duplicate)",
@@ -753,10 +692,8 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 			}
 			c.nibs[newNib.ID] = newNib
 
-			// Refresh reverse-mention index with the new body's edges.
 			c.mentionIdx.Replace(newNib.ID, newNib.Body)
 
-			// Update search index
 			if c.searchIndex != nil {
 				if err := c.searchIndex.IndexNib(newNib); err != nil {
 					warns.warn("failed to index nib %s: %v", newNib.ID, err)
@@ -780,19 +717,13 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 		}
 	}
 
-	// Closed at the end of the per-file stream it speaks for, before the passes
-	// below that warn about nothing.
+	// Closed at the end of the per-file stream it speaks for.
 	warns.close()
 
 	// Resolve short-form link ids against the post-batch store (see
 	// canonicalize.go). This runs AFTER the whole batch, not per file as it is
 	// loaded: two files arriving together are visited in map order, so a
 	// dependent can be read before the target it names is in the store.
-	//
-	// The index maps each changed nib to every event carrying its payload, so a
-	// nib canonicalized as part of its own arrival has that event's payload
-	// swapped for the canonicalized pointer instead of collecting a second,
-	// contradictory event. It doubles as the candidate set for the narrow pass.
 	touched := make(map[string][]int, len(events))
 	for i, e := range events {
 		if e.Nib != nil {
@@ -804,8 +735,8 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 	// Snapshot every payload while the lock is still held — this is the choke
 	// point behind the immutable-payload contract documented on Subscribe.
 	// Cloning under the lock also keeps Clone's field reads from racing the
-	// in-place writers (Archive, Unarchive, LoadAndUnarchive rewrite Path on the
-	// stored pointer), which hold the same lock.
+	// in-place Path writers (Archive, Unarchive, LoadAndUnarchive, and the
+	// removal branch above), which hold the same lock.
 	//
 	// Skip the clone when no payload subscriber is attached: with only
 	// signal-only subscribers it is pure waste. When it is skipped,
@@ -815,10 +746,8 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 	// and fan-out is dropped for the batch rather than handed the live pointer.
 	//
 	// CANONICAL INVARIANT (the c.mu-then-subMu lock order). Never acquire c.mu
-	// while holding subMu. The order is c.mu -> subMu, taken in
-	// unwatchLocked/Close; nothing acquires c.mu while holding subMu, so reading
-	// the subscriber count off subMu above is a contention choice, not a deadlock
-	// requirement.
+	// while holding subMu. Reading the subscriber count off subMu above is a
+	// contention choice, not a deadlock requirement.
 
 	cloningPayloads := c.hasPayloadSubscribers()
 	if cloningPayloads {
@@ -831,11 +760,9 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 
 	c.mu.Unlock()
 
-	// Load-bearing ordering, not incidental: state is committed above before any
-	// event is delivered, so a subscriber that re-reads via Get/All on an event
-	// sees the change. The TUI does exactly that — it discards the payload and
-	// re-reads — so emitting events before applying state would break it
-	// silently and intermittently. Fan out outside the lock.
+	// Load-bearing ordering: state is committed above before any event is
+	// delivered, so a subscriber that re-reads via Get/All on an event sees the
+	// change. Fan out outside the lock.
 	c.fanOut(events, cloningPayloads)
 }
 
@@ -843,26 +770,16 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 // DIFFERENT file that already answers for its id, rather than being that same
 // file again.
 //
-// Two conditions, and neither is redundant. A file rewritten in place arrives at
-// the path the store already holds, so an equal path is an edit rather than a
-// collision. And a move by an OUTSIDE mover — the CLI against a running server, a
-// pull in the separate .nibs repository — reaches the create half with the store
-// still holding the OLD path, because the removal half that updates it may not
-// have run yet: both halves land in one debounce batch and iterate as a Go map.
-// So a differing path alone reports an ordinary archive as a duplicate,
-// non-deterministically. What separates a move from a collision is whether the old
-// file is still THERE. An in-process Archive/Unarchive/LoadAndUnarchive is not in
-// that family: each rewrites the stored Path under the lock this handler takes, so
-// its create half arrives with the paths already equal — the same in-process /
-// external split the removal branch above turns on.
+// Neither condition is redundant. An equal path is an in-place rewrite, not a
+// collision. And a move by an OUTSIDE mover reaches the create half with the
+// store still holding the OLD path — both halves land in one debounce batch and
+// iterate as a Go map — so a differing path alone reports an ordinary archive as
+// a duplicate, non-deterministically; what separates the two is whether the old
+// file is still THERE.
 //
-// The answer drives a MESSAGE and nothing else, so it errs generous where it
-// cannot tell a collision apart — a link or two directory entries for one file, a
-// case-only difference on a folding volume, a stored file that no longer parses,
-// and [Inference, not reproduced] a copy-then-delete straddling the debounce. It
-// errs quiet in one direction: a stat failing for any reason other than absence
-// reads as absence, so a real collision under an unreadable parent goes
-// unreported.
+// The answer drives a MESSAGE and nothing else. It errs quiet: a stat failing for
+// any reason other than absence reads as absence, so a real collision under an
+// unreadable parent goes unreported.
 func (c *Core) arrivingShadowsStored(arrivingRel, storedRel string) bool {
 	if storedRel == arrivingRel {
 		return false
@@ -895,10 +812,8 @@ func (c *Core) isStoreSubdir(absPath string) bool {
 }
 
 // isArchivedAbsPath reports whether an absolute filesystem path lies within the
-// archive directory under the nibs root. It is the on-disk-location counterpart
-// to isArchivedPath (which classifies a stored, root-relative Path); the removal
-// branch uses it to read the move's direction from the event path rather than
-// from the possibly-stale stored Path.
+// archive directory under the nibs root — the on-disk-location counterpart to
+// isArchivedPath, which classifies a stored, root-relative Path.
 func (c *Core) isArchivedAbsPath(absPath string) bool {
 	rel, err := filepath.Rel(c.root, absPath)
 	if err != nil {
@@ -907,19 +822,12 @@ func (c *Core) isArchivedAbsPath(absPath string) bool {
 	return c.isArchivedPath(filepath.ToSlash(rel))
 }
 
-// findRelPathByID scans the store's content directories (data/ and archive/)
-// for a nib file whose parsed id equals id, returning its root-relative,
-// forward-slash path. It recognizes a nib by id rather than by exact basename, so
-// it locates a file that a same-id slug rename moved to a new name — the case the
-// removal branch's two basename checks (archive-in, unarchive-out) cannot match.
-// The scan is bounded to two os.ReadDir calls and is reached only on the removal
-// branch's delete fall-through, so the two basename checks stay the cheap fast
-// path.
-//
-// Scanning the store ROOT instead of data/ would misread every ordinary move:
-// nib files do not live there, so the scan would find nothing and the
-// removal branch would fall through to a genuine deletion, dropping a live nib
-// whose file is present on disk.
+// findRelPathByID scans data/ and archive/ — one flat os.ReadDir each, no
+// subdirectories — for a nib file whose parsed id equals id, returning its
+// root-relative, forward-slash path. It recognizes a nib by id rather than by
+// exact basename, so it locates a file that a same-id slug rename moved to a new
+// name. Reached only on the removal branch's delete fall-through, so the two
+// basename checks there stay the cheap fast path.
 func (c *Core) findRelPathByID(id string) (string, bool) {
 	if id == "" {
 		return "", false

@@ -10,7 +10,6 @@ import (
 
 // ValidateParentInMap checks if a parent is valid for the given nib.
 // The parentID must already be normalized (prefix resolution done by caller).
-// Returns nil if valid, error otherwise.
 // This is a pure function that operates on a map of nibs without locking.
 func ValidateParentInMap(nibs map[string]*nib.Nib, b *nib.Nib, parentID string) error {
 	if parentID == "" {

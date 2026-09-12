@@ -43,19 +43,15 @@ type BrokenDocument struct {
 
 // UnparseableFile is a .md file under the nibs root that failed to parse (or
 // could not be read) during the last load and was therefore SKIPPED: the nib is
-// absent from every query, and no query result hints at why. Reporting it is
-// the only way a user learns that `nibs list` is under-reporting.
+// absent from every query, and no query result hints at why. The load warns on
+// stderr; this finding is what makes the omission actionable.
 type UnparseableFile struct {
-	// NibID is derived from the FILENAME (which parses whatever the contents
-	// are), so it names the nib that went missing. Empty when the filename
-	// yields no id.
+	// NibID is derived from the FILENAME, so it names the nib that went missing.
+	// Empty when the filename yields no id.
 	NibID string `json:"nib_id"`
-	// Path is relative to the nibs root with forward slashes, the same shape as
-	// nib.Path, so a diagnostic names a file the way every other nibs surface
-	// does.
+	// Path is relative to the nibs root with forward slashes, like nib.Path.
 	Path string `json:"path"`
-	// Reason is the underlying parse/read error, verbatim — the user has to
-	// repair the file by hand, so the report has to say what is wrong with it.
+	// Reason is the underlying parse/read error, verbatim.
 	Reason string `json:"reason"`
 }
 
@@ -77,9 +73,9 @@ type DuplicateID struct {
 // InvalidEnum is a loaded nib carrying an out-of-enum field value (an unknown
 // status/type/priority/estimate — e.g. the legacy `priority: deferred` on a
 // store whose migration has not run, or a hand-edited typo). The value loads
-// exactly as written (see loadFromDisk's diagnostic warning) — this finding is
-// what makes it visible: filters, ranking and the web UI all assume enum
-// validity, and nothing else authoritatively re-checks it after load.
+// exactly as written (see loadFromDisk's diagnostic warning), and every update
+// that leaves it in place is then refused by ValidateEnums — the same dead end
+// InvalidAxis describes. This finding names the file to repair.
 type InvalidEnum struct {
 	NibID string `json:"nib_id"`
 	// Reason is ValidateEnums' message, naming the field, the value, and the
@@ -92,22 +88,13 @@ type InvalidEnum struct {
 // or `area:` value). The rule is strict on the write paths only, so the value
 // loads as written (see loadFromDisk's diagnostic warning) — and then every
 // update that leaves both the type and the offending keys as they are is
-// refused. Dropping the keys is reachable: `--clear milestone` and
-// `--clear area` (updateNib's milestone and area inputs on every other client)
-// apply to the subject ABOVE the guards, so they clear the axis instead of
-// being refused by it. This finding names the nib whose ordinary edits are
-// dead-ended until that clear runs — see ClearAxesCommand for why it is ONE
-// command and not a choice between two.
+// refused. `--clear milestone` and `--clear area` apply to the subject ABOVE
+// the guards, so they clear the axis instead of being refused by it; see
+// ClearAxesCommand for why that escape is ONE command.
 //
-// Retyping is the other way to reconcile the type with the axis, and the plain
-// diagnostics deliberately do not prescribe it, because whether it works
-// depends on state they do not report: it is refused while nibs are still
-// assigned to the milestone (a milestone's ordinary state), and refused again
-// when the `area:` it would keep is one the vocabulary no longer declares. On
-// an empty queue with a declared area it succeeds, and it is then the only
-// escape that keeps the assignment — which is exactly why `--fix` names it, as
-// the CHOICE it will not make for the author rather than as a command to run.
-// The clear is what holds in every state, so it is what carries a command.
+// Retyping also reconciles the two and carries no command: it is refused while
+// nibs are still assigned to the milestone, and again when the `area:` it would
+// keep is undeclared.
 type InvalidAxis struct {
 	NibID string `json:"nib_id"`
 	// Path is relative to the nibs root with forward slashes, like nib.Path.
@@ -122,27 +109,15 @@ type InvalidAxis struct {
 
 // UndeclaredArea is a loaded nib whose `area:` names a path the store's areas
 // vocabulary does not declare. The value loads, lists, filters and renders
-// exactly as written — read-tolerance is deliberate, see Core.ValidateArea —
-// so this finding is the only surface that names the file, exactly as
-// InvalidEnum is for an out-of-enum value.
+// exactly as written (read-tolerance is deliberate, see Core.ValidateArea), so
+// this finding is the only surface that names the file.
 //
-// It is its OWN category rather than an InvalidEnum because ValidateEnums has
-// two callers that are not write paths — loadFromDisk and CheckAllLinks — so
-// folding the area rule in would make the LOADER warn, which is the tolerance
-// this feature owes.
+// Do not fold the rule into ValidateEnums: two of its callers are not write
+// paths — loadFromDisk and CheckAllLinks — so the LOADER would start warning.
 //
-// Both of its remediations have a command: `nibs set <id> --area <declared>`
-// assigns a declared value and `nibs set <id> --clear area` drops the
-// assignment. That is the difference from the axis findings, which have a
-// command of their own (ClearAxesCommand — `--clear area` repairs an axis
-// violation too): what those lack is a command for their ALTERNATIVE, since
-// retyping the nib is a choice between the type and the assignment that only
-// the author can make. `--fix` cannot apply either of these two — it would have
-// to invent an area, or decide the assignment should go, and neither is
-// provable intent.
-//
-// A store that declares NO areas produces none of these; see Core.CheckAllLinks
-// for why that exemption is deliberate.
+// `--fix` applies neither remediation — it would have to invent an area or
+// decide the assignment should go. A store that declares NO areas produces none
+// of these; see Core.CheckAllLinks.
 type UndeclaredArea struct {
 	NibID string `json:"nib_id"`
 	// Path is relative to the nibs root with forward slashes, like nib.Path.
@@ -150,22 +125,11 @@ type UndeclaredArea struct {
 	// Area is the undeclared value as the file spells it, already rendered by
 	// config for a message (control characters neutralized, length bounded).
 	Area string `json:"area"`
-	// Declared is the vocabulary the store DOES declare, as config.AreaList
-	// renders it — bounded the same way, since a declared name is file-sourced
-	// text too.
+	// Declared is the vocabulary the store DOES declare, as config.AreaError
+	// carries it — bounded the same way.
 	Declared string `json:"declared"`
 }
 
-// ClearAxesCommand renders the one command that drops every axis key a nib's
-// type refuses.
-//
-// It is one command rather than one per key because clearing a single key
-// leaves the write refused by the next: on a nib carrying both, `--clear
-// milestone` alone is refused for the area and `--clear area` alone is refused
-// for the milestone, so offering them as alternatives names two commands of
-// which neither works. nibID is expected already rendered for the surface it
-// is printed on — this only assembles the grammar, so that every surface that
-// prescribes the escape prescribes the same one.
 // AxisKeysNoun names the offending keys in prose, matching what
 // ClearAxesCommand clears, so a message never says "key" beside a command that
 // drops two.
@@ -176,6 +140,12 @@ func AxisKeysNoun(axes []string) string {
 	return "the axis key"
 }
 
+// ClearAxesCommand renders the one command that drops every axis key a nib's
+// type refuses. Keep it one command rather than one per key: on a nib carrying
+// both, `--clear milestone` alone is still refused for the area and `--clear
+// area` alone for the milestone, so two alternatives would be two commands of
+// which neither works. nibID is expected already rendered for the surface it is
+// printed on.
 func ClearAxesCommand(nibID string, axes []string) string {
 	var b strings.Builder
 	b.WriteString("nibs set ")
@@ -190,11 +160,10 @@ func ClearAxesCommand(nibID string, axes []string) string {
 // InvalidHierarchy is a loaded nib whose parent's type the hierarchy rules
 // refuse (nibtypes.ValidateParentType: a milestone parented under a milestone,
 // a feature under a task). The rule is strict on the write paths that set a
-// parent or change a type, so an offender reaches the store only through a
-// hand edit or as the leftover of an earlier rule set — the v2 migration
-// deliberately leaves illegal nests untouched — and it then loads, lists and
-// renders like any other nib. This finding is the one surface that names the
-// file and the rule it breaks.
+// parent or change a type, so an offender reaches the store through a hand edit
+// or as the leftover of an earlier rule set — the v2 migration leaves illegal
+// nests untouched — and then loads, lists and renders like any other nib. This
+// finding is the one surface that names it.
 type InvalidHierarchy struct {
 	NibID string `json:"nib_id"`
 	// Path is relative to the nibs root with forward slashes, like nib.Path.
@@ -213,17 +182,16 @@ type InvalidHierarchy struct {
 }
 
 // InvalidMilestoneTarget is a loaded nib whose `milestone:` names a nib that
-// EXISTS but is not milestone-typed (nibtypes' rule, the same one
+// EXISTS but is not milestone-typed (the same rule
 // membership.ResolvedMilestoneID applies). The rule is strict on the write
 // paths that assign — `nibs set <id> --milestone <feature-id>` is refused — so
-// an offender reaches the store only through a hand edit or as data predating
-// the rule, and it then loads and lists like any other nib while the
-// assignment resolves to nothing: the nib confers no membership, sits in the
-// backlog, and appears in no milestone queue, yet its `milestone:` field reads
-// back the bad target. This finding is the one surface that names it.
+// an offender reaches the store through a hand edit or as data predating the
+// rule, and then loads and lists like any other nib while the assignment
+// resolves to nothing: no membership, no milestone queue, yet its `milestone:`
+// field reads back the bad target.
 //
-// A MILESTONE-typed nib carrying `milestone:` is deliberately not reported
-// here — see the exclusion where the finding is raised.
+// A MILESTONE-typed nib carrying `milestone:` is not reported here — see the
+// exclusion where the finding is raised.
 type InvalidMilestoneTarget struct {
 	NibID string `json:"nib_id"`
 	// Path is relative to the nibs root with forward slashes, like nib.Path.
@@ -237,14 +205,12 @@ type InvalidMilestoneTarget struct {
 
 // AssignmentConflict is a loaded nib assigned to a milestone while one of its
 // structural ancestors is assigned too — the shape decision 1.2 rules out (a
-// nib and one of its ancestors are never both assigned; files are the whole
-// planning truth and membership is derived, never inherited). The rule is
-// strict on the write paths that assign or reparent, so an offender reaches
-// the store only through a hand edit or data that predates the rule, and it
-// then loads, lists and schedules like any other nib — counted in BOTH queues.
-// This finding is the one surface that names the pair. One finding per nib,
-// naming its NEAREST assigned ancestor; a deeper conflict shows up as that
-// ancestor's own finding.
+// nib and one of its ancestors are never both assigned). The rule is strict on
+// the write paths that assign or reparent, so an offender reaches the store
+// through a hand edit or data that predates the rule, and then schedules like
+// any other nib — counted in BOTH queues. One finding per nib, naming its
+// NEAREST assigned ancestor; a deeper conflict shows up as that ancestor's own
+// finding.
 type AssignmentConflict struct {
 	NibID string `json:"nib_id"`
 	// Path is relative to the nibs root with forward slashes, like nib.Path.
@@ -260,44 +226,31 @@ type AssignmentConflict struct {
 // ClosedMilestoneQueue is a loaded MILESTONE carrying a status that RELEASES
 // its dependents (config.StatusReleasesDependents — today completed and
 // scrapped) while open work is still assigned to its queue: decision 1.5's
-// refusal, standing in the store as a fact rather than as a rejected write.
+// refusal standing in the store as a fact.
 //
-// The CLOSING transition is refused on every client — `nibs close`'s gate
-// (cmd/close_queue.go) and updateNib's backstop (graph.MilestoneQueueOpenError),
-// covering the CLI, the web, the TUI and `nibs graphql`. The state is NOT
-// unreachable, though, and this finding is not here only for hand edits and
-// pre-rule data: the ASSIGNMENT door is still open, since assigning work to an
-// already-closed milestone checks the target's type and never its status
-// (nibs-l5df). So ordinary use still lands it, from the other side.
-//
-// It then loads, lists and schedules like any other nib, and the queue keeps
-// carrying work planned for a wave that has finished. This finding is the one
-// surface that names it — and, while a door stays open, the only one that can:
-// a refusal only ever sees the write it refuses, never the state that write
-// leaves behind by another route.
-//
-// Deferred is not an offense on EITHER side, and for two different reasons: a
-// deferred MILESTONE holds its queue on purpose (a parked wave is coming back),
-// and a deferred MEMBER is closed and so does not hold the milestone open.
+// The close, the assignment and the type flip each refuse it (graph's
+// MilestoneQueueOpenError, MilestoneReleasedError and MilestoneRetypeError,
+// plus `nibs close`'s own gate), and a refusal only ever sees the write it
+// refuses — so once the state stands this is the one surface that names it.
+// Deferred is an offense on NEITHER side: a deferred MILESTONE holds its queue
+// on purpose, and a deferred MEMBER is closed and does not hold it open.
 type ClosedMilestoneQueue struct {
 	NibID string `json:"nib_id"`
 	// Path is relative to the nibs root with forward slashes, like nib.Path.
 	Path string `json:"path"`
 	// Status is the releasing status the milestone carries.
 	Status string `json:"status"`
-	// Open is the open queue entries' full ids, in queue order — the same set
-	// and the same order graph.OpenQueueEntries yields, so the report and the
-	// refusal name one set.
+	// Open is the open queue entries' full ids, in the same queue order
+	// graph.OpenQueueEntries yields, so report and refusal name one set.
 	Open []string `json:"open"`
 }
 
 // NearMissKey is a loaded nib carrying an unknown front-matter key whose
 // spelling is a near miss of a modeled key (a dash for the underscore, a case
-// variant, stray underscores — the rule is nib.ModeledKeyResembling's). The
-// key parses losslessly into Extra and renders back — read tolerance is
-// unchanged — but no filter or query consults Extra, so a mistyped
-// `milestone-order:` silently drops the nib out of every milestone view. This
-// finding is the one surface that names it.
+// variant, stray underscores — the rule is nib.ModeledKeyResembling's). The key
+// parses losslessly into Extra and renders back — read tolerance is unchanged —
+// but no filter or query consults Extra, so the value the author meant to set
+// has no effect. This finding is the one surface that names it.
 type NearMissKey struct {
 	NibID string `json:"nib_id"`
 	// Path is relative to the nibs root with forward slashes, like nib.Path.
@@ -308,62 +261,47 @@ type NearMissKey struct {
 	Modeled string `json:"modeled"`
 }
 
-// LinkCheckResult contains all nib integrity issues found: the link issues
-// derivable from the loaded nibs, plus the load-time integrity issues that are
-// derivable only from what did NOT make it into the store.
+// LinkCheckResult contains all nib integrity issues found.
+//
+// A finding derivable from the loaded nibs alone is filled by
+// CheckAllLinksInMap; one needing the config, or evidence of what did NOT load,
+// is added by Core.CheckAllLinks. Each field below says which, and the field
+// order is the `--json` key order.
 type LinkCheckResult struct {
 	BrokenLinks     []BrokenLink     `json:"broken_links"`
 	SelfLinks       []SelfLink       `json:"self_links"`
 	Cycles          []Cycle          `json:"cycles"`
 	BrokenDocuments []BrokenDocument `json:"broken_documents"`
 
-	// Load-time integrity. Populated only by Core.CheckAllLinks, which can read
-	// what the last load retained; CheckAllLinksInMap sees a map of nibs that
-	// loaded successfully and so has no evidence of either condition.
+	// Load-time integrity — Core.CheckAllLinks only; the evidence is the files
+	// that did not load.
 	UnparseableFiles []UnparseableFile `json:"unparseable_files"`
 	DuplicateIDs     []DuplicateID     `json:"duplicate_ids"`
 
-	// Field integrity. Populated only by Core.CheckAllLinks — enum validity
-	// needs the config's enum tables, which the pure map function does not
-	// carry.
+	// Field integrity — Core.CheckAllLinks only; needs the config's enum tables.
 	InvalidEnums []InvalidEnum `json:"invalid_enums"`
 
-	// Axis integrity. Derivable from the nibs alone (the axis rule is
-	// nibtypes.ValidateAxes, config-free), so the pure map function carries it.
+	// Axis integrity — config-free (nibtypes.ValidateAxes).
 	InvalidAxes []InvalidAxis `json:"invalid_axes"`
 
-	// Area integrity. Populated only by Core.CheckAllLinks — the areas
-	// vocabulary lives on the config, the same reason InvalidEnums is filled
-	// there and not in the pure map function.
+	// Area integrity — Core.CheckAllLinks only; needs the areas vocabulary.
 	UndeclaredAreas []UndeclaredArea `json:"undeclared_areas"`
 
-	// Hierarchy integrity. Derivable from the nibs alone (the parent-type rule
-	// is nibtypes.ValidateParentType, config-free; the prefix a parent id may
-	// need is already threaded in for the link checks), so the pure map
-	// function carries it.
+	// Hierarchy integrity — config-free (nibtypes.ValidateParentType).
 	InvalidHierarchies []InvalidHierarchy `json:"invalid_hierarchies"`
 
-	// Milestone-target integrity. Derivable from the nibs alone (a type
-	// comparison over a target the link checks already resolve), so the pure
-	// map function carries it.
+	// Milestone-target integrity — config-free.
 	InvalidMilestoneTargets []InvalidMilestoneTarget `json:"invalid_milestone_targets"`
 
-	// Assignment integrity. Derivable from the nibs alone (exclusivity along
-	// the parent chain needs only the links and the prefix already threaded
-	// in), so the pure map function carries it.
+	// Assignment integrity — config-free.
 	AssignmentConflicts []AssignmentConflict `json:"assignment_conflicts"`
 
-	// Key integrity. Derivable from the nibs alone (the modeled key set is a
-	// compile-time fact of the nib package), so the pure map function carries it.
+	// Key integrity — config-free.
 	NearMissKeys []NearMissKey `json:"near_miss_keys"`
 
-	// Queue integrity. Populated only by Core.CheckAllLinks — which statuses
-	// close and which release their dependents is the config's answer
-	// (Config.IsClosedStatus / Config.StatusReleasesDependents), the same
-	// reason InvalidEnums is filled there. The derivation itself is pure and
-	// lives in closedMilestoneQueuesInMap; only the two role predicates are
-	// threaded in, exactly as the blocking queries thread
-	// releasesDependentsPredicate, so nibcore keeps no status list of its own.
+	// Queue integrity — Core.CheckAllLinks only; which statuses close and which
+	// release their dependents is the config's answer. The derivation stays pure
+	// in closedMilestoneQueuesInMap; only the two role predicates cross.
 	ClosedMilestoneQueues []ClosedMilestoneQueue `json:"closed_milestone_queues"`
 }
 
@@ -377,58 +315,50 @@ func (r *LinkCheckResult) TotalIssues() int {
 	return len(r.BrokenLinks) + len(r.SelfLinks) + len(r.Cycles) + len(r.BrokenDocuments) + r.LoadIssues() + r.EnumIssues() + r.AxisIssues() + r.AreaIssues() + r.HierarchyIssues() + r.AssignmentIssues() + r.MilestoneTargetIssues() + r.NearMissIssues() + r.QueueIssues()
 }
 
-// LoadIssues returns the count of load-time integrity issues alone. Callers
-// that report the two kinds separately — `nibs check` renders them under their
-// own heading, and neither is auto-fixable — need to count them apart from the
-// link categories.
+// LoadIssues returns the count of load-time integrity issues alone. `nibs check`
+// renders each category under its own heading; that is what this counter and the
+// ones below it are for.
 func (r *LinkCheckResult) LoadIssues() int {
 	return len(r.UnparseableFiles) + len(r.DuplicateIDs)
 }
 
-// EnumIssues returns the count of out-of-enum field findings alone, for the
-// same render-them-apart reason as LoadIssues.
+// EnumIssues returns the count of out-of-enum field findings alone.
 func (r *LinkCheckResult) EnumIssues() int {
 	return len(r.InvalidEnums)
 }
 
-// AxisIssues returns the count of axis-rule findings alone, for the same
-// render-them-apart reason as LoadIssues.
+// AxisIssues returns the count of axis-rule findings alone.
 func (r *LinkCheckResult) AxisIssues() int {
 	return len(r.InvalidAxes)
 }
 
-// AreaIssues returns the count of undeclared-area findings alone, for the same
-// render-them-apart reason as LoadIssues.
+// AreaIssues returns the count of undeclared-area findings alone.
 func (r *LinkCheckResult) AreaIssues() int {
 	return len(r.UndeclaredAreas)
 }
 
-// HierarchyIssues returns the count of hierarchy-rule findings alone, for the
-// same render-them-apart reason as LoadIssues.
+// HierarchyIssues returns the count of hierarchy-rule findings alone.
 func (r *LinkCheckResult) HierarchyIssues() int {
 	return len(r.InvalidHierarchies)
 }
 
-// AssignmentIssues returns the count of assignment-exclusivity findings alone,
-// for the same render-them-apart reason as LoadIssues.
+// AssignmentIssues returns the count of assignment-exclusivity findings alone.
 func (r *LinkCheckResult) AssignmentIssues() int {
 	return len(r.AssignmentConflicts)
 }
 
 // MilestoneTargetIssues returns the count of invalid-milestone-target findings
-// alone, for the same render-them-apart reason as LoadIssues.
+// alone.
 func (r *LinkCheckResult) MilestoneTargetIssues() int {
 	return len(r.InvalidMilestoneTargets)
 }
 
-// NearMissIssues returns the count of near-miss key findings alone, for the
-// same render-them-apart reason as LoadIssues.
+// NearMissIssues returns the count of near-miss key findings alone.
 func (r *LinkCheckResult) NearMissIssues() int {
 	return len(r.NearMissKeys)
 }
 
-// QueueIssues returns the count of closed-milestone-queue findings alone, for
-// the same render-them-apart reason as LoadIssues.
+// QueueIssues returns the count of closed-milestone-queue findings alone.
 func (r *LinkCheckResult) QueueIssues() int {
 	return len(r.ClosedMilestoneQueues)
 }
@@ -437,26 +367,12 @@ func (r *LinkCheckResult) QueueIssues() int {
 // When projectRoot is empty, document filesystem checks are skipped.
 // This is a pure function that operates on a map of nibs without locking.
 //
-// A parent, milestone or blockedBy target is resolved through normalizeIDInMap —
-// the exact id, then the configured prefix prepended — so it is broken only when
-// no nib answers to it under either spelling. That is the same rule Core.Get
-// and findActiveBlockersInMap apply, which matters because Core.FixBrokenLinks
-// repeats these checks and writes: a bare map lookup here called a resolvable
-// short-form target broken, and `nibs check --fix` then deleted it from the
-// file. configPrefix is threaded in because a pure map function cannot reach
-// the project config itself.
-//
-// Resolution also decides self versus broken: a target that resolves back to
-// the nib holding it is a self link however it was spelled.
-//
-// The cycle pass below, the reverse traversals (findIncomingLinksInMap,
-// isBlockingInMap) and the setParent cycle guard all walk exact map keys, and
-// are correct because every id in the store is already full: the loader
-// resolves short-form link ids once, at the disk-read boundary (see
-// canonicalize.go). Resolving again here is what keeps this check honest for
-// the ids canonicalization deliberately leaves verbatim — an id naming no nib
-// is broken however it is spelled, and the report names the spelling the file
-// holds, which is what `--fix` would drop.
+// Resolve a parent, milestone or blockedBy target through normalizeIDInMap —
+// the exact id, then configPrefix prepended — never by a bare map lookup: a
+// short-form target that resolves is not broken, and Core.FixBrokenLinks repeats
+// these checks before it deletes. A target that resolves
+// back to the nib holding it is a self link, however it was spelled; one that
+// resolves to nothing is reported under the spelling the file holds.
 func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix string) *LinkCheckResult {
 	result := &LinkCheckResult{
 		BrokenLinks:             []BrokenLink{},
@@ -475,10 +391,7 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 		ClosedMilestoneQueues:   []ClosedMilestoneQueue{},
 	}
 
-	// Check for broken links and self-references
 	for _, b := range nibs {
-		// Check parent link. Target reports the spelling as stored, which is
-		// what `--fix` would drop.
 		if b.Parent != "" {
 			fullID, ok := normalizeIDInMap(nibs, b.Parent, configPrefix)
 			switch {
@@ -496,14 +409,10 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 			}
 		}
 
-		// Check milestone link, resolved under the same rule as parent. A
-		// target that resolves is judged once more, on its TYPE: only a
-		// milestone-typed one confers membership (membership.ResolvedMilestoneID's
-		// rule, which is also what the assigning write path refuses), so a
+		// A milestone target resolves as a parent does, then is judged once more
+		// on its TYPE: only a milestone-typed one confers membership, so a
 		// resolvable non-milestone target leaves the nib in no queue while its
-		// `milestone:` field still reads back. The same resolution answers all
-		// three cases — resolving a second time by another rule would part this
-		// report from the refusal it mirrors.
+		// `milestone:` field still reads back.
 		if b.Milestone != "" {
 			fullID, ok := normalizeIDInMap(nibs, b.Milestone, configPrefix)
 			switch {
@@ -518,10 +427,9 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 					NibID:    b.ID,
 					LinkType: "milestone",
 				})
-			// A MILESTONE-typed subject is excluded: its type takes no
-			// assignment axis at all, so InvalidAxes already names it and the
-			// whole key has to go. Naming the target's type here too would send
-			// the reader to repoint a key they are about to delete.
+			// A MILESTONE-typed subject is excluded: InvalidAxes already names
+			// it, and its whole `milestone:` key has to go — naming the target's
+			// type here would send the reader to repoint a key they must delete.
 			case nibs[fullID].EffectiveType() != "milestone" && b.EffectiveType() != "milestone":
 				result.InvalidMilestoneTargets = append(result.InvalidMilestoneTargets, InvalidMilestoneTarget{
 					NibID:      b.ID,
@@ -532,7 +440,6 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 			}
 		}
 
-		// Check document paths exist on disk (skip when projectRoot is empty)
 		if projectRoot != "" {
 			for _, docPath := range b.Documents {
 				absPath := filepath.Join(projectRoot, docPath)
@@ -545,7 +452,7 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 			}
 		}
 
-		// Check blocked_by links (single-side: blocking not persisted)
+		// blocked_by only: blocking is derived, never persisted.
 		for _, blocker := range b.BlockedBy {
 			fullID, ok := normalizeIDInMap(nibs, blocker, configPrefix)
 			switch {
@@ -564,16 +471,11 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 		}
 	}
 
-	// The loop above walks the map, so its findings arrive in whatever order
-	// Go hands out the keys. Sorting is what makes the report and the --json
-	// envelope stable run to run, the same reason the per-nib pass below walks
-	// sorted ids.
-	//
-	// A nib id alone orders the milestone findings because a nib carries
-	// exactly one milestone. The other three need a compound key: one nib can
-	// hold a broken parent, a broken milestone and several broken blockers at
-	// once, and can name several missing documents, so an id-only key would
-	// leave those entries tied, and nothing would then pin their order.
+	// The loop above walks the map, so sorting is what makes the report and the
+	// --json envelope stable run to run. Three of the four need a compound key:
+	// one nib can hold a broken parent, a broken milestone and several broken
+	// blockers at once, and name several missing documents, so an id-only key
+	// would leave those entries tied. A nib carries exactly one milestone.
 	sort.Slice(result.BrokenLinks, func(i, j int) bool {
 		x, y := result.BrokenLinks[i], result.BrokenLinks[j]
 		if x.NibID != y.NibID {
@@ -602,17 +504,15 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 		return result.InvalidMilestoneTargets[i].NibID < result.InvalidMilestoneTargets[j].NibID
 	})
 
-	// Check for cycles in blocked_by and parent links
-	// (blocking is derived from blocked_by, so only these two need cycle
-	// checks; milestone is a flat assignment nothing traverses transitively,
-	// so a milestone loop cannot hang any walk)
+	// Only these two link types need cycle checks: blocking is derived from
+	// blocked_by, and milestone is a flat assignment nothing traverses.
 	for _, linkType := range []string{"blocked_by", "parent"} {
 		cycles := FindCyclesInMap(nibs, linkType)
 		result.Cycles = append(result.Cycles, cycles...)
 	}
 
-	// Per-nib field findings, sorted by id (and near-miss keys by key) — both
-	// maps would otherwise shuffle the report run to run.
+	// Per-nib findings, sorted by id and near-miss keys by key: map order would
+	// otherwise shuffle the report run to run.
 	ids := make([]string, 0, len(nibs))
 	for id := range nibs {
 		ids = append(ids, id)
@@ -620,10 +520,7 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 	sort.Strings(ids)
 	for _, id := range ids {
 		b := nibs[id]
-		// Axis integrity: the axis rule is strict on the write paths only, so a
-		// hand-edited offender loads as written — and then every update of it
-		// that keeps both the type and the offending keys is refused. This
-		// finding is what names the file to fix, and the keys the fix drops.
+		// Axis integrity: see InvalidAxis.
 		if err := nibtypes.ValidateAxes(b.EffectiveType(), b.Milestone, b.Area); err != nil {
 			result.InvalidAxes = append(result.InvalidAxes, InvalidAxis{
 				NibID:  b.ID,
@@ -632,12 +529,8 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 				Axes:   nibtypes.RefusedAxes(b.EffectiveType(), b.Milestone, b.Area),
 			})
 		}
-		// Hierarchy integrity: the parent-type rule is strict only on the write
-		// paths that set a parent or change a type, and the v2 migration
-		// deliberately leaves an illegal nest untouched — so a file-level
-		// offender loads, lists and renders normally and no other surface
-		// reports it. A parent that does not resolve is already a broken link
-		// (its type is unknowable), and one resolving to the nib itself is
+		// Hierarchy integrity: see InvalidHierarchy. An unresolvable parent is
+		// already a broken link (its type is unknowable) and a self parent is
 		// already a self link, so neither is judged again here.
 		if b.Parent != "" {
 			if parentID, ok := normalizeIDInMap(nibs, b.Parent, configPrefix); ok && parentID != b.ID {
@@ -659,18 +552,12 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 				}
 			}
 		}
-		// Assignment integrity: exclusivity along the parent chain is strict
-		// only on the write paths that assign or reparent, so an assigned nib
-		// under an assigned ancestor reaches the store by hand edit or from
-		// data predating the rule, and is then scheduled in both queues. The
-		// walk reads RESOLVED assignments — the target must exist and be
-		// milestone-typed, membership.ResolvedMilestoneID's rule, which is
-		// also what the write path judges — so a dangling or non-milestone
-		// assignment conflicts with nothing; each is its own finding above (a
-		// BrokenLink, an InvalidMilestoneTarget), not a conflict here, since
-		// neither confers the membership exclusivity is about. Parents resolve
-		// the way every link check resolves them, and a visited set bounds the
-		// walk on a hand-edited cycle.
+		// Assignment integrity: see AssignmentConflict. The walk reads RESOLVED
+		// assignments, so a dangling or non-milestone one conflicts with
+		// nothing — each is its own finding above (a BrokenLink, an
+		// InvalidMilestoneTarget), neither conferring the membership
+		// exclusivity is about. A visited set bounds the walk on a hand-edited
+		// parent cycle.
 		if ms := resolvedMilestoneInMap(nibs, b, configPrefix); ms != "" {
 			visited := map[string]bool{b.ID: true}
 			for cur := b; cur.Parent != ""; {
@@ -693,9 +580,7 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 				cur = parent
 			}
 		}
-		// Key integrity: an Extra key spelled a near miss from a modeled key
-		// (nib.ModeledKeyResembling's rule) loads losslessly but is invisible to
-		// every filter, so it is reported here.
+		// Key integrity: see NearMissKey.
 		keys := make([]string, 0, len(b.Extra))
 		for key := range b.Extra {
 			keys = append(keys, key)
@@ -716,9 +601,11 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 	return result
 }
 
-// resolvedMilestoneInMap is membership.ResolvedMilestoneID's rule over the
-// map: b's `milestone:` target when it resolves (exact id, then the prefix
-// prepended) to a milestone-typed nib, "" otherwise.
+// resolvedMilestoneInMap returns b's `milestone:` target when it resolves (exact
+// id, then the prefix prepended) to a milestone-typed nib, "" otherwise.
+//
+// It does NOT apply membership.ResolvedMilestoneID's subject test, which answers
+// "" for a milestone-typed b as well.
 func resolvedMilestoneInMap(nibs map[string]*nib.Nib, b *nib.Nib, configPrefix string) string {
 	if b.Milestone == "" {
 		return ""
@@ -735,44 +622,22 @@ func resolvedMilestoneInMap(nibs map[string]*nib.Nib, b *nib.Nib, configPrefix s
 }
 
 // closedMilestoneQueuesInMap derives every ClosedMilestoneQueue finding over the
-// map: each milestone whose status releases its dependents, paired with the
-// open work still assigned to it.
+// map: each milestone whose status releases its dependents, paired with the open
+// work still assigned to it, sorted by milestone id.
 //
-// It is graph.OpenQueueEntries' rule read over a different substrate — DIRECT
-// assignees only (work belonging to the milestone through an assigned ancestor
-// carries no assignment of its own), milestone-typed members skipped, queue
-// order from nib.SortByMilestoneOrder. A report naming a wider or narrower set
-// than the refusal would send a reader to repair something no write surface
-// objects to.
+// This is graph.OpenQueueEntries' rule over a different substrate — DIRECT
+// assignees only, milestone-typed members skipped, queue order from
+// nib.SortByMilestoneOrder. Resolve the assignment by CALLING
+// membership.ResolvedMilestoneID, never by restating its clauses, and take no
+// configPrefix: expanding a shorthand id here would part the report from the
+// refusal it mirrors. No store can present the divergence that would expose —
+// Load canonicalizes stored link ids (see canonicalize.go) — so the call
+// couples the two derivations rather than fixing an observed defect.
 //
-// Which is why the assignment is resolved by calling membership.ResolvedMilestoneID
-// itself rather than by restating its clauses: that is the function both refusals
-// reach through OpenQueueEntries -> View.DirectMembers, so the three answers agree
-// by construction rather than by two prose descriptions staying in step. Hence no
-// configPrefix parameter — expanding a shorthand id here would part this function
-// from the refusals it exists to mirror.
-//
-// The agreement is what is guaranteed; it is NOT a claim that a shorthand id is
-// inert system-wide. ResolvedMilestoneID has no rule of its own — it answers
-// through the Lookup its caller supplies, and Compute's is an exact byID map
-// while the ordering engine, the milestone filter and cmd/close.go pass a
-// Reader.Get-backed closure, which DOES prefix-expand (nibcore.Core.Get).
-//
-// Nor is this guarding an observed defect: Core.Load canonicalizes link ids in
-// memory before any of this runs, so CheckAllLinks is handed assignments already
-// in full form and a store cannot in practice present the divergent case. This
-// couples a pure function to the rule it mirrors so the two cannot drift apart
-// later; it changes no reported finding today.
-// Pinned by TestClosedMilestoneQueueAgreesWithMembership.
-//
-// isClosed and releasesDependents are supplied by the caller because this is a
-// pure function over a map and cannot reach the project config itself, the same
-// arrangement isBlockedInMap has. The two are NOT interchangeable: a deferred
-// member is closed and does not hold its milestone open, while a deferred
-// milestone releases nothing and is no offense at all.
-//
-// Findings come back sorted by milestone id, since map order would shuffle the
-// report run to run.
+// isClosed and releasesDependents are NOT interchangeable: a deferred member is
+// closed and does not hold its milestone open, while a deferred milestone
+// releases nothing and is no offense at all. The caller supplies them because a
+// pure function over a map cannot reach the project config.
 func closedMilestoneQueuesInMap(nibs map[string]*nib.Nib, isClosed, releasesDependents func(string) bool) []ClosedMilestoneQueue {
 	lookup := func(id string) *nib.Nib { return nibs[id] }
 	open := make(map[string][]*nib.Nib)
@@ -806,11 +671,9 @@ func closedMilestoneQueuesInMap(nibs map[string]*nib.Nib, isClosed, releasesDepe
 // integrity problems retained from the last Load.
 //
 // Those two categories cannot be derived from c.nibs — their evidence is the
-// files that did NOT make it in — so they are read from the Core rather than
-// recomputed by CheckAllLinksInMap. They describe the last load: a CLI command
-// loads once and then checks, so what it reports is the state it is querying.
-// A long-lived process whose watcher has since reconciled an individual file
-// keeps reporting what its Load saw, until the next Load.
+// files that did NOT make it in. They describe the last LOAD: a long-lived
+// process whose watcher has since reconciled a file keeps reporting what its
+// Load saw, until the next Load.
 //
 // The retained slices are copied out rather than shared: this holds only a read
 // lock, so handing out the stored backing array would let a caller mutate Core
@@ -823,10 +686,8 @@ func (c *Core) CheckAllLinks() *LinkCheckResult {
 	result.UnparseableFiles = append(result.UnparseableFiles, c.unparseableFiles...)
 	result.DuplicateIDs = append(result.DuplicateIDs, c.duplicateIDs...)
 
-	// Field integrity: re-validate enums against the config here (not in the
-	// pure map function, which carries no config). Values load as written —
-	// see loadFromDisk — so this is the report that makes an out-of-enum value
-	// actionable. Sorted by id: map order would shuffle the report run to run.
+	// Field integrity: the enum tables are the config's, which the pure map
+	// function does not carry. Sorted by id, or map order shuffles the report.
 	ids := make([]string, 0, len(c.nibs))
 	for id := range c.nibs {
 		ids = append(ids, id)
@@ -839,38 +700,21 @@ func (c *Core) CheckAllLinks() *LinkCheckResult {
 	}
 
 	// Area integrity: here for the same reason as the enums — the areas
-	// vocabulary is the config's answer, and the pure map function carries no
-	// config. Values load as written (read-tolerance is deliberate, see
-	// ValidateArea), so this report is the only surface that names the file.
+	// vocabulary is the config's answer. See UndeclaredArea.
 	//
-	// A store declaring NO areas is exempt WHOLESALE, and the exemption is
-	// narrower than it reads. A project that never adopted areas carries no
-	// `area:` values at all, so it reports nothing either way — the exemption
-	// saves it from no red report it was ever going to get. The only stores
-	// whose report it changes are the ones carrying values with no vocabulary
-	// to check them against (a vocabulary retired out from under its data, or a
-	// config that never followed it), and every one of those nibs is a write
-	// dead end: ValidateStoredArea refuses a stored value whether or not a
-	// vocabulary exists. So what this silences is exactly the unwritable set.
-	//
-	// That is the trade being made, not a side effect of it. It is taken
-	// because the answer for such a store is one config edit — declare the
-	// vocabulary, or clear the values — which N per-nib findings do not
-	// prescribe any better than none do; and the write path stays loud, being
-	// asked about one nib the caller named, where the refusal is actionable.
-	// The cost is that no read surface names those nibs — the loader is silent
-	// by design and this report by the exemption — so the dead end is
-	// discoverable only by attempting a write. Revisiting it means a single
-	// summary line, not N findings.
+	// A store declaring NO areas is exempt wholesale. Every nib it would name is
+	// a write dead end anyway (Core.ValidateArea refuses a stored value whether
+	// or not a vocabulary exists), and the answer for such a store is one config
+	// edit, not N findings. The cost: no read surface names those nibs, so the
+	// dead end shows up only on an attempted write.
 	if c.config != nil && c.Areas().Declared() {
 		for _, id := range ids {
 			b := c.nibs[id]
 			// A type that refuses `area:` outright is already an InvalidAxis
-			// finding, and its remedy is to drop the key. Naming a declared
-			// value beside it would prescribe one this nib may not carry at
-			// all — the same ordering preValidateSubject and
-			// closeMemberOwnGuards apply. The milestone axis is passed empty so
-			// only the area reading decides.
+			// finding whose remedy is to drop the key, so naming a declared
+			// value beside it would prescribe one this nib may not carry. Axis
+			// before area, as preValidateSubject and closeMemberOwnGuards order
+			// it; the milestone axis is passed empty so only the area decides.
 			if nibtypes.ValidateAxes(b.EffectiveType(), "", b.Area) != nil {
 				continue
 			}
@@ -883,9 +727,8 @@ func (c *Core) CheckAllLinks() *LinkCheckResult {
 		}
 	}
 
-	// Queue integrity: same reason it is here and not in the pure map function
-	// — the status ROLES are the config's answer. The derivation stays pure;
-	// only the two predicates cross.
+	// Queue integrity: the status ROLES are the config's answer. The derivation
+	// stays pure; only the two predicates cross.
 	result.ClosedMilestoneQueues = append(result.ClosedMilestoneQueues,
 		closedMilestoneQueuesInMap(c.nibs, c.closedStatusPredicate(), c.releasesDependentsPredicate())...)
 	return result
@@ -893,11 +736,10 @@ func (c *Core) CheckAllLinks() *LinkCheckResult {
 
 // LoadDiagnostics returns the load-time integrity problems retained from the
 // last Load: files on disk that are NOT answerable through the store (skipped
-// unparseable files, and losers of id collisions). It exists for callers that
-// must know whether the loaded store is a faithful picture of the whole
-// directory before acting on it — the migrate command refuses to rewrite a
-// store that did not load cleanly, since migrating around a skipped file can
-// silently drop edges to it. Slices are copied out, matching CheckAllLinks.
+// unparseable files, and losers of id collisions). Ask it before rewriting a
+// store — `nibs migrate` refuses to run on one that did not load cleanly, since
+// migrating around a skipped file can silently drop edges to it. Slices are
+// copied out, matching CheckAllLinks.
 func (c *Core) LoadDiagnostics() ([]UnparseableFile, []DuplicateID) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -911,12 +753,11 @@ func FindCyclesInMap(nibs map[string]*nib.Nib, linkType string) []Cycle {
 	var cycles []Cycle
 	visited := make(map[string]bool)
 	inStack := make(map[string]bool)
-	seenCycles := make(map[string]bool) // To avoid duplicate cycle reports
+	seenCycles := make(map[string]bool)
 
 	var dfs func(id string, path []string)
 	dfs = func(id string, path []string) {
 		if inStack[id] {
-			// Found a cycle - find where the cycle starts
 			cycleStart := -1
 			for i, p := range path {
 				if p == id {
@@ -927,10 +768,8 @@ func FindCyclesInMap(nibs map[string]*nib.Nib, linkType string) []Cycle {
 			if cycleStart >= 0 {
 				// Canonicalize before STORING, not just before keying: this
 				// Path is what `nibs check` renders and --json serializes, and
-				// the rotation the walk arrived at is an artifact of which id
-				// the map handed out first.
+				// the walk's own rotation is an artifact of map order.
 				cyclePath := canonicalCyclePath(append(path[cycleStart:], id))
-				// Create a canonical key to avoid duplicate cycles
 				key := canonicalCycleKey(cyclePath)
 				if !seenCycles[key] {
 					seenCycles[key] = true
@@ -952,7 +791,6 @@ func FindCyclesInMap(nibs map[string]*nib.Nib, linkType string) []Cycle {
 
 		b, ok := nibs[id]
 		if ok {
-			// Get targets based on link type
 			var targets []string
 			switch linkType {
 			case "parent":
@@ -976,18 +814,14 @@ func FindCyclesInMap(nibs map[string]*nib.Nib, linkType string) []Cycle {
 	}
 
 	// Sorted, because `visited` spans the whole walk: a cycle whose nodes were
-	// finished under an earlier root is never explored, so the entry order
-	// decides WHICH cycles are reported and not merely in what order. Over 3000
-	// random cyclic graphs, 1157 answered differently under a different root
-	// order. This is the only nondeterminism left in the walk — BlockedBy is a
-	// slice and the adjacency lookup is keyed, so everything below is a function
-	// of this sequence.
+	// finished under an earlier root is never explored, so root order decides
+	// WHICH cycles are reported and not merely in what order. It is the only
+	// nondeterminism left — BlockedBy is a slice and adjacency is a keyed lookup.
 	//
-	// It buys determinism, not completeness: the reported set stays a SUBSET of
-	// the elementary cycles. Existence is never missed, a directed graph having
-	// a cycle exactly when some DFS finds a back edge, so no cyclic store is
-	// called clean — 0 of those 3000 reported nothing. Fix the loop that is
-	// listed and the next run surfaces the next one.
+	// That buys determinism, not completeness: the reported set is a SUBSET of
+	// the elementary cycles. Existence is never missed — a directed graph has a
+	// cycle exactly when some DFS finds a back edge — so fixing the listed loop
+	// surfaces the next one on the next run.
 	roots := slices.Sorted(maps.Keys(nibs))
 	for _, id := range roots {
 		if !visited[id] {
@@ -995,15 +829,9 @@ func FindCyclesInMap(nibs map[string]*nib.Nib, linkType string) []Cycle {
 		}
 	}
 
-	// Which cycle the walk reaches first follows from the root order, so sorting
-	// the roots above already fixes it; this puts the report in an order a reader
-	// can predict rather than the one discovery happened to take — the same
-	// reason CheckAllLinksInMap sorts its map-walk collections.
-	//
-	// No two entries share a Path: the dedup key above is derived from that
-	// same path, so a repeat would already have been dropped. Comparing whole
-	// paths is therefore a total order, and sort.Slice's instability cannot
-	// show through the way a partial key would let it.
+	// No two entries share a Path: the dedup key above is derived from that same
+	// path, so a repeat would already have been dropped. Comparing whole paths is
+	// therefore a total order, and sort.Slice's instability cannot show through.
 	sort.Slice(cycles, func(i, j int) bool {
 		return slices.Compare(cycles[i].Path, cycles[j].Path) < 0
 	})
@@ -1014,18 +842,15 @@ func FindCyclesInMap(nibs map[string]*nib.Nib, linkType string) []Cycle {
 // canonicalCyclePath rotates a cycle to start at its smallest id, so one loop
 // has one rendering no matter which of its nodes a walk entered at.
 //
-// The input closes back on its start (the last element repeats the first) and
-// so does the result: that closure is what lets `nibs check` render the loop as
-// "a → b → a" instead of leaving the reader to infer the last hop.
+// The input closes back on its start (the last element repeats the first) and so
+// does the result; `nibs check` renders the loop as "a → b → a".
 func canonicalCyclePath(path []string) []string {
 	if len(path) <= 1 {
 		return path
 	}
 
-	// Drop the duplicate end element; it is re-appended after the rotation.
 	cycle := path[:len(path)-1]
 
-	// Find the minimum element to use as start
 	minIdx := 0
 	for i, id := range cycle {
 		if id < cycle[minIdx] {
@@ -1033,7 +858,6 @@ func canonicalCyclePath(path []string) []string {
 		}
 	}
 
-	// Rotate to start from minimum
 	rotated := make([]string, 0, len(cycle)+1)
 	for i := range cycle {
 		rotated = append(rotated, cycle[(minIdx+i)%len(cycle)])
@@ -1041,8 +865,8 @@ func canonicalCyclePath(path []string) []string {
 	return append(rotated, rotated[0])
 }
 
-// canonicalCycleKey creates a unique key for a cycle to detect duplicates.
-// It normalizes the cycle by starting from the smallest ID.
+// canonicalCycleKey keys a cycle for duplicate detection, from its canonical
+// rotation.
 func canonicalCycleKey(path []string) string {
 	if len(path) <= 1 {
 		return ""
@@ -1056,44 +880,23 @@ func canonicalCycleKey(path []string) string {
 // RESOLVES to the given target from all nibs. Returns the number of links
 // removed.
 //
-// Both ends of the comparison are spelling-independent, because neither end is
-// under a caller's control:
+// Both ends of the comparison are spelling-independent. The TARGET resolves
+// through the same exact-id-then-prefix-prepended rule as Core.Get
+// (normalizeIDInMap); a STORED link matches when IT resolves to that same nib,
+// by the same rule. A literal equality against the id AS GIVEN matches as well,
+// which is what strips links to a target that resolves to nothing — an
+// unresolvable id is carried verbatim, so verbatim is the only way to name it.
 //
-//   - The TARGET is resolved through the same exact-id-then-prefix-prepended
-//     rule as Core.Get and Core.Delete (normalizeIDInMap), so a short id names
-//     the nib it names everywhere else.
-//   - A STORED link matches when IT resolves to that same nib, by the same rule.
-//     Canonicalization resolves stored link ids to their full form at the
-//     disk-read boundary, but Core.Create stores a nib's links exactly as given
-//     and runs no such pass (see canonicalize.go), so a short-form link can sit
-//     in the store while its prefixed target is the only nib answering to it.
+// The legacy v0 Blocking field is left untouched, matching CheckAllLinksInMap
+// and FixBrokenLinks: in v1+ blocking is derived from other nibs' BlockedBy and
+// is not a link source (see nib.Nib.Blocking). Clearing it belongs to the
+// v0→v1 migration.
 //
-// A literal equality against the id AS GIVEN matches as well, which is what
-// strips links to a target that resolves to nothing — an unresolvable id is
-// carried verbatim by design, so verbatim is the only way to name it. That leg
-// serves a direct Core caller repairing links behind an already-deleted nib; the
-// GraphQL DeleteNib resolver resolves its target first, so no production caller
-// reaches it.
-//
-// A store holding BOTH a bare token `tgt` and its prefixed twin `nibs-tgt` keeps
-// them as separate edges throughout: `tgt` resolves to itself by exact match, so
-// unlinking either twin leaves the other's incoming links alone.
-//
-// The legacy v0 Blocking field is deliberately untouched, matching the rest of
-// the link-health family (CheckAllLinksInMap, FixBrokenLinks): in v1+ blocking
-// is derived from other nibs' BlockedBy, and Blocking is not a link source. In a
-// loaded store it survives only where the v0→v1 migration was deferred, and
-// there it is a faithful record of the file's own bytes — Render re-emits it so
-// the canonical etag matches (see nib.Nib.Blocking). Clearing it belongs to that
-// migration, not here.
-//
-// An empty target names no nib and is refused up front. The early return is
+// An empty target names no nib and is refused up front. That refusal is
 // load-bearing, not a shortcut for the O(N) walk: `""` DOES resolve in a store
 // holding a nib whose id is exactly the configured prefix — a hand-written
-// `nibs-.md`, which Get("") answers with — so without the refusal an empty
-// target would strip that nib's incoming links. Separately, pointsAtTarget
-// rejects an empty LINK id, so a nib whose Parent is unset is never an incoming
-// link to anything.
+// `nibs-.md` — so without it an empty target would strip that nib's incoming
+// links. Separately, pointsAtTarget rejects an empty LINK id.
 //
 // Copy-on-write, per the canonical live-pointer invariant (see
 // NibReader.GetSnapshot in internal/graph/interfaces.go): the changed fields
@@ -1102,9 +905,9 @@ func canonicalCycleKey(path []string) string {
 // key. Ranging over c.nibs while reassigning an existing key's value is safe in
 // Go.
 //
-// CONCURRENCY: this is a whole-store sweep, so it takes the per-operation
-// cross-process write lock the single-nib writers take (c.mu then the flock —
-// see Core.acquireWriteLock), which excludes `nibs config set-prefix` for its
+// CONCURRENCY: this whole-store sweep takes the per-operation cross-process
+// write lock the single-nib writers take — c.mu, then the flock (see
+// Core.acquireWriteLock) — which excludes `nibs config set-prefix` for its
 // duration. It therefore cannot be called under AcquireStoreLock, whose flock is
 // the same per-descriptor one (see flock.go).
 //
@@ -1114,8 +917,7 @@ func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Ahead of the lock: an empty target names no nib and writes nothing, so
-	// there is nothing to serialize and no reason to wait behind a long holder.
+	// Refused, not optimized away — see the doc comment.
 	if targetID == "" {
 		return 0, nil
 	}
@@ -1129,8 +931,6 @@ func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 	configPrefix := c.configPrefix()
 	fullID, resolved := c.normalizeIDForLookupLocked(targetID)
 
-	// Resolving the link costs a map lookup, so it runs only for a link the
-	// literal compare already rejected, and only when the target resolves at all.
 	pointsAtTarget := func(linkID string) bool {
 		if linkID == "" {
 			return false // an unset Parent or Milestone is not a link
@@ -1173,8 +973,6 @@ func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 			removed++
 		}
 		if removeBlocker {
-			// Every occurrence of every matching spelling goes; count the drops
-			// via the length delta (matching FixBrokenLinks).
 			before := len(clone.BlockedBy)
 			clone.BlockedBy = slices.DeleteFunc(clone.BlockedBy, pointsAtTarget)
 			removed += before - len(clone.BlockedBy)
@@ -1191,17 +989,16 @@ func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 	return removed, nil
 }
 
-// SkippedIDSet builds the set of ids whose file is present on disk but was
-// not loaded (unparseable/unreadable — see UnparseableFile), so a link naming
-// one of them is unresolvable-for-now rather than broken. Each skipped id is
-// entered under BOTH spellings a link may hold — as the filename derives it,
-// and with the configured prefix trimmed — the same two spellings
-// normalizeIDInMap resolves, so consumers test a link target with one plain
-// map probe of the spelling the file holds.
+// SkippedIDSet builds the set of ids whose file is present on disk but was not
+// loaded (unparseable/unreadable — see UnparseableFile), so a link naming one of
+// them is unresolvable-for-now rather than broken. Each id is entered under BOTH
+// spellings a link may hold — as the filename derives it, and with the
+// configured prefix trimmed — the same two normalizeIDInMap resolves, so a
+// consumer tests a link target with one plain map probe.
 //
-// It is the ONE builder for this rule: Core.FixBrokenLinks' keep-don't-erase
-// gate and cmd/check's report partition both build from it, so what --fix
-// preserves and what the report claims can never disagree by construction.
+// Build from this, not from a private copy: Core.FixBrokenLinks' keep-don't-erase
+// gate and cmd/check's report partition both do, so what `--fix` preserves and
+// what the report claims cannot disagree.
 func SkippedIDSet(unparseable []UnparseableFile, prefix string) map[string]bool {
 	if len(unparseable) == 0 {
 		return nil
@@ -1220,18 +1017,14 @@ func SkippedIDSet(unparseable []UnparseableFile, prefix string) map[string]bool 
 }
 
 // skippedIDsLocked returns SkippedIDSet for the files that failed THIS load.
+// Must be called with c.mu held.
 //
 // Their nibs are absent from c.nibs, so every link naming one resolves to
-// nothing and CheckAllLinks reports it broken. That report is correct — the
-// link genuinely cannot be followed right now — but "fixing" it by deletion is
-// not: the target is sitting on disk needing a YAML repair, and repairing it
-// does NOT bring back an edge already erased. The migrate command takes the
-// same posture for the same reason, refusing to run while a file is
-// unparseable rather than destroying edges around it.
-//
-// This became urgent when `nibs check` started REPORTING unparseable files
-// (nibs-968i): the user is now told a file is broken, and the obvious next step
-// is --fix. Must be called with c.mu held.
+// nothing and CheckAllLinks reports it broken. That report is correct — the link
+// cannot be followed right now — but do not let `--fix` delete such a link: the
+// target is on disk needing a YAML repair, and repairing it does NOT bring back
+// an edge already erased. `nibs migrate` refuses to run at all while a file is
+// unparseable, for the same reason.
 func (c *Core) skippedIDsLocked() map[string]bool {
 	return SkippedIDSet(c.unparseableFiles, c.configPrefix())
 }
@@ -1240,14 +1033,12 @@ func (c *Core) skippedIDsLocked() map[string]bool {
 // Returns the number of issues fixed.
 //
 // It restates the parent, milestone, blockedBy and document checks
-// CheckAllLinksInMap makes, resolving each link target through
-// normalizeIDInMap the same way, so
-// `nibs check --fix` removes exactly the broken links, self links and broken
-// documents `nibs check` reported. The other reported categories are left
-// untouched here and the command prints them as not auto-fixable instead:
-// cycles, and the two load-time conditions (an unparseable file, whose repair
-// means editing YAML the user wrote, and a duplicate id, whose resolution means
-// choosing which file to lose).
+// CheckAllLinksInMap makes, resolving each link target through normalizeIDInMap
+// the same way — but it KEEPS a link whose target is only skipped this load (see
+// skippedIDsLocked), so `nibs check --fix` removes a SUBSET of the broken links,
+// self links and broken documents `nibs check` reported; cmd/check partitions
+// its report the same way. The other categories are left untouched and printed
+// as not auto-fixable: cycles, and the two load-time conditions.
 //
 // A link that resolves is left exactly as stored: nothing here rewrites a
 // short id into its full form.
@@ -1257,13 +1048,12 @@ func (c *Core) skippedIDsLocked() map[string]bool {
 // reader ever sees a stored pointer's non-Path fields torn mid-write. See the
 // canonical live-pointer / copy-on-write invariant at NibReader.GetSnapshot
 // (internal/graph/interfaces.go). Documents is made copy-on-write here too, for
-// the same discipline, so any future off-lock reader of it is safe as well.
+// the same discipline.
 //
-// CONCURRENCY and the non-creating write are RemoveLinksTo's, for its reasons —
-// read them there. This sweep holds the lock longer: it stats one file per
-// document link on top of the walk of every nib, so a store with many document
-// links parks concurrent writers for that long. Both callers of either sweep are
-// write paths (`nibs check --fix`, deleteNib), so nothing that only reads waits.
+// CONCURRENCY and the non-creating write are RemoveLinksTo's — read them there.
+// This sweep holds the lock longer: it stats one file per document link on top
+// of the walk of every nib, so a store with many document links parks concurrent
+// writers for that long.
 func (c *Core) FixBrokenLinks() (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -1288,25 +1078,20 @@ func (c *Core) FixBrokenLinks() (int, error) {
 	for id, b := range c.nibs {
 		// Detect changes by READING the stored pointer only — never mutate it.
 
-		// Parent is dropped when it resolves back to this nib (self) or
-		// resolves to nothing (broken) — but NOT when it names a nib whose file
-		// is on disk and merely failed to load (see skippedIDsLocked).
+		// Dropped when the parent resolves back to this nib (self) or to nothing
+		// (broken), but NOT when its file is merely skipped this load.
 		fixParent := false
 		if b.Parent != "" {
 			fullID, ok := normalizeIDInMap(c.nibs, b.Parent, configPrefix)
 			fixParent = (!ok && !skipped[b.Parent]) || fullID == b.ID
 		}
 
-		// Milestone follows the same rule as parent, skipped-target gate
-		// included.
 		fixMilestone := false
 		if b.Milestone != "" {
 			fullID, ok := normalizeIDInMap(c.nibs, b.Milestone, configPrefix)
 			fixMilestone = (!ok && !skipped[b.Milestone]) || fullID == b.ID
 		}
 
-		// Surviving blocked_by set (drop self-refs and links to missing nibs).
-		// Survivors keep the spelling they were stored with.
 		var newBlockedBy []string
 		for _, blocker := range b.BlockedBy {
 			fullID, ok := normalizeIDInMap(c.nibs, blocker, configPrefix)
@@ -1317,7 +1102,6 @@ func (c *Core) FixBrokenLinks() (int, error) {
 		}
 		blockedRemoved := len(b.BlockedBy) - len(newBlockedBy)
 
-		// Surviving document set (drop paths that no longer exist on disk).
 		var newDocs []string
 		for _, docPath := range b.Documents {
 			absPath := filepath.Join(projectRoot, docPath)
