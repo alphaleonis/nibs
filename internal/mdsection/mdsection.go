@@ -2,10 +2,9 @@ package mdsection
 
 import "strings"
 
-// AnyLevel is the wildcard match-level sentinel. Passed as the match level to
-// Find, Replace, or SetAtLevel, it matches a heading at ANY level; a level N>0
-// instead gates the match to a heading spelled at exactly level N (so a request
-// at level 3 will not match — and later clobber — a level-2 "## Sub").
+// AnyLevel is the wildcard match level: it matches a heading at any level, where
+// a level N>0 matches only a heading spelled at exactly N. Spell the level to
+// stop a "### Sub" request matching — and then clobbering — a level-2 "## Sub".
 const AnyLevel = 0
 
 // section holds the line range of a found section.
@@ -16,17 +15,13 @@ type section struct {
 	level      int // heading level (number of # chars)
 }
 
-// findSection locates a section by heading text (case-insensitive) at the
-// requested level and returns its line range, preferring an EXACT text match
-// over a parenthetical-suffix fallback. matchLevel is a sentinel: AnyLevel
-// matches a heading of any level (wildcard); N>0 matches only a heading spelled
-// at level N (so a matchLevel of 3 will not match a level-2 "## Sub").
+// findSection locates a section by heading text (case-insensitive) at matchLevel
+// and returns its line range.
 //
-// Matching runs in two passes so an exact heading always wins regardless of
-// document order. Pass 1 scans for a heading whose text equals the target
-// exactly; only when pass 1 finds nothing does pass 2 scan for a heading whose
-// text is "<target> (…)" — a parenthetical suffix (so a bare "Foo" can still
-// target a lone "Foo (Phase 1)"). Both passes apply the same level gate.
+// TWO PASSES, so an exact heading wins regardless of document order: pass 1 takes
+// a heading whose text equals the target, and only if that finds nothing does
+// pass 2 take one spelled "<target> (…)", letting a bare "Foo" reach a lone
+// "Foo (Phase 1)". Both passes apply the same level gate.
 func findSection(lines []string, heading string, matchLevel int) (section, bool) {
 	target := strings.ToLower(heading)
 
@@ -37,10 +32,8 @@ func findSection(lines []string, heading string, matchLevel int) (section, bool)
 }
 
 // scanSection returns the first section whose heading satisfies match and the
-// level gate. match receives the heading text (with its "#" markers stripped)
-// and the already-lower-cased target. Splitting the scan out lets findSection
-// run it once per matching predicate (exact, then parenthetical) while the
-// section-span computation and level gate stay in a single place.
+// level gate. match receives the heading text with its "#" markers stripped, and
+// the already-lower-cased target.
 func scanSection(lines []string, target string, matchLevel int, match func(text, target string) bool) (section, bool) {
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -49,14 +42,11 @@ func scanSection(lines []string, target string, matchLevel int, match func(text,
 		}
 		l := HeadingLevel(trimmed)
 		text := strings.TrimSpace(trimmed[l:])
-		// A spelled matchLevel (N>0) gates the match to that exact level so a
-		// "### Sub" request cannot match — and later clobber — a level-2 "## Sub".
-		// AnyLevel is the wildcard: match a heading at any level.
 		if !match(text, target) || (matchLevel != AnyLevel && l != matchLevel) {
 			continue
 		}
 
-		// Found the heading. Now find where the section ends.
+		// The section ends at the next heading of equal or higher level.
 		end := len(lines)
 		for j := i + 1; j < len(lines); j++ {
 			jTrimmed := strings.TrimSpace(lines[j])
@@ -72,13 +62,10 @@ func scanSection(lines []string, target string, matchLevel int, match func(text,
 	return section{}, false
 }
 
-// Find locates a section by heading text (case-insensitive match on text after # symbols).
-// Returns the content between the heading line and the next heading at equal or higher level,
-// and whether the section was found. An EXACT heading match is preferred over a
-// parenthetical-suffix match: "Key Decisions" matches an exact "Key Decisions" heading
-// anywhere in the body before falling back to a "Key Decisions (…)" heading. matchLevel is a
-// sentinel: AnyLevel matches a heading of any level (wildcard); N>0 matches only a heading
-// spelled at level N.
+// Find returns a section's content — the lines between its heading and the next
+// heading at equal or higher level — and whether it was found. The heading is
+// matched case-insensitively at matchLevel, exact before parenthetical (see
+// findSection).
 func Find(body, heading string, matchLevel int) (string, bool) {
 	lines := strings.Split(body, "\n")
 	sec, found := findSection(lines, heading, matchLevel)
@@ -89,17 +76,13 @@ func Find(body, heading string, matchLevel int) (string, bool) {
 	return trimTrailingBlanks(content), true
 }
 
-// FindExact locates a section by heading text like Find, but runs ONLY the exact
-// case-insensitive pass — it NEVER falls back to a "<heading> (…)"
-// parenthetical-suffix match. matchLevel is the same sentinel as Find (AnyLevel
-// matches any level; N>0 matches only level N).
+// FindExact is Find with pass 2 disabled: it never falls back to a
+// "<heading> (…)" match.
 //
-// Use FindExact when the distinction between an exact heading and a parenthetical
-// one is load-bearing. Because Find prefers an exact heading over a parenthetical
-// one, a freshly-created exact heading WINS a wildcard read even when a lone
-// "<heading> (…)" also exists — so a caller reasoning about whether that new
-// exact heading would be shadowed must key on an EXACT existing heading, which
-// only FindExact detects.
+// Reach for it when the difference between an exact heading and a parenthetical
+// one decides something. A newly created exact heading wins a wildcard read over
+// a lone parenthetical one, so a caller asking whether that new heading would be
+// shadowed has to ask about an EXACT existing heading — which Find cannot answer.
 func FindExact(body, heading string, matchLevel int) (string, bool) {
 	lines := strings.Split(body, "\n")
 	sec, found := scanSection(lines, strings.ToLower(heading), matchLevel, exactHeading)
@@ -110,12 +93,9 @@ func FindExact(body, heading string, matchLevel int) (string, bool) {
 	return trimTrailingBlanks(content), true
 }
 
-// Replace replaces the content of a named section, keeping the heading line intact.
-// The heading is matched case-insensitively, preferring an EXACT heading over a
-// parenthetical-suffix fallback (see Find). Content between the heading and the next
-// equal/higher-level heading is replaced with newContent.
-// Returns the body unchanged if the section is not found. matchLevel is a sentinel:
-// AnyLevel matches a heading of any level (wildcard); N>0 matches only a heading spelled at level N.
+// Replace swaps a section's content for newContent, keeping the heading line. The
+// section is matched as findSection describes. A body with no matching section
+// comes back unchanged — check first if that is not what you want.
 func Replace(body, heading, newContent string, matchLevel int) string {
 	lines := strings.Split(body, "\n")
 	sec, found := findSection(lines, heading, matchLevel)
@@ -130,42 +110,23 @@ func Replace(body, heading, newContent string, matchLevel int) string {
 	return strings.Join(result, "\n")
 }
 
-// Set replaces the content of a matching section, or appends a new section if
-// none matches — matching an existing heading at ANY level (wildcard) and
-// preferring an EXACT heading over a parenthetical-suffix fallback (see Find).
-// appendLevel is the level of the heading created when no match exists (clamped
-// to at least 1). This is the wildcard-match variant: use it for callers that
-// target a heading regardless of the level it is spelled at. Use SetAtLevel to
-// gate the match to a specific level.
-//
-// The returned bool is appended: true when no existing section matched and a new
-// heading was appended, false when an existing section was replaced in place. It
-// is the authoritative append-vs-replace signal — callers must not re-derive it
-// from a separate Find. The tuple is propagated straight from SetAtLevel.
-//
-// CANONICAL INVARIANT (the append-vs-replace signal). This doc is its single
-// authoritative statement; cmd/body.go defers here rather than re-derive it.
+// Set is SetAtLevel matching at AnyLevel, for a caller that targets a heading
+// whatever level it is spelled at. Both returns come straight through; see
+// SetAtLevel for the bool.
 func Set(body string, appendLevel int, heading, content string) (string, bool) {
 	return SetAtLevel(body, AnyLevel, appendLevel, heading, content)
 }
 
-// SetAtLevel replaces a section's content if a matching section is found, or
-// appends a new section if not. An EXACT heading is preferred over a
-// parenthetical-suffix fallback (see Find). matchLevel selects which existing
-// heading counts as a match (AnyLevel = any level/wildcard, N>0 = only level N);
-// appendLevel is the level of the heading created when no match exists (clamped
-// to at least 1).
-// Separating the two lets a caller demand a match at an exact level yet still
-// create a new heading at a chosen level when absent. The two intent-revealing
-// entry points (Set for wildcard, SetAtLevel for a spelled level) keep callers
-// from transposing the two adjacent int levels.
+// SetAtLevel replaces a matching section's content, or appends a new section when
+// none matches. The two levels are separate so a caller can demand a match at an
+// exact level yet still create at a chosen one: matchLevel picks which existing
+// heading counts (see findSection), appendLevel spells the heading created when
+// none does, clamped to at least 1.
 //
-// The returned bool is appended: true when no matching section was found and a
-// new heading was appended at appendLevel, false when an existing matched section
-// was replaced in place. This is the write's own record of what it did — the
-// single source of truth for callers reasoning about append-vs-replace (e.g. the
-// shadowing-append warning), so they need not re-run a separate Find and risk
-// disagreeing with the write.
+// CANONICAL INVARIANT (the append-vs-replace signal). The returned bool is
+// appended: true when a new heading was appended at appendLevel, false when an
+// existing section was replaced in place. It is the write's own record of what it
+// did — read it rather than re-running a Find, which can disagree with the write.
 func SetAtLevel(body string, matchLevel, appendLevel int, heading, content string) (string, bool) {
 	if appendLevel < 1 {
 		appendLevel = 1
@@ -176,18 +137,14 @@ func SetAtLevel(body string, matchLevel, appendLevel int, heading, content strin
 		return Replace(body, heading, content, matchLevel), false
 	}
 
-	// Append new section.
 	prefix := strings.Repeat("#", appendLevel)
 	section := prefix + " " + heading + "\n" + content
 	if body == "" {
-		// Leading newline ensures a blank line before the heading when this
-		// content is later joined with YAML front matter or other preamble.
 		return "\n" + section, true
 	}
-	// Exactly one blank line separates the last content from the new heading.
-	// The body's own trailing newlines are terminator, not separator — a body
-	// ending in a blank line would otherwise push the heading down by one line
-	// per append.
+	// Exactly one blank line before the new heading. Trim first: the body's own
+	// trailing newlines are a terminator, not a separator, so a body ending blank
+	// would push the heading down one line per append.
 	return strings.TrimRight(body, "\n") + "\n\n" + section, true
 }
 
@@ -200,33 +157,26 @@ func isHeading(line string) bool {
 	return len(stripped) > 0 && stripped[0] == ' '
 }
 
-// HeadingLevel returns the number of # characters at the start of a heading
-// line. It counts from the first rune, so callers pass a whitespace-trimmed
-// line (e.g. "## H" → 2).
+// HeadingLevel returns the number of # characters starting a heading line
+// ("## H" → 2). It counts from the first rune, so pass a trimmed line.
 func HeadingLevel(line string) int {
 	return len(line) - len(strings.TrimLeft(line, "#"))
 }
 
-// exactHeading reports whether a heading's text is an exact case-insensitive
-// match for the target. text is the heading with its "#" markers already
-// stripped; target is lower-cased by the caller. This is findSection's
-// preferred (first-pass) predicate: an exact heading always wins over a
-// parenthetical-suffix one.
+// exactHeading reports whether a heading's text matches the target exactly,
+// case-insensitively. findSection's first pass.
 func exactHeading(text, target string) bool {
 	return strings.ToLower(text) == target
 }
 
-// parentheticalHeading reports whether a heading's text is the target followed
-// by a parenthetical suffix, so "Key Decisions" matches "Key Decisions (Phase 2)"
-// but not "Key Decisions Extended". This is findSection's fallback (second-pass)
-// predicate, used only when no exact heading exists, letting a bare "Foo" target
-// a lone "Foo (…)" heading.
+// parentheticalHeading reports whether a heading's text is the target followed by
+// a parenthetical suffix: "Key Decisions" matches "Key Decisions (Phase 2)" but
+// not "Key Decisions Extended". findSection's second pass.
 func parentheticalHeading(text, target string) bool {
 	return strings.HasPrefix(strings.ToLower(text), target+" (")
 }
 
-// trimTrailingBlanks removes trailing blank lines from content,
-// keeping a single trailing newline.
+// trimTrailingBlanks removes trailing blank lines, keeping one trailing newline.
 func trimTrailingBlanks(s string) string {
 	return strings.TrimRight(s, "\n") + "\n"
 }
