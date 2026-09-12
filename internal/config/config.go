@@ -18,8 +18,7 @@ import (
 // DefaultStatuses is the hardcoded status vocabulary, in RANK order: the open
 // statuses first, then the closed ones. That order is the primary sort key of
 // nib.SortByStatusPriorityAndType, so reordering it re-sorts the lists.
-// Pickers read a different order — see workflowStatusOrder. The three closed
-// statuses take their distinct colors from the ramp in internal/ui/styles.go.
+// Pickers read a different order — see workflowStatusOrder.
 var DefaultStatuses = []StatusConfig{
 	{Name: "in-progress", Color: "yellow", Role: RoleOpen, Description: "Currently being worked on"},
 	{Name: "todo", Color: "green", Role: RoleStartable, Description: "Ready to be worked on"},
@@ -30,23 +29,16 @@ var DefaultStatuses = []StatusConfig{
 }
 
 // Status group names, for every surface that accepts a group where a concrete
-// status goes: the CLI's `-s open` (cmd/statusfilter.go) and the web's
-// `status:open` (via internal/webvocab). Only the NAMES live here — each
-// surface derives the membership from the roles.
+// status goes — `-s open` on the CLI, `status:open` in the web. Only the NAMES
+// live here; each surface derives the membership from the roles.
 const (
 	StatusGroupOpen   = "open"
 	StatusGroupClosed = "closed"
 )
 
-// workflowStatusOrder lists the statuses in transition order — the sequence a
-// chooser reads best, where DefaultStatuses is the rank order lists read best.
-// Reach it through WorkflowStatuses/WorkflowStatusNames: the TUI status picker
-// (internal/tui/statuspicker.go) reads it, and so do the web's StatusSelect and
-// RowContextMenu, via internal/webvocab.
-//
-// Membership is not restated here. orderStatusesBy appends a status this list
-// forgets rather than dropping it, so the mistake never shows at runtime and
-// TestWorkflowStatusOrderCoversEveryStatus is what reports it.
+// workflowStatusOrder lists the statuses in transition order, which is what
+// choosers offer; DefaultStatuses is the rank order. Read it through
+// WorkflowStatuses/WorkflowStatusNames.
 var workflowStatusOrder = []string{"draft", "todo", "in-progress", "completed", "deferred", "scrapped"}
 
 // DefaultTypes is the hardcoded type vocabulary. Its order is the tertiary
