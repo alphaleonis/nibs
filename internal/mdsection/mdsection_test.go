@@ -88,10 +88,8 @@ func TestFind(t *testing.T) {
 			wantText:  "\nFirst.\n",
 			wantFound: true,
 		},
-		// --- exact-preferred matching (an exact heading wins over a parenthetical suffix) ---
+		// --- exact-preferred matching ---
 		{
-			// P2 regression: a parenthetical "(Phase 1)" ordered BEFORE the exact
-			// heading must not win — the exact "## Key Decisions" section is returned.
 			name:      "exact heading wins over an earlier parenthetical suffix",
 			body:      "## Key Decisions (Phase 1)\n- old\n\n## Key Decisions\n- keep\n",
 			heading:   "Key Decisions",
@@ -99,13 +97,8 @@ func TestFind(t *testing.T) {
 			wantFound: true,
 		},
 		{
-			// Two-pass × level-gate interaction: the exact heading is at the WRONG
-			// level ("### Foo", level 3) while a parenthetical heading sits at the
-			// RIGHT level ("## Foo (Bar)", level 2). Pass 1 (exact) finds no level-2
-			// exact heading — the gate rejects the level-3 "### Foo" — so pass 2 falls
-			// back to the level-2 parenthetical. This discriminates a two-pass whose
-			// EXACT pass drops the level gate: that bug would return the level-3
-			// "### Foo" content ("\nlevel-three exact.\n") instead.
+			// The exact "### Foo" fails the level gate, so the level-2 parenthetical
+			// wins. An exact pass without the gate returns "\nlevel-three exact.\n".
 			name:       "exact pass level gate defers to a right-level parenthetical fallback",
 			body:       "### Foo\n\nlevel-three exact.\n\n## Foo (Bar)\n\nlevel-two paren.\n",
 			heading:    "Foo",
@@ -193,9 +186,6 @@ func TestFind(t *testing.T) {
 	}
 }
 
-// TestFindExact pins FindExact's exact-only contract: it matches an exact heading
-// (case-insensitively, honoring the level gate) but NEVER falls back to a
-// parenthetical-suffix heading — the crucial difference from Find.
 func TestFindExact(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -220,8 +210,6 @@ func TestFindExact(t *testing.T) {
 			wantFound: true,
 		},
 		{
-			// The load-bearing difference from Find: a lone parenthetical heading is
-			// NOT matched by FindExact (Find WOULD fall back to it).
 			name:      "does NOT fall back to a lone parenthetical heading",
 			body:      "## Key Decisions (Phase 1)\n\n- Decision one\n",
 			heading:   "Key Decisions",
@@ -229,7 +217,6 @@ func TestFindExact(t *testing.T) {
 			wantFound: false,
 		},
 		{
-			// An exact heading is found even when a parenthetical one also exists.
 			name:      "finds the exact heading alongside a parenthetical one",
 			body:      "## Key Decisions (Phase 1)\n\n- old\n\n## Key Decisions\n\n- exact\n",
 			heading:   "Key Decisions",
@@ -306,8 +293,6 @@ func TestReplace(t *testing.T) {
 		},
 		// --- exact-preferred matching ---
 		{
-			// The exact "## Key Decisions" is replaced even though a parenthetical
-			// "(Phase 1)" heading precedes it; the parenthetical section is untouched.
 			name:       "replaces the exact heading, not an earlier parenthetical",
 			body:       "## Key Decisions (Phase 1)\n- old\n\n## Key Decisions\n- keep\n",
 			heading:    "Key Decisions",
@@ -425,8 +410,7 @@ func TestSet(t *testing.T) {
 			wantAppended: true,
 		},
 		{
-			// A parsed body carries nib.Render's terminating newline, so the
-			// append must not treat it as part of the separator.
+			// Bodies written by nib.Render end in a newline.
 			name:         "appends one blank line after a body ending in a newline",
 			body:         "## Goal\n\nShip it.\n",
 			matchLevel:   0,
@@ -448,8 +432,6 @@ func TestSet(t *testing.T) {
 		},
 		// --- exact-preferred matching ---
 		{
-			// Set finds the exact heading (not the earlier parenthetical) and
-			// replaces it in place rather than appending a duplicate.
 			name:         "replaces the exact heading, not an earlier parenthetical",
 			body:         "## Key Decisions (Phase 1)\n- old\n\n## Key Decisions\n- keep\n",
 			matchLevel:   0,
@@ -505,9 +487,6 @@ func TestSet(t *testing.T) {
 	}
 }
 
-// TestSetWildcard verifies the wildcard-match Set wrapper: it matches an existing
-// heading regardless of the level it is spelled at (proving it delegates to
-// SetAtLevel with AnyLevel), and appends at the requested level when absent.
 func TestSetWildcard(t *testing.T) {
 	tests := []struct {
 		name         string
