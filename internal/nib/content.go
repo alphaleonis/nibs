@@ -11,11 +11,8 @@ type BodyReplacement struct {
 	New string
 }
 
-// ReplaceMatchError is returned by ReplaceOnce when the old text does not occur
-// exactly once in the body. Count is the number of occurrences found: 0 means
-// "not found", any value >1 means "ambiguous". Callers inspect Count via
-// errors.As to distinguish the two cases and to report the occurrence count
-// structurally (e.g. the CLI's TEXT_NOT_FOUND / TEXT_AMBIGUOUS envelopes).
+// ReplaceMatchError is ReplaceOnce's refusal when old does not occur exactly
+// once. Count is the number found: 0 is not found, more than 1 is ambiguous.
 type ReplaceMatchError struct {
 	Count int
 }
@@ -51,9 +48,6 @@ func ReplaceOnce(text, old, new string) (string, error) {
 	if old == "" {
 		return "", fmt.Errorf("old text cannot be empty")
 	}
-	// Exactly-once semantics: 0 occurrences (not found) and >1 occurrences
-	// (ambiguous) are both surfaced as a typed *ReplaceMatchError carrying the
-	// count, so callers can branch structurally instead of parsing the message.
 	if count := strings.Count(text, old); count != 1 {
 		return "", &ReplaceMatchError{Count: count}
 	}
@@ -70,7 +64,6 @@ func AppendWithSeparator(text, addition string) string {
 	if text == "" {
 		return addition
 	}
-	// Ensure single newline separator
 	text = strings.TrimRight(text, "\n")
 	return text + "\n\n" + addition
 }

@@ -7,13 +7,8 @@ import (
 	"strings"
 )
 
-// PositionMap returns a map of nib.ID -> 1-based natural position among its
-// siblings (sorted by Order). Positions are per-parent: root-level nibs are
-// siblings of each other, children of the same parent are siblings, etc.
-//
-// Used by list rendering to surface a stable, human-friendly position number
-// independent of the current --sort flag (so an agent can reference "move
-// from 2 to 5" and have it survive sort changes).
+// PositionMap returns each nib's 1-based position, by Order, among the nibs with
+// the same raw Parent string.
 func PositionMap(nibs []*Nib) map[string]int {
 	byParent := make(map[string][]*Nib)
 	for _, b := range nibs {
@@ -35,30 +30,21 @@ func SortByOrder(nibs []*Nib) {
 	SortByKey(nibs, func(n *Nib) string { return n.Order })
 }
 
-// SortByMilestoneOrder sorts nibs by their MilestoneOrder field — the
-// milestone-queue position key — with SortByOrder's semantics. A milestone's
-// members sit in its QUEUE, not among their structural siblings, so listing
-// them by the parent-scope Order key would ignore the queue entirely (a
-// migrated assignee carries no Order at all); consumers listing a milestone's
-// members sort through this, and epic members keep SortByOrder.
+// SortByMilestoneOrder sorts nibs by MilestoneOrder with SortByOrder's semantics.
+// Use it for a milestone's queue; Order is a nib's structural position.
 func SortByMilestoneOrder(nibs []*Nib) {
 	SortByKey(nibs, func(n *Nib) string { return n.MilestoneOrder })
 }
 
-// SortByKey sorts nibs by a caller-chosen ordering key, with SortByOrder's
-// semantics: keyed nibs first in lexicographic key order, unkeyed nibs
-// appended sorted by title. The multi-scope ordering engine sorts each scope
-// by its own key field through this.
+// SortByKey sorts nibs stably by key, with SortByOrder's semantics.
 func SortByKey(nibs []*Nib, key func(*Nib) string) {
 	slices.SortStableFunc(nibs, func(a, b *Nib) int {
 		return CompareByKey(a, b, key)
 	})
 }
 
-// CompareByKey is SortByKey's element comparison — keyed before unkeyed, key
-// order first, then the title-then-ID tiebreak — exported so a consumer
-// ordering a WRAPPER slice keyed by an embedded nib applies the exact rule the
-// nib-slice sorts do.
+// CompareByKey is SortByKey's comparison: keyed before unkeyed, then key, then
+// case-insensitive title, then ID. Use it to sort slices that wrap nibs.
 func CompareByKey(a, b *Nib, key func(*Nib) string) int {
 	aKey, bKey := key(a), key(b)
 	aHas := aKey != ""
@@ -92,12 +78,9 @@ type PriorityRanker interface {
 	PriorityRank(priority string) int
 }
 
-// SortByStatusPriorityAndType sorts nibs by status order, then priority, then type, then title.
-// Available via CLI --sort status-priority. The default sort is SortByOrder.
-// Unrecognized statuses, priorities, and types are sorted last within their category.
-// Nibs without priority are treated as "normal" (via the ranker) and nibs without
-// a type as "task" (via EffectiveType) for sorting purposes, so a default-omitting
-// nib sorts at the same position it would if the default were written to disk.
+// SortByStatusPriorityAndType sorts nibs by status order, priority rank, type
+// order (EffectiveType), then case-insensitive title. Statuses and types missing
+// from statusNames or typeNames sort last.
 func SortByStatusPriorityAndType(nibs []*Nib, statusNames, typeNames []string, ranker PriorityRanker) {
 	statusOrder := make(map[string]int)
 	for i, s := range statusNames {
@@ -108,7 +91,6 @@ func SortByStatusPriorityAndType(nibs []*Nib, statusNames, typeNames []string, r
 		typeOrder[t] = i
 	}
 
-	// Helper to get order with unrecognized values sorted last
 	getStatusOrder := func(status string) int {
 		if order, ok := statusOrder[status]; ok {
 			return order

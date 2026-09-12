@@ -5,10 +5,8 @@ import (
 	"strings"
 )
 
-// Fractional indexing for nib ordering.
-//
-// Uses base-62 strings (0-9, A-Z, a-z) that sort lexicographically.
-// This allows inserting between any two existing keys without reindexing.
+// Order keys are base-62 fractional indexes (0-9, A-Z, a-z) that sort
+// lexicographically, so a key fits between any two others without renumbering.
 
 const base62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 const base = len(base62) // 62
@@ -54,11 +52,8 @@ func OrderBetween(a, b string) string {
 	return midpoint(a, b)
 }
 
-// OrderFirst returns a key that sorts before existing.
-// Precondition: existing must contain at least one non-'0' character.
-// All-'0' keys are at the bottom of the keyspace and have no predecessor.
-// Generated keys always start from "a0" (via OrderInitial), so this precondition
-// is satisfied for any key produced by this package.
+// OrderFirst returns a key that sorts before existing, which must not be all '0's:
+// such a key has no predecessor.
 func OrderFirst(existing string) string {
 	// Walk past leading '0's (smallest char) to find first non-minimal character
 	i := 0
@@ -67,7 +62,6 @@ func OrderFirst(existing string) string {
 	}
 
 	if i == len(existing) {
-		// All '0's — extend with "0" + midpoint char
 		return existing + string(base62[0]) + string(base62[base/2])
 	}
 
@@ -97,8 +91,8 @@ func OrderInitial() string {
 	return "a0"
 }
 
-// OrderKeyN generates n evenly-spaced order keys for backfilling.
-// Keys are strictly increasing and spread across the keyspace.
+// OrderKeyN returns n strictly increasing keys for backfilling: OrderInitial, then
+// OrderLast of each key before it.
 func OrderKeyN(n int) []string {
 	if n <= 0 {
 		return nil
