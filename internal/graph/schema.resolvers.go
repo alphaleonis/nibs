@@ -24,7 +24,6 @@ func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibI
 		Version: nib.CurrentVersion,
 	}
 
-	// Optional fields with defaults documented in schema
 	if input.Type != nil {
 		b.Type = *input.Type
 	}
@@ -43,9 +42,8 @@ func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibI
 	if len(input.Tags) > 0 {
 		b.Tags = input.Tags
 	}
-	// The ownership axis is a plain scalar here: it names no nib, so unlike
-	// parent there is nothing to resolve. Core.Create judges it against the
-	// declared vocabulary.
+	// Area names no nib, so there is nothing to resolve here; Core.Create judges
+	// it against the declared vocabulary.
 	if input.Area != nil {
 		b.Area = *input.Area
 	}
@@ -56,9 +54,7 @@ func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibI
 		b.Documents = input.Documents
 	}
 
-	// Handle parent (with validation)
 	if input.Parent != nil && *input.Parent != "" {
-		// Normalize short ID to full ID
 		parentID, ok := r.Reader.NormalizeID(*input.Parent)
 		if !ok {
 			return nil, fmt.Errorf("parent nib not found: %s", *input.Parent)
@@ -69,7 +65,6 @@ func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibI
 		b.Parent = parentID
 	}
 
-	// Handle blocking (validate targets, will add blockedBy after creation)
 	var blockingTargets []string
 	if len(input.Blocking) > 0 {
 		blockingTargets = make([]string, len(input.Blocking))
@@ -85,7 +80,6 @@ func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibI
 		}
 	}
 
-	// Handle blocked_by (with cycle validation)
 	if len(input.BlockedBy) > 0 {
 		normalizedBlockedBy := make([]string, len(input.BlockedBy))
 		for i, id := range input.BlockedBy {
@@ -98,7 +92,6 @@ func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibI
 				return nil, fmt.Errorf("blocker nib not found: %s", id)
 			}
 		}
-		// Check for cycles: same nib in both blocking and blockedBy
 		for _, blockerID := range normalizedBlockedBy {
 			for _, blockingID := range blockingTargets {
 				if blockerID == blockingID {
@@ -109,7 +102,6 @@ func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibI
 		b.BlockedBy = normalizedBlockedBy
 	}
 
-	// Handle positioning (afterId, beforeId, first)
 	placement, err := PlacementFromArgs(input.AfterID, input.BeforeID, input.First)
 	if err != nil {
 		return nil, err
@@ -118,10 +110,10 @@ func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibI
 		return nil, err
 	}
 
-	// Handle custom prefix - pre-generate ID if prefix is provided. Redraw on
-	// a collision like Core.Create does for the ids it generates itself
-	// (nibs-kafe); Create's duplicate refusal stays the backstop for a draw
-	// that races a concurrent write between this check and the store lock.
+	// A custom prefix means generating the id here, redrawing on a collision as
+	// Core.Create does for its own draws. A draw that races a concurrent write
+	// between this check and the store lock is caught by Create's duplicate
+	// refusal.
 	if input.Prefix != nil && *input.Prefix != "" {
 		idLength := 4 // default
 		if cfg := r.Reader.Config(); cfg != nil && cfg.Nibs.IDLength > 0 {
@@ -129,10 +121,9 @@ func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibI
 		}
 		for range 100 {
 			id := newPrefixedNibID(*input.Prefix, idLength)
-			// Reader.Get prefix-prepends on a miss, so a draw can be marked
-			// taken by a DIFFERENT nib under the store prefix — deliberately
-			// conservative: a false "taken" costs one wasted draw, and a
-			// false "free" is impossible (exact match is tried first).
+			// Reader.Get prefix-prepends on a miss, so a draw can read as taken
+			// by a DIFFERENT nib under the store prefix. A false "free" is
+			// impossible — the exact match is tried first.
 			if _, err := r.Reader.Get(id); err != nil {
 				b.ID = id
 				break
@@ -147,10 +138,8 @@ func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibI
 		return nil, err
 	}
 
-	// Single-side: add new nib's ID to each blocking target's blockedBy.
-	// updateTargetClone mutates an owned clone of the target, never the shared
-	// pointer, so a refused write leaves the in-memory nib untouched.
-	// Guard existence first so a target that vanished stays a no-op rather than
+	// Single-side: the new nib's ID goes into each target's blockedBy. Guard
+	// existence first so a target that vanished stays a no-op rather than
 	// surfacing GetForUpdate's not-found error.
 	for _, targetID := range blockingTargets {
 		if _, err := r.Reader.Get(targetID); err == nil {
@@ -163,16 +152,12 @@ func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibI
 		}
 	}
 
-	// Writer.Create installed b AS the shared store entry (c.nibs[b.ID] = b), so
-	// b is now the live pointer — return a detached snapshot, never b itself.
+	// Writer.Create installed b AS the shared store entry — return a snapshot,
+	// never b itself.
 	return r.snapshotResult(b.ID)
 }
 
 // UpdateNib is the resolver for the updateNib field.
-// Clone-before-mutate: all mutations are applied to an owned clone of the
-// in-memory nib (obtained via GetForUpdate). The shared store pointer is only
-// replaced via Writer.Update on success, so any validation or persistence
-// failure leaves the in-memory store untouched.
 func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model.UpdateNibInput) (*nib.Nib, error) {
 	// GetForUpdate returns an owned clone; mutate b freely — the shared store nib
 	// stays pristine until Writer.Update installs b.
@@ -181,7 +166,6 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 		return nil, err
 	}
 
-	// Validate mutually exclusive field pairs (no mutation yet)
 	if err := checkMutualExclusion("body and bodyMod", input.Body, input.BodyMod); err != nil {
 		return nil, err
 	}
@@ -192,16 +176,15 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 		return nil, err
 	}
 
-	// Update fields if provided.
-	//
 	// All four enum fields land in this block, ABOVE the type-change branch that
 	// follows, so preValidateSubject between them sees the final subject and still
-	// precedes every step that writes to another nib's file. Keeping priority and
-	// estimate above that branch also orders it by the same priority the parent
-	// block further down already uses (see the pre-check comment).
+	// precedes every step that writes to another nib's file.
 	if input.Title != nil {
 		b.Title = *input.Title
 	}
+	// A RAW comparison, where the effective-type check below needs
+	// EffectiveType(): status has no normalizing accessor, so a form echoes back
+	// the same "" it read and no no-op can disguise itself as a change.
 	statusChanged := input.Status != nil && *input.Status != b.Status
 	if input.Status != nil {
 		b.Status = *input.Status
@@ -210,35 +193,31 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 	if input.Type != nil {
 		b.Type = *input.Type
 	}
-	// priority/estimate are graphql.Omittable[*string] so an explicit JSON
-	// `null` (IsSet with a nil inner pointer → clear the field) is distinct from
-	// an omitted field (not set → leave unchanged). See gqlgen.yml.
+	// priority/estimate are graphql.Omittable[*string]: an explicit JSON `null`
+	// clears the field, an omitted field leaves it unchanged. See gqlgen.yml.
 	if p, ok := input.Priority.ValueOK(); ok {
 		if p != nil {
 			b.Priority = *p
 		} else {
-			b.Priority = "" // explicit null clears the priority
+			b.Priority = ""
 		}
 	}
 	if e, ok := input.Estimate.ValueOK(); ok {
 		if e != nil {
 			b.Estimate = *e
 		} else {
-			b.Estimate = "" // explicit null clears the estimate
+			b.Estimate = ""
 		}
 	}
 
-	// The milestone assignment's three-way wire reading — omitted leaves it,
-	// null or "" clears it, an id assigns — is read here, above the axis check,
-	// because a CLEAR's FIELD effect belongs to the state this request leaves:
-	// one call carrying both a type change to milestone and a clear ends valid,
-	// and preValidateSubject must judge that state rather than the stale
-	// pre-write assignment. Only the field effect moves up. The write-capable
-	// half of a clear — Orderer.Recalculate, which drops the queue key — stays
-	// in the milestone block below, after the guards that exist to precede
-	// every foreign write. An ASSIGNMENT is not pre-applied: it is judged by
-	// validateAndSetMilestone against the chain the nib will sit on, which the
-	// parent block has not yet settled here.
+	// The milestone reads three ways on the wire — omitted leaves it, null or ""
+	// clears it, an id assigns. A CLEAR's FIELD effect is applied here, above
+	// the axis check, so preValidateSubject judges the state this request leaves
+	// rather than the stale pre-write assignment: one call carrying both a type
+	// change to milestone and a clear ends valid. Its key drop stays in the
+	// milestone block below. An ASSIGNMENT is not pre-applied at all — it is
+	// judged by validateAndSetMilestone against the chain the nib will sit on,
+	// which the parent block has not yet settled here.
 	milestoneSet, newMilestone := false, ""
 	if m, ok := input.Milestone.ValueOK(); ok {
 		milestoneSet = true
@@ -253,23 +232,18 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 	// The writes that can put a NEW pair into a milestone queue (decision 2.3):
 	// an assignment, where the subject enters a queue, and a new dependency edge
 	// in either spelling, which gives a pair already sharing a queue its blocking
-	// half. A clear and the remove-forms can only take pairs away, and a status
-	// change is not linted either — reopening a released blocker re-arms a pair
-	// whose order and dependency both pre-existed. Taken here because it must
-	// read the store before Writer.Update lands; nothing above it writes.
+	// half. A clear and the remove-forms only take pairs away. Taken here: it
+	// must read the store before Writer.Update lands, and nothing above writes.
 	var lintBefore map[inversionKey]bool
 	if (milestoneSet && newMilestone != "") || len(input.AddBlocking) > 0 || len(input.AddBlockedBy) > 0 {
 		lintBefore = r.beginQueueLint(ctx, b.ID)
 	}
 
-	// The ownership axis reads the same three ways on the wire — omitted leaves
-	// it, null or "" clears it, a path assigns — but unlike the milestone BOTH
-	// directions are applied here. An area names no nib, so an assignment
-	// resolves nothing, moves no queue and touches no other file; there is no
-	// write-capable half to hold back. Applying it above the guards is also what
-	// makes the repair possible at all: a nib whose file carries an undeclared
-	// area is refused by every write, so the request that clears or replaces the
-	// value has to be judged on the state it LEAVES rather than the one it found.
+	// The area axis reads the same three ways, and BOTH directions are applied
+	// here: an area names no nib, moves no queue and touches no other file.
+	// Applying it above the guards is what makes repair possible — a nib whose
+	// file carries an undeclared area is refused by every write, so the request
+	// that clears or replaces the value is judged on the state it LEAVES.
 	if a, ok := input.Area.ValueOK(); ok {
 		b.Area = ""
 		if a != nil {
@@ -279,44 +253,28 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 
 	// Everything above assigns to b, the owned clone, and reads nothing off disk.
 	// Every step BELOW can reach a write to another nib's file, so the subject's
-	// write-free guards run here — a doomed update must not leave a durable edit on
-	// a nib it then reports as failed. Two routes get there, and this one call
-	// precedes both: the blocking handlers persist each target directly, and both
-	// calls to validateAndSetParent (the type-change branch immediately below, and
-	// the parent block further down) recalculate the order key on a real parent
-	// change, which reads the sibling set through Orderer.backfillKeys — a
-	// lazy read-path repair that PERSISTS an order key to any sibling that has
-	// none. See preValidateSubject for the window Writer.Update still owns.
+	// write-free guards run here — a doomed update must not leave a durable edit
+	// on a nib it then reports as failed. The blocking handlers persist each
+	// target directly; a real parent change (the type-change branch below and the
+	// parent block further down) and a milestone ASSIGNMENT each recalculate the
+	// order key, which reads its group through Orderer.backfillKeys — a lazy
+	// read-path repair that PERSISTS a key to any member that has none.
 	if err := r.preValidateSubject(b, input.IfMatch); err != nil {
 		return nil, err
 	}
 
-	// Decision 1.5 at the model boundary, and the reason it is HERE rather than
-	// inside preValidateSubject is a correctness requirement, not a preference:
+	// Decision 1.5 at the model boundary. It cannot move into preValidateSubject:
 	// `nibs close` calls PreValidateSubject BEFORE its dispositions drain the
-	// queue (closePreValidateSubject), so a guard placed there would refuse the
-	// very escapes that exist to answer this refusal. It also reads store state,
-	// which everything in that function deliberately does not — the axis rule
-	// sits there precisely because it is pure. What it shares with that function
-	// is only the obligation this position satisfies: run before any foreign
-	// write.
+	// queue (closePreValidateSubject), so a guard there would refuse the very
+	// escapes that exist to answer this refusal.
 	//
-	// Gated on the status actually CHANGING, not merely being supplied, because
-	// the invariant is about CLOSING a milestone. The web edit form sends `status`
-	// on every save, so a title-only edit arrives carrying the value the nib
-	// already holds; refusing that would make a milestone that already sits on a
-	// releasing status over a live queue permanently uneditable from the web, in
-	// the name of a close nobody asked for — and unfixable through the surface
-	// most likely to be fixing it. The standing offense is `nibs check`'s to
-	// report (nibcore's ClosedMilestoneQueue finding), not this write's to block.
-	// Revising one releasing reason to another IS a close and is still refused.
-	//
-	// Same distinction, same reason, as the effective-type check just below —
-	// but a RAW comparison is right here where that one needs EffectiveType().
-	// Status has no normalizing accessor: a status-less nib carries "" and the
-	// Nib.status field hands back that same "", so a form echoes what it read and
-	// no no-op can disguise itself as a change. ("" also releases nothing, so a
-	// status-less milestone never reaches the guard at all.)
+	// Gated on the status actually CHANGING, not merely being supplied. The web
+	// edit form sends `status` on every save, so a title-only edit arrives
+	// carrying the value the nib already holds, and refusing that would make a
+	// milestone already sitting on a releasing status over a live queue
+	// uneditable from the web. `nibs check` reports that standing offense
+	// (nibcore's ClosedMilestoneQueue finding). Revising one releasing reason to
+	// another IS a close and is still refused.
 	if statusChanged {
 		if err := r.refuseClosingFullQueue(ctx, b); err != nil {
 			return nil, err
@@ -325,30 +283,24 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 
 	if input.Type != nil {
 		// Only re-validate relationships when the EFFECTIVE type ACTUALLY changed.
-		// The web edit form always sends `type` unconditionally, so a title-only
-		// edit arrives with type PRESENT but equal to the current value — a no-op.
-		// No-op detection must use EffectiveType(): a type-less nib carries raw
-		// Type == "" on disk, but the Nib.type field the form reads back normalizes
-		// it to "task", so the form echoes back "task" — a raw comparison would see
-		// "" != "task" and mis-classify that as a real change. A no-op submission
-		// must not re-validate an untouched (possibly pre-existing invalid)
-		// parent/child relationship, or every edit of a nib with a legacy invalid
-		// parent would dead-end with a hierarchy error.
+		// The web edit form always sends `type`, so a title-only edit arrives with
+		// type present but equal. No-op detection must use EffectiveType(): a
+		// type-less nib carries "" on disk while the Nib.type field reads back
+		// "task", and a raw comparison would call that echo a change and
+		// re-validate an untouched (possibly already invalid) parent/child
+		// relationship, dead-ending every edit of such a nib.
 		if b.EffectiveType() != oldEffectiveType {
-			// Decision 1.5's TYPE-FLIP door, and a defect on its own terms. A
-			// milestone holding assignments cannot stop being one: every nib
-			// pointing at it would keep a `milestone:` naming a non-milestone,
-			// which confers no membership and is exactly what `nibs check` reports
-			// as an invalid target. It also closed a three-call route to the state
-			// the close guard refuses — retype away, close (the guard skips a
-			// non-milestone), retype back (the guard keys on the status CHANGING,
-			// and it did not) — by refusing that sequence at its first step.
+			// Decision 1.5's TYPE-FLIP door. A milestone holding assignments
+			// cannot stop being one: every nib pointing at it would keep a
+			// `milestone:` naming a non-milestone, which confers no membership and
+			// is what `nibs check` reports as an invalid target. It also closes
+			// the retype-away / close / retype-back route into the state the close
+			// guard refuses.
 			//
 			// The queue is read here, while the STORED type is still milestone, so
-			// View.DirectMembers answers on the assignment axis exactly as it does
-			// everywhere else. Openness is deliberately not consulted: a closed
-			// member's assignment is still a live link that this change would
-			// invalidate, which is a different question from the close gate's.
+			// View.DirectMembers answers on the assignment axis. Openness is not
+			// consulted: a closed member's assignment is still a live link this
+			// change would invalidate.
 			if oldEffectiveType == "milestone" {
 				if held := cachedMembershipView(ctx, r.Reader).DirectMembers(b.ID); len(held) > 0 {
 					return nil, &MilestoneRetypeError{
@@ -359,22 +311,17 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 				}
 			}
 
-			// Re-validate existing parent against the new type (when parent isn't also
-			// being changed — i.e. the parent field was omitted, not set to null/id).
-			//
-			// "Existing parent" is the RESOLVED link, not the stored string — see
-			// resolvedParent for the rule. A link naming no nib names no parent, so
-			// there is no parent-type constraint to check and the type change stands.
-			// Testing the stored string instead sends the unresolvable id through
-			// NormalizeID and aborts the whole mutation with "parent nib not found",
-			// naming a field the caller never touched — which dead-ends every type
-			// change on such a nib while leaving every other field editable.
+			// Re-validate the existing parent against the new type, when the parent
+			// field was omitted. "Existing parent" is the RESOLVED link, not the
+			// stored string (see resolvedParent): a link naming no nib names no
+			// parent, and testing the stored string instead aborts the whole
+			// mutation with "parent nib not found" over a field the caller never
+			// touched.
 			if parentID := resolvedParentID(b, r.Reader); parentID != "" && !input.Parent.IsSet() {
 				if err := r.validateAndSetParent(b, parentID); err != nil {
 					return nil, err
 				}
 			}
-			// Validate that existing children are still valid under the new type.
 			for _, link := range r.Reader.FindIncomingLinks(b.ID) {
 				if link.LinkType == "parent" {
 					if err := nibtypes.ValidateParentType(link.FromNib.EffectiveType(), b.EffectiveType()); err != nil {
@@ -401,31 +348,26 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 		}
 		b.Body = newBody
 	}
-	// Handle tags
 	if input.Tags != nil {
 		b.Tags = input.Tags
 	} else if input.AddTags != nil || input.RemoveTags != nil {
-		// Build a set of current tags
 		tagSet := make(map[string]bool)
 		for _, tag := range b.Tags {
 			tagSet[tag] = true
 		}
 
-		// Add new tags
 		if input.AddTags != nil {
 			for _, tag := range input.AddTags {
 				tagSet[tag] = true
 			}
 		}
 
-		// Remove tags
 		if input.RemoveTags != nil {
 			for _, tag := range input.RemoveTags {
 				delete(tagSet, tag)
 			}
 		}
 
-		// Convert back to slice
 		newTags := make([]string, 0, len(tagSet))
 		for tag := range tagSet {
 			newTags = append(newTags, tag)
@@ -433,7 +375,6 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 		b.Tags = newTags
 	}
 
-	// Handle documents (same pattern as tags)
 	if input.Documents != nil {
 		if err := validateDocumentPaths(input.Documents); err != nil {
 			return nil, err
@@ -465,29 +406,20 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 
 	// A request carrying BOTH a parent and a milestone change is judged on the
 	// state it leaves, and each exclusivity check reads the other axis off the
-	// clone — so the two blocks are ordered by which one has to see the other's
-	// result: a clear runs BEFORE the parent block (the parent block then judges
-	// the move against a nib that carries no assignment, rather than refusing it
-	// for one this request drops), an assignment runs AFTER it (judged against
-	// the chain the nib will actually sit on, not the one it leaves). Both stay
-	// before the blocking handlers like every other subject-side step. Like a
-	// parent change, a queue change recalculates the scope key, which reads the
-	// queue through Orderer.backfillKeys — the foreign write preValidateSubject
-	// above exists to precede, which is why the clear's field effect, and not
-	// this call, is what the axis check up there gets to see.
+	// clone. So a CLEAR runs BEFORE the parent block, which then judges the move
+	// against a nib carrying no assignment rather than refusing it for one this
+	// request drops; an ASSIGNMENT runs AFTER it, judged against the chain the
+	// nib will actually sit on. Both stay before the blocking handlers.
 	if milestoneSet && newMilestone == "" {
 		if err := r.validateAndSetMilestone(b, ""); err != nil {
 			return nil, err
 		}
 	}
 
-	// Handle parent relationship. parent is graphql.Omittable[*string] so the
-	// wire distinguishes three cases:
-	//   - not set (omitted)        → leave unchanged (the type-change path above
-	//                                re-validates the existing parent when needed)
-	//   - set to null OR ""        → clear the parent (validateAndSetParent("")
-	//                                moves the nib to root)
-	//   - set to a non-empty id    → normalize + validate + set
+	// parent is graphql.Omittable[*string], so the wire distinguishes three
+	// cases: omitted leaves it unchanged (the type-change path above re-validates
+	// it when needed), null or "" clears it to root, a non-empty id is
+	// normalized, validated and set.
 	if p, ok := input.Parent.ValueOK(); ok {
 		newParent := ""
 		if p != nil {
@@ -504,7 +436,6 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 		}
 	}
 
-	// Handle blocking relationships
 	if input.AddBlocking != nil {
 		if err := r.validateAndAddBlocking(b, input.AddBlocking); err != nil {
 			return nil, err
@@ -516,7 +447,6 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 		}
 	}
 
-	// Handle blocked-by relationships
 	if input.AddBlockedBy != nil {
 		if err := r.validateAndAddBlockedBy(b, input.AddBlockedBy); err != nil {
 			return nil, err
@@ -526,14 +456,10 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 		r.removeBlockedByRelationships(b, input.RemoveBlockedBy)
 	}
 
-	// ETag validation happens inside Update() under write lock.
-	// Writer.Update replaces the in-memory pointer with b (the clone).
 	if err := r.Writer.Update(b, input.IfMatch); err != nil {
 		return nil, err
 	}
 
-	// Auto-activation: when a child is set to in-progress, propagate upward
-	// to any parent that is still in todo or draft status.
 	if input.Status != nil && *input.Status == "in-progress" && b.Parent != "" {
 		cfg := r.Reader.Config()
 		if cfg != nil && cfg.Nibs.AutoActivation {
@@ -541,8 +467,8 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 		}
 	}
 
-	// Reported after every effect of this mutation has landed, auto-activation
-	// included, so the pairs name the store the caller is about to see.
+	// After every effect has landed, auto-activation included, so the pairs name
+	// the store the caller is about to see.
 	r.endQueueLint(ctx, b.ID, lintBefore)
 
 	// Writer.Update installed b AS the shared store entry — return a snapshot.
@@ -551,35 +477,26 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 
 // DeleteNib is the resolver for the deleteNib field.
 //
-// Both halves of the delete are driven by the RESOLVED id rather than the
-// caller's spelling: a prefixed project accepts a short id (Core.Get prepends
-// the configured prefix), and the two halves have to name the same nib, or
-// `deleteNib(id: "tgt")` removes nibs-tgt while unlinking something else. Only
-// the immutable ID is read off the live pointer Get returns, which is what the
-// live-pointer invariant permits (see NibReader.GetSnapshot in interfaces.go).
+// Both halves run on the RESOLVED id. Only the immutable ID is read off the live
+// pointer Get returns (see NibReader.GetSnapshot in interfaces.go).
 //
 // Order is load-bearing. Unlinking runs FIRST, while the target is still in the
-// store, so RemoveLinksTo resolves its target against the same key set the
-// stored links resolve against. Afterwards it would not: with a bare-token id
-// gone, its prefixed twin answers to that token, so the links this delete should
-// have CLEARED would instead be re-pointed onto the twin by Core.Delete's
-// canonicalization sweep, and the twin's own incoming links would then be
-// stripped in their place. Clearing incoming links is RemoveLinksTo's job alone;
-// the sweep only re-resolves the links that remain.
+// store, so RemoveLinksTo resolves against the same key set the stored links do.
+// Afterwards it would not: with a bare-token id gone, its prefixed twin answers
+// to that token, so the links this delete should have CLEARED would instead be
+// re-pointed onto the twin by Core.Delete's canonicalization sweep, and the
+// twin's own incoming links stripped in their place.
 func (r *mutationResolver) DeleteNib(ctx context.Context, id string) (bool, error) {
-	// Verify nib exists, and take the resolved id from the nib it found.
 	target, err := r.Reader.Get(id)
 	if err != nil {
 		return false, err
 	}
 	resolvedID := target.ID
 
-	// Remove incoming links first
 	if _, err := r.Writer.RemoveLinksTo(resolvedID); err != nil {
 		return false, err
 	}
 
-	// Delete the nib
 	if err := r.Writer.Delete(resolvedID); err != nil {
 		return false, err
 	}
@@ -588,16 +505,14 @@ func (r *mutationResolver) DeleteNib(ctx context.Context, id string) (bool, erro
 }
 
 // ArchiveNib is the resolver for the archiveNib field.
-// Unlike DeleteNib, incoming links are intentionally preserved because archived
-// nibs remain accessible and may be unarchived later.
+// Incoming links are preserved, unlike DeleteNib: an archived nib stays in the
+// store and may be unarchived.
 func (r *mutationResolver) ArchiveNib(ctx context.Context, id string) (bool, error) {
-	// Verify nib exists
 	_, err := r.Reader.Get(id)
 	if err != nil {
 		return false, err
 	}
 
-	// Archive the nib
 	if err := r.Writer.Archive(id); err != nil {
 		return false, err
 	}
@@ -607,9 +522,6 @@ func (r *mutationResolver) ArchiveNib(ctx context.Context, id string) (bool, err
 
 // SetParent is the resolver for the setParent field.
 func (r *mutationResolver) SetParent(ctx context.Context, id string, parentID *string, ifMatch *string) (*nib.Nib, error) {
-	// GetForUpdate returns an owned clone — validateAndSetParent and Writer.Update
-	// operate on it, so a rejected write never leaves the shared in-memory nib
-	// showing a phantom parent/order change.
 	b, err := r.Reader.GetForUpdate(id)
 	if err != nil {
 		return nil, err
@@ -620,13 +532,10 @@ func (r *mutationResolver) SetParent(ctx context.Context, id string, parentID *s
 		newParent = *parentID
 	}
 
-	// validateAndSetParent handles normalization, validation, cycle detection,
-	// and order key recalculation when the parent changes.
 	if err := r.validateAndSetParent(b, newParent); err != nil {
 		return nil, err
 	}
 
-	// ETag validation happens inside Update() under write lock
 	if err := r.Writer.Update(b, ifMatch); err != nil {
 		return nil, err
 	}
@@ -642,7 +551,6 @@ func (r *mutationResolver) AddBlocking(ctx context.Context, id string, targetID 
 		return nil, err
 	}
 
-	// Normalize short ID to full ID
 	normalizedTargetID, ok := r.Reader.NormalizeID(targetID)
 	if !ok {
 		return nil, fmt.Errorf("target nib not found: %s", targetID)
@@ -652,25 +560,19 @@ func (r *mutationResolver) AddBlocking(ctx context.Context, id string, targetID 
 		return nil, fmt.Errorf("nib cannot block itself")
 	}
 
-	// Check target exists
 	if _, err := r.Reader.Get(normalizedTargetID); err != nil {
 		return nil, fmt.Errorf("target nib not found: %s", targetID)
 	}
 
-	// Check for cycles: adding b→target means target.blockedBy += b.ID
+	// The edge added is target.blockedBy += b.ID, hence the argument order.
 	if cycle := r.Validator.DetectCycle(normalizedTargetID, "blocked_by", b.ID); cycle != nil {
 		return nil, fmt.Errorf("would create cycle: %v", cycle)
 	}
 
-	// The same lint updateNib's addBlocking path runs, for the same reason: this
-	// edge can give a pair already sharing a queue its blocking half. Linted on
-	// the SUBJECT, which the new pair names as the blocker.
+	// This edge can give a pair already sharing a queue its blocking half. Linted
+	// on the SUBJECT, which the new pair names as the blocker.
 	lintBefore := r.beginQueueLint(ctx, b.ID)
 
-	// Single-side: add blocker ID to target's blockedBy. updateTargetClone mutates
-	// an owned clone (fetched via GetForUpdate), never the shared pointer, so a
-	// refused write leaves the in-memory nib untouched; it keys the
-	// if-match on the target's pre-mutation etag, preserving require_if_match.
 	if err := r.updateTargetClone(normalizedTargetID, func(c *nib.Nib) bool {
 		c.AddBlockedBy(b.ID)
 		return true
@@ -678,8 +580,7 @@ func (r *mutationResolver) AddBlocking(ctx context.Context, id string, targetID 
 		return nil, err
 	}
 	r.endQueueLint(ctx, b.ID, lintBefore)
-	// b is the live Reader.Get pointer for id (only the target was mutated) —
-	// return a detached snapshot rather than the shared store pointer.
+	// b is the live Reader.Get pointer — return a snapshot, never b itself.
 	return r.snapshotResult(b.ID)
 }
 
@@ -691,13 +592,10 @@ func (r *mutationResolver) RemoveBlocking(ctx context.Context, id string, target
 		return nil, err
 	}
 
-	// Normalize short ID to full ID (no-op if target doesn't exist — just return source nib)
+	// NormalizeID echoes the id back for a target that does not exist; the
+	// existence guard below then makes the whole call a no-op.
 	normalizedTargetID, _ := r.Reader.NormalizeID(targetID)
-	// RemoveBlocking is a no-op for non-existent targets (acceptable behavior)
 
-	// Single-side: remove blocker ID from target's blockedBy. Guard existence
-	// first so a missing target stays a no-op; the write goes through an owned
-	// clone (via GetForUpdate), never the shared pointer.
 	if _, err := r.Reader.Get(normalizedTargetID); err == nil {
 		if err := r.updateTargetClone(normalizedTargetID, func(c *nib.Nib) bool {
 			return c.RemoveBlockedBy(b.ID)
@@ -706,22 +604,18 @@ func (r *mutationResolver) RemoveBlocking(ctx context.Context, id string, target
 		}
 	}
 
-	// b is the live Reader.Get pointer for id (only the target was mutated) —
-	// return a detached snapshot rather than the shared store pointer.
+	// b is the live Reader.Get pointer — return a snapshot, never b itself.
 	return r.snapshotResult(b.ID)
 }
 
 // AddBlockedBy is the resolver for the addBlockedBy field.
 // Single-side storage: only modifies this nib's blockedBy field.
 func (r *mutationResolver) AddBlockedBy(ctx context.Context, id string, targetID string, ifMatch *string) (*nib.Nib, error) {
-	// GetForUpdate returns an owned clone — a rejected Update never leaves the
-	// shared in-memory nib showing a phantom blockedBy.
 	b, err := r.Reader.GetForUpdate(id)
 	if err != nil {
 		return nil, err
 	}
 
-	// Normalize short ID to full ID
 	normalizedTargetID, ok := r.Reader.NormalizeID(targetID)
 	if !ok {
 		return nil, fmt.Errorf("blocker nib not found: %s", targetID)
@@ -731,12 +625,10 @@ func (r *mutationResolver) AddBlockedBy(ctx context.Context, id string, targetID
 		return nil, fmt.Errorf("nib cannot be blocked by itself")
 	}
 
-	// Check target exists
 	if _, err := r.Reader.Get(normalizedTargetID); err != nil {
 		return nil, fmt.Errorf("blocker nib not found: %s", targetID)
 	}
 
-	// Check for cycles via blocked_by links
 	if cycle := r.Validator.DetectCycle(b.ID, "blocked_by", normalizedTargetID); cycle != nil {
 		return nil, fmt.Errorf("would create cycle: %v", cycle)
 	}
@@ -756,16 +648,14 @@ func (r *mutationResolver) AddBlockedBy(ctx context.Context, id string, targetID
 // RemoveBlockedBy is the resolver for the removeBlockedBy field.
 // Single-side storage: only modifies this nib's blockedBy field.
 func (r *mutationResolver) RemoveBlockedBy(ctx context.Context, id string, targetID string, ifMatch *string) (*nib.Nib, error) {
-	// GetForUpdate returns an owned clone — a rejected Update never leaves the
-	// shared in-memory nib showing a phantom blockedBy.
 	b, err := r.Reader.GetForUpdate(id)
 	if err != nil {
 		return nil, err
 	}
 
-	// Normalize short ID to full ID (no-op if target doesn't exist — just remove any matching ID)
+	// NormalizeID echoes the id back for a target that does not exist, so the
+	// removal below simply matches nothing.
 	normalizedTargetID, _ := r.Reader.NormalizeID(targetID)
-	// RemoveBlockedBy is a no-op for non-existent targets (acceptable behavior)
 
 	b.RemoveBlockedBy(normalizedTargetID)
 	if err := r.Writer.Update(b, ifMatch); err != nil {
@@ -777,9 +667,6 @@ func (r *mutationResolver) RemoveBlockedBy(ctx context.Context, id string, targe
 
 // ReorderNib is the resolver for the reorderNib field.
 func (r *mutationResolver) ReorderNib(ctx context.Context, id string, afterID *string, beforeID *string, first *bool, parentID *string, ifMatch *string, scope model.OrderScope) (*nib.Nib, error) {
-	// GetForUpdate returns an owned clone — validateAndSetParent/positionAfter/
-	// positionBefore and Writer.Update operate on it, so a rejected write never
-	// leaves the shared in-memory nib showing a phantom order/parent change.
 	b, err := r.Reader.GetForUpdate(id)
 	if err != nil {
 		return nil, err
@@ -797,12 +684,9 @@ func (r *mutationResolver) ReorderNib(ctx context.Context, id string, afterID *s
 		lintBefore = r.beginQueueLint(ctx, b.ID)
 	}
 
-	// Optional reparent: change parent before reordering (atomic cross-parent
-	// move). See ContainerChange for the wire reading — note the contrast with
-	// updateNib's omittable parent, where null is the clear. It belongs to the
-	// parent scope alone: a queue move changes no container, and the queue a
-	// nib sits in is set through updateNib's milestone field, so the two
-	// arguments together are a contradiction rather than a combined move.
+	// Optional reparent, applied before the move (an atomic cross-parent move).
+	// ContainerChange carries the wire reading — note the contrast with
+	// updateNib's omittable parent, where null is the clear.
 	if target, ok := ContainerChangeFromArg(parentID).Requested(); ok {
 		if scope == model.OrderScopeMilestone {
 			return nil, fmt.Errorf("parentId reparents within the parent scope; a milestone-queue reorder takes no container change (reassign the nib with updateNib's milestone field instead)")
@@ -812,11 +696,10 @@ func (r *mutationResolver) ReorderNib(ctx context.Context, id string, afterID *s
 		}
 	}
 
-	// Move resolves b's (possibly new) group in the requested scope itself, so
-	// the set an anchor has to be found in is the same set the siblingId filter
-	// and `nibs rel --rel siblings` report for b in the parent scope, and the
-	// milestone filter's queue in the milestone scope. The engine's memberless
-	// and wrong-queue refusals surface here as-is.
+	// Move resolves b's (possibly new) group in the requested scope itself, so an
+	// anchor must be found in the set siblingId and `nibs rel --rel siblings`
+	// report for b in the parent scope, or the milestone filter's queue in the
+	// milestone scope.
 	if err := r.Orderer.Move(scopeFromModel(scope), b, pos); err != nil {
 		return nil, err
 	}
@@ -851,33 +734,30 @@ func (r *mutationResolver) RemoveArea(ctx context.Context, input model.RemoveAre
 }
 
 // Type is the resolver for the type field. The stored Nib keeps Type empty when
-// the file omits it (so the etag witnesses the on-disk bytes); this resolver
-// applies the presentation default so the non-nullable field always resolves a
-// value ("task"). See nib.DefaultType.
+// the file omits it, so the etag witnesses the on-disk bytes; this resolver
+// applies the "task" presentation default. See nib.DefaultType.
 func (r *nibResolver) Type(ctx context.Context, obj *nib.Nib) (string, error) {
 	return obj.EffectiveType(), nil
 }
 
 // Priority is the resolver for the priority field. Mirrors Type: the stored Nib
-// keeps Priority empty when the file omits it; this resolver applies the "normal"
-// presentation default for the non-nullable field. See nib.DefaultPriority.
+// keeps Priority empty when the file omits it; this resolver applies "normal".
+// See nib.DefaultPriority.
 //
-// Read-back limitation (decided out of scope): clearing priority via
-// updateNib(priority: null) stores "" on disk, but this resolver reports the
-// effective "normal" for empty. So a cleared priority reads back as "normal" and
-// a web round-trip that writes the read value back can self-revert the clear.
-// This is by design — empty→normal is the data model — not a resolver bug; do
-// not "fix" it here without also changing that model.
+// Read-back limitation: updateNib(priority: null) stores "" on disk, but this
+// resolver reports "normal" for empty, so a web round-trip that writes the read
+// value back can self-revert the clear. Empty→normal is the data model; do not
+// "fix" it here without also changing that model.
 func (r *nibResolver) Priority(ctx context.Context, obj *nib.Nib) (string, error) {
 	return obj.EffectivePriority(), nil
 }
 
 // ParentID is the resolver for the parentId field.
 //
-// Reports the RESOLVED parent id — the project's one definition of "has a
-// parent", see resolvedParent. Null for a nib with no parent AND for one whose
-// stored link names no nib, so this field, the parent field, hasParent and
-// siblingId all answer alike. The raw stored link is storedParentId.
+// Reports the RESOLVED parent id (see resolvedParent). Null both for a nib with
+// no parent and for one whose stored link names no nib, so this field, the
+// parent field, hasParent and siblingId all answer alike. The raw stored link is
+// storedParentId.
 func (r *nibResolver) ParentID(ctx context.Context, obj *nib.Nib) (*string, error) {
 	id := resolvedParentID(obj, r.Reader)
 	if id == "" {
@@ -888,9 +768,8 @@ func (r *nibResolver) ParentID(ctx context.Context, obj *nib.Nib) (*string, erro
 
 // StoredParentID is the resolver for the storedParentId field.
 //
-// The counterweight to ParentID reporting the resolved reading: the raw stored
-// link, unresolved, so a broken one stays inspectable instead of reading as
-// absent. Null only when the field is genuinely empty.
+// The raw stored link, unresolved, so a broken one stays inspectable instead of
+// reading as absent. Null only when the field is genuinely empty.
 func (r *nibResolver) StoredParentID(ctx context.Context, obj *nib.Nib) (*string, error) {
 	if obj.Parent == "" {
 		return nil, nil
@@ -899,9 +778,9 @@ func (r *nibResolver) StoredParentID(ctx context.Context, obj *nib.Nib) (*string
 }
 
 // BlockingIds is the resolver for the blockingIds field.
-// Computed: scans for active nibs that have this nib in their blockedBy list.
-// A nib whose status released its dependents (completed, scrapped) is not
-// blocking anything; a deferred nib is closed but still blocks.
+// Computed: nibs that have this nib in their blockedBy. A status that released
+// its dependents (completed, scrapped) blocks nothing; a deferred nib is closed
+// but still blocks.
 func (r *nibResolver) BlockingIds(ctx context.Context, obj *nib.Nib) ([]string, error) {
 	if r.releasesDependents(obj.Status) {
 		return []string{}, nil
@@ -920,9 +799,8 @@ func (r *nibResolver) BlockingIds(ctx context.Context, obj *nib.Nib) ([]string, 
 }
 
 // BlockedByIds is the resolver for the blockedByIds field.
-// Returns only IDs of active blockers — those whose status has not released
-// its dependents. Completed and scrapped blockers drop out; a deferred blocker
-// stays, because the set-aside work is coming back and the dependency is unmet.
+// Only blockers whose status has not released its dependents: completed and
+// scrapped drop out, a deferred blocker stays.
 func (r *nibResolver) BlockedByIds(ctx context.Context, obj *nib.Nib) ([]string, error) {
 	var ids []string
 	for _, blockerID := range obj.BlockedBy {
@@ -939,12 +817,8 @@ func (r *nibResolver) BlockedByIds(ctx context.Context, obj *nib.Nib) ([]string,
 }
 
 // BlockedBy is the resolver for the blockedBy field.
-// Returns only active blockers — those whose status has not released its
-// dependents. Completed and scrapped blockers drop out; a deferred blocker
-// stays.
-//
-// Returns detached snapshots via Reader.GetSnapshot (clone-under-lock), never
-// the live c.nibs pointers — gqlgen marshals their fields asynchronously.
+// Only blockers whose status has not released its dependents: completed and
+// scrapped drop out, a deferred blocker stays.
 func (r *nibResolver) BlockedBy(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error) {
 	var result []*nib.Nib
 	for _, blockerID := range obj.BlockedBy {
@@ -959,14 +833,9 @@ func (r *nibResolver) BlockedBy(ctx context.Context, obj *nib.Nib, filter *model
 }
 
 // Blocking is the resolver for the blocking field.
-// Computed: returns active nibs whose BlockedBy field contains this nib's ID.
-// A nib whose status released its dependents (completed, scrapped) is not
-// blocking anything; a deferred nib is closed but still blocks.
-//
-// Returns detached snapshots via Reader.GetSnapshot (clone-under-lock), never
-// the live c.nibs pointers — gqlgen marshals their fields asynchronously. Only
-// the immutable link.FromNib.ID is read off the live pointer; the status filter
-// runs against the detached clone.
+// Computed: nibs whose BlockedBy contains this nib's ID. A status that released
+// its dependents (completed, scrapped) blocks nothing; a deferred nib is closed
+// but still blocks.
 func (r *nibResolver) Blocking(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error) {
 	if r.releasesDependents(obj.Status) {
 		return ApplyFilter(ctx, nil, filter, r.Reader, r.Resolver.Blocking)
@@ -987,15 +856,11 @@ func (r *nibResolver) Blocking(ctx context.Context, obj *nib.Nib, filter *model.
 }
 
 // Parent is the resolver for the parent field.
-//
-// Returns a detached snapshot via Reader.GetSnapshot (clone-under-lock), never
-// the live c.nibs pointer — gqlgen marshals its fields asynchronously. A broken
-// parent link (absent target) resolves to nil, as before.
+// A broken parent link (absent target) resolves to nil.
 func (r *nibResolver) Parent(ctx context.Context, obj *nib.Nib) (*nib.Nib, error) {
 	if obj.Parent == "" {
 		return nil, nil
 	}
-	// A missing parent is a broken link → nil (mirrors the prior ErrNotFound path).
 	snap, ok := r.Reader.GetSnapshot(obj.Parent)
 	if !ok {
 		return nil, nil
@@ -1004,11 +869,6 @@ func (r *nibResolver) Parent(ctx context.Context, obj *nib.Nib) (*nib.Nib, error
 }
 
 // Children is the resolver for the children field.
-//
-// Returns detached snapshots via Reader.GetSnapshot (clone-under-lock), never
-// the live c.nibs pointers — gqlgen marshals their fields asynchronously. Only
-// the immutable sibling.ID is read off Members' live pointers; the
-// sort/backfill it performs internally is a separate pre-existing concern.
 func (r *nibResolver) Children(ctx context.Context, obj *nib.Nib, filter *model.NibFilter, sort *model.NibSort) ([]*nib.Nib, error) {
 	siblings := r.Orderer.Members(ScopeParent, obj.ID)
 	result := make([]*nib.Nib, 0, len(siblings))
@@ -1026,45 +886,26 @@ func (r *nibResolver) Children(ctx context.Context, obj *nib.Nib, filter *model.
 }
 
 // MentionIds is the resolver for the mentionIds field.
-// Returns the IDs of nibs mentioned via `#<id>` in this nib's body.
-//
-// Unlike BlockedBy/Blocking, mentions are informational and include nibs in
-// every status, the closed ones (deferred, completed, scrapped) included.
-// Callers who want open nibs only should request the `mentions` field with a
-// filter instead, e.g.
-// `mentions(filter: { status: ["draft", "todo", "in-progress"] }) { id }` —
-// status/excludeStatus match literal names, with no open/closed group
-// expansion at this layer.
+// The IDs of nibs mentioned via `#<id>` in this nib's body. Mentions are
+// informational and include every status, the closed ones included; for open
+// nibs only, request `mentions` with a status filter — which matches literal
+// names, with no open/closed group expansion at this layer.
 func (r *nibResolver) MentionIds(ctx context.Context, obj *nib.Nib) ([]string, error) {
 	return existingMentionIDs(r.Reader, cachedMentions(ctx, r.Reader, obj.ID)), nil
 }
 
 // MentionedByIds is the resolver for the mentionedByIds field.
-// Returns the IDs of nibs whose bodies mention this nib via `#<id>`.
-//
-// Unlike BlockedBy/Blocking, mentions are informational and include nibs in
-// every status, the closed ones (deferred, completed, scrapped) included.
-// Callers who want open nibs only should request the `mentionedBy` field with a
-// filter, e.g.
-// `mentionedBy(filter: { status: ["draft", "todo", "in-progress"] }) { id }` —
-// status/excludeStatus match literal names, with no open/closed group
-// expansion at this layer.
+// The IDs of nibs whose bodies mention this nib via `#<id>`. Mentions include
+// every status, the closed ones included; for open nibs only, request
+// `mentionedBy` with a status filter (see MentionIds).
 func (r *nibResolver) MentionedByIds(ctx context.Context, obj *nib.Nib) ([]string, error) {
 	return existingMentionIDs(r.Reader, cachedMentionedBy(ctx, r.Reader, obj.ID)), nil
 }
 
 // Mentions is the resolver for the mentions field.
-//
-// Returns detached snapshots via Reader.GetSnapshot (clone-under-lock), never
-// the live c.nibs pointers cachedMentions/FindMentions hand back — gqlgen
-// marshals their fields asynchronously. Only the immutable ID is read off the
-// cached live pointers; a mention that vanished before the snapshot is skipped.
-//
-// Unlike BlockedBy/Blocking, mentions are informational and include nibs in
-// every status, the closed ones (deferred, completed, scrapped) included.
-// Callers who want open nibs only should pass
-// `filter: { status: ["draft", "todo", "in-progress"] }` — status/excludeStatus
-// match literal names, with no open/closed group expansion at this layer.
+// Mentions include every status, the closed ones included; for open nibs only,
+// pass `filter: { status: [...] }` (see MentionIds). A mention that vanished
+// before its snapshot is skipped.
 func (r *nibResolver) Mentions(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error) {
 	mentioned := cachedMentions(ctx, r.Reader, obj.ID)
 	result := make([]*nib.Nib, 0, len(mentioned))
@@ -1077,17 +918,9 @@ func (r *nibResolver) Mentions(ctx context.Context, obj *nib.Nib, filter *model.
 }
 
 // MentionedBy is the resolver for the mentionedBy field.
-//
-// Returns detached snapshots via Reader.GetSnapshot (clone-under-lock), never
-// the live c.nibs pointers cachedMentionedBy/FindMentionedBy hand back — gqlgen
-// marshals their fields asynchronously. Only the immutable ID is read off the
-// cached live pointers; a source that vanished before the snapshot is skipped.
-//
-// Unlike BlockedBy/Blocking, mentions are informational and include nibs in
-// every status, the closed ones (deferred, completed, scrapped) included.
-// Callers who want open nibs only should pass
-// `filter: { status: ["draft", "todo", "in-progress"] }` — status/excludeStatus
-// match literal names, with no open/closed group expansion at this layer.
+// Mentions include every status, the closed ones included; for open nibs only,
+// pass `filter: { status: [...] }` (see MentionIds). A source that vanished
+// before its snapshot is skipped.
 func (r *nibResolver) MentionedBy(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error) {
 	mentionedBy := cachedMentionedBy(ctx, r.Reader, obj.ID)
 	result := make([]*nib.Nib, 0, len(mentionedBy))
@@ -1100,11 +933,7 @@ func (r *nibResolver) MentionedBy(ctx context.Context, obj *nib.Nib, filter *mod
 }
 
 // Nib is the resolver for the nib field.
-//
-// Returns a detached snapshot via Reader.GetSnapshot (clone-under-lock), never
-// the live c.nibs pointer — gqlgen marshals its fields asynchronously. A missing
-// nib resolves to nil (mirrors the prior ErrNotFound path); GetSnapshot resolves
-// short IDs exactly as Get did.
+// A missing nib resolves to nil. GetSnapshot resolves short IDs as Get does.
 func (r *queryResolver) Nib(ctx context.Context, id string) (*nib.Nib, error) {
 	snap, ok := r.Reader.GetSnapshot(id)
 	if !ok {
@@ -1115,38 +944,18 @@ func (r *queryResolver) Nib(ctx context.Context, id string) (*nib.Nib, error) {
 
 // Nibs is the resolver for the nibs field.
 //
-// Returns detached snapshots via Reader.GetSnapshot (clone-under-lock), never
-// the live c.nibs pointers — gqlgen marshals their fields asynchronously. The
-// filter/ancestor/sort pipeline runs synchronously over the live pointers
-// (Search and All both hand back store pointers, as does includeAncestors), then
-// every element handed back is replaced by its snapshot so no live pointer
-// escapes to async marshaling. Only the immutable ID is read off the live
-// pointers at the snapshot step; a nib that vanished before the snapshot is
-// skipped. This one conversion covers both the All and the Search branches.
-//
-// Search SEEDS the input here rather than being left to the intersection branch
-// ApplyFilter runs, and the seeding is what carries the ORDER the schema
-// promises for an unsorted search: id matches first, then full-text hits by
-// relevance. Intersecting All() instead would answer with the store's own order.
-// ApplyFilter is then handed a copy of the filter with the term cleared, because
-// the seeded set already IS the term's answer: leaving it set would query the
-// index a second time only to intersect that answer with itself.
-//
-// WHICH search entry point seeds depends on the rest of the filter, because the
-// two shapes ask different questions. A term alone selects from the whole store,
-// so Search's store-wide cap is the answer — the top hits. A term alongside a
-// field naming a nib's relationships is an intersection over a set that field
-// already bounds, so it seeds from the UNCAPPED SearchAll: capping there would
-// truncate the store rather than the answer, dropping a genuine member ranking
-// below the global cutoff. hasBoundingFilter draws that line and says why.
-// SearchAll returns the same order Search does, so the seeding's ordering
-// promise holds either way — and that order is why the seed reads the reader
-// directly rather than through cachedSearchAllIDs, whose memo keeps a membership
-// set with the ranking discarded.
+// A search term SEEDS the input rather than being left to ApplyFilter's
+// intersection branch: the seed carries the ORDER the schema promises for an
+// unsorted search (id matches first, then full-text hits by relevance), which
+// intersecting All() would lose. Seed from the reader, not cachedSearchAllIDs,
+// whose memo keeps membership with the ranking discarded. A term alone seeds
+// from Search, whose store-wide cap IS the answer; a term alongside a field
+// that already bounds the set seeds from the uncapped SearchAll, where capping
+// would drop a genuine member ranking below the global cutoff (see
+// hasBoundingFilter).
 func (r *queryResolver) Nibs(ctx context.Context, filter *model.NibFilter, sort *model.NibSort) ([]*nib.Nib, error) {
 	var nibs []*nib.Nib
 
-	// If search filter is provided, start with search results
 	searched := filter != nil && filter.Search != nil && *filter.Search != ""
 	if searched {
 		search := r.Reader.Search
@@ -1159,11 +968,10 @@ func (r *queryResolver) Nibs(ctx context.Context, filter *model.NibFilter, sort 
 		}
 		nibs = searchResults
 
-		// Nothing else in ApplyFilter reads Search, so clearing it skips the
-		// redundant branch and changes nothing else. The clear lands on a LOCAL
-		// copy: writing it back through the caller's pointer would strip the
-		// term from a filter the caller still holds and reuses, as cmd/list.go
-		// does for its hidden-closed count.
+		// The seeded set already IS the term's answer, and nothing else in
+		// ApplyFilter reads Search. Clear it on a LOCAL copy: writing back through
+		// the caller's pointer would strip the term from a filter the caller still
+		// holds and reuses, as cmd/list.go does for its hidden-closed count.
 		unsearched := *filter
 		unsearched.Search = nil
 		filter = &unsearched
@@ -1176,26 +984,19 @@ func (r *queryResolver) Nibs(ctx context.Context, filter *model.NibFilter, sort 
 		return nil, err
 	}
 
-	// When search is active, include ancestors of matched nibs so the
-	// client can build complete tree hierarchies even when only leaf
-	// nodes match the search query.
+	// Ancestors of the matches, so a client can build complete trees from hits
+	// that are all leaves.
 	if searched {
 		result = includeAncestors(result, r.Reader)
 	}
 
 	ApplySorting(result, sort, r.Reader.Config())
 
-	// Detach: hand gqlgen snapshots, never the live store pointers gathered
-	// above (whose Path a concurrent Archive rewrites in place under c.mu), so no
-	// live c.nibs pointer outlives the store lock to reach gqlgen's async
-	// marshaler. That detachment is all this end-of-pipeline snapshot buys; it
-	// does NOT by itself make the synchronous pipeline above race-free. That
-	// pipeline reads non-Path fields (Parent, BlockedBy, ...) off live pointers,
-	// and relies on the canonical live-pointer / copy-on-write invariant (see
-	// NibReader.GetSnapshot) to keep those reads safe: every writer that changes a
-	// non-Path field installs a FRESH pointer instead of editing a published one in
-	// place, while Path — the one field still mutated in place — is exactly why the
-	// returned data must still be snapshotted.
+	// Detach: hand gqlgen snapshots, never the live pointers gathered above,
+	// whose Path a concurrent Archive rewrites in place. This detaches the
+	// RESULT only — the pipeline above reads non-Path fields off live pointers
+	// and stays safe through the copy-on-write rule (see NibReader.GetSnapshot),
+	// not through this step.
 	snapshots := make([]*nib.Nib, 0, len(result))
 	for _, b := range result {
 		if snap, ok := r.Reader.GetSnapshot(b.ID); ok {
@@ -1210,10 +1011,9 @@ func (r *queryResolver) Config(ctx context.Context) (*model.Config, error) {
 	return configResult(r.Reader), nil
 }
 
-// UpdateStatus is the resolver for the updateStatus field. It is best-effort:
-// any gating (dev build / CI / opt-out) or network failure yields
-// updateAvailable=false rather than failing the query, so the web UI can query
-// it freely without risking an error on the page.
+// UpdateStatus is the resolver for the updateStatus field. Best-effort: any
+// gating (dev build / CI / opt-out) or network failure yields
+// updateAvailable=false rather than failing the query.
 func (r *queryResolver) UpdateStatus(ctx context.Context) (*model.UpdateStatus, error) {
 	res, ok := updatecheck.NewChecker(r.Version).Check(ctx)
 	return updateStatusResult(r.Version, res, ok), nil
@@ -1239,9 +1039,9 @@ func (r *subscriptionResolver) NibChanged(ctx context.Context, id *string) (<-ch
 					if id != nil && evt.NibID != *id {
 						continue
 					}
-					// evt.Nib is already an immutable snapshot (see Core.Subscribe),
-					// so it is safe to hand to gqlgen for asynchronous field
-					// resolution — including path — without re-reading the store.
+					// evt.Nib is already an immutable snapshot (see Core.Subscribe)
+					// — safe to hand to gqlgen's async marshaler, path included,
+					// without re-reading the store.
 					event := &model.NibChangeEvent{
 						Type:  evt.Type.String(),
 						NibID: evt.NibID,
@@ -1262,11 +1062,10 @@ func (r *subscriptionResolver) NibChanged(ctx context.Context, id *string) (<-ch
 
 // ConfigChanged is the resolver for the configChanged field.
 //
-// The tick carries no payload, so the config is READ at delivery time rather
-// than captured when the tick was published: NibReader.Areas is an atomic load
-// of whatever the store declares now, so a client that missed a tick under
-// backpressure still receives the current vocabulary on the next one rather than
-// a stale one held in a queue.
+// The tick carries no payload, so the config is READ at delivery time:
+// NibReader.Areas is an atomic load of what the store declares now, and a client
+// that missed a tick under backpressure receives the current vocabulary on the
+// next one rather than a stale one held in a queue.
 func (r *subscriptionResolver) ConfigChanged(ctx context.Context) (<-chan *model.Config, error) {
 	ticks, unsub := r.Subscriber.SubscribeAreas()
 	out := make(chan *model.Config)

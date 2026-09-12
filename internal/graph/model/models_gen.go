@@ -72,7 +72,7 @@ type Config struct {
 	// Configured nib ID prefix (e.g., 'nibs-', 'myproj-'). Empty if unset.
 	Prefix string `json:"prefix"`
 	// The declared areas, FLATTENED in declaration order — a parent immediately
-	// before the subtree it heads (config.AreaPaths' order). That ordering is the
+	// before the subtree it heads (config.Areas.Paths' order). That ordering is the
 	// CONTRACT, not an incidental: a node's subtree is the maximal run of following
 	// entries with a greater `depth`, which is how a client answers the
 	// downward-closed `area:` filter's membership without restating the rule.

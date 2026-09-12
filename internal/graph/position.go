@@ -2,17 +2,11 @@ package graph
 
 import "fmt"
 
-// This file is the one home of the positioning-flag algebra. Every mutation
-// that takes afterId/beforeId/first — createNib, reorderNib, the bulk
-// reorders — reads those wire arguments through PositionFromArgs or
-// PlacementFromArgs, so the exactly-one rule and the unset-shape reading (a
-// nil pointer, an empty string, an explicit false all count as absent) exist
-// once instead of once per resolver.
+// This file is the one home of the positioning-flag algebra: read wire
+// afterId/beforeId/first arguments through PositionFromArgs or
+// PlacementFromArgs, never flag by flag in a resolver.
 
-// positionKind is which anchor form a Position carries. The zero value is
-// deliberately none of them: a Position can only be built through
-// After/Before/First (or PositionFromArgs), so "no position" is inexpressible
-// where a Position is required — Move has no default arm.
+// positionKind is which anchor form a Position carries.
 type positionKind uint8
 
 const (
@@ -23,39 +17,32 @@ const (
 )
 
 // Position says where in a group an existing member moves to: after or before
-// a named member, or first. There is no "default" Position — a move without a
-// destination is a validation error, which PositionFromArgs enforces.
+// a named member, or first. There is no default — see Placement.
 type Position struct {
 	kind   positionKind
 	anchor string
 }
 
-// After positions immediately after the member with the given id.
 func After(id string) Position { return Position{kind: posAfter, anchor: id} }
 
-// Before positions immediately before the member with the given id.
 func Before(id string) Position { return Position{kind: posBefore, anchor: id} }
 
-// First positions ahead of every current member.
 func First() Position { return Position{kind: posFirst} }
 
 // Placement says where a nib ENTERING a group lands: at an explicit Position,
-// or wherever the scope's default policy puts it. The default is expressible
-// here and not on Position because entering a group without naming a spot is
-// meaningful (creation, reassignment) while moving within one is not.
+// or wherever the scope's default policy puts it.
 type Placement struct {
 	pos       Position
 	isDefault bool
 }
 
-// At places at an explicit position.
 func At(p Position) Placement { return Placement{pos: p} }
 
-// DefaultPlacement places wherever the scope's default policy decides.
 func DefaultPlacement() Placement { return Placement{isDefault: true} }
 
 // positionArgs reads the wire shape shared by both From-args constructors:
-// which flags are actually set, with unset-shaped values counting as absent.
+// which flags are set, with a nil pointer, an empty string and an explicit
+// false all counting as absent.
 func positionArgs(afterID, beforeID *string, first *bool) (Position, int) {
 	var p Position
 	count := 0
@@ -104,15 +91,12 @@ func PlacementFromArgs(afterID, beforeID *string, first *bool) (Placement, error
 // ContainerChange is the resolved reading of an optional container argument on
 // the wire (reorderNib's parentId): a nil pointer keeps the current container,
 // an empty string clears to the root group, anything else names the target.
-// Note the contrast with updateNib's omittable parent, where null is the
-// clear: a reorder must be able to omit reparenting entirely, so nil cannot
-// double as a clear here.
+// Not updateNib's omittable parent, where null is the clear.
 type ContainerChange struct {
 	requested bool
 	target    string
 }
 
-// ContainerChangeFromArg reads the wire argument.
 func ContainerChangeFromArg(p *string) ContainerChange {
 	if p == nil {
 		return ContainerChange{}
@@ -120,8 +104,7 @@ func ContainerChangeFromArg(p *string) ContainerChange {
 	return ContainerChange{requested: true, target: *p}
 }
 
-// Requested returns the change target ("" clears to the root group) and
-// whether a change was requested at all.
+// Requested returns the change target and whether one was requested at all.
 func (c ContainerChange) Requested() (string, bool) {
 	return c.target, c.requested
 }

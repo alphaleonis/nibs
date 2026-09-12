@@ -6,11 +6,10 @@ import (
 )
 
 // updateStatusResult maps a check outcome to the GraphQL model. When the check
-// had no opinion (ok=false) it reports the running version with no update, so
-// the updateStatus query never fails and never claims a false positive.
+// had no opinion (ok=false) it reports the running version with no update.
 //
-// Lives here rather than in the generated schema.resolvers.go: gqlgen comments
-// out free helper functions it finds in resolver files on regeneration.
+// Lives here rather than in schema.resolvers.go, which would not keep it — see
+// the codegen-survival note at the top of resolver.go.
 func updateStatusResult(current string, res updatecheck.Result, ok bool) *model.UpdateStatus {
 	if !ok {
 		return &model.UpdateStatus{Current: current, Latest: "", UpdateAvailable: false}

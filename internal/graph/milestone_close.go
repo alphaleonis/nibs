@@ -11,44 +11,23 @@ import (
 )
 
 // QueueNameLimit caps how many ids a queue refusal enumerates before it
-// switches to a count.
-//
-// `close`'s sibling guard (incomplete children) names them all, but a milestone
-// queue is a project-sized set rather than one container's children, and a
-// refusal that scrolls off the screen stops naming anything usefully. The count
-// that follows keeps the message honest about the size.
-//
-// It lives here rather than in cmd because BOTH refusals below it are the same
-// refusal seen from two surfaces (see MilestoneQueueOpenError), and a limit that
-// differed between them would make the CLI and the wire disagree about how much
-// of one set they are willing to name.
+// switches to a count. It is exported because `nibs close`'s own gate
+// (cmd/close_queue.go) words that refusal for the CLI and must cap it the same
+// way.
 const QueueNameLimit = 5
 
-// OpenQueueEntries is THE definition of a milestone's OPEN queue (decision
-// 1.5): the ids of its direct assignees whose status is not closed, in queue
-// order, so a set that moves elsewhere arrives there in the order it left.
+// OpenQueueEntries is THE definition of a milestone's OPEN queue (decision 1.5):
+// the ids of its direct assignees whose status is not closed, in queue order.
+// Call it rather than re-deriving the predicate.
 //
-// One definition, two callers, deliberately: `nibs close`'s gate
-// (cmd/close_queue.go) and updateNib's backstop (refuseClosingFullQueue). A
-// second copy of the predicate is exactly how the verb-local rule and the model
-// invariant drift back apart.
+// "Open" is the ordinary role vocabulary (config.IsClosedStatus): a deferred
+// MEMBER is closed and does not hold the milestone open. The set is the DIRECT
+// assignees, not the transitive closure beneath them — the remedies act on an
+// assignment (--unassign-open, --move-open-to), and work belonging through an
+// ancestor has none.
 //
-// "Open" is the ordinary role vocabulary every other surface reads
-// (config.IsClosedStatus): a deferred MEMBER is closed and does not hold the
-// milestone open. The two readings of "deferred" in decision 1.5 are about
-// different nibs — the milestone's own close reason, and its members' statuses.
-//
-// The set is the milestone's QUEUE — its DIRECT assignees — not the transitive
-// closure beneath them. That is the set the CLI's two escapes can act on: an
-// assignment is what --unassign-open clears and what --move-open-to rewrites,
-// and work belonging to the milestone only through an assigned ancestor has no
-// assignment of its own to dispose of. A refusal reading a wider set than its
-// own remedies could clear would be unanswerable — on the wire just as much as
-// on the command line, where the remedy is the same two mutations spelled by
-// hand.
-//
-// view pins live store pointers (see internal/membership's discipline); only
-// ids are read out of it here, so nothing survives the call.
+// view pins live store pointers (see internal/membership's discipline); only ids
+// are read out of it here.
 func OpenQueueEntries(view *membership.View, milestoneID string, cfg *config.Config) []string {
 	var open []*nib.Nib
 	for _, m := range view.DirectMembers(milestoneID) {
@@ -65,11 +44,9 @@ func OpenQueueEntries(view *membership.View, milestoneID string, cfg *config.Con
 }
 
 // MilestoneRetypeError refuses to strip milestone-hood from a nib that still
-// holds assignments. Every member's `milestone:` would keep naming it, conferring
-// no membership and reading back a target of the wrong type — the state
-// nibcore's InvalidMilestoneTarget finding reports. Unlike the close gate this
-// counts EVERY assignee, open or closed: a closed member's assignment is still a
-// link this change would invalidate.
+// holds assignments: every member's `milestone:` would keep naming it, conferring
+// no membership. Unlike the close gate this counts EVERY assignee, open or
+// closed.
 type MilestoneRetypeError struct {
 	MilestoneID string
 	NewType     string
@@ -94,12 +71,9 @@ func (e *MilestoneRetypeError) Error() string {
 // memberIDs reads the ids out of a member set in queue order, so no store pointer
 // outlives the view it came from (internal/membership's discipline).
 //
-// The sort is not cosmetic. DirectMembers answers in reader.All() order, which is
-// Go map-iteration order, so without it two identical refusals name the same set
-// differently — and once the set exceeds QueueNameLimit they name DIFFERENT nibs,
-// leaving the caller unable to enumerate the blockers by re-running and pointing
-// the ", and N more" tail at a rotating remainder. OpenQueueEntries sorts for
-// exactly this reason; the two refusals must present one set one way.
+// DirectMembers answers in reader.All() order, which is Go map-iteration order,
+// so without the sort a refusal past QueueNameLimit names a different subset each
+// time it is raised.
 func memberIDs(members []*nib.Nib) []string {
 	nib.SortByMilestoneOrder(members)
 	ids := make([]string, len(members))
@@ -111,31 +85,21 @@ func memberIDs(members []*nib.Nib) []string {
 
 // MilestoneQueueOpenError is decision 1.5's refusal at the model boundary: a
 // milestone may not take a status that RELEASES its dependents while open work
-// is still assigned to its queue, because that would leave the work planned for
-// a wave that has finished.
+// is still assigned to its queue, which would unblock them while the work the
+// milestone gathered is unfinished.
 //
-// It is the BACKSTOP, not the primary refusal. `nibs close` gates first and
-// keeps its own message, which can name the flags that answer it
-// (--move-open-to / --unassign-open); this one is reached by every OTHER client
-// — the web status dropdown, the TUI status picker, `nibs graphql` — none of
-// which has those flags. So the message names the CAPABILITY instead: reassign
-// the open work or clear its assignments, which on the wire is one
-// updateNib(milestone:) per member and is what the flags batch.
+// It is the backstop `nibs close` gates ahead of, reached by every client that
+// has no flags to offer — so the message names the capability (reassign the open
+// work or clear its assignments), not a flag.
 //
-// Holding reasons come from the role vocabulary rather than from a status name
-// spelled here, so a project declaring none gets no clause rather than advice
-// it cannot follow. They are resolved at construction so Error() stays a pure
-// rendering of the value.
-//
-// It deliberately carries no Unwrap, matching MilestoneExclusivityError: there
-// is no cause underneath, and mutationErrCode's trailing nib.ErrNotFound test
-// must not be able to claim it. With no class of its own there it stays
-// validation-class — exit 2, the same class `nibs close`'s own refusal reports.
+// Add no Unwrap: there is no cause underneath, and mutationErrCode's trailing
+// nib.ErrNotFound test must not be able to reach through one. With no branch of
+// its own there this stays validation-class, like `nibs close`'s own refusal.
 type MilestoneQueueOpenError struct {
 	MilestoneID string   // the milestone being closed
 	Status      string   // the releasing status it was being closed as
 	Open        []string // its open queue entries, in queue order
-	Holding     []string // the declared holding statuses, if any
+	Holding     []string // declared holding statuses, resolved at construction; may be empty
 }
 
 func (e *MilestoneQueueOpenError) Error() string {
@@ -161,41 +125,32 @@ func (e *MilestoneQueueOpenError) Error() string {
 // b is updateNib's owned clone with this request's status and type already
 // applied, so the guard judges what will be on disk rather than what is.
 //
-// The conjunction is ordered by cost, and that ordering is load-bearing rather
-// than cosmetic. The two field tests are free; the queue read behind them is a
-// full-store scan (membership.Compute over Reader.All()), so an ordinary
-// updateNib — every title edit, every status change on anything that is not a
-// milestone — pays nothing for this guard. The view comes from
-// cachedMembershipView, which memoFor deliberately does NOT memoize for a
-// mutation: one document can write between two reads, and a queue answered from
-// before that write is exactly the staleness this guard must not have.
+// The conjunction is ordered by cost: the two field tests are free, the queue
+// read behind them is a full-store scan (membership.Compute over Reader.All()),
+// so an ordinary updateNib pays nothing. cachedMembershipView does not memoize
+// for a mutation — one document can write between two reads, and a queue
+// answered from before that write is the staleness this guard must not have.
 //
-// Nothing here is spelled as a status name. Which reasons release their
-// dependents is config.StatusReleasesDependents' answer, so a holding reason —
-// today deferred — passes: a parked milestone is coming back and decision 1.5
-// lets it keep its queue.
+// Spell no status name here: config.StatusReleasesDependents decides, so a
+// holding reason (today deferred) keeps its queue.
 func (r *mutationResolver) refuseClosingFullQueue(ctx context.Context, b *nib.Nib) error {
 	cfg := r.Reader.Config()
 	if b.EffectiveType() != "milestone" || !cfg.StatusReleasesDependents(b.Status) {
 		return nil
 	}
 
-	// Two different types are in play, and the queue read below answers to the
-	// STORED one. membership.View.DirectMembers picks its axis from the stored
-	// nib: a milestone-typed container hands back its assignees, anything else
-	// hands back its structural CHILDREN. The pending clone decides whether this
-	// guard runs; the stored nib decides what it would be shown.
+	// The queue read below answers to the STORED type: DirectMembers hands back
+	// assignees for a milestone-typed nib and structural CHILDREN for anything
+	// else. The pending clone decides whether this guard runs; the stored nib
+	// decides what it would be shown.
 	//
-	// For a nib only BECOMING a milestone in this same request those diverge, and
-	// it has no queue either way — nothing can have been assigned to it while it
-	// was not a milestone. Asking anyway hands back its children and refuses while
-	// naming work that carries no assignment at all, so the remedy the message
-	// names ("clear its assignments") cannot apply to any of it. The type change
-	// is still refused, by the check that actually understands it: a milestone can
-	// be nobody's parent.
+	// A nib only BECOMING a milestone in this request has no queue either way,
+	// and asking anyway would refuse while naming children that carry no
+	// assignment. That type change is refused by the check that understands it:
+	// a milestone can be nobody's parent.
 	//
-	// A subject that vanished between GetForUpdate and here is not this guard's to
-	// report — the write it is about to attempt says so with the right error.
+	// A subject that vanished between GetForUpdate and here is not this guard's
+	// to report; the write it is about to attempt says so.
 	stored, err := r.Reader.Get(b.ID)
 	if err != nil || stored.EffectiveType() != "milestone" {
 		return nil

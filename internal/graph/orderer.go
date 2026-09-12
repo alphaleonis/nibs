@@ -13,10 +13,8 @@ import (
 	"github.com/alphaleonis/nibs/internal/nibcore"
 )
 
-// Scope identifies which ordering axis an operation runs on. The positioning
-// grammar (after/before/first/default), the duplicate-key boundary skipping,
-// the two membership error tiers and the lazy key backfill exist once,
-// parameterized by scope; what varies per scope lives in its scopeOps entry.
+// Scope identifies which ordering axis an operation runs on. What varies per
+// scope lives in its scopeOps entry; everything else is shared code below.
 type Scope uint8
 
 const (
@@ -25,15 +23,12 @@ const (
 	ScopeParent Scope = iota
 	// ScopeMilestone orders a milestone's queue — the group a nib's
 	// `milestone:` field resolves to (membership.ResolvedMilestoneID). The
-	// empty group id means MEMBERLESS — a nib assigned to no milestone is in
-	// no queue at all: Move errors there, and a default Place clears the
-	// queue key. Reached by the assignment write (validateAndSetMilestone)
-	// and by reorderNib in the MILESTONE scope.
+	// empty group id means MEMBERLESS: a nib assigned to no milestone is in no
+	// queue at all, so Move errors there and a default Place clears the key.
 	ScopeMilestone
 	numScopes
 )
 
-// String names the scope for subtests and diagnostics.
 func (s Scope) String() string {
 	switch s {
 	case ScopeParent:
@@ -44,34 +39,25 @@ func (s Scope) String() string {
 	return fmt.Sprintf("scope(%d)", uint8(s))
 }
 
-// scopeOps is one scope's set of switch points: how to read and write its
-// ordering key, how a nib resolves to its group, how a group enumerates its
-// raw members, what the default placement is, and the nouns its membership
-// errors speak in. Everything else — grammar, backfill, boundary skipping,
-// error tiers — is shared code in the methods below.
+// scopeOps is one scope's set of switch points.
 type scopeOps struct {
 	key    func(*nib.Nib) string
 	setKey func(*nib.Nib, string)
-	// group resolves the nib's container in this scope; "" has the per-scope
-	// meaning documented on the Scope constants.
+	// group resolves the nib's container; "" means what the Scope constant says.
 	group func(*nib.Nib, NibReader) string
 	// rawMembers enumerates the group unsorted and un-backfilled.
-	rawMembers func(*Orderer, string) []*nib.Nib
-	// emptyGroupIsMemberless: "" is a real group in the parent scope (the
-	// roots) and no group at all in the milestone scope.
+	rawMembers             func(*Orderer, string) []*nib.Nib
 	emptyGroupIsMemberless bool
-	// defaultPlace assigns the scope's default position among siblings
-	// (never empty here — the empty set short-circuits to OrderInitial).
+	// defaultPlace positions b among siblings; never called with an empty set.
 	defaultPlace func(*Orderer, *nib.Nib, string, []*nib.Nib)
-	// errAnchorNotFound / errAnchorNotMember are the two membership error
-	// tiers: the anchor does not exist at all, or exists outside the group.
+	// The two membership error tiers: the anchor does not exist at all, or
+	// exists outside the group.
 	errAnchorNotFound  func(id string) error
 	errAnchorNotMember func(id string) error
 	// errNoGroup is the memberless refusal (milestone scope only).
 	errNoGroup func(id string) error
 }
 
-// scopeTable holds every scope's ops; Scope.ops is the single dispatch point.
 var scopeTable = [numScopes]scopeOps{
 	ScopeParent: {
 		key:    func(b *nib.Nib) string { return b.Order },
@@ -79,8 +65,6 @@ var scopeTable = [numScopes]scopeOps{
 		group:  resolvedParentID,
 		rawMembers: func(o *Orderer, groupID string) []*nib.Nib {
 			if groupID == "" {
-				// Root-ness comes from resolvedParentID, so the root set here
-				// is the same one the query surfaces report.
 				var roots []*nib.Nib
 				for _, b := range o.reader.All() {
 					if resolvedParentID(b, o.reader) == "" {
@@ -98,9 +82,8 @@ var scopeTable = [numScopes]scopeOps{
 			return siblings
 		},
 		defaultPlace: func(o *Orderer, b *nib.Nib, groupID string, siblings []*nib.Nib) {
-			// Root nibs: append last (no priority-aware positioning — use
-			// reorderNib to reposition). Child nibs: insert last among
-			// siblings of the same priority.
+			// Roots append last, with no priority awareness; children insert
+			// last among siblings of the same priority.
 			if groupID == "" {
 				b.Order = nib.OrderLast(siblings[len(siblings)-1].Order)
 				return
@@ -122,8 +105,6 @@ var scopeTable = [numScopes]scopeOps{
 			if groupID == "" {
 				return nil
 			}
-			// A full-store scan: an index can move BEHIND this shape without an
-			// API change if a profile ever asks for one.
 			var members []*nib.Nib
 			for _, b := range o.reader.All() {
 				if resolvedMilestoneID(b, o.reader) == groupID {
@@ -152,12 +133,9 @@ func (s Scope) ops() *scopeOps {
 	return &scopeTable[s]
 }
 
-// resolvedMilestoneID is the milestone-queue group of b, answered by THE
-// shared definition of "directly assigned" — membership.ResolvedMilestoneID,
-// which reads the `milestone:` field — through a reader-backed Lookup.
-// Reader.Get is resolvedParent's own rule (normalization included; a dangling
-// link is no assignment), so the ordering engine and every membership
-// consumer read one definition.
+// resolvedMilestoneID is the milestone-queue group of b: the shared definition
+// of "directly assigned" (membership.ResolvedMilestoneID) over a reader-backed
+// Lookup.
 func resolvedMilestoneID(b *nib.Nib, reader NibReader) string {
 	return membership.ResolvedMilestoneID(b, func(id string) *nib.Nib {
 		n, err := reader.Get(id)
@@ -168,29 +146,23 @@ func resolvedMilestoneID(b *nib.Nib, reader NibReader) string {
 	})
 }
 
-// Orderer is the two-scope ordering engine, with only read/write dependencies.
+// Orderer is the two-scope ordering engine.
 type Orderer struct {
 	reader NibReader
 	writer NibWriter
 
-	// warnedStalePath latches the "a nib's file is not where the store says it
-	// is" warning to ONE line for this Orderer's lifetime. The condition is
-	// store-wide and nothing this engine does clears it, so an unlatched warning
-	// is emitted once per unkeyed sibling per read — see backfillKeys.
-	//
-	// Atomic because `nibs serve` builds one Orderer at startup (App.newResolver,
-	// called once there) and serves every request through it concurrently.
+	// warnedStalePath latches the stale-path warning to ONE line per Orderer
+	// (see warnStalePathOnce). Atomic because `nibs serve` builds one Orderer
+	// at startup and serves every request through it concurrently.
 	warnedStalePath atomic.Bool
 }
 
-// NewOrderer creates an Orderer with the given reader and writer.
 func NewOrderer(reader NibReader, writer NibWriter) *Orderer {
 	return &Orderer{reader: reader, writer: writer}
 }
 
 // Members returns the scope's group sorted by its ordering key, lazily
-// backfilling a key onto any member that lacks one. In the parent scope the
-// empty group id names the roots; in the milestone scope it names nothing and
+// backfilling a key onto any member that lacks one. A memberless group id
 // returns nil.
 func (o *Orderer) Members(scope Scope, groupID string) []*nib.Nib {
 	ops := scope.ops()
@@ -200,12 +172,11 @@ func (o *Orderer) Members(scope Scope, groupID string) []*nib.Nib {
 	return members
 }
 
-// Place computes b's ordering key for ENTERING its group in the scope — at
-// creation, or after a reassignment put it there. The group is derived from b
-// itself. A default placement is allowed and lands where the scope's policy
-// says; an explicit position anchors among the current members. An unassigned
-// nib in a memberless scope takes a default Place as "no key" (the key is
-// cleared) and refuses an anchored one.
+// Place computes b's ordering key for ENTERING its group in the scope, with the
+// group derived from b itself. A default placement lands where the scope's
+// policy says; an explicit position anchors among the current members. An
+// unassigned nib in a memberless scope takes a default Place as "no key" (the
+// key is cleared) and refuses an anchored one.
 //
 // Mutates only b's own scope key; the caller owns b (a clone) and persists it.
 func (o *Orderer) Place(scope Scope, b *nib.Nib, pl Placement) error {
@@ -231,8 +202,7 @@ func (o *Orderer) Place(scope Scope, b *nib.Nib, pl Placement) error {
 	return o.position(scope, b, pl.pos, siblings)
 }
 
-// Move repositions b within the group it is already in. There is no default
-// arm — a Position always names a destination — and moving a nib that is in
+// Move repositions b within the group it is already in. Moving a nib that is in
 // no group (memberless scopes only) is an error.
 //
 // Mutates only b's own scope key; the caller owns b (a clone) and persists it.
@@ -246,10 +216,10 @@ func (o *Orderer) Move(scope Scope, b *nib.Nib, pos Position) error {
 	return o.position(scope, b, pos, siblings)
 }
 
-// Recalculate assigns b a fresh key at the scope's default position among its
-// CURRENT group — the hook a reassignment calls after changing the nib's
-// container, so it enters the new group where a created nib would. In a
-// memberless scope an unassigned nib's key is cleared instead.
+// Recalculate assigns b a fresh key at the scope's default position in its
+// CURRENT group — call it after changing b's container, so b enters the new
+// group where a created nib would. In a memberless scope an unassigned nib's
+// key is cleared instead.
 func (o *Orderer) Recalculate(scope Scope, b *nib.Nib) {
 	ops := scope.ops()
 	groupID := ops.group(b, o.reader)
@@ -288,8 +258,8 @@ func (o *Orderer) position(scope Scope, b *nib.Nib, pos Position, siblings []*ni
 	return fmt.Errorf("a move requires a position (after, before or first)")
 }
 
-// excludeSelf returns members without the nib being positioned, so a nib never
-// anchors against itself and default placement ignores its old spot.
+// excludeSelf drops the nib being positioned, so it never anchors against
+// itself and default placement ignores its old spot.
 func excludeSelf(members []*nib.Nib, id string) []*nib.Nib {
 	filtered := make([]*nib.Nib, 0, len(members))
 	for _, m := range members {
@@ -300,16 +270,15 @@ func excludeSelf(members []*nib.Nib, id string) []*nib.Nib {
 	return filtered
 }
 
-// sameGroup reports whether x and y sit in the same group of the scope. Two
-// nibs whose container links both resolve to nothing are in the same group
-// exactly when "" names a real group there (the parent scope's roots).
+// sameGroup compares group ids alone: in a memberless scope two unassigned nibs
+// come back as the same group. Refuse that case before asking.
 func (o *Orderer) sameGroup(scope Scope, x, y *nib.Nib) bool {
 	ops := scope.ops()
 	return ops.group(x, o.reader) == ops.group(y, o.reader)
 }
 
-// backfillKeys assigns ordering keys to members that lack them.
-// Unkeyed nibs are appended after the last keyed member.
+// backfillKeys assigns ordering keys to members that lack them, after the last
+// keyed member.
 func (o *Orderer) backfillKeys(scope Scope, members []*nib.Nib) {
 	if len(members) == 0 {
 		return
@@ -327,10 +296,8 @@ func (o *Orderer) backfillKeys(scope Scope, members []*nib.Nib) {
 		return
 	}
 
-	// Sort for stable baseline (keyed first by key, unkeyed by title)
 	nib.SortByKey(members, ops.key)
 
-	// Find the last existing ordering key
 	lastKey := ""
 	for _, b := range members {
 		if k := ops.key(b); k != "" && k > lastKey {
@@ -338,7 +305,6 @@ func (o *Orderer) backfillKeys(scope Scope, members []*nib.Nib) {
 		}
 	}
 
-	// Assign keys to unkeyed nibs, appending after the last keyed one.
 	for i := range members {
 		b := members[i]
 		if ops.key(b) != "" {
@@ -346,55 +312,29 @@ func (o *Orderer) backfillKeys(scope Scope, members []*nib.Nib) {
 		}
 		newKey := nib.OrderBetween(lastKey, "")
 
-		// Compute ETag BEFORE mutation so it matches the on-disk version.
+		// The etag comes from b, before the mutation, never from the clone.
 		etag := b.ETag()
 		lastKey = newKey
 
 		// Mutate an OWNED clone from GetForUpdate, never the shared reader pointer
 		// (b is c.nibs[id]): a refused write must not leave the shared in-memory
-		// sibling showing a phantom key that was never persisted.
-		// GetForUpdate fails only not-found: the sibling was deleted between the
-		// snapshot above and here (a concurrent external/`serve` delete). It's gone,
-		// so there is nothing to backfill — quietly skip it (not a write failure, and
-		// the nib no longer exists, so no warning is warranted).
+		// sibling showing a phantom key that was never persisted. GetForUpdate
+		// fails only not-found — the sibling was deleted concurrently, so there
+		// is nothing left to backfill.
 		clone, err := o.reader.GetForUpdate(b.ID)
 		if err != nil {
 			continue
 		}
 		ops.setKey(clone, newKey)
 
-		// Best-effort persist: ordering falls back to title sort if this fails.
-		// backfillKeys runs on the hot Children/root READ path (once per
-		// parent per tree render/poll), and a persistently unwritable sibling
-		// keeps an empty key so needsBackfill never clears — meaning this Update is
-		// re-attempted on EVERY read. Classify the error so a steady-state
-		// failure does not flood stderr under a long-running `nibs serve`:
-		//   - *ETagMismatchError: a stable on-disk etag divergence (e.g. a
-		//     hand-authored nib missing an order key AND both timestamps, whose
-		//     synthesized-from-mtime in-memory etag permanently differs from the
-		//     stored one). This is the already-accepted best-effort fallback — the
-		//     failed clone's computed key is DISCARDED (members[i] keeps its
-		//     pre-write, unkeyed pointer), so the sibling falls back to title sort;
-		//     the write simply cannot land. Stay quiet.
-		//   - *config.AreaError: the nib carries an `area:` the store's vocabulary
-		//     no longer declares. Read-tolerant by design, so the value survives
-		//     every load and the refusal is as stable as an etag divergence —
-		//     but unlike one it is not even a divergence to reconcile, and
-		//     nothing this loop can do clears it. Without this arm the warning
-		//     is re-emitted on EVERY read of the parent, forever.
-		//   - *OnDiskUnparseableError: the file is corrupt/unreadable. Suppressing
-		//     our OWN warning here avoids the orderer emitting a line per read on the
-		//     hot Children/root path; the condition is still surfaced where it
-		//     matters — at the write/pre-validation boundary (cmd/update.go →
-		//     FILE_ERROR, bulk-reorder pre-validation). nibcore.computeStoredETag now
-		//     RETURNS this error instead of logging it, so suppressing here means the
-		//     read path emits no warning at all (no orderer line, no nibcore
-		//     double-log, no flood).
-		// fs.ErrNotExist is LATCHED rather than suppressed — see the arm below.
-		// Warn only on a genuinely unexpected write failure (disk I/O, etc.) so a
-		// real problem stays diagnosable (matches activateParentChain's stderr
-		// warning). Propagating is not an option: Members returns no error and has
-		// many callers, so this stays best-effort.
+		// Best-effort persist: a sibling that cannot be written falls back to
+		// title sort, and Members returns no error, so nothing propagates. This
+		// runs on the hot Children/root READ path and leaves the key empty on
+		// failure, so the Update is re-attempted on EVERY read — warning on a
+		// refusal that repeats (an etag divergence, an `area:` the vocabulary no
+		// longer declares, an unparseable file) would flood stderr under a
+		// long-running `nibs serve`. fs.ErrNotExist is latched instead; see
+		// warnStalePathOnce.
 		if err := o.writer.Update(clone, &etag); err != nil {
 			var etagMismatch *nibcore.ETagMismatchError
 			var unparseable *nibcore.OnDiskUnparseableError
@@ -408,9 +348,8 @@ func (o *Orderer) backfillKeys(scope Scope, members []*nib.Nib) {
 			}
 			continue
 		}
-		// The write installed the clone as the new c.nibs[id]; reflect the
-		// persisted key in the returned slice without touching the pre-write
-		// pointer.
+		// The write installed the clone as the new c.nibs[id]; return that, not
+		// the pre-write pointer.
 		members[i] = clone
 	}
 }
@@ -418,39 +357,19 @@ func (o *Orderer) backfillKeys(scope Scope, members []*nib.Nib) {
 // warnStalePathOnce reports, at most once per Orderer, that a backfill could not
 // reach a nib's file because nothing is at the path the loaded store recorded.
 //
-// The condition is that the nib's FILE is not where the store says it is.
-// Core.Update replaces a file rather than creating one, so a path this process
-// cannot re-derive — `nibs config set-prefix` renames every file in the store —
-// refuses there instead of leaving a second copy of the nib under the retired
-// name. The refusal lands in a best-effort arm that cannot propagate (Members
-// returns no error), so the only question left is how loudly to say it.
-//
 // Once, because the condition is store-wide rather than per-nib: unlatched, one
-// read of one parent warns once per unkeyed sibling and every later read repeats
-// the whole set, which is 4 identical lines across 4 reads of a single-sibling
-// fixture and unbounded on a real tree. Nothing this loop can do clears it
-// either — the computed key is discarded and the sibling falls back to title
-// sort, exactly as for a stable etag divergence.
+// read warns per unkeyed sibling and every later read repeats the whole set.
 //
-// But not zero, which is what suppressing it outright would give. Two conditions
-// reach this arm and only one of them self-heals: a set-prefix rename is
-// store-wide and leaves c.nibs when a watcher observes it, while a hand-deleted
-// nib file or a removed data/ subdirectory is neither store-wide nor transient —
-// and errors.Is matches the whole chain, so fsutil's bare os.Lstat miss arrives
-// here for any absent target. A reader browsing through `nibs serve` or the TUI
-// triggers no mutation, so the write-boundary diagnostic (cmd/set.go's
-// FILE_ERROR on an explicit mutation of the same nib) never fires for them; where
-// StartWatching FAILED — serve treats that as a warning, not a fatal — nothing
-// refreshes the store either, and this line is the only signal that exists.
+// Not zero, because for a read-only reader this line is the only signal there
+// is: browsing through `nibs serve` or the TUI triggers no mutation, so the
+// write-boundary diagnostic (cmd/set.go's FILE_ERROR) never fires, and where
+// StartWatching failed nothing refreshes the store either.
 func (o *Orderer) warnStalePathOnce(id string, err error) {
 	if o.warnedStalePath.Swap(true) {
 		return
 	}
-	// Only a re-read is prescribed, and deliberately nothing else: a fresh
-	// process never loads a nib whose file is gone, so `nibs check` reports this
-	// condition not at all (executed against the sample fixture with one nib
-	// file removed: "✓ All nib files loaded"). This process is the only one that
-	// can still see it.
+	// The message prescribes a re-read and nothing else: a fresh process never
+	// loads a nib whose file is gone, so `nibs check` cannot see this condition.
 	fmt.Fprintf(os.Stderr, "warning: could not backfill order key for %s: %v — nothing is at the path this process recorded for it, so it stays unordered (falls back to title sort); the file was renamed or removed after this process loaded the store, and only a re-read sees that (restart a running `nibs serve`/`nibs tui`). Further occurrences are not reported.\n", id, err)
 }
 
@@ -466,16 +385,13 @@ func (o *Orderer) positionAfter(scope Scope, b *nib.Nib, targetID string, siblin
 	targetID = normalizedID
 	for i, s := range siblings {
 		if s.ID == targetID {
-			// Defensive: every production caller passes a member slice already
-			// filtered by group (Members). This guard fires only for direct
-			// unit tests that hand-build a mixed list.
+			// Defensive: production callers pass a group-filtered slice (Members).
 			if !o.sameGroup(scope, s, b) {
 				return ops.errAnchorNotMember(targetID)
 			}
-			// Find the next member with a different ordering key to get a real
-			// boundary. Duplicate keys (from legacy data) would cause
-			// OrderBetween to produce a key that collides with the nib's
-			// current one.
+			// Scan past duplicate keys (legacy data) to a member with a
+			// DIFFERENT key: OrderBetween of two equal bounds returns a key
+			// greater than both, so a duplicate is no usable boundary.
 			nextKey := ""
 			for j := i + 1; j < len(siblings); j++ {
 				if ops.key(siblings[j]) != ops.key(s) {
@@ -487,8 +403,6 @@ func (o *Orderer) positionAfter(scope Scope, b *nib.Nib, targetID string, siblin
 			return nil
 		}
 	}
-	// Target was resolved (exists) but not in the member list — that means
-	// it belongs to a different group. Surface a clearer error than "not found".
 	if t, err := o.reader.Get(targetID); err == nil && !o.sameGroup(scope, t, b) {
 		return ops.errAnchorNotMember(targetID)
 	}
@@ -533,7 +447,6 @@ func (o *Orderer) placeDefaultByPriority(b *nib.Nib, siblings []*nib.Nib) {
 
 	newRank := cfg.PriorityRank(b.Priority)
 
-	// Find the last sibling with priority >= new nib's priority (rank <= newRank)
 	insertAfterIdx := -1
 	for i, s := range siblings {
 		if cfg.PriorityRank(s.Priority) <= newRank {
@@ -543,13 +456,11 @@ func (o *Orderer) placeDefaultByPriority(b *nib.Nib, siblings []*nib.Nib) {
 
 	switch {
 	case insertAfterIdx == -1:
-		// All siblings have lower priority — insert first
+		// Every sibling has lower priority.
 		b.Order = nib.OrderFirst(siblings[0].Order)
 	case insertAfterIdx == len(siblings)-1:
-		// Insert after the last sibling
 		b.Order = nib.OrderLast(siblings[insertAfterIdx].Order)
 	default:
-		// Insert between insertAfterIdx and insertAfterIdx+1
 		b.Order = nib.OrderBetween(siblings[insertAfterIdx].Order, siblings[insertAfterIdx+1].Order)
 	}
 }

@@ -7,40 +7,35 @@ import (
 )
 
 // NextReason names a situation the walk could not answer from, or the reason
-// it answered from outside a queue. The values are the wire vocabulary `nibs
-// next --json` reports, so an agent branches on a token rather than on prose.
+// it answered from outside a queue. The values are wire vocabulary: `nibs next
+// --json` and `nibs context` report them verbatim, so renaming one breaks
+// agents that branch on the token.
 type NextReason string
 
 const (
-	// NextReasonNoMilestones: the store declares no milestone at all — the
-	// day-one flat-list shape the model deliberately supports.
 	NextReasonNoMilestones NextReason = "no_milestones"
-	// NextReasonNoActiveMilestone: milestones exist, none is in progress, so
-	// nothing derives as active (decision 1.4).
+	// Milestones exist, none is in progress (decision 1.4).
 	NextReasonNoActiveMilestone NextReason = "no_active_milestone"
-	// NextReasonEmptyQueue: the active milestone has no members.
-	NextReasonEmptyQueue NextReason = "empty_queue"
-	// NextReasonNothingStartable: the walk ran and every candidate it reached
-	// was closed, blocked, or open-but-not-startable. NextTally says which.
+	NextReasonEmptyQueue        NextReason = "empty_queue"
+	// Every candidate the walk reached was closed, blocked, or not startable.
+	// NextTally says which.
 	NextReasonNothingStartable NextReason = "nothing_startable"
 )
 
 // NextTally counts what a walk declined, so a "nothing to do" answer can say
-// WHY rather than only that. Each node is counted at most once and only where
-// the walk stopped at it: a closed node is counted where the walk declined to
-// enter it (its subtree is not counted behind it), and an entered node is
-// counted only when it turned out to be a leaf the caller cannot start.
+// WHY rather than only that. Counts are of declines, not of distinct nodes:
+// one nib can be counted twice, and under two of the counters.
 type NextTally struct {
-	// Closed: nodes the walk declined to enter because their status is closed.
+	// Declines to enter a node whose status is closed.
 	Closed int
-	// Blocked: leaves carrying a startable status but held by an active
-	// blocker — the same withholding `nibs list --ready` applies.
+	// Nodes with nothing open below them, carrying a startable status but held
+	// by an active blocker — the same withholding `nibs list --ready` applies.
 	Blocked int
-	// Open: leaves that are open but not startable (a draft, or work already
-	// in progress).
+	// Nodes with nothing open below them that are open but not startable (a
+	// draft, or work already in progress).
 	Open int
-	// Inverted: queue entries passed over as order-vs-dependency inversions
-	// (decision 2.3). The pairs themselves are NextResult.Inversions.
+	// Queue entries passed over as order-vs-dependency inversions (decision
+	// 2.3). The pairs themselves are NextResult.Inversions.
 	Inverted int
 }
 
@@ -49,14 +44,16 @@ func (t NextTally) Any() bool {
 	return t.Closed > 0 || t.Blocked > 0 || t.Open > 0 || t.Inverted > 0
 }
 
-// NextResult is the answer to "what do I do", with the provenance that makes
-// it checkable. Every nib pointer is a LIVE store pointer (see NibReader.Get);
-// a caller whose result outlives the store lock must snapshot them.
+// NextResult is the answer to "what do I do", with the provenance that reached
+// it. Every nib pointer is a LIVE store pointer (see NibReader.GetSnapshot) —
+// snapshot a result that outlives the store lock.
 type NextResult struct {
 	// Milestone is the derived active milestone, or nil when none derives.
 	Milestone *nib.Nib
-	// Position is the answer's 1-based place in the active milestone's queue,
-	// or 0 when the answer did not come from a queue.
+	// Position is the 1-based place in the active milestone's queue of the
+	// ENTRY the answer was reached through, not of Action — Action is often
+	// deeper in that entry's decomposition and in no queue. 0 on the fallback
+	// walk and when there is no Action.
 	Position int
 	// Action is the nib to work on, or nil when the walk found none.
 	Action *nib.Nib
@@ -70,26 +67,21 @@ type NextResult struct {
 	// NoAnswerReason is why the walk that ran produced no Action; "" when it
 	// produced one.
 	NoAnswerReason NextReason
-	// Tally counts what the walk declined on its way (see NextTally).
-	Tally NextTally
-	// Inversions are the queue inversions that caused an Inverted skip, as
-	// QueueInversionsIn reports them.
+	Tally          NextTally
+	// Inversions are the queue inversions that caused an Inverted skip.
 	Inversions []QueueInversion
 }
 
-// activeMilestoneStatus is the status decision 1.4 derives "active" from. It
-// is a literal rather than a config-derived group for the reason
-// nibcontext.BuildSummaryWithView states about its own selectors: this picks
-// out ONE status, and no group predicate singles a status out — "open" holds
-// draft and todo too, and a planned-but-unstarted milestone is not active.
+// activeMilestoneStatus is the status decision 1.4 derives "active" from. A
+// literal, not a config-derived group: this picks out ONE status, and no group
+// predicate singles one out — "open" holds draft and todo too, and a
+// planned-but-unstarted milestone is not active.
 const activeMilestoneStatus = "in-progress"
 
 // ActiveMilestone derives the active milestone (decision 1.4): the in-progress
 // milestone that comes first in milestone order — the `order:` key milestones
-// carry among themselves, NOT a queue key. It is derived per call and never
-// stored, so a status change anywhere moves it with no migration and no cache
-// to invalidate. Several in-progress milestones are legal; the earliest wins.
-// Nil when no milestone is in progress.
+// carry among themselves, NOT a queue key. Several in-progress milestones are
+// legal; the earliest wins. Nil when no milestone is in progress.
 func ActiveMilestone(view *membership.View) *nib.Nib {
 	var active []*nib.Nib
 	for _, m := range view.Milestones() {
@@ -105,48 +97,29 @@ func ActiveMilestone(view *membership.View) *nib.Nib {
 }
 
 // Next answers "what do I do": the first startable leaf in the active
-// milestone's queue, with the provenance that reached it (decision 2.4).
+// milestone's queue, with the provenance that reached it.
 //
-// The walk takes the queue in milestone_order and, for each entry, descends
-// its decomposition in `order` until it reaches a node with nothing open under
-// it — a genuine leaf, or a container whose children are all closed, which
-// decision 2.4 makes the action itself. The first such node that is STARTABLE
-// is the answer; everything else is passed over and counted (NextTally), so a
-// walk that comes up empty can say why.
+// The walk takes the queue in milestone_order and, for each entry, descends its
+// decomposition in `order` until it reaches a node with nothing open under it
+// (decision 2.4). The first such node that is STARTABLE is the answer.
 //
 // Startable is `--ready`'s own pair, not a second definition of it: a startable
-// status (config.IsStartableStatus) AND no active blocker (BlockingChecker.
-// IsBlocked, which is what the --ready filter narrows on). A deferred blocker
-// therefore still withholds work here exactly as it does there.
+// status (config.IsStartableStatus) AND no active blocker
+// (BlockingChecker.IsBlocked). A deferred blocker therefore withholds work here
+// exactly as it does there.
 //
-// Two prunings, and only two. A CLOSED node is not entered — a completed,
-// scrapped or deferred branch is finished or set aside, and offering work from
-// under it would contradict the decomposition that says so. A queue entry
-// caught in an inversion is passed over with its subtree (decision 2.3), by
-// THE shared definition in QueueInversionsIn so `next` and the lint cannot
-// drift: the entry sits ahead of a blocker that is itself later in the queue,
-// so queue order alone would hand out work whose dependency has not been
-// reached. An entry blocked by something EARLIER in the queue needs no
-// pruning — the walk offers that blocker's work first and only reaches the
-// blocked entry once the blocker has closed.
+// Two prunings, and only two: a CLOSED node is not entered, and a queue entry
+// caught in an inversion is passed over with its subtree (decision 2.3), by the
+// shared definition in QueueInversionsIn.
 //
-// With no active milestone — none declared, or none in progress — the same
-// walk runs over the store's roots in tree order and the result says so
-// through FallbackReason. That case is the model's day-one shape (a flat
-// ordered list is a complete use of the tool), so refusing to answer there
-// would make the verb useless for the simplest project. Once an active
-// milestone DOES exist, `next` speaks only for it: a queue that is empty or
-// yields nothing startable is reported as such rather than routed around,
-// because the honest next action is to change the plan, not to quietly work
-// outside it.
+// With no active milestone — none declared, or none in progress — the same walk
+// runs over the store's roots in tree order and FallbackReason says so. Once one
+// exists, `next` speaks only for it: an empty queue, or one yielding nothing
+// startable, is reported as such rather than routed around.
 //
-// Next never writes. It reads the queue the way QueueInversionsIn does
-// — enumerate the group, sort by the key — rather than through Orderer.Members,
-// which backfills a missing milestone_order onto members as a side effect of
-// being read. A question must not edit files the caller never named (and must
-// not fail differently on a read-only store), and an unkeyed member still
-// sorts deterministically: nib.SortByKey puts keyed members first and orders
-// the rest by title.
+// Next never writes. Read the queue the way this does — enumerate the group,
+// sort by the key — not through Orderer.Members, which backfills a missing
+// milestone_order onto members as a side effect of being read.
 func Next(reader NibReader, blocking BlockingChecker) NextResult {
 	w := &nextWalk{
 		view:     membership.Compute(reader.All()),
@@ -163,8 +136,7 @@ func Next(reader NibReader, blocking BlockingChecker) NextResult {
 			w.res.FallbackReason = NextReasonNoActiveMilestone
 		}
 		// The store's roots, in tree order. DirectMembers("") is the root
-		// group with the milestone-typed nibs already dropped — a milestone is
-		// a container, never the work.
+		// group with the milestone-typed nibs already dropped.
 		roots := w.view.DirectMembers("")
 		nib.SortByOrder(roots)
 		w.walk(roots, false)
@@ -183,32 +155,25 @@ func Next(reader NibReader, blocking BlockingChecker) NextResult {
 	return w.res
 }
 
-// nextWalk carries the one-command state the walk threads through itself. The
-// membership view is built once here and never cached beyond this call, per
-// the package's live-pointer discipline.
+// nextWalk carries one command's walk state. The membership view is built per
+// call and never cached beyond it, per the package's live-pointer discipline.
 type nextWalk struct {
 	view     *membership.View
 	reader   NibReader
 	blocking BlockingChecker
 	cfg      *config.Config
-	// visited makes the descent total over illegal data: a cyclic parent chain
-	// is an adjacency the recursion would otherwise follow forever.
+	// visited bounds the descent over a cyclic parent chain, which the
+	// recursion would otherwise follow forever.
 	visited map[string]bool
 	// aheadOf holds the active queue's inversions, keyed by the entry sitting
-	// AHEAD of its blocker — the half of an inversion that makes queue order
-	// unusable for that entry. The other half (a member it blocks sits ahead
-	// of it) is the blocker's own problem, not a reason to skip it. Nil on the
-	// fallback walk, which runs over roots and so sits in no queue.
+	// AHEAD of its blocker — the half that makes queue order unusable for that
+	// entry. Nil on the fallback walk, which sits in no queue.
 	aheadOf map[string][]QueueInversion
 	res     NextResult
 }
 
-// indexInversions reads the queue's inversions ONCE, by THE shared definition,
-// and files them under the entry each one holds back. The scan, sort and
-// position map behind them depend on the queue rather than on the entry, so
-// asking per entry would repeat identical work for every one of them. The
-// index is built once up front, so the walk pays for the queue once however
-// far into it the answer lies.
+// indexInversions files the queue's inversions under the entry each one holds
+// back.
 func (w *nextWalk) indexInversions(milestoneID string) {
 	inversions := QueueInversionsIn(w.reader, milestoneID)
 	if len(inversions) == 0 {
@@ -220,10 +185,9 @@ func (w *nextWalk) indexInversions(milestoneID string) {
 	}
 }
 
-// walk runs the entries in the order they were given, recording the answer on
-// the result. isQueue selects the inversion pruning, which applies to queue
-// entries alone — a nib deeper in a decomposition has no direct assignment, so
-// it is in no queue and can be in no inversion.
+// walk runs the entries in the order given, recording the answer on the
+// result. isQueue selects the inversion pruning and the Position record, both
+// of which apply to queue entries alone.
 func (w *nextWalk) walk(entries []*nib.Nib, isQueue bool) {
 	for i, e := range entries {
 		if w.cfg.IsClosedStatus(e.Status) {
@@ -251,7 +215,7 @@ func (w *nextWalk) walk(entries []*nib.Nib, isQueue bool) {
 
 // descend returns the provenance path to the first startable node at or under
 // n, or nil when there is none. The caller has already established that n is
-// not closed; a repeat visit is this function's own guard.
+// not closed.
 func (w *nextWalk) descend(n *nib.Nib, path []*nib.Nib) []*nib.Nib {
 	if w.visited[n.ID] {
 		return nil
@@ -272,10 +236,9 @@ func (w *nextWalk) descend(n *nib.Nib, path []*nib.Nib) []*nib.Nib {
 		}
 		if onPath(path, c.ID) {
 			// A cyclic parent chain: c is its own ancestor here, so it is not
-			// work BELOW n and must not make n look unfinished. Every other
-			// already-visited child stays — "nothing open below" is a property
-			// of n's children, not of the order the walk happened to reach
-			// them in, and the entry guard above still ends the recursion.
+			// work below n. Not w.visited — an already-visited child that is
+			// not on this path is still a child of n, and the entry guard
+			// above ends the recursion.
 			continue
 		}
 		candidates = append(candidates, c)
@@ -304,8 +267,7 @@ func (w *nextWalk) descend(n *nib.Nib, path []*nib.Nib) []*nib.Nib {
 	return nil
 }
 
-// onPath reports whether id is already a step of the descent that reached
-// here — the only shape in which an open child is not work below its parent.
+// onPath reports whether id is already a step of the descent that reached here.
 func onPath(path []*nib.Nib, id string) bool {
 	for _, p := range path {
 		if p.ID == id {
@@ -315,8 +277,7 @@ func onPath(path []*nib.Nib, id string) bool {
 	return false
 }
 
-// startable is `nibs list --ready`'s predicate, composed from the same two
-// halves it composes: a startable status, and no active blocker.
+// startable is `nibs list --ready`'s predicate.
 func (w *nextWalk) startable(n *nib.Nib) bool {
 	return w.cfg.IsStartableStatus(n.Status) && !w.blocking.IsBlocked(n.ID)
 }
