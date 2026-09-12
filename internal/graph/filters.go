@@ -9,62 +9,26 @@ import (
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
-// resolveFilterID normalizes a single-ID filter argument via the reader's
-// NormalizeID method. It returns exactly what NibReader.NormalizeID returns
-// — (fullID, true) on success; (echoed input id, false) on miss — so the
-// two helpers agree on the miss convention and callers can use either
-// interchangeably without surprise.
+// resolveFilterID resolves one id-valued filter argument through the reader,
+// returning what NibReader.NormalizeID returns: (full id, true) on a hit, (the
+// id as supplied, false) on a miss.
 //
-// Why this wrapper exists despite being a straight passthrough today:
-//   - Semantic naming at the call site: `resolveFilterID` reads as "resolve a
-//     filter ID" rather than "normalize a generic ID", making intent explicit.
-//   - Future extension point: this is the single place where every
-//     filter.*ID branch can gain a shared id TRANSFORM — trimming, case
-//     folding, an input-length cap, should any of those ever be wanted —
-//     without touching each branch individually. None is implemented: a filter
-//     id is whatever length the caller sends, and an unresolvable one travels
-//     verbatim into FilterTargetNotFoundError.ID. It does not reach the response
-//     in full — that error's Error() caps the echo at maxEchoedIDBytes, and the
-//     echo is where the amplification lives, since a relationship field refuses
-//     once per nib while the request body bounds the input at 1x. See echoID for
-//     the measurement. A cap HERE would be a
-//     different thing from that one: it would change which ids RESOLVE, not
-//     what a refusal prints.
-//
-// Its sole caller is resolveFilterTarget, which owns the refusal policy layered
-// on top: this function reports whether an id resolves, that one decides what an
-// id that does not resolve — or that is not an id at all — means. A transform
-// added here therefore runs AFTER the emptiness test, so a trim would turn a
-// whitespace-only id into an empty one this layer then hands to NormalizeID; a
-// trim meant to read as "empty" has to go above the test, in resolveFilterTarget.
+// An id TRANSFORM added here would run AFTER resolveFilterTarget's emptiness
+// test, so a trim meant to read a whitespace-only id as empty has to go above
+// that test instead. See FilterTargetEmptyError for the policy it would break.
 func resolveFilterID(reader NibReader, id string) (string, bool) {
 	return reader.NormalizeID(id)
 }
 
 // resolveFilterTarget turns one id-valued filter field into the full id its
-// branch matches on, or reports why the branch cannot run. It is the single
-// place both refusals are decided, and every filter.*ID branch in ApplyFilter
-// goes through it:
+// branch matches on, or reports why the branch cannot run. Every filter.*ID
+// branch in ApplyFilter goes through it, which is what makes an unknown target
+// fail the whole filter chain instead of narrowing it.
 //
-//   - The empty string is *FilterTargetEmptyError — malformed input, not a
-//     question about the store.
-//   - An id no nib answers to is *FilterTargetNotFoundError, so an unknown
-//     target fails the whole filter chain instead of narrowing it.
-//
-// Both decisions live here rather than being spelled out per branch because a
-// per-branch copy of the emptiness test can be half-applied, and a branch that
-// reads an empty id as "unset" skips itself and silently widens the query to
-// the whole store. One copy cannot be half-applied. What stays per branch is the
-// field name and the `if err != nil` return, so each branch still names its own
-// schema field in the error and the refusal stays grep-findable at the call
-// site.
-//
-// The two cases are ordered, and the order is the whitespace policy: emptiness
-// is an EXACT test that runs first, so only "" is malformed input and every
-// other value — including a whitespace-only one — is an id that gets its lookup
-// and is reported as not-found if it misses. Trimming here would contradict the
-// id FilterTargetNotFoundError echoes back, and would make this layer stricter
-// than cmd/list.go's flag checks, which test for "" the same exact way.
+// Keep the emptiness test here rather than copying it into each branch: a copy
+// can be half-applied, and a branch that reads an empty id as "unset" skips
+// itself and silently widens the query to the whole store. The test is EXACT —
+// see FilterTargetEmptyError for what a trimming policy here would contradict.
 func resolveFilterTarget(reader NibReader, field, id string) (string, error) {
 	if id == "" {
 		return "", &FilterTargetEmptyError{Field: field}
@@ -81,36 +45,22 @@ func resolveFilterTarget(reader NibReader, field, id string) (string, error) {
 // relationship, set to false. Two pairs qualify, and each is empty by
 // construction rather than by store state:
 //
-//   - parentId + hasParent. Both read the resolved parent, so a nib parentId
-//     matches has a link reader.Get answers for — which is exactly what
-//     hasParent asks (see resolvedParent). No nib both has parent X and has
-//     none.
+//   - parentId + hasParent. Both read the resolved parent (see resolvedParent),
+//     so no nib both has parent X and has none.
 //   - blockedById + hasBlockedBy. blockedById requires the target in
 //     b.BlockedBy, which forces len(b.BlockedBy) > 0, which is hasBlockedBy.
 //
-// blockingId + hasBlocking looks like a third and is NOT one. hasBlocking asks
-// BlockingChecker.IsBlocking, which means ACTIVELY blocking — nibcore's
-// isBlockingInMap applies releasesDependentsPredicate to BOTH ends of the edge,
-// so a candidate reports false when its own status released its dependents, and
-// equally when every nib listing it in blocked_by has itself been released —
-// while blockingId matches anything in the target's blocked_by
-// regardless of status. The pair therefore selects the blockers the target
-// still lists that are no longer blocking anything, by either route. That
-// second route is why it is not a status filter in disguise: with the target's
-// own status released and its blocker listed nowhere else, an OPEN blocker is
-// in the answer. The status-released ones alone are reachable as blockingId +
-// status: ["completed", "scrapped"]; this pair asks the wider question, and a
-// real one.
+// Do not add blockingId + hasBlocking as a third. hasBlocking asks whether a nib
+// is ACTIVELY blocking (nibcore's isBlockingInMap releases on the status at BOTH
+// ends of the edge) while blockingId matches the target's stored blocked_by
+// whatever the candidate's status, so the pair is a real query — the schema's
+// blockingId description states which one, and says why it can return an open
+// blocker.
 //
-// An id that is the EMPTY STRING is not treated as a contradiction. It names no
-// nib, so there is nothing for the presence field to contradict; it is malformed
-// input, and FilterTargetEmptyError reports it as that — for parentId with a
-// hint redirecting to hasParent: false, the filter that does select parentless
-// nibs. Both classes exit 2, so the two surfaces still agree on the verdict and
-// only the message differs.
-//
-// A presence field set to TRUE is merely redundant and is left alone, as
-// cmd/list.go leaves `--parent X --has-parent` alone.
+// An empty id is left to FilterTargetEmptyError: it names no nib, so there is
+// nothing for the presence field to contradict. A presence field set to TRUE is
+// merely redundant and is left alone, as cmd/list.go leaves `--parent X
+// --has-parent` alone.
 func refuseContradiction(field string, id *string, presenceField string, presence *bool) error {
 	if id == nil || *id == "" || presence == nil || *presence {
 		return nil
@@ -122,35 +72,25 @@ func refuseContradiction(field string, id *string, presenceField string, presenc
 // already bound the set a search term can select from.
 //
 // It decides which population queryResolver.Nibs truncates. A term on its own
-// chooses from the whole store, so the store-wide cap IS the answer there — "the
-// top hits for q", which is what the caller asked for. Add one of these fields
-// and the question becomes an intersection over a set the store's link structure
-// already bounds — "the children of X matching q" — and a store-wide cap
-// truncates the wrong population, dropping a genuine member that ranks below the
-// global cutoff with no error and no signal. That is the same reading
-// filterBySearch gives on a relationship field, which is what lets the two
-// surfaces expressing one question reach one answer.
+// chooses from the whole store, so the store-wide cap IS the answer there — the
+// top hits for q. Add one of these fields and the question becomes an
+// intersection over a set the store's link structure already bounds — "the
+// children of X matching q" — where a store-wide cap truncates the wrong
+// population, dropping a genuine member that ranks below the global cutoff with
+// no error and no signal. filterBySearch reads a relationship field the same
+// way, which is what lets the two surfaces reach one answer.
 //
-// The fields are ENUMERATED rather than derived from a naming rule, so the
-// classification is readable where it is made and cannot shift under a rename.
-// What keeps the list from going stale is
-// TestEveryNibFilterFieldIsClassifiedAsBoundingOrNot, which reflects over
-// model.NibFilter and requires every field to be classified: a new bounding
-// filter fails a test instead of quietly missing this list.
-//
-// The list-valued and tri-state fields (status, tags, hasParent, isBlocked, ...)
-// are deliberately excluded. The test is whether the field NAMES A NIB, not how
-// large the set it selects turns out to be: siblingId on a root and ancestorId
-// on the tree root can each select most of the store and are still bounding,
-// because the question is "of X's siblings/descendants, which match q" and a
-// store-wide cap truncates the wrong population there too. A field that names no
-// nib leaves the question one about the store's top hits, so capping it is right.
+// Classify a new field by whether it NAMES A NIB, not by how large a set it
+// selects: siblingId on a root can select most of the store and is still
+// bounding, because the question is still "of X's siblings, which match q".
+// TestEveryNibFilterFieldIsClassifiedAsBoundingOrNot requires every
+// model.NibFilter field to be classified, so a new bounding filter fails a test
+// instead of quietly missing this list.
 //
 // A field set to the EMPTY STRING counts here, even though ApplyFilter goes on
-// to refuse it. Presence is the whole test: the refusal still happens, one
-// uncapped search earlier than it would otherwise, and reading emptiness as
-// "absent" would put a second copy of the emptiness rule here to disagree with
-// resolveFilterTarget's.
+// to refuse it: the refusal still happens, just after an uncapped search has
+// already run. Reading emptiness as "absent" would put a second copy of the
+// emptiness rule here to disagree with resolveFilterTarget's.
 func hasBoundingFilter(filter *model.NibFilter) bool {
 	if filter == nil {
 		return false
@@ -174,54 +114,25 @@ func hasBoundingFilter(filter *model.NibFilter) bool {
 // a relationship's members rather than the whole store.
 //
 // ctx carries an optional per-operation RequestCache (see request_cache.go); the
-// mention filter branches and the search branch route through it so a duplicate
-// mention lookup or a repeated search term within a single GraphQL operation
-// hits the cache instead of the reader. CLI callers or pure unit tests may pass
-// context.Background(); the cache is keyed on ctx values only. That lookup is
-// the ONLY thing ctx is consulted for: ApplyFilter checks no cancellation and
-// honors no deadline, so every filter branch runs to completion.
+// mention branches and the search branch route through it, and CLI callers or
+// pure unit tests may pass context.Background(). That lookup is the ONLY thing
+// ctx is consulted for: ApplyFilter checks no cancellation and honors no
+// deadline, so every filter branch runs to completion.
 //
-// Callers threading filter.MentionsID / filter.MentionedByID must let
-// ApplyFilter handle ID resolution via resolveFilterTarget. Pre-normalizing in
-// the caller is not required for correctness, but mixing short and full
-// forms across resolvers within the same request will desync the cache
-// keys (keyed on the full normalized ID) and silently degrade memoization.
-//
-// Six outcomes are kept distinct, and the error return exists to separate the
-// first five from the last:
-//
-//   - A filter field naming a single nib was given the empty string:
-//     *FilterTargetEmptyError, the validation class — malformed input rather
-//     than a question about the store.
-//   - An id-valued field was combined with its presence twin set to false:
-//     *FilterTargetContradictionError, also the validation class — a pair no
-//     store state could satisfy.
-//   - A filter field requiring a nib of one type was given an id resolving to
-//     a nib of another (milestone naming an epic): *FilterTargetTypeError,
-//     also the validation class — the class the write path gives the same
-//     mistake.
-//   - A filter field naming a single nib was given an id no nib answers to:
-//     *FilterTargetNotFoundError, carrying nib.ErrNotFound.
-//   - A target that resolved could not then be fetched:
-//     *FilterTargetUnreadableError, deliberately not a not-found.
-//   - Nothing matched: an empty result and a nil error.
-//
-// Folding any of the refusals into the last is what this signature exists
-// to prevent. "What is under nibs-abc1?" answered with an empty list is a
-// factual claim about the store, and a caller that mistyped the id cannot tell
-// it apart from the truth. An empty id is worse still: read as "unset" it drops
-// its branch outright, so the query widens to every nib in the store and
-// answers a question nobody asked.
+// The error return exists to keep the refusal classes in filter_errors.go out of
+// the empty result. Folding any of them into it is what this signature prevents:
+// "what is under nibs-abc1?" answered with an empty list is a factual claim
+// about the store, and a caller that mistyped the id cannot tell it apart from
+// the truth. An empty id is worse still — read as "unset" it drops its branch
+// outright, so the query widens to every nib in the store and answers a question
+// nobody asked.
 func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, reader NibReader, blocking BlockingChecker) ([]*nib.Nib, error) {
 	if filter == nil {
 		return nibs, nil
 	}
 
-	// Contradictory pairs are refused before anything else runs. They cost no
-	// store access, and deciding them first is what makes an unresolvable id in
-	// a contradictory pair report the contradiction rather than the not-found —
-	// see refuseContradiction for why that is the useful verdict, and for why
-	// these two pairs and not the third that looks like one.
+	// Refused first, and the order is the verdict: an unresolvable id in a
+	// contradictory pair reports the contradiction rather than the not-found.
 	if err := refuseContradiction("parentId", filter.ParentID, "hasParent", filter.HasParent); err != nil {
 		return nil, err
 	}
@@ -231,44 +142,33 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 
 	result := nibs
 
-	// String field filters. Type and Priority use the effective value so a
-	// default-omitting nib filters as though the "task"/"normal" default were on
-	// disk (matching the stored Nib's presentation defaults — see nib.DefaultType).
 	result = filterByField(result, filter.Status, func(b *nib.Nib) string { return b.Status })
 	result = excludeByField(result, filter.ExcludeStatus, func(b *nib.Nib) string { return b.Status })
+
+	// Type and Priority filter on the EFFECTIVE value, so a nib that omitted the
+	// field matches as though nib.DefaultType / nib.DefaultPriority were on disk.
 	result = filterByField(result, filter.Type, func(b *nib.Nib) string { return b.EffectiveType() })
 	result = excludeByField(result, filter.ExcludeType, func(b *nib.Nib) string { return b.EffectiveType() })
 
 	result = filterByField(result, filter.Priority, func(b *nib.Nib) string { return b.EffectivePriority() })
 	result = excludeByField(result, filter.ExcludePriority, func(b *nib.Nib) string { return b.EffectivePriority() })
 
-	// Estimate filters
 	result = filterByField(result, filter.Estimate, func(b *nib.Nib) string { return b.Estimate })
 	result = excludeByField(result, filter.ExcludeEstimate, func(b *nib.Nib) string { return b.Estimate })
 
-	// Slice field filters
 	result = filterBySliceField(result, filter.Tags, func(b *nib.Nib) []string { return b.Tags })
 	result = excludeBySliceField(result, filter.ExcludeTags, func(b *nib.Nib) []string { return b.Tags })
 
-	// Parent predicate filters. Parent-ness is "the link resolves", not "the
-	// field is non-empty" — see resolvedParent for why, and for the surfaces
-	// this has to agree with.
+	// Parent-ness is "the link resolves", not "the field is non-empty" — see
+	// resolvedParent for the rule and the surfaces it has to agree with.
 	result = filterByPredicate(result, filter.HasParent, func(b *nib.Nib) bool {
 		return resolvedParentID(b, reader) != ""
 	})
 	if filter.ParentID != nil {
-		// Normalize the target id like every other *ID filter, so a short
-		// --parent and a full one reach the same answer. An unknown target fails
-		// the filter (shared contract for all *ID filters).
-		//
-		// Each candidate is then compared by its RESOLVED parent, not its stored
-		// spelling — the same reading hasParent and the parentId field give, which
-		// is what lets refuseContradiction treat this field and hasParent:false as
-		// jointly empty by construction. Comparing the stored string would agree
-		// on every link the loader's canonicalization pass rewrote and disagree on
-		// one it never saw, which is a property of the reader rather than of the
-		// data. A link naming no nib resolves to "" and matches nothing here,
-		// since resolveFilterTarget has already refused an unresolvable target.
+		// Candidates are compared by RESOLVED parent, not stored spelling.
+		// Comparing the stored string would agree on every link the loader's
+		// canonicalization pass rewrote and disagree on one it never saw, making
+		// the answer a property of the reader rather than of the data.
 		fullID, err := resolveFilterTarget(reader, "parentId", *filter.ParentID)
 		if err != nil {
 			return nil, err
@@ -278,43 +178,21 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 		})
 	}
 
-	// Transitive hierarchy filters. Like every other *ID filter, each field
-	// names the relationship the MATCHED nib holds toward the supplied target:
-	// ancestorId keeps nibs whose ancestor is the target (its descendants),
-	// descendantId keeps nibs whose descendant is the target (its ancestors),
-	// siblingId keeps nibs sharing the target's parent. The target itself is
-	// none of those things to itself, so all three exclude it here.
+	// Each field names the relationship the MATCHED nib holds toward the
+	// supplied target: ancestorId keeps the target's descendants, descendantId
+	// keeps its ancestors, siblingId keeps nibs sharing its parent. The target
+	// is none of those to itself, so all three exclude it here.
 	//
 	// "Here" is load-bearing: queryResolver.Nibs runs includeAncestors AFTER
-	// ApplyFilter whenever search is set, re-adding every survivor's ancestors
-	// so the client can render a complete tree. For ancestorId that puts the
-	// target back into the response, and for siblingId it brings in the shared
-	// parent. The schema descriptions state this; it is not a bug to fix in
-	// this file — the web UI's tree rendering and ancestor dimming depend on
-	// that completion.
+	// ApplyFilter whenever search is set, which puts the ancestorId target and
+	// the siblingId shared parent back into the response. That is the documented
+	// behavior of both schema fields and the web UI's tree rendering depends on
+	// it — do not "fix" it in this file.
 	//
-	// An unknown target fails the filter (shared contract for all *ID filters).
-	// Each guard decides its branch's outcome, and what it prevents differs by
-	// branch. Drop the ancestorId guard and the branch answers with the empty
-	// set: resolveFilterID echoes the input back on a miss, and parentChain
-	// banks only fetched nibs' ids, so the echoed string matches nothing. Drop
-	// the descendantId or siblingId guard and the branch instead reports the
-	// unreadable class, because each opens with a Get that fails the same
-	// exact-then-prefix lookup NormalizeID just did — a refusal, but the wrong
-	// one, naming an internal read failure for what is a caller's typo.
-	//
-	// The empty set is the answer worth guarding hardest against: "what is under
-	// this nib" reads as a fact about the store rather than as a rejected
-	// question.
-	//
-	// Cost: filterByAncestorID walks each candidate's chain independently
-	// instead of sharing work between candidates, which is O(N x depth) reader
-	// lookups. Deliberate. Reader.Get is an in-memory map lookup under an
-	// RLock, so the walk is bounded by tree depth rather than I/O, and the
-	// obvious sharing is unsound: one seen set across candidates makes a later
-	// candidate's walk stop at an ancestor an earlier one already marked,
-	// truncating its chain before the target can be reached or ruled out. Any
-	// memoization must cache the per-id ANSWER, not the visited flag.
+	// Keep all three guards even though a missing one refuses differently:
+	// ancestorId would narrow to the empty set (parentChain banks only fetched
+	// ids, so the echoed miss matches nothing) while the other two would report
+	// the unreadable class for what is a caller's typo.
 	if filter.AncestorID != nil {
 		fullID, err := resolveFilterTarget(reader, "ancestorId", *filter.AncestorID)
 		if err != nil {
@@ -341,12 +219,9 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 		}
 	}
 
-	// Blocking filters (computed via BlockingChecker)
 	result = filterByPredicate(result, filter.HasBlocking, func(b *nib.Nib) bool { return blocking.IsBlocking(b.ID) })
 	result = filterByPredicate(result, filter.IsBlocked, func(b *nib.Nib) bool { return blocking.IsBlocked(b.ID) })
 
-	// BlockingID (special: needs reader to look up target nib).
-	// An unknown target fails the filter (shared contract for all *ID filters).
 	if filter.BlockingID != nil {
 		fullID, err := resolveFilterTarget(reader, "blockingId", *filter.BlockingID)
 		if err != nil {
@@ -357,7 +232,7 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 		}
 	}
 
-	// Blocked-by filters (from direct blocked_by field)
+	// Read from the nib's own blocked_by, not from BlockingChecker.
 	result = filterByPredicate(result, filter.HasBlockedBy, func(b *nib.Nib) bool { return len(b.BlockedBy) > 0 })
 	if filter.BlockedByID != nil {
 		fullID, err := resolveFilterTarget(reader, "blockedById", *filter.BlockedByID)
@@ -367,15 +242,13 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 		result = filterBySliceField(result, []string{fullID}, func(b *nib.Nib) []string { return b.BlockedBy })
 	}
 
-	// Assignment-axis filters. milestone matches the RESOLVED direct
-	// assignment — membership.ResolvedMilestoneID's reading, the one the
-	// ordering engine's queue scope groups by — so a dangling or non-milestone
-	// assignment matches nothing here exactly as it schedules nothing there.
-	// An unknown target fails the filter (shared contract for all id-valued
-	// filters), and so does a target that exists but is not milestone-typed:
-	// no assignment can resolve to it, so the empty set it would otherwise
-	// get reads as "this milestone has no members" for an id that names no
-	// milestone — the same mistake the write path refuses naming the type.
+	// milestone matches the RESOLVED direct assignment —
+	// membership.ResolvedMilestoneID's reading, the one the ordering engine's
+	// queue scope groups by — so a dangling or non-milestone assignment matches
+	// nothing here exactly as it schedules nothing there. A target that exists
+	// but is not milestone-typed is refused rather than answered with the empty
+	// set, which would read as "this milestone has no members" for an id that
+	// names no milestone.
 	if filter.Milestone != nil {
 		fullID, err := resolveFilterTarget(reader, "milestone", *filter.Milestone)
 		if err != nil {
@@ -393,15 +266,11 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 		})
 	}
 
-	// noMilestone reads DERIVED membership (membership.MilestoneOf): true is
-	// the backlog, and a child of an assigned epic is planned work rather than
-	// backlog. The View is built over the WHOLE store, not the candidate
-	// slice: an assigned ancestor outside the slice — filtered out earlier, or
-	// never in the relation — still schedules its subtree. Built once per
-	// GraphQL OPERATION via the per-operation cache — the reuse scope the
-	// membership package's live-pointer discipline permits — so relationship
-	// resolvers invoking ApplyFilter once per parent share one View instead of
-	// recomputing O(N) per parent; never cached across operations.
+	// noMilestone reads DERIVED membership (membership.MilestoneOf): true is the
+	// backlog, and a child of an assigned epic is planned work rather than
+	// backlog. The View covers the WHOLE store, not the candidate slice, so an
+	// assigned ancestor an earlier branch filtered out still schedules its
+	// subtree.
 	if filter.NoMilestone != nil {
 		view := cachedMembershipView(ctx, reader)
 		result = filterByPredicate(result, filter.NoMilestone, func(b *nib.Nib) bool {
@@ -409,22 +278,17 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 		})
 	}
 
-	// The OWNERSHIP axis. area is DOWNWARD-CLOSED over the declared tree: the
-	// path named plus every area declared beneath it, so `area: "web"` selects
-	// web/dashboard too. Closure is Areas.IsWithin's, which descends the
-	// tree rather than testing the strings — `webhooks` is not within `web`, and
-	// a stored value the vocabulary no longer declares is within nothing, so a
-	// retired area is not swept back in by a filter naming its former parent.
-	//
-	// Unlike milestone this names no nib, so there is no target to resolve and
-	// nothing here bounds a search (see hasBoundingFilter). What it does share
-	// with milestone is the refusal: a value the vocabulary does not declare is
-	// rejected rather than answered with the empty set, which would read as "no
-	// work is in this area" for a path that names no area at all.
+	// The OWNERSHIP axis. area is DOWNWARD-CLOSED over the declared tree, so
+	// `area: "web"` selects web/dashboard too; Areas.IsWithin owns that closure.
+	// Unlike milestone it names no nib, so there is no target to resolve and
+	// nothing here bounds a search (see hasBoundingFilter). What it shares with
+	// milestone is the refusal: an undeclared value is rejected rather than
+	// answered with the empty set, which would read as "no work is in this area"
+	// for a path that names no area at all.
 	if filter.Area != nil {
 		// ONE snapshot for both steps. The vocabulary reloads while the server
 		// runs, so asking twice could refuse against one tree and then filter
-		// against another — accepting a path and returning nothing for it.
+		// against another, accepting a path and returning nothing for it.
 		areas := reader.Areas()
 		if err := refuseUndeclaredArea(areas, "area", *filter.Area); err != nil {
 			return nil, err
@@ -432,9 +296,6 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 		result = filterByAreaWithin(result, areas, *filter.Area)
 	}
 
-	// Mention filters (computed via FindMentions/FindMentionedBy on the reader,
-	// routed through the per-operation cache so repeated lookups within one
-	// GraphQL operation don't re-run the reader).
 	if filter.MentionsID != nil {
 		fullID, err := resolveFilterTarget(reader, "mentionsId", *filter.MentionsID)
 		if err != nil {
@@ -450,20 +311,9 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 		result = filterByMentionedByID(ctx, result, fullID, reader)
 	}
 
-	// Search INTERSECTS the working set rather than choosing it. Every caller
-	// but queryResolver.Nibs hands this function a set some relationship
-	// already determined — the children of X, the nibs blocking X — so on those
-	// a term can only mean "of those, the ones matching". A hit outside the
-	// relation is not a child of X, so admitting it would answer a different
-	// question. queryResolver.Nibs seeds its input with Search() instead, and
-	// says there why it keeps doing so.
-	//
-	// The branch runs LAST. It is the only one that queries the search index, so
-	// placing it here means a filter that is going to be refused — an empty id,
-	// an unknown target, a contradictory pair — never pays for that query, and
-	// the refusal rather than an index failure is what reaches the caller. It
-	// also runs its membership loop over the narrowest set the rest of the chain
-	// produces.
+	// Keep search LAST. It is the only branch that queries the index, so a
+	// filter that is going to be refused never pays for that query, and the
+	// refusal rather than an index failure is what reaches the caller.
 	//
 	// An empty term leaves the set unfiltered, matching every other surface that
 	// takes one (cmd/list.go only sets the field for a non-empty -S): "no
@@ -479,40 +329,30 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 	return result, nil
 }
 
-// filterBySearch keeps the nibs the search index matched, in the input's own
-// order. An index that cannot answer is reported rather than read as "nothing
-// matched" — the reader's error travels out as it is, which is what
-// queryResolver.Nibs does with the same failure from its seeding call.
+// filterBySearch INTERSECTS the working set with the search index's answer,
+// keeping the input's own order. It never chooses the set: a hit outside the
+// relation the caller named is not a child of X, so admitting it would answer a
+// different question. queryResolver.Nibs seeds from the index instead, and says
+// there why.
 //
-// On a relationship field that failure costs the WHOLE response: every such
-// field is [Nib!]!, so nothing between it and the response root is nullable and
-// GraphQL's null propagation carries the failure all the way up, discarding
-// every other nib's successful result. That is accepted. Degrading to "no match" would put this branch back in the business of
-// answering a question it could not evaluate — the confident empty answer the
-// refusal classes above exist to eliminate — and a malformed term is not what
-// gets here: a query string the parser rejects degrades to a plain match query
-// instead of failing (see search.Index.Search). The sibling id-valued branches
-// bubble the same way on FilterTargetUnreadableError, so one broken read behaves
-// alike across the filter.
+// An index that cannot answer is reported rather than read as "nothing matched",
+// even though on a relationship field that costs the WHOLE response — every such
+// field is [Nib!]!, so GraphQL's null propagation carries the failure to the
+// root and discards every other nib's successful result. That is accepted:
+// degrading to "no match" would put this branch back in the business of
+// answering a question it could not evaluate, and a malformed term is not what
+// gets here — a query string the parser rejects degrades to a plain match query
+// instead of failing (see search.Index.Search).
 //
 // Membership is decided by ID. The relationship resolvers hand ApplyFilter
 // detached snapshots (see NibReader.GetSnapshot) while the reader hands back its
 // own store pointers, so comparing pointers would match nothing.
 //
-// It reads the UNCAPPED answer (SearchAll), not the top hits Search returns.
-// The working set here is already bounded by the relation the caller named, so
-// the store-wide cap would truncate the wrong population — "the children of X
-// matching q" would quietly become "the children of X that are also among the
-// store's global top hits for q", dropping a real member that ranks below the
-// cutoff. That is the top level's answer, and it is wrong here; see
-// NibReader.SearchAll.
-//
-// The index is queried ONCE per call, never per candidate, and — through the
-// per-operation cache (request_cache.go) — once per TERM per operation rather
-// than once per parent nib when a relationship field is selected across many of
-// them. The membership set lives in that same memo rather than being rebuilt
-// here, so the per-parent cost is |relation| lookups and nothing proportional to
-// the match set.
+// It reads the UNCAPPED answer, not the top hits Search returns, because the
+// working set is already bounded by the relation — see hasBoundingFilter for
+// which population a store-wide cap would truncate. cachedSearchAllIDs memoizes
+// the membership set itself, so the per-parent cost is |relation| lookups and
+// nothing proportional to the match set.
 func filterBySearch(ctx context.Context, nibs []*nib.Nib, query string, reader NibReader) ([]*nib.Nib, error) {
 	matched, err := cachedSearchAllIDs(ctx, reader, query)
 	if err != nil {
@@ -529,9 +369,7 @@ func filterBySearch(ctx context.Context, nibs []*nib.Nib, query string, reader N
 }
 
 // filterByMentionsID keeps nibs that mention the given target in their body.
-// targetID must already be a full (normalized) ID — callers resolve via
-// resolveFilterTarget before invoking. Routes through the per-request mention
-// cache attached to ctx (if any).
+// targetID must already be a full (normalized) ID — see cachedMentionedBy.
 func filterByMentionsID(ctx context.Context, nibs []*nib.Nib, targetID string, reader NibReader) []*nib.Nib {
 	inbound := cachedMentionedBy(ctx, reader, targetID)
 	inboundSet := make(map[string]bool, len(inbound))
@@ -547,10 +385,8 @@ func filterByMentionsID(ctx context.Context, nibs []*nib.Nib, targetID string, r
 	return result
 }
 
-// filterByMentionedByID keeps nibs that are mentioned in the given source's body.
-// sourceID must already be a full (normalized) ID — callers resolve via
-// resolveFilterTarget before invoking. Routes through the per-request mention
-// cache attached to ctx (if any).
+// filterByMentionedByID keeps nibs that are mentioned in the given source's
+// body. sourceID must already be a full (normalized) ID — see cachedMentions.
 func filterByMentionedByID(ctx context.Context, nibs []*nib.Nib, sourceID string, reader NibReader) []*nib.Nib {
 	outbound := cachedMentions(ctx, reader, sourceID)
 	outboundSet := make(map[string]bool, len(outbound))
@@ -567,25 +403,21 @@ func filterByMentionedByID(ctx context.Context, nibs []*nib.Nib, sourceID string
 }
 
 // parentChain returns the IDs on b's parent chain, nearest ancestor first,
-// walking up to the root. Every id is a RESOLVED id — the ID of a nib that was
-// actually fetched — and a link that resolves to nothing ends the chain; see
-// WalkParentChain for both rules.
+// walking up to the root — resolved ids only, and a link naming no nib ends the
+// chain (see WalkParentChain for both rules).
 //
 // The visited set is per-call and seeded with b.ID, so each candidate gets an
-// independent walk and b's own ID is never in its result. Sharing one set
-// across candidates would be unsound here for a second reason beyond the
-// seeding: a later candidate's walk would stop at an ancestor an earlier one
-// banked, truncating its chain before the target could be reached or ruled out.
-// Any memoization must cache the per-id ANSWER, not the visited flag.
+// independent walk that keeps b off its own chain. Two constraints on any
+// memoization added here, both of which fail silently with the suite green:
 //
-// Ancestry is always resolved through reader, never from the candidate slice
-// the caller is filtering. ApplyFilter runs over genuinely narrowed slices
-// from the relationship resolvers (Children, Blocking, Mentions, ...), so an
-// intermediate ancestor an earlier filter removed is still on the chain, and
-// `--status todo --ancestor <epic>` still reaches through a completed
-// intermediate. Any memoization added here must keep reader as the source of
-// ancestry: indexing the candidate slice instead would truncate every chain at
-// the first filtered-out ancestor, silently and with the suite still green.
+//   - Cache the per-id ANSWER, not the visited flag. One set shared across
+//     candidates makes a later walk stop at an ancestor an earlier one banked,
+//     truncating its chain before the target can be reached or ruled out.
+//   - Keep reader as the source of ancestry. ApplyFilter runs over genuinely
+//     narrowed slices from the relationship resolvers, so indexing the candidate
+//     slice instead would truncate every chain at the first filtered-out
+//     ancestor — `--status todo --ancestor <epic>` has to reach through a
+//     completed intermediate.
 func parentChain(b *nib.Nib, reader NibReader) []string {
 	var ids []string
 	for _, ancestor := range liveParentChain(b, reader, map[string]bool{b.ID: true}) {
@@ -611,46 +443,20 @@ func parentChain(b *nib.Nib, reader NibReader) []string {
 // query, and is offered as a root's sibling by one surface while being refused
 // as that root's reorder anchor by another.
 //
-// Re-deriving is not the same as READING the stored field, and most raw reads in
-// this package are legitimate. What every legitimate one has in common is that
-// "is the string empty" is not its answer:
+// Reading b.Parent is not itself the mistake — most raw reads in this package
+// are legitimate. Deciding parent-ness from whether that string is empty is.
 //
-//   - The rule's own body, here. Reading the field is what it is for.
-//   - WRITES. Storing a normalized parent, or clearing it, produces the spelling
-//     every reader then has to resolve; there is nothing to resolve first.
-//   - A GraphQL INPUT struct's Parent (model.CreateNibInput, model.UpdateNibInput).
-//     That is a question about the request — was the field supplied at all — and
-//     not about any nib.
-//   - A value handed STRAIGHT to a resolving lookup: the parent-chain walk's next
-//     iteration, and the early-out asking whether there is any link to start a
-//     walk from. A link naming no nib ends the walk on its first lookup, which is
-//     the answer resolving would give, so resolving here would change only the
-//     cost.
-//   - The stored spelling AS THE SUBJECT. The storedParentId GraphQL field and
-//     the `-f stored_parent` CLI field exist so a broken link stays inspectable;
-//     routing a diagnostic that deliberately prints both spellings through the
-//     rule would lose the information it exists to carry.
-//   - A resolution by another route. Nib.parent resolves through GetSnapshot,
-//     which runs the same exact-then-prefix lookup as Get — a dependency not
-//     obvious at the call site, so it is pinned by
-//     TestParentResolverDependsOnGetSnapshotIDResolution rather than left to a
-//     reader to notice.
+// Surfaces outside this package read the raw link to decide root-ness, so what
+// is worth checking of them is agreement on the ANSWER rather than on the
+// reading: a link naming no nib is absent from the id set ui.BuildTree and
+// membership.View each walk, so for a dangling link both reach this rule's
+// answer without calling it. That dangling link is the whole of the claim.
 //
-// Every other surface in this package routes through here. Surfaces OUTSIDE it
-// read the raw link to decide root-ness, so what is worth checking of them is
-// agreement on the ANSWER rather than the reading: a link naming no nib is
-// absent from the id set ui.BuildTree and membership.View each walk, so for a
-// dangling link both arrive at this rule's answer without calling it. The
-// dangling link is the whole of the claim; nothing here holds either surface to
-// this rule for any other shape.
-//
-// Resolving is also what compares a short-form link under its resolved
-// spelling. Canonicalization makes the two spellings coincide, and every
-// mutation that can change the key set re-runs it — Load, Core.Create,
-// Core.Delete (gated on removalCanRebindLinksLocked) and the watcher's batch
-// (its scanAll branch). Resolving here does not lean on that: it keeps the
-// helper correct on any reader, including one that never ran the pass, so the
-// rule is a property of this package rather than of the store's history.
+// Resolving is also what makes a short-form link compare under its resolved
+// spelling. Canonicalization (see canonicalize.go) makes the two coincide, but
+// this does not lean on that: it stays correct on a reader that never ran the
+// pass, so the rule is a property of this package rather than of the store's
+// history.
 //
 // The returned pointer is the reader's LIVE store pointer (see NibReader.Get):
 // a caller whose result outlives the store lock must snapshot it, see
@@ -679,16 +485,12 @@ func resolvedParentID(b *nib.Nib, reader NibReader) string {
 }
 
 // filterByAncestorID keeps nibs with targetID somewhere in their parent chain —
-// the target's descendants at any depth, the target itself excluded.
-// targetID must already be a full (normalized) ID — callers resolve via
-// resolveFilterTarget before invoking.
+// the target's descendants at any depth, the target itself excluded. targetID
+// must already be a full (normalized) ID.
 //
-// Unlike its two siblings this never fetches the target, so it has no
-// defensive nil return for a concurrent delete: matching is decided entirely
-// by the candidates' own chains. Since parentChain banks only resolved ids, a
-// target deleted between resolveFilterID and the walk simply stops appearing
-// on any chain, and its former descendants stop matching. Adding a Get here to
-// look symmetric would change behavior, not tidy it.
+// Do not add a Get here for symmetry with its two siblings: never fetching the
+// target is what lets a concurrent delete simply drop the target off every
+// chain, rather than needing a defensive nil return.
 func filterByAncestorID(nibs []*nib.Nib, targetID string, reader NibReader) []*nib.Nib {
 	var result []*nib.Nib
 	for _, b := range nibs {
@@ -701,12 +503,9 @@ func filterByAncestorID(nibs []*nib.Nib, targetID string, reader NibReader) []*n
 
 // filterByDescendantID keeps nibs with targetID somewhere in their descendant
 // subtree — exactly the target's ancestor chain, the target itself excluded.
-// The chain is walked once up front rather than per candidate.
-// targetID must already be a full (normalized) ID — callers resolve via
-// resolveFilterTarget before invoking. Reports *FilterTargetUnreadableError if the
-// target nib cannot be fetched (defensive: the caller already proved the ID
-// resolves, but Get may still fail on a concurrent delete — which is why that
-// is its own class and not a not-found).
+// The chain is walked once up front rather than per candidate. targetID must
+// already be a full (normalized) ID; the Get can still fail on a concurrent
+// delete, which is what FilterTargetUnreadableError is for.
 func filterByDescendantID(nibs []*nib.Nib, targetID string, reader NibReader) ([]*nib.Nib, error) {
 	target, err := reader.Get(targetID)
 	if err != nil {
@@ -728,15 +527,12 @@ func filterByDescendantID(nibs []*nib.Nib, targetID string, reader NibReader) ([
 }
 
 // filterBySiblingID keeps nibs sharing the target's parent, the target itself
-// excluded. A parentless target selects the other root nibs — the root-level
-// branch fetchSiblings implements for `nibs rel siblings` — which falls out of
-// matching on the target's empty parent instead of needing its own case.
-// Both sides go through resolvedParentID, so root-ness means the same thing
-// here as it does to nibResolver.Parent and fetchSiblings; see that helper for
-// the rule and why it has a single home.
-// targetID must already be a full (normalized) ID — callers resolve via
-// resolveFilterTarget before invoking. Reports *FilterTargetUnreadableError if the
-// target nib cannot be fetched (defensive: see filterByBlockingID).
+// excluded. A parentless target selects the other root nibs — the same answer
+// fetchSiblings gives `nibs rel siblings` — which falls out of matching on the
+// target's empty parent instead of needing its own case. Both sides go through
+// resolvedParentID, so root-ness means the same thing here as it does there.
+// targetID must already be a full (normalized) ID; see filterByDescendantID for
+// the unreadable case.
 func filterBySiblingID(nibs []*nib.Nib, targetID string, reader NibReader) ([]*nib.Nib, error) {
 	target, err := reader.Get(targetID)
 	if err != nil {
@@ -802,18 +598,9 @@ func excludeByField(nibs []*nib.Nib, values []string, getter func(*nib.Nib) stri
 // value names a declared area.
 //
 // The empty string is refused for the reason resolveFilterTarget refuses an
-// empty id: read as "unset" the branch would be dropped and the query would
-// widen to the whole store, which is the worst answer for the input that
-// produces it — an unset shell variable, not a deliberate choice. It is tested
-// EXACTLY, so a whitespace-only value stays an ordinary undeclared path and is
-// reported as one; that keeps this layer from carrying a trimming policy the
-// echoed value would then contradict, and matches cmd/list.go's own `== ""`
-// tests.
-//
-// Every rule it applies belongs to the vocabulary: membership is IsValid, and
-// the declared set is List's rendering — empty when the store declares none,
-// which is what selects the wording that says so instead of naming an empty
-// allowed set.
+// empty id — read as "unset" the branch would be dropped and the query would
+// widen to the whole store — and is tested EXACTLY for the same reason, leaving
+// a whitespace-only value an ordinary undeclared path.
 func refuseUndeclaredArea(areas *config.Areas, field, path string) error {
 	if path == "" {
 		return &FilterAreaError{Field: field}
@@ -829,10 +616,10 @@ func refuseUndeclaredArea(areas *config.Areas, field, path string) error {
 }
 
 // filterByAreaWithin keeps the nibs whose stored area is ancestor or sits below
-// it in the DECLARED tree. ancestor has already been checked as declared, so a
-// candidate is judged only on its own value — and one the vocabulary does not
-// declare is within nothing, which is how a retired area stays out of an answer
-// about the tree that no longer holds it.
+// it in the DECLARED tree (Areas.IsWithin). ancestor has already been checked as
+// declared, so a candidate is judged only on its own value — and a stored value
+// the vocabulary no longer declares is within nothing, which is how a retired
+// area stays out of an answer about the tree that no longer holds it.
 func filterByAreaWithin(nibs []*nib.Nib, areas *config.Areas, ancestor string) []*nib.Nib {
 	var result []*nib.Nib
 	for _, b := range nibs {
@@ -910,14 +697,12 @@ outer:
 }
 
 // includeAncestors walks the parent chain for every nib in the result and adds
-// any missing ancestor nibs.  This ensures the client can always build a
-// complete tree hierarchy even when search or filters matched only leaves.
+// any missing ancestor nibs, so the client can build a complete tree hierarchy
+// even when search or filters matched only leaves.
 //
-// One visited set spans the WHOLE batch, seeded with every input nib's ID: an
-// ancestor already in the result — or already added while completing an earlier
-// nib — is neither re-added nor walked through a second time. That batch-wide
-// lifetime is what keeps the output free of duplicates, and it is the opposite
-// of the per-call set parentChain needs; see WalkParentChain.
+// One visited set spans the WHOLE batch, seeded with every input nib's ID, and
+// that batch-wide lifetime is what keeps the output free of duplicates. It is
+// the opposite of the per-call set parentChain needs; see WalkParentChain.
 //
 // The added ancestors are the reader's live store pointers, exactly as the
 // input nibs are. queryResolver.Nibs — this function's only caller — snapshots
@@ -939,13 +724,10 @@ func includeAncestors(nibs []*nib.Nib, reader NibReader) []*nib.Nib {
 	return append(nibs, extras...)
 }
 
-// filterByBlockingID filters nibs that are blocking a specific nib ID.
-// Computed: checks if targetID has this nib in its blockedBy.
-// targetID must already be a full (normalized) ID — callers resolve via
-// resolveFilterTarget before invoking. Reports *FilterTargetUnreadableError if the
-// target nib cannot be fetched (defensive: the caller already proved the ID
-// resolves, but Get may still fail on a concurrent delete — which is why that
-// is its own class and not a not-found).
+// filterByBlockingID keeps the nibs the target lists in its blocked_by, whatever
+// their status — see the schema's blockingId description for why that is not the
+// same question hasBlocking asks. targetID must already be a full (normalized)
+// ID; see filterByDescendantID for the unreadable case.
 func filterByBlockingID(nibs []*nib.Nib, targetID string, reader NibReader) ([]*nib.Nib, error) {
 	targetNib, err := reader.Get(targetID)
 	if err != nil {

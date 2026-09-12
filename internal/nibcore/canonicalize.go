@@ -11,80 +11,56 @@ import (
 // This doc is its single authoritative statement; sibling comments across
 // internal/nibcore defer here rather than re-derive it.
 //
-// Link-id canonicalization: every id stored in c.nibs is a FULL id.
+// The rule: every id stored in c.nibs is a FULL id.
 //
 // A nib file may name its parent, milestone or a blocker by SHORT id
 // (`parent: par` rather than `parent: nibs-par`) — hand-editing a file is the
 // only way that spelling enters the store, since every write path resolves
-// through NormalizeID first. The forward resolvers normalize such an id when they
-// follow it, but the reverse traversals (findIncomingLinksInMap,
+// through NormalizeID first. The forward resolvers normalize such an id when
+// they follow it, but the reverse traversals (findIncomingLinksInMap,
 // isBlockingInMap) and the cycle passes (FindCyclesInMap,
 // findPathToTargetInMap) walk exact map keys, so an un-normalized short-form
-// link resolves from the nib holding it and is invisible from the other end —
-// and a short-form parent cycle goes undetected while the forward resolver loops
-// through it.
-//
-// Rather than teach each of those traversals to normalize (a lookup per edge on
-// paths that run per nib in list projections, and a discipline every future
-// traversal has to remember), resolution happens ONCE at the disk-read
-// boundary. Downstream every id is full, so an exact map lookup is correct
-// everywhere.
+// link is invisible from the other end and a short-form parent cycle goes
+// undetected. Resolution therefore happens ONCE, at the disk-read boundary, and
+// downstream an exact map lookup is correct everywhere.
 //
 // Two consequences are deliberate, not incidental:
 //
-//   - In-memory only. Nothing here rewrites a file; canonicalization never
-//     touches bytes the user did not edit and never fights the file watcher.
-//     But the store now holds the full form, so the NEXT unrelated write to
-//     that nib (a set/body/close) persists it — a hand-written short id
-//     silently becomes canonical on its next save. computeStoredETag
-//     canonicalizes the same way, so the divergence between the canonicalized
-//     nib and its short-form file does not false-conflict an if-match Update in
-//     the meantime.
-//   - An UNRESOLVABLE id stays verbatim. `parent: e001` naming no nib cannot be
-//     canonicalized, so it is left exactly as written and `nibs check` still
-//     reports it broken against the spelling in the file.
+//   - In-memory only. Nothing here rewrites a file, but the store now holds the
+//     full form, so the NEXT unrelated write to that nib (a set/body/close)
+//     persists it. computeStoredETag canonicalizes the same way, so the
+//     divergence between the canonicalized nib and its short-form file does not
+//     false-conflict an if-match Update in the meantime.
+//   - An UNRESOLVABLE id stays verbatim, so `nibs check` still reports it broken
+//     against the spelling in the file.
 //
 // What a stored id resolves to is a property of the KEY SET, not of the id
-// alone, so canonicalization is not a one-shot load-time step: every change to
-// the set of stored ids can re-point a link that was already resolved. Both
-// directions matter. An id ARRIVING can resolve a link that was unresolvable
-// before it. An id LEAVING can re-point one that resolved exactly — a store
-// holding both a bare token `e1` and its prefixed twin `nibs-e1` keeps a raw
-// `parent: e1` verbatim (it resolves exactly), and removing `e1` makes that same
-// spelling fall through to `nibs-e1`. Whoever changes the key set therefore
-// re-runs the sweep — Core.Delete gated on removalCanRebindLinksLocked,
-// Core.Create unconditionally, the watcher via canonicalizeLinksAfterBatchLocked's
-// scanAll; skipping it leaves the stored spelling naming one nib while Get
-// answers with another, invisibly.
+// alone, so canonicalization is not a one-shot load-time step. An id ARRIVING
+// can resolve a link that was unresolvable before it; an id LEAVING can re-point
+// one that resolved exactly — a store holding both a bare token `e1` and its
+// prefixed twin `nibs-e1` keeps a raw `parent: e1` verbatim, and removing `e1`
+// makes that same spelling fall through to `nibs-e1`. Whoever changes the key
+// set therefore re-runs the sweep — Core.Delete gated on
+// removalCanRebindLinksLocked, Core.Create unconditionally, the watcher via
+// canonicalizeLinksAfterBatchLocked's scanAll; skipping it leaves the stored
+// spelling naming one nib while Get answers with another, invisibly.
 //
-// Because the sweep re-points a link that was already resolved, it must resolve
-// from the FILE's spelling and not from the value the store now holds. The
-// stored value is the previous sweep's output, so feeding it back in makes the
-// pass one-way and the two directions asymmetric: `parent: e1` re-pointed to
-// `nibs-e1` by a delete resolves to itself forever, and restoring `e1.md` — a
-// `git checkout` in the separately-versioned .nibs repo, or a re-create — leaves
-// the live store answering `nibs-e1` while the untouched file, and therefore
-// every fresh load, says `e1`. Resolving from the file spelling instead
-// (nib.RawLinks, mirrored on every read AND every write) makes each pass a pure
-// function of the file: idempotent, reversible, and identical in both
-// directions without the sweep having to know which one occurred.
+// Because a sweep re-points links that already resolved, it must resolve from
+// the FILE's spelling (nib.RawLinks, mirrored on every read AND every write) and
+// not from the value the store now holds — see RawLinks for why that is what
+// makes each pass idempotent and reversible.
 
-// canonicalLinks holds the resolved link fields for one nib. changed reports
-// whether any of them differs from what the nib currently holds, so callers can
-// skip the write (and, on published pointers, the clone) entirely.
+// canonicalLinks holds the resolved link fields for one nib, so callers can skip
+// the write (and, on published pointers, the clone) when nothing moved. changed
+// compares against the nib's CURRENT values, not against the file spelling
+// resolution reads from: those two differ permanently on every hand-edited
+// short-form nib, so comparing against the file would report a change on every
+// sweep forever and turn each into a spurious EventUpdated on the watcher path.
 //
-// changed is deliberately measured against the nib's CURRENT values, not against
-// the file spelling resolution reads from. Those two differ permanently on every
-// hand-edited short-form nib — the file says `par`, the store says `nibs-par` —
-// so comparing against the file would report a change on every sweep forever,
-// installing a fresh clone each time and turning each into a spurious
-// EventUpdated on the watcher path.
-//
-// A list field is nil when it did not change, which is distinguishable from a
-// changed value because resolution never empties a non-empty list: it rewrites
-// spellings and can collapse duplicates, so at least one entry always survives.
-// That keeps applyTo from overwriting loadNib's empty-slice defaults (which
-// GraphQL's non-null list fields rely on) with a nil.
+// A nil list field means unchanged, which is unambiguous because resolution
+// never empties a non-empty list — it rewrites spellings and can collapse
+// duplicates, so at least one entry always survives. That keeps applyTo from
+// overwriting loadNib's empty-slice defaults with a nil.
 type canonicalLinks struct {
 	parent    string
 	milestone string
@@ -93,8 +69,9 @@ type canonicalLinks struct {
 	changed   bool
 }
 
-// applyTo writes the resolved fields onto b. Only meaningful when changed is
-// true; applying an unchanged set is a no-op.
+// applyTo writes the resolved fields onto b. Call it only when changed is true:
+// a set reporting no change may be the zero value, which would clear Parent and
+// Milestone.
 func (s canonicalLinks) applyTo(b *nib.Nib) {
 	b.Parent = s.parent
 	b.Milestone = s.milestone
@@ -108,30 +85,21 @@ func (s canonicalLinks) applyTo(b *nib.Nib) {
 
 // canonicalizeLinksInMap resolves b's Parent, Milestone, BlockedBy and legacy
 // Blocking ids to their full form against nibs, using the same exact-match-
-// then-prefix-prepended rule as Core.Get (normalizeIDInMap). Targets that
-// resolve to no nib are carried through unchanged. Area is not touched: it is
-// a plain path-valued string, not a link (see nib.LinkSpelling).
+// then-prefix-prepended rule as Core.Get (normalizeIDInMap). It resolves from
+// b's FILE spelling (nib.RawLinks), never from the values b currently holds —
+// see RawLinks for why that is what keeps each pass idempotent.
 //
-// Resolution reads b's FILE spelling (nib.RawLinks), never the values b
-// currently holds — those are the previous resolution's own output, and feeding
-// them back in makes the pass one-way: `nibs-par` resolves to itself, so a link
-// re-pointed while its target was missing can never follow the file back when
-// the target returns. See RawLinks for the full argument.
+// Targets that resolve to no nib are carried through unchanged, and an EMPTY
+// file spelling where b holds a link is left alone: this pass rewrites how a
+// link is spelled and never invents or erases one.
 //
-// A file spelling that is EMPTY where b holds a link is left alone rather than
-// cleared: this pass rewrites how a link is spelled and never invents or erases
-// one, so a nib whose in-memory links have run ahead of its file keeps them.
+// It does NOT mutate b, so a caller holding an already-published nib can apply
+// the result copy-on-write (see NibReader.GetSnapshot in
+// internal/graph/interfaces.go).
 //
-// It does NOT mutate b — the result is returned so the caller can decide where
-// it lands. That matters for already-published nibs, which must be updated
-// copy-on-write (see NibReader.GetSnapshot in internal/graph/interfaces.go).
-//
-// Pure function operating on the given map without locking. Callers passing a
-// Core.nibs map must hold Core.mu for the duration of the call.
-//
-// With no configured prefix, resolution degrades to an exact map lookup, so
-// nothing can resolve to a DIFFERENT spelling and the whole pass is a no-op —
-// taken as an early return so the common prefix-less project pays nothing.
+// Pure function over the given map, without locking: a caller passing Core.nibs
+// must hold Core.mu for the duration. With no configured prefix nothing can
+// resolve to a DIFFERENT spelling, so the whole pass early-returns.
 func canonicalizeLinksInMap(nibs map[string]*nib.Nib, b *nib.Nib, configPrefix string) canonicalLinks {
 	if configPrefix == "" {
 		return canonicalLinks{}
@@ -161,10 +129,9 @@ func canonicalizeLinksInMap(nibs map[string]*nib.Nib, b *nib.Nib, configPrefix s
 	}
 
 	// Resolving can collapse two spellings of one target onto the same id
-	// (`blocked_by: [blk, nibs-blk]`). Drop the later duplicate: keeping it would
-	// render a duplicated entry on the next save and double-count the edge in
-	// every reverse traversal. Returns nil when the resolved list matches what the
-	// nib already holds.
+	// (`blocked_by: [blk, nibs-blk]`); the later duplicate is dropped so the next
+	// save does not render it twice and the reverse traversals do not double-count
+	// the edge. Returns nil when the result matches what the nib already holds.
 	canonicalList := func(rawIDs, current []string) []string {
 		if len(rawIDs) == 0 {
 			return nil
@@ -197,17 +164,14 @@ func canonicalizeLinksInMap(nibs map[string]*nib.Nib, b *nib.Nib, configPrefix s
 
 // canonicalizeAllLinksUnpublishedLocked resolves every loaded nib's link ids to
 // their full form. It runs as a second pass over the whole map because a target
-// only resolves once every file has been read — a per-file step during the walk
-// would leave a link written before its target was visited unresolved.
+// only resolves once every file has been read.
 //
 // UNPUBLISHED is the precondition, spelled in the name because otherwise this
-// reads like a fungible alternative to canonicalizeStoreLocked (same call shape,
-// no arguments): this mutates the stored nibs
-// IN PLACE, which is safe only on the bulk load path, where loadFromDisk builds a
-// fresh c.nibs of pointers no off-lock reader can hold. Anything working on
-// published pointers must go through canonicalizeStoreLocked or
-// canonicalizeLinksAfterBatchLocked, which rewrite copy-on-write. Must be called
-// with c.mu held.
+// reads like a fungible alternative to canonicalizeStoreLocked: it mutates the
+// stored nibs IN PLACE, which is safe only on the bulk load path, where
+// loadFromDisk builds a fresh c.nibs of pointers no off-lock reader can hold.
+// Anything working on published pointers must go through canonicalizeStoreLocked
+// or canonicalizeLinksAfterBatchLocked. Must be called with c.mu held.
 func (c *Core) canonicalizeAllLinksUnpublishedLocked() {
 	configPrefix := c.configPrefix()
 	if configPrefix == "" {
@@ -229,11 +193,8 @@ func (c *Core) canonicalizeAllLinksUnpublishedLocked() {
 // BlockedBy (a memory-unsafe torn slice header) are non-Path fields, so they
 // must land on a FRESH pointer rather than on the published one — see the
 // canonical live-pointer invariant at NibReader.GetSnapshot
-// (internal/graph/interfaces.go).
-//
-// This is the runtime counterpart used by the mutator and watcher sweeps, which
-// re-point links on nibs the user is already looking at; the load path rewrites
-// in place instead (see canonicalizeAllLinksUnpublishedLocked). Must be called
+// (internal/graph/interfaces.go). This is the runtime counterpart to
+// canonicalizeAllLinksUnpublishedLocked's in-place load pass. Must be called
 // with c.mu held.
 func (c *Core) canonicalizeOneLocked(id, configPrefix string) *nib.Nib {
 	b, ok := c.nibs[id]
@@ -298,12 +259,10 @@ func describeRebinds(before, after *nib.Nib) []linkRebind {
 // the key set outside a watcher batch and publish nothing — so the return value
 // is the only way their callers can announce a third nib's link moving.
 //
-// Reassigning an existing key's value while ranging over the map is safe in Go,
-// and no key is added or removed here, so the in-loop normalizeIDInMap lookups
-// see a stable key set. (c.mu is held exclusively, so there are no off-lock
-// readers inside that function to reason about.) O(N) over the store — callers
-// gate it on a condition that can actually re-point a link. Must be called with
-// c.mu held.
+// The loop reassigns existing keys only, never adding or removing one, so the
+// key set the in-loop normalizeIDInMap lookups read is stable. O(N) over the
+// store — callers gate it on a condition that can actually re-point a link. Must
+// be called with c.mu held.
 func (c *Core) canonicalizeStoreLocked() []linkRebind {
 	configPrefix := c.configPrefix()
 	if configPrefix == "" {
@@ -331,10 +290,10 @@ func (c *Core) canonicalizeStoreLocked() []linkRebind {
 // alone — a link naming a gone id simply stops resolving, and an unresolvable id
 // is left verbatim by design.
 //
-// Note the gate reads the store, so a caller that removes several ids in one pass
-// may see it fire on an intermediate state. That is safe in the direction that
-// matters: the sweep re-resolves against the final map, so a spurious true costs
-// one pass and rewrites nothing. Must be called with c.mu held.
+// The gate reads the store, so a caller removing several ids in one pass may see
+// it fire on an intermediate state. Harmless in the direction that matters: the
+// sweep re-resolves against the final map, so a spurious true costs one pass and
+// rewrites nothing. Must be called with c.mu held.
 func (c *Core) removalCanRebindLinksLocked(removedID string) bool {
 	configPrefix := c.configPrefix()
 	if configPrefix == "" || strings.HasPrefix(removedID, configPrefix) {
@@ -346,28 +305,23 @@ func (c *Core) removalCanRebindLinksLocked(removedID string) bool {
 
 // canonicalizeLinksAfterBatchLocked is the watcher's counterpart, run after a
 // debounce batch has been applied to the store. It returns the events to
-// publish, which may be the ones it was given with a canonicalized payload
-// swapped in, plus an EventUpdated for any OTHER nib the batch re-pointed.
+// publish: the ones it was given with a canonicalized payload swapped in, plus
+// an EventUpdated for any OTHER nib the batch re-pointed.
 //
 // touched maps a nib id changed by this batch to the indices of the events
 // carrying its payload, so a nib canonicalized as part of its own arrival keeps
-// its created/updated event (with the canonicalized payload swapped in) instead
-// of collecting a second, contradictory one.
+// its created/updated event instead of collecting a second, contradictory one.
 //
 // scanAll widens the pass from the batch's own nibs to the whole store. The
 // caller sets it when the batch CHANGED THE KEY SET in a way that can re-point a
 // link on a nib the batch never touched — an id arriving that was not in the
 // store before, or a bare-token id leaving while its prefixed twin remains (see
-// removalCanRebindLinksLocked). Without that sweep the forward resolver would
-// answer for such a link while the stored spelling and every reverse traversal
-// disagreed until the next full reload. A batch that only edits existing nibs
-// cannot re-point anything, so it pays the cheap touched-only pass.
+// removalCanRebindLinksLocked). A batch that only edits existing nibs cannot
+// re-point anything, so it pays the cheap touched-only pass.
 //
 // Rewrites are copy-on-write — see canonicalizeOneLocked, which this delegates
-// to. The scanAll branch ranges c.nibs while that delegate reassigns its values,
-// which is safe for the same reason canonicalizeStoreLocked states: only existing
-// keys are reassigned, none is added or removed, so the key set the in-loop
-// lookups read is stable. Must be called with c.mu held.
+// to, and which the scanAll branch ranges c.nibs across safely for the reason
+// canonicalizeStoreLocked states. Must be called with c.mu held.
 func (c *Core) canonicalizeLinksAfterBatchLocked(events []NibEvent, touched map[string][]int, scanAll bool) []NibEvent {
 	configPrefix := c.configPrefix()
 	if configPrefix == "" {

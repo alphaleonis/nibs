@@ -720,10 +720,10 @@ func TestPlanStoredAreaEditWritesNothingUntilWrite(t *testing.T) {
 	}
 }
 
-// TestStoredAreaEditRoundTripPreservesWhatItClaims executes the doc comment on
-// editStoredAreas rather than trusting it. The edit is a semantic-preserving
-// re-marshal, so this pins both halves: what a project's committed config gets
-// back, and the layout it does not.
+// TestStoredAreaEditRoundTripPreservesWhatItClaims is the authority on what
+// planStoredAreaEdit's re-marshal preserves — the doc comment there points here
+// rather than restating the inventory. It pins both halves: what a project's
+// committed config gets back, and the layout it does not.
 func TestStoredAreaEditRoundTripPreservesWhatItClaims(t *testing.T) {
 	const authored = `# The vocabulary this project places work in.
 nibs:
@@ -1451,11 +1451,10 @@ func TestStoredAreaEditRefusesAnOutputPastTheConfigLimit(t *testing.T) {
 // client through the area mutations, so Error names no filesystem path, and the
 // one surface entitled to name it asks for it.
 //
-// It drives every refusal shape planStoredAreaEdit can make about a FILE — one
-// per branch that interpolates the path — because the leak this closes was a
-// per-branch one: the wrapper added the path while the inner reason was already
-// path-free, so a reader auditing one branch concluded the whole surface was
-// clean.
+// It drives the refusal shapes that interpolate the path, because the leak this
+// closes was a per-branch one: the wrapper added the path while the inner reason
+// was already path-free, so a reader auditing one branch concluded the whole
+// surface was clean. Not every such branch is covered here.
 func TestAreaEditRefusalsNameNoPathUntilAsked(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -1533,5 +1532,31 @@ func TestAreaEditRefusalsNameNoPathUntilAsked(t *testing.T) {
 				t.Errorf("Naming = %q, want it to name %s", named, areasPath)
 			}
 		})
+	}
+}
+
+// TestStoredAreaEditRefusesAKeyTheTreeCannotMatch drives the re-read backstop in
+// planStoredAreaEdit. A `!!binary` key decodes to "areas", so the loader binds
+// it, but mappingValueNode compares the literal scalar and cannot see it — and
+// the inheritance gate does not fire, since the key carries no anchor, alias or
+// merge key. The create then writes a literal `areas:` beside it, binding the
+// field twice, which the re-read has to catch.
+func TestStoredAreaEditRefusesAKeyTheTreeCannotMatch(t *testing.T) {
+	const vocab = "!!binary \"YXJlYXM=\": [{name: web}]\n"
+	storeDir := writeAreaEditStore(t, vocab)
+
+	edit, err := PlanCreateStoredArea(storeDir, "infra", "", "")
+	if err == nil {
+		t.Fatalf("planning must refuse this vocabulary, got a plan for %s", edit.Path())
+	}
+	var refusal *AreaEditRefusal
+	if !errors.As(err, &refusal) {
+		t.Fatalf("error = %v (%T), want an *AreaEditRefusal", err, err)
+	}
+	if !strings.Contains(refusal.Error(), "unreadable") {
+		t.Errorf("Error = %q, want the re-read's refusal — another branch fired first", refusal.Error())
+	}
+	if got := readAreaEditStore(t, storeDir); got != vocab {
+		t.Errorf("a refused plan changed the file:\n%s", got)
 	}
 }
