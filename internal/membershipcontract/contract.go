@@ -1,68 +1,14 @@
 // Package membershipcontract renders the Go↔TS parity contract for the two
-// rules deciding which milestone queue a nib is in — membership.ResolvedMilestoneID
-// (DIRECT assignment) and (*membership.View).MilestoneOf (DERIVED membership,
-// which inherits up the structural parent chain) — as a TypeScript module the
-// web's test suite replays.
+// milestone-membership rules, membership.ResolvedMilestoneID (direct
+// assignment) and (*membership.View).MilestoneOf (derived, inherited up the
+// parent chain), as a TypeScript module. web/src/lib/membership.test.ts replays
+// it against the mirrors in web/src/lib/membership.ts.
 //
-// CANONICAL INVARIANT (the Go-to-TS milestone-membership parity contract). This
-// doc is its single authoritative statement; the TypeScript mirror in
-// web/src/lib/membership.ts and its replay suite defer here rather than
-// re-derive it.
-//
-// The web has to apply those rules itself: `Nib.milestone` is reported VERBATIM
-// on the wire (schema.graphqls, and the field is autobound with no resolver of
-// its own), so a dangling or non-milestone assignment arrives at the client as
-// written. A client that gets a rule wrong draws a row in a section whose queue
-// it is not in, and then reorders it in a region the server does not agree it
-// belongs to. The derived rule is also what the server's own `noMilestone`
-// filter answers over (internal/graph/filters.go), so a client grouping by the
-// direct one disagrees with `no:milestone` about which nibs are backlog.
-//
-// Two implementations of one rule drift silently, so the fixture below is
-// rendered together with the answers Go gives for it, and the pair is
-// committed. What the tests hold:
-//
-//   - TestGeneratedMembershipContractIsFresh (here) reddens when the committed
-//     bytes stop matching what the current rules, fixture and renderer produce.
-//   - web/src/lib/membership.test.ts reddens when a regenerated answer stops
-//     matching the TS mirror's — Go changed and was regenerated but
-//     resolvedMilestoneId or milestoneOf was not, or a mirror changed and Go did
-//     not.
-//   - TestContractFixtureDiscriminatesEachRuleDecision and
-//     TestContractFixtureDiscriminatesEachMilestoneOfDecision (here) redden when
-//     the fixture stops being able to tell a rule from a mutant of it, so a
-//     fixture edit cannot hollow the two above out.
-//
-// All of them are BOUNDED BY FIXTURE COVERAGE, and the bound is the deliberate
-// residual: a change on either side that moves no fixture row's answer renders
-// identical bytes and replays identically, so it fails nothing. A clause added
-// over the three fields the fixture already varies is the shape that gets
-// through, on either side of the parity.
-//
-// TestRuleIsComputableFromTheWireProjection narrows the bound in one direction
-// rather than removing it: it reddens when a rule starts reading a field the wire
-// projection cannot carry AND a fixture row varies it. What the projection
-// carries on the parent axis is the RESOLVED parent, so following a parent link
-// cannot redden it while telling a DANGLING link apart from no parent at all does
-// — `t9` links to a nib that does not exist, and is the row that varies the two
-// readings. `status:` is outside the projection altogether, but no fixture row
-// sets it, so a clause reading `status:` is free.
-//
-// So a new decision carries an obligation nothing enforces: add a fixture row
-// whose answer it moves, add a mutant that undoes it, mirror it in
-// web/src/lib/membership.ts, and run `task codegen`. That is the price of a
-// fixture-bounded contract.
-//
-// TestRenderedTypeIsTheWireType holds the projection those tests answer over:
-// `type` is the effective type and `parentId` the resolved parent.
-//
-// The rendering shape follows internal/webvocab: `task codegen` writes the file
-// via go:generate, and the committed bytes are pinned by a test, so the web
-// never depends on running Go. It differs from that sibling in what holds its
-// consumer in place: vocabulary.ts is imported by app code, so deleting its
-// consumer breaks the build, while this module is imported only by
-// web/src/lib/membership.test.ts — nothing but that replay reads it, so if the
-// replay goes the two copies of the rule are free to drift apart in silence.
+// Rule changes are caught only through the fixture: one that moves no fixture
+// row's answer renders and replays identically, so nothing fails. A new decision in
+// either rule needs a fixture row whose answer it moves, a mutant in the
+// discrimination tests that undoes it, a mirror in membership.ts, and
+// `task codegen`.
 package membershipcontract
 
 //go:generate go run ./gen
@@ -78,68 +24,18 @@ import (
 // OutputPath is the module-root-relative path of the generated file.
 const OutputPath = "web/src/lib/generated/membershipContract.ts"
 
-// fixtureNib is one authored fixture row: a nib, the other ids the fixture's
-// lookup resolves to it, and why the row is in the fixture.
 type fixtureNib struct {
 	nib     *nib.Nib
-	aliases []string
-	note    string
+	aliases []string // other ids fixtureLookup resolves to this nib
+	note    string   // why the row exists; shipped verbatim in the generated module
 }
 
-// fixture is the parity fixture, authored as stored nibs. It carries the three
-// degenerate cases the direct rule has clauses for — a milestone-typed subject,
-// an assignment naming no nib, an assignment naming a non-milestone — alongside
-// assignments that do resolve, and the shapes the derived rule's walk decides
-// on: an unassigned nib under an assigned one, an unassigned nib TWO levels
-// under one, an assigned nib under a differently assigned one, a milestone-typed
-// ancestor, and a parent cycle. So the contract discriminates rather than merely
-// agreeing on "".
-// TestContractFixtureDiscriminatesEachRuleDecision and its MilestoneOf sibling
-// prove it does, by running a mutant with each decision undone and requiring
-// the answers to differ.
+// fixture is the parity fixture. The discrimination tests name the row each
+// decision turns on; keep those rows.
 //
-// The `note` strings number the clauses in ResolvedMilestoneID's own order:
-// 1 the subject is not itself a milestone, 2 the target exists, 3 the target is
-// milestone-typed. They ship verbatim into the generated module, where they are
-// the only clause legend either side carries.
-//
-// Parent links carry the derived rule: t2 is the row whose two answers differ
-// (the direct rule confers nothing from a parent, the walk inherits), t10 is
-// the row only a TRANSITIVE walk answers, and t7, t8 and the c1/c2 cycle are
-// the walk's remaining decisions. They are checkable on the TS side because
-// MembershipNib carries the parent link the mirror's walk needs; the contract's
-// parent column is what holds the two walks together.
-//
-// Aliases are deliberately MILESTONE-side only. The rendered parent column is
-// the View's own reading, which is exact, and so is the resolution MilestoneOf
-// performs; a short-form `parent:` would therefore resolve on the wire — where
-// Core.Get retries with the configured prefix prepended — and miss here. The
-// two never actually disagree on a Core-backed store, because nibcore rewrites
-// every stored link id to full form in memory before either side reads it
-// (canonicalize.go applies one resolve to `parent:` and `milestone:` alike), so
-// such a row would model no store anyone can present while making this file
-// contradict itself about which resolution the column is.
-//
-// aliases model a CANONICALIZING lookup: nibcore.Core.Get tries the id, then
-// the configured prefix prepended, so a stored `milestone: abc` resolves to the
-// nib `nibs-abc`. The two store-backed callers build their Lookup on that Get
-// (graph/orderer.go via NibReader, cmd/close.go via Resolver.Reader); the two
-// in-memory ones (membership's own View, nibcore/link_health.go) are plain
-// maps.
-//
-// One row (t6, answering nibs-m4 for a stored `m4`) is the only one where the
-// target's id and the stored string differ, so it is the whole of what lets the
-// contract tell "return target.ID" from "return b.Milestone" — the fourth
-// mutant in TestContractFixtureDiscriminatesEachRuleDecision has no other row
-// to fail on. It is NOT a divergence a store can present: nibcore canonicalizes
-// every stored link id in memory on load (canonicalize.go — "every id stored in
-// c.nibs is a FULL id"), so those two callers are handed a Milestone that
-// already equals target.ID, and Core.Get's prefix fallback answers user-typed
-// ids rather than stored link fields. link_health.go's
-// closedMilestoneQueuesInMap says the same about the same divergence, as does
-// TestClosedMilestoneQueueAgreesWithMembership. The row couples the two
-// derivations so they cannot drift apart later; it models no defect anyone can
-// hit today.
+// Give aliases only to milestone rows. The parent column and MilestoneOf resolve
+// by exact id, while the wire resolves a parent through Core.Get, which retries
+// with the prefix, so a short-form `parent:` would resolve there and not here.
 func fixture() []fixtureNib {
 	return []fixtureNib{
 		{
@@ -222,16 +118,14 @@ func fixture() []fixtureNib {
 	}
 }
 
-// contractRow is the wire projection of one fixture nib, paired with the
-// answers the two rules give for the FULL nib. It is the single place the
-// generated file's columns are decided — the renderer has nothing else to print
-// — so pinning it pins the file. See TestRenderedTypeIsTheWireType.
+// contractRow is the wire projection of one fixture nib, paired with the answers
+// the two rules give for the full nib.
 type contractRow struct {
 	ID        string
 	Type      string
 	Milestone string
-	// ParentID is the RESOLVED parent — the reading Nib.parentId reports — so ""
-	// covers both no parent and a link naming no nib.
+	// ParentID is the resolved parent, as Nib.parentId reports it: "" for no
+	// parent and for a link naming no nib.
 	ParentID    string
 	Aliases     []string
 	Resolved    string
@@ -239,8 +133,8 @@ type contractRow struct {
 	Note        string
 }
 
-// fixtureLookup builds the fixture's Lookup: exact id first, then the alias
-// table, which is the shape of a canonicalizing store lookup.
+// fixtureLookup resolves an exact id first, then an alias, modelling a
+// canonicalizing store lookup.
 func fixtureLookup(f []fixtureNib) membership.Lookup {
 	byID := make(map[string]*nib.Nib, len(f))
 	aliases := make(map[string]*nib.Nib)
@@ -258,7 +152,6 @@ func fixtureLookup(f []fixtureNib) membership.Lookup {
 	}
 }
 
-// fixtureNibs returns the fixture's nibs in fixture order.
 func fixtureNibs(f []fixtureNib) []*nib.Nib {
 	out := make([]*nib.Nib, 0, len(f))
 	for _, r := range f {
@@ -267,21 +160,9 @@ func fixtureNibs(f []fixtureNib) []*nib.Nib {
 	return out
 }
 
-// resolvedParents inverts the View's structural axis: nib id → the id its
-// `parent:` link resolves to, absent for a root and for a link naming no nib.
-//
-// It is READ OUT of the View rather than re-derived from the stored links, so
-// the rendered parent column is by construction the same resolution
-// MilestoneOf's walk performs, rather than a second copy of that rule free to
-// drift from it.
-//
-// The near-miss no replay can catch is rendering the RAW stored link instead:
-// every fixture row's link either names a fixture nib, where the two readings
-// are the same string, or names none, where the mirror's walk stops on the
-// lookup miss and answers "" exactly as it does for a null parent — so no TS
-// answer moves and the replay stays green. TestRenderedTypeIsTheWireType is what
-// catches that copy, by re-deriving the column from the fixture's own index and
-// naming the row it differs on.
+// resolvedParents maps each nib id to the id its `parent:` resolves to, absent
+// for a root and for a link naming no nib. Read it out of the View; do not
+// re-derive it from the stored links.
 func resolvedParents(v *membership.View, all []*nib.Nib) map[string]string {
 	out := make(map[string]string, len(all))
 	for _, parent := range all {
@@ -293,15 +174,8 @@ func resolvedParents(v *membership.View, all []*nib.Nib) map[string]string {
 }
 
 // rows projects the fixture to what the wire reports and answers each row with
-// both Go rules.
-//
-// The two answers are computed over two different lookups, because the rules
-// take theirs differently: ResolvedMilestoneID is handed one, and the fixture's
-// canonicalizes (see fixtureLookup), while MilestoneOf is a View method and the
-// View indexes its slice by exact id. That is not a harness choice — no View
-// canonicalizes — and t6 is where it shows: `milestone: m4` resolves to nibs-m4
-// for the direct rule and to nothing for the walk. The generated header states
-// it so the replay uses the matching lookup for each column.
+// both rules. ResolvedMilestoneID uses the canonicalizing fixture lookup and
+// MilestoneOf the View's exact-id index, so the two part on t6.
 func rows() []contractRow {
 	f := fixture()
 	lookup := fixtureLookup(f)
@@ -312,10 +186,8 @@ func rows() []contractRow {
 	out := make([]contractRow, 0, len(f))
 	for _, r := range f {
 		out = append(out, contractRow{
-			ID: r.nib.ID,
-			// The EFFECTIVE type: what the Nib.type resolver reports
-			// (internal/graph/schema.resolvers.go), not the stored field.
-			Type:        r.nib.EffectiveType(),
+			ID:          r.nib.ID,
+			Type:        r.nib.EffectiveType(), // what Nib.type reports, not the stored field
 			Milestone:   r.nib.Milestone,
 			ParentID:    parents[r.nib.ID],
 			Aliases:     r.aliases,
