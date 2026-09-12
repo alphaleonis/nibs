@@ -3,25 +3,20 @@ package fsutil
 import "sort"
 
 // DirSyncBatch collects the distinct directories a bulk loop wrote into, so the
-// loop pays one directory fsync per DIRECTORY rather than one per file — the
-// same flush, N times fewer. It is the other half of
-// AtomicWriteFileDeferDirSync: that writer hands its flush obligation back to
-// the caller, and this is what a caller discharging many of them holds.
+// loop pays one directory fsync per DIRECTORY rather than one per file. It is the
+// other half of AtomicWriteFileDeferDirSync, which hands its flush obligation back
+// to the caller.
 //
-// A SET rather than a single remembered directory, because one loop can span
-// several. A nib's Path carries the content directory it lives in, so archived
-// nibs sit under archive/ while active ones sit under data/, and data/ itself
-// tolerates subdirectories that a nib's Path preserves. Syncing one hardcoded
-// directory would silently drop the durability of every write outside it, and
-// silently is the operative word: SyncDir returns nothing, so the loss is
-// invisible to everything but the SyncDirFn seam.
+// It holds a SET because one loop can span several directories: a nib's Path
+// carries the content directory it lives in, so archived nibs sit under archive/
+// while active ones sit under data/, which itself tolerates subdirectories.
+// Syncing one hardcoded directory would drop the durability of every write
+// outside it, and SyncDir returns nothing, so that loss is invisible.
 //
-// The zero value is ready to use, so a caller declares one and defers its
-// Flush. Pass it by POINTER — a copy taken before the first Add gets its own
-// backing map, and the Adds recorded through one would not reach the other.
-// noCopy makes that a lint error rather than only a documented hazard: go vet's
-// copylocks check, which this project already runs, reports any copy of a type
-// carrying a Lock method.
+// The zero value is ready to use — declare one and defer its Flush. Pass it by
+// POINTER: a copy taken before the first Add gets its own backing map, and Adds
+// through one never reach the other. noCopy makes that a vet error rather than
+// only a documented hazard.
 type DirSyncBatch struct {
 	_    noCopy
 	dirs map[string]struct{}
@@ -34,9 +29,8 @@ type noCopy struct{}
 func (*noCopy) Lock()   {}
 func (*noCopy) Unlock() {}
 
-// Add records a directory to flush. The empty string is ignored, so a caller can
-// hand it the result of a failed write — AtomicWriteFileDeferDirSync returns no
-// directory when the rename never ran — without a guard at every call site.
+// Add records a directory to flush. It ignores the empty string, so the result of
+// a failed write can go straight in without a guard at the call site.
 func (b *DirSyncBatch) Add(dir string) {
 	if dir == "" {
 		return
@@ -47,14 +41,13 @@ func (b *DirSyncBatch) Add(dir string) {
 	b.dirs[dir] = struct{}{}
 }
 
-// Flush fsyncs each collected directory once, in a deterministic order so a
-// test can assert the set, and discharges them: a second Flush with nothing
-// added in between does no work.
+// Flush fsyncs each collected directory once, in sorted order so a test can
+// assert the set, and discharges them: a second Flush with nothing added between
+// does no work.
 //
 // RUN IT FROM A DEFER. A loop that returns on its first error has already
-// committed every write before the failure, so those directory entries still
-// need flushing — a flush placed after the loop is skipped exactly when a
-// partial batch is on disk, which is the case it exists for.
+// committed every write before the failure, so a flush placed after the loop is
+// skipped exactly when a partial batch is on disk.
 //
 // Best-effort, like every directory sync here: see AtomicWriteFile's "does not
 // promise" list.

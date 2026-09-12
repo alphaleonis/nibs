@@ -1,7 +1,6 @@
 // Package fsutil holds filesystem primitives shared by layers that cannot import
-// each other. It is stdlib-only, like internal/store, so internal/config and
-// internal/nibcore can both use it (nibcore imports config, so config must not
-// import nibcore).
+// each other. Keep it stdlib-only: internal/config and internal/nibcore both use
+// it, and nibcore imports config.
 package fsutil
 
 import (
@@ -13,76 +12,55 @@ import (
 )
 
 // RenameFn is a seam over os.Rename so tests can simulate a crash between the
-// temp write and the rename. Production always uses os.Rename.
+// temp write and the rename.
 var RenameFn = os.Rename
 
 // SyncDirFn is the seam a test observes the directory flush through — syncDir
-// returns nothing and swallows its errors by contract, so a sync that stopped
-// happening would otherwise be invisible. Production always uses syncDir.
-//
-// Callers outside this package go through SyncDir, not this variable: a seam is
-// owned by the package that declares it (as RenameFn here and storeRenameFn in
-// cmd are), so the set of places that can silently disable a flush stays inside
-// one file.
+// returns nothing and swallows its errors, so a sync that stopped happening
+// would otherwise be invisible. Call SyncDir instead; this is for tests.
 var SyncDirFn = syncDir
 
-// SyncDir flushes one directory entry, and is the call a batch writer makes for
-// each distinct directory after a run of AtomicWriteFileDeferDirSync writes.
+// SyncDir flushes one directory entry — the call a batch writer makes for each
+// distinct directory after a run of AtomicWriteFileDeferDirSync writes.
 // Best-effort, like every directory sync here: see AtomicWriteFile's "does not
 // promise" list.
 func SyncDir(dir string) {
 	SyncDirFn(dir)
 }
 
-// AtomicWriteFile writes data to path atomically: it writes to a uniquely-named
-// temp file in the same directory, fsyncs it, renames it over path, then fsyncs the
-// containing directory. Because the rename is atomic on the same filesystem, a
-// concurrent reader observes either the old file or the fully-written new file —
-// never a torn/partial write that would fail nib.Parse. A failure before the rename
-// leaves any existing file at path untouched, and the temp file is removed on every
-// error path.
+// AtomicWriteFile writes data to path atomically, through a uniquely-named temp
+// file in the same directory. A concurrent reader observes either the old file or
+// the fully-written new one — never a torn write that would fail nib.Parse. A
+// failure before the rename leaves any existing file at path untouched, and the
+// temp file is removed on every error path.
 //
-// A unique temp name (not a fixed "<path>.tmp" suffix) is deliberate: two writers
-// racing on the same nib — the exact hazard this hardening targets — must not
-// collide on a shared temp file. Each renames its own complete temp; the later
-// rename wins wholesale rather than interleaving bytes.
+// Keep the temp name unique. Two writers racing on the same nib must not share
+// one temp file; each renames its own complete temp and the later rename wins
+// wholesale.
 //
 // WHAT IT DOES NOT PROMISE:
 //
-//   - Nothing about CONCURRENT writers beyond "no torn file": two writers of
-//     different content both succeed and the later rename wins wholesale. It is not
-//     a lock (see nibcore's store lock for that).
+//   - Anything about CONCURRENT writers beyond "no torn file": two writers of
+//     different content both succeed and the later wins wholesale. This is not a
+//     lock — see nibcore's store lock.
 //   - Durability of the directory entry where the platform will not flush it. The
-//     directory fsync after the rename is best-effort: Windows rejects Sync on a
-//     directory handle, and the write has already succeeded there, so failing would
-//     report an error for a completed operation. On such a platform a crash-recovery
-//     path keying on "the file is present" must not treat the rename as durable.
-//     AtomicWriteFileDeferDirSync widens that same window deliberately, for a
-//     caller writing a batch; it hands the flush obligation back rather than
-//     dropping it.
-//   - Durability of the directory ENTRY OF A DIRECTORY a caller had to create
-//     first. A new directory's own name lives in its PARENT, which nothing here
-//     flushes — the sync covers the directory the file was renamed into, not the
-//     chain above it. Callers that MkdirAll before writing (nibcore's saveToDisk)
-//     inherit that: after a crash the file's contents are durable and its
-//     directory may not be, which the bullet above already says about the file
-//     itself.
-//   - Mode BITS beyond the permission bits. Both callers pass
-//     info.Mode().Perm(), so setuid/setgid/sticky never reach Chmod and the new
-//     file does not carry them. That is the safe direction, and no config or nib
-//     file wants them.
-//   - Anything else carried by the OLD file, all of it lost the way every
-//     write-temp-and-rename loses it: OWNERSHIP (uid/gid — the temp belongs to the
-//     writing process), POSIX ACLs, extended attributes, and any HARD LINK to the
-//     old path, which now refers to the replaced content.
-//   - Preservation of a SYMLINK at path. The rename replaces it, so the file the
-//     link pointed at keeps its old contents — writing through it instead would
-//     mean writing wherever the link leads, and a dangling one created the file
-//     outside the store, after which callers deleted their source and reported
-//     success. Every caller inherits the replacement; config.Save documents and
-//     reports what it means for a config.yml.
+//     fsync after the rename is best-effort, because Windows refuses Sync on a
+//     directory handle and the write has already succeeded there. A crash-recovery
+//     path must not key on "the file is present".
+//   - Durability of the directory ENTRY OF A DIRECTORY a caller created first. A
+//     new directory's name lives in its PARENT, which nothing here flushes.
+//   - Mode bits this function was not given. perm reaches Chmod unchanged, so pass
+//     info.Mode().Perm() (or a literal without setuid/setgid/sticky) — nothing
+//     here strips them for you.
+//   - Anything else the OLD file carried, lost the way every write-temp-and-rename
+//     loses it: OWNERSHIP (the temp belongs to the writing process), POSIX ACLs,
+//     extended attributes, and any HARD LINK to the old path.
+//   - Preservation of a SYMLINK at path: the rename replaces it, so the file the
+//     link pointed at keeps its old contents. Writing through the link instead
+//     would write wherever it leads, including outside the store. config.Save
+//     documents and reports what the replacement means for a config.yml.
 //   - Any protection against a cross-filesystem rename, which cannot arise: the
-//     temp file is always created in filepath.Dir(path), so EXDEV is impossible.
+//     temp is always created in filepath.Dir(path), so EXDEV is impossible.
 func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	dir, err := writeAndRename(path, data, perm)
 	if err != nil {
@@ -93,32 +71,22 @@ func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 }
 
 // AtomicWriteFileDeferDirSync is AtomicWriteFile without the trailing directory
-// fsync, for a caller writing a BATCH of files: N writes into one directory pay
-// N identical directory fsyncs where a single one after the batch is equivalent
-// (measured on this project's ext4 volume, 500 same-directory writes: 2.1s
-// without the per-write directory fsync against 4.1s with it — the flush is a
-// second full journal commit per file, not something amortized behind the
-// file's own fsync, and it roughly DOUBLES the cost of an atomic write. Take
-// any figure here from a real disk: on tmpfs the same probe reports ~18us per
-// write either way, because there the flush is very nearly free).
+// fsync, for a caller writing a BATCH into one directory. The per-write flush is
+// a second full journal commit rather than something amortized behind the file's
+// own fsync, so it roughly doubles the cost of an atomic write on a real disk.
 //
 // It returns the directory the file was renamed into, whose entry is NOT yet
-// flushed, and the empty string when it returns an error — an error means the
-// rename never ran, so there is no new entry to flush.
+// flushed, and the empty string with any error — an error means the rename never
+// ran, so there is no new entry to flush.
 //
-// CANONICAL INVARIANT (the deferred directory-sync debt). This doc is its single
-// authoritative statement; comments in internal/nibcore and internal/reprefix
-// defer here rather than re-derive it.
+// CANONICAL INVARIANT (the deferred directory-sync debt): internal/nibcore and
+// internal/reprefix defer here; do not re-derive it.
 //
-// THE WEAKER GUARANTEE: until the caller passes that directory to SyncDir,
-// the file's CONTENTS are durable (the temp is fsynced before the rename) but
-// its NAME may not survive a crash, so a recovery path keying on "the file is
-// present" cannot rely on it — precisely the state AtomicWriteFile's "does not
-// promise" list describes for a platform that refuses a directory sync, except
-// here it is the caller who ends it. A batch caller therefore owes SyncDir one
-// call per DISTINCT directory it collected, and owes them on the ERROR path too:
-// a batch that aborts midway has already committed every rename before the
-// failure. Everything else in AtomicWriteFile's contract holds unchanged.
+// THE WEAKER GUARANTEE: until that directory reaches SyncDir, the file's CONTENTS
+// are durable (the temp is fsynced before the rename) but its NAME may not survive
+// a crash. Pass SyncDir one call per DISTINCT directory collected, on the ERROR
+// path too — a batch that aborts midway has already committed every rename before
+// the failure. Everything else in AtomicWriteFile's contract holds unchanged.
 func AtomicWriteFileDeferDirSync(path string, data []byte, perm os.FileMode) (string, error) {
 	return writeAndRename(path, data, perm)
 }
@@ -127,30 +95,26 @@ func AtomicWriteFileDeferDirSync(path string, data []byte, perm os.FileMode) (st
 // sibling: it REFUSES, wrapping fs.ErrNotExist, when nothing is at path, and
 // creates neither the file nor a temp file on that path.
 //
-// It exists for a caller that believes it is UPDATING a file it read earlier —
-// nibcore's area cascade, which writes each nib back to the path its in-memory
-// copy carries. Both writers here end in a rename, and a rename creates
-// unconditionally, so a path gone stale (another process renamed every nib file
-// under a new prefix) silently yields a SECOND copy of the nib at its old path
-// instead of an error. Refusing turns that into a failure the caller reports,
-// which is the only answer a stale path has.
+// Use it when you believe you are UPDATING a file read earlier, from a path your
+// in-memory copy carries. Every writer here ends in a rename and a rename creates
+// unconditionally, so a path gone stale — another process renamed every nib file
+// under a new prefix — otherwise yields a SECOND copy at the old path instead of
+// an error.
 //
-// WHAT THE REFUSAL IS AND IS NOT: the check and the rename are separate steps,
-// so this is not an atomic test-and-set — a writer that removes path in between
-// still gets a created file. That window is the caller's to close, and nibcore's
-// is: it holds the store lock across the whole verb. What no lock can detect is
-// a caller whose OWN path is stale, and that is what this catches.
+// WHAT THE REFUSAL IS AND IS NOT: the check and the rename are separate steps, so
+// this is not an atomic test-and-set — a writer that removes path in between still
+// gets a created file. Close that window with the store lock, as nibcore's callers
+// do. What no lock detects is a caller whose OWN path is stale, which is what this
+// catches.
 //
-// The check is an Lstat, so a SYMLINK at path counts as present — the rename
-// replaces the entry, and the entry is what the check asks about. Everything
-// else in AtomicWriteFileDeferDirSync's contract holds unchanged, including the
-// caller's obligation to hand the returned directory to SyncDir and the empty
-// string returned with any error.
+// The check is an Lstat, so a SYMLINK at path counts as present: the rename
+// replaces the entry, and the entry is what the check asks about. Everything else
+// in AtomicWriteFileDeferDirSync's contract holds unchanged, the returned
+// directory's flush included.
 func AtomicUpdateFileDeferDirSync(path string, data []byte, perm os.FileMode) (string, error) {
-	// Ahead of the temp file rather than beside the rename: a stale path has
-	// often lost its DIRECTORY too, and there os.CreateTemp fails first with an
-	// error about a temp file the caller never asked for, burying the one fact
-	// it needs — that the file it meant to update is not there.
+	// Ahead of the temp file: a stale path has often lost its DIRECTORY too, and
+	// os.CreateTemp would fail first, burying the one fact the caller needs behind
+	// an error about a temp file it never asked for.
 	if _, err := os.Lstat(path); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return "", fmt.Errorf("updating %s: %w", path, fs.ErrNotExist)
@@ -160,9 +124,9 @@ func AtomicUpdateFileDeferDirSync(path string, data []byte, perm os.FileMode) (s
 	return writeAndRename(path, data, perm)
 }
 
-// writeAndRename is the shared mechanism behind both writers: temp file, fsync,
-// chmod, rename. It returns the directory whose entry the rename created, so
-// the caller can decide when — or whether — to flush it.
+// writeAndRename is the mechanism behind all three writers: temp file, fsync,
+// chmod, rename. It returns the directory whose entry the rename created, so the
+// caller can decide when — or whether — to flush it.
 func writeAndRename(path string, data []byte, perm os.FileMode) (_ string, err error) {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
@@ -171,8 +135,8 @@ func writeAndRename(path string, data []byte, perm os.FileMode) (_ string, err e
 	}
 	tmpName := tmp.Name()
 
-	// On any error after creation, drop the temp file so it never leaks and never
-	// gets committed to the .nibs/ git repo.
+	// Drop the temp file on any error after creation, so it never leaks into the
+	// .nibs/ git repo.
 	defer func() {
 		if err != nil {
 			_ = tmp.Close()
@@ -183,16 +147,16 @@ func writeAndRename(path string, data []byte, perm os.FileMode) (_ string, err e
 	if _, err = tmp.Write(data); err != nil {
 		return "", fmt.Errorf("writing temp file: %w", err)
 	}
-	// Flush to disk before the rename so a crash cannot leave a renamed-but-empty
-	// file (the rename would otherwise be durable while the data is not).
+	// Flush before the rename, or a crash leaves a durable name over data that is
+	// not.
 	if err = tmp.Sync(); err != nil {
 		return "", fmt.Errorf("syncing temp file: %w", err)
 	}
 	if err = tmp.Close(); err != nil {
 		return "", fmt.Errorf("closing temp file: %w", err)
 	}
-	// os.CreateTemp makes the file 0600; restore the intended permissions before
-	// it becomes the visible file.
+	// os.CreateTemp makes the file 0600; set the intended mode before the rename
+	// makes it visible.
 	if err = os.Chmod(tmpName, perm); err != nil {
 		return "", fmt.Errorf("chmod temp file: %w", err)
 	}
@@ -202,9 +166,9 @@ func writeAndRename(path string, data []byte, perm os.FileMode) (_ string, err e
 	return dir, nil
 }
 
-// syncDir flushes the directory entry the rename created, so the file's NAME is as
-// durable as its contents. Best-effort by contract: see AtomicWriteFile's
-// "does not promise" list for why a failure here is not reported.
+// syncDir flushes the directory entry the rename created, making the file's NAME
+// as durable as its contents. Best-effort: see AtomicWriteFile's "does not
+// promise" list for why a failure here goes unreported.
 func syncDir(dir string) {
 	d, err := os.Open(dir)
 	if err != nil {
