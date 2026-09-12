@@ -15,18 +15,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// DefaultStatuses defines the hardcoded status configuration.
-//
-// The three closed statuses carry distinct colours: they were all "gray", which
-// left deferred, completed and scrapped indistinguishable in the TUI and the CLI
-// even though they mean different things. Deferred is magenta because it is the
-// odd one out — the work is coming back — while completed and scrapped share a
-// gray ramp with scrapped the dimmer of the two. See the closed-status ramp in
-// internal/ui/styles.go for why those two grays sit where they do.
-// Statuses are not configurable - they are hardcoded like types.
-// Order determines sort priority: the open statuses first (in-progress, todo,
-// draft), then the closed ones (deferred, completed, scrapped) last. Pickers
-// list statuses in a different order — see workflowStatusOrder.
+// DefaultStatuses is the hardcoded status vocabulary, in RANK order: the open
+// statuses first, then the closed ones. That order is the primary sort key of
+// nib.SortByStatusPriorityAndType, so reordering it re-sorts the lists.
+// Pickers read a different order — see workflowStatusOrder. The three closed
+// statuses take their distinct colors from the ramp in internal/ui/styles.go.
 var DefaultStatuses = []StatusConfig{
 	{Name: "in-progress", Color: "yellow", Role: RoleOpen, Description: "Currently being worked on"},
 	{Name: "todo", Color: "green", Role: RoleStartable, Description: "Ready to be worked on"},
@@ -36,37 +29,28 @@ var DefaultStatuses = []StatusConfig{
 	{Name: "scrapped", Color: "dimgray", Role: RoleDropped, Description: "Will not be done"},
 }
 
-// Status group names — one value vocabulary across every surface that accepts
-// a group where a concrete status goes: the CLI's `-s open` (cmd/statusfilter.go)
-// and the web filter box's `status:open` (via the generated vocabulary,
-// internal/webvocab). Membership is not declared here — each surface derives
-// it from the roles (OpenStatusNames/ClosedStatusNames); the names are the one
-// part that cannot be derived, so they live once.
+// Status group names, for every surface that accepts a group where a concrete
+// status goes: the CLI's `-s open` (cmd/statusfilter.go) and the web's
+// `status:open` (via internal/webvocab). Only the NAMES live here — each
+// surface derives the membership from the roles.
 const (
 	StatusGroupOpen   = "open"
 	StatusGroupClosed = "closed"
 )
 
-// workflowStatusOrder lists the statuses in transition order — the path work
-// actually takes, from draft through to a closed state. It exists because the
-// two ways a status list gets shown want opposite orders: a *chooser* reads
-// best as the flow (what comes next?), while a *list* reads best with the work
-// that is underway at the top. DefaultStatuses is the second one, and its order
-// is the primary sort key of nib.SortByStatusPriorityAndType, so reordering it
-// into a workflow would push in-progress work off the top of every list,
-// archive and roadmap. Two orders, one vocabulary.
+// workflowStatusOrder lists the statuses in transition order — the sequence a
+// chooser reads best, where DefaultStatuses is the rank order lists read best.
+// Reach it through WorkflowStatuses/WorkflowStatusNames: the TUI status picker
+// (internal/tui/statuspicker.go) reads it, and so do the web's StatusSelect and
+// RowContextMenu, via internal/webvocab.
 //
-// Read through WorkflowStatuses/WorkflowStatusNames by the TUI status picker
-// (internal/tui/statuspicker.go) and, via the generated vocabulary
-// (internal/webvocab), by the web's status select and row context menu.
-//
-// Membership is not restated: TestWorkflowStatusOrderCoversEveryStatus requires
-// this list and DefaultStatuses to hold the same names, and orderStatusesBy
-// appends anything missing rather than dropping it, so a status added to
-// DefaultStatuses and forgotten here is still offered by every picker.
+// Membership is not restated here. orderStatusesBy appends a status this list
+// forgets rather than dropping it, so the mistake never shows at runtime and
+// TestWorkflowStatusOrderCoversEveryStatus is what reports it.
 var workflowStatusOrder = []string{"draft", "todo", "in-progress", "completed", "deferred", "scrapped"}
 
-// DefaultTypes defines the default type configuration.
+// DefaultTypes is the hardcoded type vocabulary. Its order is the tertiary
+// sort key of nib.SortByStatusPriorityAndType.
 var DefaultTypes = []TypeConfig{
 	{Name: "milestone", Color: "cyan", Description: "A target release or checkpoint; group work that should ship together"},
 	{Name: "epic", Color: "purple", Description: "A deliverable that tops the work tree; should have child nibs, not be worked on directly"},
@@ -76,8 +60,8 @@ var DefaultTypes = []TypeConfig{
 	{Name: "research", Color: "yellow", Description: "Exploratory work whose output is knowledge or decisions, not code"},
 }
 
-// DefaultPriorities defines the hardcoded priority configuration.
-// Priorities are ordered from highest to lowest urgency.
+// DefaultPriorities is the hardcoded priority vocabulary, ordered from highest
+// to lowest urgency. PriorityRank is the index into it.
 var DefaultPriorities = []PriorityConfig{
 	{Name: "critical", Color: "red", Description: "Urgent, blocking work. When possible, address immediately"},
 	{Name: "high", Color: "yellow", Description: "Important, should be done before normal work"},
@@ -85,8 +69,8 @@ var DefaultPriorities = []PriorityConfig{
 	{Name: "low", Color: "gray", Description: "Less important, can be delayed"},
 }
 
-// DefaultEstimates defines the hardcoded estimate configuration.
-// Estimates are t-shirt sizes ordered from smallest to largest.
+// DefaultEstimates is the hardcoded estimate vocabulary: t-shirt sizes ordered
+// from smallest to largest.
 var DefaultEstimates = []EstimateConfig{
 	{Name: "s", Color: "blue", Description: "Small (1 point)"},
 	{Name: "m", Color: "white", Description: "Medium (3 points)"},
@@ -101,49 +85,25 @@ type EstimateConfig struct {
 	Description string `yaml:"description,omitempty"`
 }
 
-// StatusConfig defines a single status with its display color.
+// StatusConfig defines a single status with its display color and its Role.
 //
-// A status's Role is its whole classification (see Role): which of the five
-// lifecycle positions the status occupies. The three group predicates —
-// closed, releases-dependents, startable — derive from the role, so of the
-// eight states three independent booleans could express, only the legal
-// combinations are representable: every role IS one legal row of that table,
-// and the illegal rows (an open status releasing its dependents, a startable
-// closed status) have no role to express them. What the role adds over the
-// flags is the done/dropped split: completed and scrapped share every
-// predicate and differ only in whether the work counts as accomplished, which
-// is the distinction progress arithmetic keys on.
+// The Role is the status's whole classification: the closed,
+// releases-dependents and startable predicates all derive from it, and it
+// carries the done/dropped split none of them can see — the distinction
+// progress arithmetic keys on.
 //
-// TestStatusRoles pins each status's role, and TestStatusRoleGroupsAreNonEmpty
-// requires each derived group to be NON-EMPTY, which is not a stylistic
-// nicety: a derived set that empties out fails open rather than closed.
-// Emptying Startable made `nibs list --ready` widen from "only startable"
-// to every unblocked nib — 86 of 89 on the sample fixture, including completed
-// and scrapped work — because an empty include-list filters nothing.
+// The three sets are not interchangeable. Deferred is closed and still blocks;
+// startable is narrower than "not closed", excluding draft and in-progress.
+// Read them through IsClosedStatus/ClosedStatusNames/OpenStatusNames,
+// StatusReleasesDependents/ReleasingStatusNames, HoldingStatusNames,
+// IsStartableStatus/StartableStatusNames and StatusRole. The web derives its
+// copy from the generated vocabulary (internal/webvocab), pinned by
+// TestGeneratedVocabularyIsFresh; TestStatusRoles and
+// TestStatusRoleGroupsAreNonEmpty guard the roles here, and say why.
 //
-// None of the derived sets is interchangeable with another. Deferred is closed
-// and still blocks, so collapsing Closed and ReleasesDependents into one
-// answer would silently unblock deferred work. Startable is strictly narrower
-// than "not closed": draft and in-progress are open and not startable, so
-// reading Startable off the Closed answer would put work that is already
-// underway or not yet refined into the ready queue.
-//
-// In Go the roles are the only definitions of their sets — consumers read
-// them through IsClosedStatus/ClosedStatusNames/OpenStatusNames,
-// StatusReleasesDependents/ReleasingStatusNames, HoldingStatusNames for the
-// closed-but-still-blocking difference,
-// IsStartableStatus/StartableStatusNames for the ready queue, and StatusRole
-// for the done/dropped split the group predicates cannot see. The web UI
-// derives its copy from the generated vocabulary (internal/webvocab), pinned
-// fresh by TestGeneratedVocabularyIsFresh. README.md's Data Model section is a
-// hand-written copy — there is no render step behind it — held to these roles
-// by cmd/readme_test.go rather than by derivation.
-//
-// Sites that name one specific status are not rival definitions of these sets,
-// because a group predicate cannot single a member out — but renaming a status
-// means visiting them. cmd/dedup.go names "scrapped" to attach the
-// scrap-reason snippet; internal/ui abbreviates "deferred" to F so it does not
-// collide with draft.
+// Renaming a status means visiting the sites that name one: internal/progress
+// exposes `scrapped` and `deferred` as JSON field names, and internal/ui
+// abbreviates "deferred" to F so it does not collide with draft.
 type StatusConfig struct {
 	Name        string `yaml:"name"`
 	Color       string `yaml:"color"`
@@ -165,24 +125,20 @@ type PriorityConfig struct {
 	Description string `yaml:"description,omitempty"`
 }
 
-// Config holds the nibs configuration. Statuses are hardcoded rather than
-// configured, like types.
+// Config holds the nibs configuration.
 type Config struct {
 	Nibs NibsConfig `yaml:"nibs"`
 
-	// storeDir is the `.nibs` directory this config was read from (not
-	// serialized). Everything positional about a project derives from it: the
-	// config file's own location, the data and archive directories, and the
-	// project name (its PARENT directory's name).
+	// The `.nibs` directory this config was read from. Everything positional
+	// about a project derives from it: the config file's own location, the data
+	// and archive directories, and the project name (its PARENT directory's).
 	storeDir string `yaml:"-"`
 
-	// fromFile records that a config FILE was read to produce these values,
-	// rather than them being the defaults a store without one gets. See
-	// LoadedFromFile for the distinction this exists to keep answerable.
+	// See LoadedFromFile.
 	fromFile bool `yaml:"-"`
 }
 
-// NibsConfig defines settings for nib creation.
+// NibsConfig holds the `nibs:` block of a project config.
 type NibsConfig struct {
 	Prefix         string       `yaml:"prefix"`
 	IDLength       int          `yaml:"id_length"`
@@ -201,13 +157,9 @@ type ServerConfig struct {
 	OpenBrowser *bool `yaml:"open_browser,omitempty"`
 }
 
-// The system defaults: what an unset key means. Named rather than repeated,
-// because they have to be identical in two places — Default(), which nibs init
-// persists into a new project config, and applySystemDefaults, which fills the
-// gaps in a config that omits them. Those two disagreed about the type: the
-// fallback read DefaultTypes[0], and that list is ordered by HIERARCHY DEPTH, not
-// by which entry is a sensible default, so it answered "milestone" while every
-// config nibs init wrote said "task".
+// The system defaults: what an unset key means. Default() persists them into a
+// new project config and applySystemDefaults fills them into one that omits
+// them; the two must answer alike.
 const (
 	defaultIDLength   = 4
 	defaultStatusName = "todo"
@@ -228,7 +180,6 @@ func Default() *Config {
 	}
 }
 
-// boolPtr returns a pointer to the given bool value.
 func boolPtr(b bool) *bool {
 	return &b
 }
@@ -253,21 +204,16 @@ func Load(configPath string) (*Config, error) {
 }
 
 // LoadFromStore reads the config that lives INSIDE the store directory
-// (<store>/config.yml). This is the derivation every command uses: the store
-// is located first, and its config is read from within it.
+// (<store>/config.yml), without user-config defaults. Commands reach their
+// config through LoadStoreWithUserConfig.
 func LoadFromStore(storeDir string) (*Config, error) {
 	return Load(store.NewLayout(storeDir).ConfigPath())
 }
 
-// retiredPathProbe detects a `nibs.path:` key, which the store layout retired.
-// The key points the config at a data directory somewhere else; the store
-// directory IS the data directory's parent, so a config still carrying the key
-// describes a layout this build cannot honor. Refusing loudly
-// beats silently reading the key's value as decoration and operating on a
-// different directory than the user wrote down.
-//
-// It is also what RetiredNibsPath reads on behalf of the CLI, so the shape of
-// the retired key is declared once rather than re-transcribed per caller.
+// retiredPathProbe detects a `nibs.path:` key, which the store layout retired:
+// it points the config at a data directory somewhere else, and the store
+// directory IS that directory's parent. The shape is declared once here, for
+// loadRaw and RetiredNibsPath both.
 type retiredPathProbe struct {
 	Nibs struct {
 		Path string `yaml:"path"`
@@ -275,17 +221,17 @@ type retiredPathProbe struct {
 }
 
 // RetiredNibsPath returns the retired `nibs.path` value a pre-layout config
-// carries. The answer is THREE-WAY, because one of its callers decides whether
-// `nibs migrate` may rewrite a directory and "I could not read the evidence" is
-// not the same authorization answer as "there is no evidence":
+// carries. The answer is THREE-WAY, because a caller deciding whether
+// `nibs migrate` may rewrite a directory must not read "I could not tell" as
+// "there is no evidence":
 //
-//   - ("", nil)      the file is absent, or present and simply does not set the key;
+//   - ("", nil)      the file is absent, or does not set the key;
 //   - (value, nil)   the key is set;
-//   - ("", err)      the file EXISTS but its content could not be established —
+//   - ("", err)      the file EXISTS and its content could not be established —
 //     unreadable, over MaxConfigBytes, or not YAML at all.
 //
-// A caller that only sharpens a message may discard the error; a caller making a
-// decision from the answer must report "cannot determine" instead of guessing.
+// A caller that only sharpens a message may discard the error; one deciding
+// from the answer must report "cannot determine".
 func RetiredNibsPath(path string) (string, error) {
 	data, err := ReadConfigFile(path)
 	if err != nil {
@@ -301,49 +247,34 @@ func RetiredNibsPath(path string) (string, error) {
 	return probe.Nibs.Path, nil
 }
 
-// MaxConfigBytes bounds how many bytes any config file read may consume — the
-// project config, the user config and the pre-layout config probe alike, because
-// every one of them is read on the ORDINARY, always-successful path of every
-// command. A nibs config is a few dozen lines; the ceiling exists because an
-// unbounded os.ReadFile there turns one oversized file into several times its
-// size in resident memory (a 50 MB config.yml drove a plain `nibs list` to
-// 334 MB RSS). It is the same posture nib.MaxFrontMatterBytes takes for a nib
-// file's header.
+// MaxConfigBytes bounds every config file read. A nibs config is a few dozen
+// lines, and several of these reads sit on the ordinary path of an everyday
+// command, where an unbounded os.ReadFile would turn one oversized file into
+// several times its size in resident memory. Same posture as
+// nib.MaxFrontMatterBytes for a nib's header.
 const MaxConfigBytes = 1 << 20 // 1 MiB
 
 // ReadConfigFile reads a config file, refusing one that is not a regular file
-// and one larger than MaxConfigBytes.
+// and one larger than MaxConfigBytes. Read every config file through it: it is
+// the one point they all pass through.
 //
 // THE REGULARITY CHECK IS ABOUT LIVENESS. Opening a FIFO for reading blocks
-// inside open(2) until a writer arrives, so a `.nibs.yml` or a config.yml that
-// is a named pipe made every command hang forever instead of failing — and
-// nothing downstream can bound that, because the process never reaches
-// downstream. Statting first answers before the open, and it is the shared
-// reader that has to do it: this is the one point all four config reads — the
-// project config, the user config, the pre-layout probe and the store-evidence
-// probe — pass through.
+// inside open(2) until a writer arrives, so a `.nibs.yml` or config.yml that is
+// a named pipe hangs the command instead of failing it, and nothing downstream
+// can bound that — the process never reaches downstream. Statting first answers
+// before the open. It also makes the answer DETERMINATE: the discovery route
+// reads the same pre-layout `.nibs.yml` twice (cmd/root.go), and a FIFO can
+// serve different bytes to each read.
 //
-// It is also what makes the answer DETERMINATE. The discovery route reads the
-// same pre-layout `.nibs.yml` twice, and a FIFO can serve different bytes to
-// each read: a valid `nibs.path` first and malformed YAML second made one
-// refusal say a config names the store while the next said no config names it.
-// A regular file cannot diverge that way for free.
+// The stat races the filesystem by construction. This guard bounds a hang and a
+// divergence, not an attacker — do not treat "was regular a moment ago" as a
+// security property.
 //
-// os.O_RDONLY|syscall.O_NONBLOCK is the other way to avoid the block, and it is
-// worse. On a writerless FIFO it opens and then reads clean EOF (measured: 0
-// bytes, nil error), so the caller is handed an EMPTY config — a project with
-// no prefix, whose next nib is written under a different id — where it should
-// be handed an error. A determinate refusal beats a silent misreading.
-//
-// The stat races the filesystem by construction. That is acceptable because
-// this guard bounds a hang and a divergence, not an attacker: nothing decided
-// downstream treats "was regular a moment ago" as a security property.
-//
-// The ceiling is enforced by reading one byte PAST it and erroring, never by
-// truncating: a silently shortened config would parse as a different project —
-// a missing prefix re-prefixes every new nib — which is worse than not opening
-// at all. A missing file is returned as an ordinary os.IsNotExist error so
-// callers can keep treating absence as "use the defaults".
+// The ceiling is enforced by reading one byte PAST it and erroring. Never
+// truncate instead: a shortened config parses as a different project, and a
+// missing prefix re-prefixes every new nib. A missing file comes back as an
+// ordinary os.IsNotExist error, so callers can keep treating absence as "use
+// the defaults".
 func ReadConfigFile(path string) ([]byte, error) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -369,10 +300,9 @@ func ReadConfigFile(path string) ([]byte, error) {
 	return data, nil
 }
 
-// describeFileKind names what sits at a path a config was expected at. The
-// refusal quotes it because "not a regular file" alone sends the reader hunting:
-// a stray FIFO and a directory called config.yml are different mistakes with
-// different fixes.
+// describeFileKind names what sits at a path a config was expected at. A stray
+// FIFO and a directory called config.yml are different mistakes with different
+// fixes, so the refusal quotes this rather than saying "not a regular file".
 func describeFileKind(mode fs.FileMode) string {
 	switch {
 	case mode.IsDir():
@@ -405,28 +335,19 @@ func loadRaw(configPath string) (*Config, error) {
 		return nil, err
 	}
 
-	// The CONFIG PATH and the backticked `nibs migrate` are load-bearing OUTSIDE
-	// this package. cmd's resolveCLIStore wraps this error with a `%w`-only
-	// format that contributes no path and no command of its own, so what the
-	// user reads — and what cmd/refusal_invariant_test.go's rows "--config
-	// naming a store config that still sets nibs.path" and "a store config that
-	// still sets nibs.path" assert on — comes from here. That test parses
-	// cmd/root.go alone and cannot see this string: dropping the path from it
-	// leaves the composed message with nothing but an unresolvable command, and
-	// the `want` list in TestLoadRejectsRetiredNibsPath is what catches it.
-	// Reword freely, but keep both.
+	// Reword freely, but keep the config PATH and the backticked `nibs migrate`.
+	// cmd's resolveCLIStore wraps this error with a `%w`-only format, so this is
+	// the only place either reaches the user; TestLoadRejectsRetiredNibsPath is
+	// what catches their loss.
 	var probe retiredPathProbe
 	if err := yaml.Unmarshal(data, &probe); err == nil && probe.Nibs.Path != "" {
 		return nil, fmt.Errorf("%s sets the retired `nibs.path` key (%q); the store directory now holds the config, the data and the archive together — remove the key, and run `nibs migrate` if this project still uses the old layout",
 			configPath, probe.Nibs.Path)
 	}
 
-	// The areas vocabulary moved to its own file, and a config still declaring
-	// one is refused rather than ignored. Ignoring it would be the quiet
-	// failure this whole split exists to avoid: the block would keep reading
-	// like a declaration while authorizing nothing, so every `area:` a nib
-	// already carries would become undeclared and every write to it refused,
-	// with the file that appears to declare the vocabulary sitting right there.
+	// An `areas:` block here is refused, not ignored: ignoring it leaves a block
+	// that still reads like a declaration while authorizing nothing, which
+	// undeclares every `area:` a nib carries and refuses every write to it.
 	var areasProbe struct {
 		Areas []AreaConfig `yaml:"areas"`
 	}
@@ -472,22 +393,19 @@ func (c *Config) SetStoreDir(dir string) {
 }
 
 // LoadedFromFile reports whether a config FILE was read to produce these
-// values. False means the store holds no config.yml (or the Config was built in
-// memory by Default and friends), so every field here is a default rather than
+// values. False means the store holds no config.yml, or the Config was built in
+// memory by Default and friends, so every field here is a default rather than
 // something the store declares.
 //
-// Load returns a fully-defaulted Config either way, which is right for the
-// readers that only need values. It is wrong for the one reader that compares
-// what the store declares against what this process loaded: there "the store
-// declares nothing" and "the store declares the empty string" are different
-// answers, and only one of them is evidence that something changed on disk. See
-// nibcore.Core.mintingVocabulary.
+// Load returns a fully-defaulted Config either way, which serves a reader that
+// only needs values. A reader comparing what the store declares against what
+// this process loaded needs this instead — see nibcore.Core.mintingVocabulary.
 func (c *Config) LoadedFromFile() bool {
 	return c.fromFile
 }
 
-// Layout returns the store layout this config belongs to — the one place the
-// data and archive directories are derived from.
+// Layout returns the store layout this config belongs to. Derive the data and
+// archive directories from it.
 func (c *Config) Layout() store.Layout {
 	return store.NewLayout(c.storeDir)
 }
@@ -507,20 +425,19 @@ func (c *Config) GetProjectName() string {
 }
 
 // errMultipleConfigDocuments reports a config file that holds more than one YAML
-// document. Both in-place config editors refuse such a file, and each renders its
-// own remedy, because the sentence has to name the edit that would otherwise have
-// rewritten the whole file from the first document alone.
+// document. Both in-place editors refuse it and each words its own remedy, which
+// has to name the edit that would have rewritten the file from the first
+// document alone.
 var errMultipleConfigDocuments = errors.New("more than one YAML document")
 
-// soleConfigDocument decodes data as the single YAML document a nibs config is,
-// which is what makes an in-place edit of one key safe to write back: yaml.Marshal
+// soleConfigDocument decodes data as the single YAML document a nibs config is.
+// That is what makes an in-place edit of one key safe to write back: yaml.Marshal
 // re-emits the file from one node tree, so a second document would be deleted by
-// the write that carries the edit.
+// the write carrying the edit.
 //
-// An empty file comes back as a zero node rather than an error, because the two
-// editors answer that case differently — the prefix editor creates the document,
-// the areas editor refuses. Anything else the decoder objects to is returned as
-// it came, for the caller to word.
+// An empty file comes back as a ZERO NODE rather than an error — callers differ
+// on it, so each decides. Anything else the decoder objects to is returned as it
+// came, for the caller to word.
 func soleConfigDocument(data []byte) (yaml.Node, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	var doc yaml.Node
@@ -554,8 +471,8 @@ func mappingValueNode(node *yaml.Node, key string) *yaml.Node {
 }
 
 // writeConfigPreservingMode writes data over the config at path, keeping the
-// existing file's permissions and reporting a symlink at that path the way Save
-// does — the two writers must not differ about either.
+// existing file's permissions and reporting a replaced symlink. Save holds the
+// same contract; keep the two in step.
 func writeConfigPreservingMode(path string, data []byte) (staleLinkTarget string, err error) {
 	if link, lstatErr := os.Lstat(path); lstatErr == nil && link.Mode()&os.ModeSymlink != 0 {
 		if target, readErr := os.Readlink(path); readErr == nil {
@@ -584,27 +501,17 @@ func writeConfigPreservingMode(path string, data []byte) (staleLinkTarget string
 // Save writes the configuration to <store>/config.yml. If the config has no
 // store directory, the given directory is taken as the store.
 //
-// The write is ATOMIC and MODE-PRESERVING, the same contract the migration engine's
-// relocation of this file holds it to (fsutil.AtomicWriteFile). One file with two
-// writers and two contracts is not a contract: a plain os.WriteFile here widened a
-// 0600 config the relocation had deliberately kept private, and left a torn file
-// possible for a resume path that assumes config.yml is only ever absent or
-// complete.
+// The write is ATOMIC and MODE-PRESERVING (fsutil.AtomicWriteFile), the same
+// contract the migration engine's relocation of this file holds it to.
 //
-// A SYMLINK at config.yml is REPLACED with a regular file rather than written
-// through, because the rename is what makes the write atomic. That is a contract of
-// Save and not an implementation detail of fsutil: a config.yml symlinked into a
-// dotfile manager becomes an ordinary file holding the new settings while the
-// manager's copy keeps the old ones, so the next `chezmoi apply` (or equivalent)
-// restores a stale prefix and short-id resolution stops finding nibs created since.
+// A SYMLINK at config.yml is REPLACED with a regular file, because the rename is
+// what makes the write atomic. That is a contract of Save, not a detail of
+// fsutil: a config.yml symlinked into a dotfile manager leaves the manager's copy
+// holding the old settings, and the next apply restores a stale prefix.
 //
-// It is REPORTED rather than silent — the first return value is the path the link
-// pointed at, non-empty only when a link was replaced, and the caller must tell the
-// user which file is now stale. Refusing instead was rejected because this policy
-// is not Save's alone — writeConfigPreservingMode carries the same sequence for
-// the in-place editors, which reach it instead of Save — and there a refusal is
-// worse: `nibs config set-prefix` has already renamed every nib file by the time
-// its config write runs, so a refusal there leaves the store half-changed.
+// The replacement is REPORTED, not silent: staleLinkTarget is the path the link
+// pointed at, non-empty only when one was replaced, and the caller must tell the
+// user which file is now stale.
 func (c *Config) Save(storeDir string) (staleLinkTarget string, err error) {
 	targetDir := c.storeDir
 	if targetDir == "" {
@@ -631,10 +538,9 @@ func (c *Config) Save(storeDir string) (staleLinkTarget string, err error) {
 		}
 	}
 
-	// Keep the existing file's permissions; a config that has never existed gets
-	// the ordinary 0644. A stat failure that is not "absent" is reported rather
-	// than answered with 0644 — that fallback could only widen a config whose real
-	// mode was narrower.
+	// A config that has never existed gets the ordinary 0644. A stat failure that
+	// is not "absent" is reported rather than defaulted, which could only widen a
+	// config whose real mode was narrower.
 	perm := os.FileMode(0644)
 	info, statErr := os.Stat(path)
 	switch {
@@ -655,9 +561,8 @@ func (c *Config) IsValidStatus(status string) bool {
 }
 
 // IsKnownStatus reports whether status is one of the hardcoded statuses. The
-// package-level form exists for callers that have no Config yet — store
-// resolution runs before any config is loaded and uses a nibs status as the
-// evidence that a file was written by nibs.
+// package-level form exists for callers with no Config in hand — `nibs migrate`
+// classifies a pre-layout file partly on its status before any config loads.
 func IsKnownStatus(status string) bool {
 	for _, s := range DefaultStatuses {
 		if s.Name == status {
@@ -668,7 +573,6 @@ func IsKnownStatus(status string) bool {
 }
 
 // StatusList returns a comma-separated list of valid statuses.
-// Statuses are hardcoded and not configurable.
 func (c *Config) StatusList() string {
 	names := make([]string, len(DefaultStatuses))
 	for i, s := range DefaultStatuses {
@@ -677,8 +581,7 @@ func (c *Config) StatusList() string {
 	return strings.Join(names, ", ")
 }
 
-// StatusNames returns a slice of valid status names.
-// Statuses are hardcoded and not configurable.
+// StatusNames returns the valid status names, in DefaultStatuses rank order.
 func (c *Config) StatusNames() []string {
 	names := make([]string, len(DefaultStatuses))
 	for i, s := range DefaultStatuses {
@@ -687,16 +590,15 @@ func (c *Config) StatusNames() []string {
 	return names
 }
 
-// WorkflowStatuses returns every hardcoded status in transition order — what a
-// status picker offers, and in what sequence. Same members as DefaultStatuses,
-// different order; see workflowStatusOrder for why the two differ.
+// WorkflowStatuses returns every status in transition order — what a picker
+// offers, and in what sequence. Same members as DefaultStatuses, different
+// order; see workflowStatusOrder.
 func (c *Config) WorkflowStatuses() []StatusConfig {
 	return orderStatusesBy(workflowStatusOrder)
 }
 
 // WorkflowStatusNames returns the status names in transition order — the name
-// half of WorkflowStatuses, and the order the web's STATUS_WORKFLOW is pinned
-// against.
+// half of WorkflowStatuses, generated into the web as STATUS_WORKFLOW_ORDER.
 func (c *Config) WorkflowStatusNames() []string {
 	statuses := orderStatusesBy(workflowStatusOrder)
 	names := make([]string, len(statuses))
@@ -707,11 +609,9 @@ func (c *Config) WorkflowStatusNames() []string {
 }
 
 // orderStatusesBy returns DefaultStatuses rearranged into the given name order.
-// A declared status the order forgets is appended (keeping its
-// DefaultStatuses-relative position), and a name that is not a declared status
-// is skipped, so the result always holds every status exactly once whatever the
-// order says. That is deliberate: an ordering mistake should make a picker read
-// oddly, never hide a status a nib can be set to.
+// A status the order forgets is appended and a name that is no status is
+// skipped, so the result holds every status exactly once whatever the order
+// says: an ordering mistake makes a picker read oddly, never hide a status.
 func orderStatusesBy(order []string) []StatusConfig {
 	out := make([]StatusConfig, 0, len(DefaultStatuses))
 	taken := make(map[string]bool, len(DefaultStatuses))
@@ -737,7 +637,6 @@ func orderStatusesBy(order []string) []StatusConfig {
 }
 
 // GetStatus returns the StatusConfig for a given status name, or nil if not found.
-// Statuses are hardcoded and not configurable.
 func (c *Config) GetStatus(name string) *StatusConfig {
 	for i := range DefaultStatuses {
 		if DefaultStatuses[i].Name == name {
@@ -760,16 +659,13 @@ func (c *Config) GetDefaultType() string {
 	return c.Nibs.DefaultType
 }
 
-// IsClosedStatus returns true if the given status is closed (terminal) — the
-// canonical answer to "is this nib finished", used by every package instead of
-// a local status list. Unknown statuses are open.
-// Statuses are hardcoded and not configurable, so the receiver is currently
-// never dereferenced — but callers should not depend on that: hand it a real
-// *Config (config.Default() if nothing better is in reach).
+// IsClosedStatus reports whether a status is closed (terminal) — the answer to
+// "is this nib finished". Ask it rather than keeping a local status list.
+// Unknown statuses are open. The receiver is not dereferenced today; do not
+// depend on that — hand it a real *Config (config.Default() will do).
 //
-// CANONICAL INVARIANT (the closed-status answer). This doc is its single
-// authoritative statement; comments across cmd, internal/graph, internal/nibcore
-// and internal/nibcontext defer here rather than re-derive it.
+// CANONICAL INVARIANT (the closed-status answer): cmd, internal/graph,
+// internal/nibcore and internal/nibcontext all defer here; do not re-derive it.
 func (c *Config) IsClosedStatus(name string) bool {
 	if s := c.GetStatus(name); s != nil {
 		return s.Role.Closed()
@@ -777,11 +673,9 @@ func (c *Config) IsClosedStatus(name string) bool {
 	return false
 }
 
-// ClosedStatusNames returns the names of all closed statuses, derived from
-// DefaultStatuses (the single source of truth). Every returned name satisfies
-// IsClosedStatus. Today this is {deferred, completed, scrapped}; deriving it
-// here keeps the set correct if the Closed flags ever change. This is the
-// "closed" status group, and the exact complement of OpenStatusNames.
+// ClosedStatusNames returns the closed statuses, derived from the roles. Every
+// returned name satisfies IsClosedStatus. This is the "closed" status group, and
+// the exact complement of OpenStatusNames.
 func (c *Config) ClosedStatusNames() []string {
 	var names []string
 	for _, s := range DefaultStatuses {
@@ -792,20 +686,14 @@ func (c *Config) ClosedStatusNames() []string {
 	return names
 }
 
-// StatusReleasesDependents returns true if closing a blocker with this status
-// satisfies the dependency — the canonical answer to "does this blocker still
-// count", used by the blocking graph instead of IsClosedStatus. Today this is
-// {completed, scrapped}: deferred is closed but still blocks, because the
-// set-aside work is coming back. Unknown statuses do not release, so an
-// unrecognized blocker keeps blocking rather than silently freeing its
-// dependents.
-// Like IsClosedStatus the receiver is currently never dereferenced, but callers
-// should hand it a real *Config anyway (config.Default() if nothing better).
+// StatusReleasesDependents reports whether closing a blocker with this status
+// satisfies the dependency. Ask it rather than IsClosedStatus: deferred is
+// closed and still blocks, because the set-aside work is coming back. Unknown
+// statuses do not release, so an unrecognized blocker keeps blocking. Hand it a
+// real *Config, as with IsClosedStatus.
 //
-// CANONICAL INVARIANT (the blocker-release answer, deliberately distinct from
-// closed). This doc is its single authoritative statement; the blocking graph in
-// internal/graph and the CLI's readiness surface defer here rather than
-// re-derive it.
+// CANONICAL INVARIANT (the blocker-release answer, distinct from closed): the
+// blocking graph in internal/graph and the CLI's readiness surface defer here.
 func (c *Config) StatusReleasesDependents(name string) bool {
 	if s := c.GetStatus(name); s != nil {
 		return s.Role.ReleasesDependents()
@@ -813,11 +701,9 @@ func (c *Config) StatusReleasesDependents(name string) bool {
 	return false
 }
 
-// ReleasingStatusNames returns the names of the statuses that release their
-// dependents, derived from DefaultStatuses (the single source of truth). Every
-// returned name satisfies StatusReleasesDependents. Today this is {completed,
-// scrapped} — a strict subset of ClosedStatusNames, since deferred is closed
-// but keeps blocking.
+// ReleasingStatusNames returns the statuses that release their dependents,
+// derived from the roles. Every returned name satisfies
+// StatusReleasesDependents. A strict subset of ClosedStatusNames.
 func (c *Config) ReleasingStatusNames() []string {
 	var names []string
 	for _, s := range DefaultStatuses {
@@ -829,12 +715,10 @@ func (c *Config) ReleasingStatusNames() []string {
 }
 
 // HoldingStatusNames returns the closed statuses that do NOT release their
-// dependents — the statuses a blocker can carry while still holding up
-// everything that depends on it. It is the set difference ClosedStatusNames \
-// ReleasingStatusNames, derived from the same flags. Today this is {deferred}.
-// The agent-facing docs (cmd/cheat.go and the prime templates) state the
-// "closed but still blocks" rule from this set instead of naming a status in
-// prose; an empty result means no such rule exists and the docs drop it.
+// dependents — what a blocker can carry while still holding up everything that
+// depends on it, the set difference ClosedStatusNames \ ReleasingStatusNames.
+// The agent-facing docs (cmd/cheat.go, cmd/prime.go) word the "closed but still
+// blocks" rule from this set, and drop the rule when it comes back empty.
 func (c *Config) HoldingStatusNames() []string {
 	var names []string
 	for _, s := range DefaultStatuses {
@@ -845,10 +729,8 @@ func (c *Config) HoldingStatusNames() []string {
 	return names
 }
 
-// OpenStatusNames returns the names of all non-closed statuses — the "open"
-// status group, and the exact complement of ClosedStatusNames. Derived from
-// DefaultStatuses (Closed == false), so it stays correct if the Closed flags
-// ever change. Today this is {in-progress, todo, draft}.
+// OpenStatusNames returns the non-closed statuses, derived from the roles — the
+// "open" status group, and the exact complement of ClosedStatusNames.
 func (c *Config) OpenStatusNames() []string {
 	var names []string
 	for _, s := range DefaultStatuses {
@@ -859,16 +741,11 @@ func (c *Config) OpenStatusNames() []string {
 	return names
 }
 
-// IsStartableStatus returns true if work can be picked up from the given status
-// — the status half of "can I start this?", read by both the projected `ready`
-// field and `nibs list --ready` so the two answer it from one definition rather
-// than two. The other half is having no active blockers; this predicate says
-// nothing about blockers.
-// Unknown statuses are not startable, so a nib carrying a status outside the
-// declared vocabulary stays out of the work queue rather than being offered as
-// the next thing to do.
-// Like IsClosedStatus the receiver is currently never dereferenced, but callers
-// should hand it a real *Config anyway (config.Default() if nothing better).
+// IsStartableStatus reports whether work can be picked up from a status — the
+// status half of "can I start this?", shared by the projected `ready` field and
+// `nibs list --ready`. It says nothing about blockers, which are the other half.
+// Unknown statuses are not startable, so a nib outside the declared vocabulary
+// stays out of the work queue. Hand it a real *Config, as with IsClosedStatus.
 func (c *Config) IsStartableStatus(name string) bool {
 	if s := c.GetStatus(name); s != nil {
 		return s.Role.Startable()
@@ -876,13 +753,11 @@ func (c *Config) IsStartableStatus(name string) bool {
 	return false
 }
 
-// StartableStatusNames returns the names of all startable statuses, derived from
-// DefaultStatuses (the single source of truth). Every returned name satisfies
-// IsStartableStatus. Today this is {todo} alone — narrower than OpenStatusNames,
-// which also holds draft and in-progress.
-// `nibs list --ready` builds its status filter from this set and the agent
-// guides state the --ready rule from it, so a status added to DefaultStatuses
-// reaches the ready queue only by declaring itself startable.
+// StartableStatusNames returns the startable statuses, derived from the roles.
+// Every returned name satisfies IsStartableStatus; narrower than
+// OpenStatusNames. `nibs list --ready` builds its status filter from this set
+// and the agent guides word the --ready rule from it, so a new status reaches
+// the ready queue only by declaring itself startable.
 func (c *Config) StartableStatusNames() []string {
 	var names []string
 	for _, s := range DefaultStatuses {
@@ -893,13 +768,11 @@ func (c *Config) StartableStatusNames() []string {
 	return names
 }
 
-// DoneStatusNames returns the names of the statuses in the done role — the
-// close reasons that count as an accomplishment, in DefaultStatuses order.
-// Today this is {completed}. `nibs close` derives its default reason and its
-// completion reason from the FIRST of them, so the set must never be empty —
-// which TestStatusRoleGroupsAreNonEmpty enforces for the declared vocabulary.
-// Strictly narrower than ReleasingStatusNames: dropped work also releases its
-// dependents, but nothing was accomplished.
+// DoneStatusNames returns the statuses in the done role — the close reasons
+// that count as an accomplishment, in DefaultStatuses order. `nibs close` takes
+// its default and completion reasons from the FIRST of them, so the set must
+// never be empty; TestStatusRoleGroupsAreNonEmpty enforces that. Strictly narrower
+// than ReleasingStatusNames: dropped work releases its dependents too.
 func (c *Config) DoneStatusNames() []string {
 	var names []string
 	for _, s := range DefaultStatuses {
@@ -911,7 +784,6 @@ func (c *Config) DoneStatusNames() []string {
 }
 
 // GetType returns the TypeConfig for a given type name, or nil if not found.
-// Types are hardcoded and not configurable.
 func (c *Config) GetType(name string) *TypeConfig {
 	for i := range DefaultTypes {
 		if DefaultTypes[i].Name == name {
@@ -921,8 +793,7 @@ func (c *Config) GetType(name string) *TypeConfig {
 	return nil
 }
 
-// TypeNames returns a slice of valid type names.
-// Types are hardcoded and not configurable.
+// TypeNames returns the valid type names.
 func (c *Config) TypeNames() []string {
 	names := make([]string, len(DefaultTypes))
 	for i, t := range DefaultTypes {
@@ -950,7 +821,7 @@ func (c *Config) TypeList() string {
 	return strings.Join(names, ", ")
 }
 
-// NibColors holds resolved color information for rendering a nib
+// NibColors holds resolved color information for rendering a nib.
 type NibColors struct {
 	StatusColor   string
 	TypeColor     string
