@@ -9,14 +9,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// PrefixEditRefusal is a refusal about the config file's CONTENT — a file this
-// edit cannot address, or one it could only rewrite by deleting part of it — as
-// opposed to a failure to read or write the file.
-//
-// It is the prefix editor's half of the split AreaEditRefusal draws for the
-// areas editor, and it exists for the same reason: content is the caller's to
-// fix, where a filesystem error is the machine's, and nothing about a refusal is
-// repaired by rerunning.
+// PrefixEditRefusal is a refusal about the config file's content, not a failure
+// to read or write it. Report as a validation error; retrying will not help.
 type PrefixEditRefusal struct{ msg string }
 
 func (e *PrefixEditRefusal) Error() string { return e.msg }
@@ -28,89 +22,47 @@ func refusePrefixEdit(format string, a ...any) error {
 // StoredPrefixEdit is one edit to a store's `nibs.prefix` key, resolved against
 // the file and rendered to bytes, but NOT yet written.
 //
-// Planning and writing are separate steps because the caller — `nibs config
-// set-prefix` — renames every nib file in the store BETWEEN them.
+// Keep planning and writing separate. `nibs config set-prefix` renames every nib
+// file in the store between them, and a rename is durable the moment it lands,
+// so every refusal this editor can make comes before the first file moves. Only
+// the filesystem can fail at Write, and a rerun repairs that.
 //
-// That order is the whole point. A rename is durable the moment it lands, so a
-// config edit that can only fail after them leaves every file carrying an id
-// prefix the config does not declare: `nibs new` then mints ids under the old
-// prefix that no file uses, and the printed remedy is a hand edit. Planning
-// first moves every refusal this editor can make to before the first file is
-// touched, which leaves the store completely untouched instead. What can still
-// fail at Write is the filesystem, and that is the one failure a rerun repairs.
-//
-// A plan is only as current as the file it was read from: the caller owes it the
-// store's cross-process write lock (nibcore.AcquireStoreLock) across both steps,
-// or a concurrent editor's write is lost when this one lands.
+// Hold the store's write lock (nibcore.AcquireStoreLock) across both steps; a
+// plan is only as current as the file it was read from.
 type StoredPrefixEdit struct {
 	path string
 	out  []byte
 }
 
-// Path is the config file this edit will write.
 func (e *StoredPrefixEdit) Path() string { return e.path }
 
-// Write applies the planned edit, keeping the file's permission bits and
-// reporting a symlink it replaced, the way every other config writer does.
+// Write applies the planned edit, keeping the file's permission bits. A symlink
+// at the path is replaced by a regular file, reported as staleLinkTarget.
 func (e *StoredPrefixEdit) Write() (staleLinkTarget string, err error) {
 	return writeConfigPreservingMode(e.path, e.out)
 }
 
 // PlanSetStoredPrefix resolves a change of the `nibs.prefix` key in the config
-// inside storeDir and renders the resulting file, without writing anything. An
-// existing key keeps its position; a config with no `nibs:` mapping — one that
-// omits the key, one that writes `nibs:` with no value under it, or no config
-// file at all — gains one, since set-prefix's whole job is to make the file say
-// the new prefix.
+// inside storeDir and renders the resulting file, writing nothing. An existing
+// key keeps its position. A config that omits the `nibs:` mapping, writes
+// `nibs:` with no value, or does not exist gains one. A file that is nothing but
+// comments parses to no document at all, so it comes back holding the new key
+// and none of its comments.
 //
-// The edit goes through a yaml.Node tree rather than Config.Save because
-// Config.Save marshals a whole Config, and the Config a command holds is the
-// MERGED read model: LoadStoreWithUserConfig layers the user's config and then
-// the system defaults onto the project's own values in place. Saving that back
-// writes advisory settings into a project's committed config and drops every key
-// this build does not model — including keys a NEWER nibs wrote, which is data
-// loss rather than formatting. Save keeps its meaning for the caller that wants
-// it: `nibs init` writes a brand new config from the merged defaults on purpose,
-// and there is no prior file to preserve.
+// Do not marshal a Config back over the file instead. The Config a command holds
+// is the MERGED read model — the user's config and the system defaults layered
+// onto the project's own values — so Config.Save would write those defaults into
+// a committed config and drop every key this build does not model, including
+// keys a newer nibs wrote.
 //
-// It is a semantic-preserving RE-MARSHAL, not a byte-preserving splice:
-// yaml.Marshal re-emits the whole document from the node tree, so the file comes
-// back with yaml.v3's layout rather than the project's. Measured on a round trip
-// (TestStoredPrefixEditRoundTripPreservesWhatItClaims), what survives is every
-// comment ATTACHED TO A NODE — head, inline and footer — key order, nesting,
-// anchors and aliases, keys this build does not model at any depth, and the
-// file's permission bits. What does NOT survive is layout: indentation is
-// normalized to four spaces, blank lines are dropped, a leading `---` goes, CRLF
-// line endings come back as LF, a leading BOM is stripped, an inline comment
-// loses its column alignment, a folded scalar is re-flowed, a `<<:` merge key
-// gains an explicit `!!merge` tag, and the rewritten key loses whatever quoting
-// style the old prefix carried.
-//
-// "Attached to a node" is the qualifier that keeps the comment clause true. A
-// config that is NOTHING but comments parses to no document at all, so its
-// comments hang off nothing and the file comes back holding only the new
-// `nibs.prefix`. That is documented rather than refused because no CLI route
-// reaches it: every shape this paragraph and the one above describe — a comment-
-// only file, a `nibs:` with no value, a missing file — declares no prefix, and
-// `nibs config set-prefix` refuses an empty OLD prefix in reprefix.BuildPlan
-// before it ever plans a config edit (TestSetPrefixRefusesAStoreThatDeclaresNoPrefix).
-// They are here for this package's exported API, where the promise above is the
-// contract.
-//
-// A file holding more than one YAML document is REFUSED rather than edited: the
-// re-marshal emits only the first, so writing it back would silently delete the
-// rest. nibs never writes such a file, so refusing costs nothing a project did
-// not do on purpose, and the alternative is data loss on an exit-0 success. A
-// trailing bare `---` counts — yaml.v3 reads it as a second, null document — so
-// the remedy has to name deleting the marker as well as moving what follows it.
-//
-// The rendered file is re-read as a Config and its prefix compared against the
-// one asked for, because there is a shape where every step above succeeds and
-// the key is still not set: a `nibs:` section written as a YAML alias
-// (`nibs: *base`) decodes to an alias node, whose Content the marshaller does
-// not emit, so the new key goes into a node that renders as `*base` and the file
-// comes back unchanged. Without that comparison the command exits 0 reporting a
-// prefix the file does not carry, after renaming every nib file in the store.
+// The edit is a semantic-preserving RE-MARSHAL, not a byte-preserving splice.
+// Content survives: key order, nesting, anchors and aliases, keys this build
+// does not model at any depth, and comments — though an inline comment on a
+// `nibs:` written as an explicit null moves to the next key, or is lost when
+// there is none. Layout does not: indentation becomes four spaces, blank lines,
+// a leading `---` and a BOM go, CRLF becomes LF, an inline comment loses its
+// alignment, a folded scalar is re-flowed, a `<<:` merge key gains an explicit
+// `!!merge` tag, and the rewritten key loses its quoting style.
 func PlanSetStoredPrefix(storeDir, prefix string) (*StoredPrefixEdit, error) {
 	path := store.NewLayout(storeDir).ConfigPath()
 	data, err := ReadConfigFile(path)
@@ -133,6 +85,9 @@ func PlanSetStoredPrefix(storeDir, prefix string) (*StoredPrefixEdit, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The re-read is what catches a `nibs:` written as an alias: it decodes to an
+	// alias node whose Content the marshaller does not emit, so the new key lands
+	// in a node that renders as `*base` and the marshal above still succeeds.
 	var edited Config
 	if err := yaml.Unmarshal(out, &edited); err != nil {
 		return nil, refusePrefixEdit("the edit would leave %s unreadable: %v", path, err)
@@ -145,10 +100,7 @@ func PlanSetStoredPrefix(storeDir, prefix string) (*StoredPrefixEdit, error) {
 	return &StoredPrefixEdit{path: path, out: out}, nil
 }
 
-// SetStoredPrefix plans and writes a prefix change in one step, for a caller
-// with nothing to do between the two. `nibs config set-prefix` is not that
-// caller: it renames every nib file in between, which is what the two steps are
-// separated for.
+// SetStoredPrefix plans and writes a prefix change in one step.
 func SetStoredPrefix(storeDir, prefix string) (staleLinkTarget string, err error) {
 	edit, err := PlanSetStoredPrefix(storeDir, prefix)
 	if err != nil {
@@ -159,9 +111,7 @@ func SetStoredPrefix(storeDir, prefix string) (staleLinkTarget string, err error
 
 // setNestedScalar sets doc's section.key to value, creating the document, the
 // section or the key when any of them is absent, and converting a section
-// written with no value at all into the mapping it has to be. An existing key
-// keeps its position in the file, which is what keeps the rewrite off every
-// other line.
+// written with no value into a mapping.
 func setNestedScalar(doc *yaml.Node, section, key, value string) {
 	if doc.Kind == 0 {
 		doc.Kind = yaml.DocumentNode
@@ -184,8 +134,7 @@ func setNestedScalar(doc *yaml.Node, section, key, value string) {
 		existing.Kind = yaml.ScalarNode
 		existing.Tag = "!!str"
 		existing.Value = value
-		// Drop any style the old scalar carried (a quoted prefix, a folded
-		// block): the value is new, so the old rendering does not describe it.
+		// Without this a quoted or folded old prefix keeps its rendering.
 		existing.Style = 0
 		return
 	}
@@ -194,16 +143,10 @@ func setNestedScalar(doc *yaml.Node, section, key, value string) {
 		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value})
 }
 
-// nullToEmptyMapping turns a key written with no value — `nibs:` on a line of
-// its own, or `nibs: null` — into the empty mapping the caller can append to.
-// The node itself is kept rather than replaced, so the comments hanging off it
-// come back.
-//
-// Only an EXPLICIT null qualifies. An alias (`nibs: *base`) also has no mapping
-// of its own to append to, and converting one would silently drop the alias for
-// every other reader of the file; it stays refused by the round-trip re-read
-// instead. A `nibs:` holding a scalar or a sequence is refused by that same
-// re-read, since converting it would delete whatever the project meant by it.
+// nullToEmptyMapping turns a key written with no value — `nibs:` alone on its
+// line, `nibs: null` or `nibs: ~` — into an empty mapping the caller can append
+// to. An alias, a scalar or a sequence is left as it is: converting one would
+// delete what the project wrote, and PlanSetStoredPrefix's re-read refuses it.
 func nullToEmptyMapping(node *yaml.Node) {
 	if node == nil || node.Kind != yaml.ScalarNode || node.Tag != "!!null" {
 		return

@@ -8,23 +8,19 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// UserConfig holds user-level configuration that provides defaults
-// across all projects. Project config (<store>/config.yml) overrides these.
+// UserConfig holds defaults applied across all projects. A value set in a
+// project's <store>/config.yml wins over the one here.
 type UserConfig struct {
 	Nibs UserNibsConfig `yaml:"nibs"`
 }
 
-// UserNibsConfig defines user-level nib settings.
 type UserNibsConfig struct {
 	IDLength      int   `yaml:"id_length,omitempty"`
 	HideCompleted *bool `yaml:"hide_completed,omitempty"`
 	WideMode      *bool `yaml:"wide_mode,omitempty"`
 }
 
-// UserConfigPath returns the path to the user-level nibs config file.
-// On Linux: ~/.config/nibs/nibs.yml
-// On macOS: ~/Library/Application Support/nibs/nibs.yml
-// On Windows: %AppData%/nibs/nibs.yml
+// UserConfigPath returns nibs/nibs.yml under os.UserConfigDir.
 func UserConfigPath() (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {
@@ -33,25 +29,18 @@ func UserConfigPath() (string, error) {
 	return filepath.Join(dir, "nibs", "nibs.yml"), nil
 }
 
-// LoadUserConfig loads the user config from the OS-standard location.
-// Returns a zero-value UserConfig (no error) when the file doesn't exist.
-// Also returns zero-value if the config path cannot be determined
-// (e.g., os.UserConfigDir() fails due to missing HOME).
+// LoadUserConfig loads the user config from the OS-standard location. A missing
+// file, or no location to look in, gives a zero-value UserConfig and no error.
 func LoadUserConfig() (*UserConfig, error) {
 	path, err := UserConfigPath()
 	if err != nil {
-		// Can't determine config dir (no HOME, etc.) — treat as no user config
 		return &UserConfig{}, nil
 	}
 	return LoadUserConfigFrom(path)
 }
 
-// LoadUserConfigFrom loads user config from the given path.
-// Returns a zero-value UserConfig (no error) when the file doesn't exist.
-//
-// The read goes through ReadConfigFile, the same bounded reader the project
-// config uses: this path is reached by every command that resolves a store, so
-// an oversized file here costs exactly what MaxConfigBytes exists to prevent.
+// LoadUserConfigFrom returns a zero-value UserConfig and no error when path does
+// not exist.
 func LoadUserConfigFrom(path string) (*UserConfig, error) {
 	data, err := ReadConfigFile(path)
 	if err != nil {
@@ -68,23 +57,21 @@ func LoadUserConfigFrom(path string) (*UserConfig, error) {
 	return &cfg, nil
 }
 
-// LoadStoreWithUserConfig loads an already-resolved store's config from inside
-// it, with user config from the OS-standard location providing defaults for
-// unset fields.
+// LoadStoreWithUserConfig loads an already-resolved store's config, layering the
+// user config from the OS-standard location underneath.
 func LoadStoreWithUserConfig(storeDir string) (*Config, error) {
 	userCfgPath, err := UserConfigPath()
 	if err != nil {
-		// Can't determine user config path; fall back to project-only
+		// No user config location; skip the user layer.
 		return LoadFromStore(storeDir)
 	}
 	return LoadStoreWithUserConfigPath(storeDir, userCfgPath)
 }
 
-// LoadFromExplicitPathWithUserConfig loads project config from a specific file path
-// (rather than searching upward), with user config from the OS-standard location
-// providing defaults for unset fields. Used when --config flag is provided.
+// LoadFromExplicitPathWithUserConfig loads the project config at configPath (the
+// --config route), with the user config layered underneath.
 func LoadFromExplicitPathWithUserConfig(configPath string) (*Config, error) {
-	// User config is advisory — degrade gracefully on errors
+	// User config is advisory; a load error drops the user layer.
 	userCfg, err := LoadUserConfig()
 	if err != nil {
 		userCfg = &UserConfig{}
@@ -100,18 +87,10 @@ func LoadFromExplicitPathWithUserConfig(configPath string) (*Config, error) {
 	return cfg, nil
 }
 
-// LoadStoreWithUserConfigPath loads the config of an ALREADY-RESOLVED store,
-// layering the user config underneath. It is the shared bottom of every
-// config-loading path: whichever way the store was resolved (an upward walk,
-// --nibs-path, NIBS_PATH), its config is read the same way from inside it.
-// It accepts an explicit user config path so tests can layer without touching
-// the OS-standard location.
-//
-// Layering order: project config > user config > system defaults.
-// The raw project config is loaded first (without system defaults),
-// then user config fills in unset fields, then system defaults fill the rest.
+// LoadStoreWithUserConfigPath loads an already-resolved store's config: the
+// project config over the user config at userConfigPath, over system defaults.
 func LoadStoreWithUserConfigPath(storeDir string, userConfigPath string) (*Config, error) {
-	// Load user config — graceful on all errors (user config is advisory)
+	// User config is advisory; a load error drops the user layer.
 	userCfg, err := LoadUserConfigFrom(userConfigPath)
 	if err != nil {
 		userCfg = &UserConfig{}
@@ -122,18 +101,14 @@ func LoadStoreWithUserConfigPath(storeDir string, userConfigPath string) (*Confi
 		return nil, err
 	}
 
-	// Layer 2: fill in unset fields from user config
 	applyUserDefaults(cfg, userCfg)
-
-	// Layer 3: fill in remaining unset fields from system defaults
 	applySystemDefaults(cfg)
 
 	return cfg, nil
 }
 
-// DefaultWithPrefixFromUserConfig creates a new default config with the given
-// prefix, seeding values from the user config where available.
-// Used by `nibs init` to persist user preferences into the new project config.
+// DefaultWithPrefixFromUserConfig returns a default config with the given prefix,
+// seeded from userCfg where it sets a value. userCfg may be nil.
 func DefaultWithPrefixFromUserConfig(prefix string, userCfg *UserConfig) *Config {
 	cfg := Default()
 	cfg.Nibs.Prefix = prefix
@@ -151,8 +126,8 @@ func DefaultWithPrefixFromUserConfig(prefix string, userCfg *UserConfig) *Config
 	return cfg
 }
 
-// applyUserDefaults fills in unset project config fields from user config.
-// Project values always take precedence over user values.
+// applyUserDefaults fills project fields left unset — a nil *bool, an IDLength of
+// zero — from the user config.
 func applyUserDefaults(cfg *Config, userCfg *UserConfig) {
 	if userCfg.Nibs.IDLength != 0 && cfg.Nibs.IDLength == 0 {
 		cfg.Nibs.IDLength = userCfg.Nibs.IDLength

@@ -18,8 +18,9 @@ import (
 // This vocabulary is re-read whenever the file changes; config.yml is loaded
 // once. That is why it has its own file.
 //
-// A nil *Areas is the empty vocabulary a store without the file gets — call any
-// method on it without a nil check.
+// A nil *Areas answers as the empty vocabulary, so call any method on it
+// without a nil check. LoadAreas never returns one: a store with no areas.yml
+// gets a non-nil value with no nodes, which LoadedFromFile tells apart.
 //
 // Treat a loaded value as immutable. A reload builds a new one and swaps the
 // pointer; see nibcore.Core.ValidateArea for what reads one off-lock.

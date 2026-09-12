@@ -8,13 +8,11 @@ import (
 	"github.com/alphaleonis/nibs/internal/safetext"
 )
 
-// AreaPathSeparator joins area path segments (`web/dashboard`). Not a filesystem
-// separator — an `area:` value travels between machines in a file.
+// AreaPathSeparator joins area path segments (`web/dashboard`). It is not a
+// filesystem separator — never substitute filepath.Separator.
 const AreaPathSeparator = "/"
 
-// AreaConfig is one node of the areas vocabulary declared in a store's
-// areas.yml. Areas are the one per-project vocabulary a store holds — statuses,
-// types, priorities and estimates are hardcoded.
+// AreaConfig is one node of the areas vocabulary declared in a store's areas.yml.
 type AreaConfig struct {
 	// May not contain AreaPathSeparator.
 	Name string `yaml:"name"`
@@ -25,19 +23,20 @@ type AreaConfig struct {
 	// checked against any known set.
 	Color string `yaml:"color,omitempty"`
 
-	Order    string       `yaml:"order,omitempty"` // sibling sort key
+	// Not a sort key: Paths enumerates in declaration order.
+	Order    string       `yaml:"order,omitempty"`
 	Children []AreaConfig `yaml:"children,omitempty"`
 }
 
-// Validate checks the declared vocabulary and returns the first fault it finds,
-// naming the offending path. An absent or empty vocabulary is valid.
+// Validate returns the first fault in the declared vocabulary. An absent or
+// empty vocabulary is valid.
 func (a *Areas) Validate() error {
 	return validateAreaNodes(a.Roots(), "")
 }
 
 // Roots returns the declared forest's top-level nodes, each carrying its own
-// children. A store with no areas.yml has a nil *Areas — a normal state, not a
-// fault — so read through this rather than the Nodes field.
+// children. Read through this rather than the Nodes field — the receiver may be
+// nil.
 func (a *Areas) Roots() []AreaConfig {
 	if a == nil {
 		return nil
@@ -45,8 +44,7 @@ func (a *Areas) Roots() []AreaConfig {
 	return a.Nodes
 }
 
-// validateAreaNodes validates one level of the tree and recurses. parent is the
-// path of the node these areas hang under, empty at the top level.
+// parent is the path these areas hang under, empty at the top level.
 func validateAreaNodes(areas []AreaConfig, parent string) error {
 	seen := make(map[string]struct{}, len(areas))
 	for i, area := range areas {
@@ -58,10 +56,8 @@ func validateAreaNodes(areas []AreaConfig, parent string) error {
 			return fmt.Errorf("area %q %s has leading or trailing whitespace in its name; an `area:` value would have to carry the same spaces to match it",
 				area.Name, areaLocation(parent))
 		}
-		// INTERIOR whitespace is permitted: this runs on every load, and tightening
-		// would fail a config valid today. The gap it leaves is that the web query
-		// box splits on whitespace with no quoting (web/src/lib/query/parse.ts), so
-		// `area:Web UI` loses its tail — closing it needs quoting in the grammar.
+		// INTERIOR whitespace is permitted: this runs on every load, so tightening
+		// it would fail a config valid today.
 		path := joinAreaPath(parent, name)
 		if strings.Contains(name, AreaPathSeparator) {
 			return fmt.Errorf("area %q %s has a %q in its name; nest the child under its parent instead, which is what makes the path",
@@ -81,8 +77,6 @@ func validateAreaNodes(areas []AreaConfig, parent string) error {
 	return nil
 }
 
-// areaLocation names where a faulty node sits, for a message about a node whose
-// own name cannot be quoted usefully.
 func areaLocation(parent string) string {
 	if parent == "" {
 		return "at the top level"
@@ -118,7 +112,6 @@ func ValidateAreaColor(color string) error {
 	return nil
 }
 
-// joinAreaPath appends name to parent, which is empty at the top level.
 func joinAreaPath(parent, name string) string {
 	if parent == "" {
 		return name
@@ -142,9 +135,8 @@ func appendAreaPaths(paths *[]string, areas []AreaConfig, parent string) {
 	}
 }
 
-// Bounds for List: how many paths it enumerates, and how much of one it repeats.
-// A declared name is file-sourced text up to MaxConfigBytes long, so an unbounded
-// message would let a config decide how much a refusal prints.
+// A declared name is file-sourced text bounded only by MaxConfigBytes; these
+// bound what a message prints.
 const (
 	maxListedAreas     = 20
 	maxListedAreaRunes = 200
@@ -174,8 +166,6 @@ func RenderAreaPath(path string) string {
 	return truncateListedArea(safetext.Strip(path))
 }
 
-// truncateListedArea bounds one echoed path, marking the truncation so a
-// shortened rendering is distinguishable from a complete one.
 func truncateListedArea(path string) string {
 	if utf8.RuneCountInString(path) <= maxListedAreaRunes {
 		return path
@@ -188,19 +178,18 @@ func (a *Areas) Get(path string) *AreaConfig {
 	return findArea(a.Roots(), path)
 }
 
-// Declared reports whether the store declares any areas.
 func (a *Areas) Declared() bool {
 	return len(a.Roots()) > 0
 }
 
-// IsValid reports whether path names a declared area. The empty string does not,
-// so a caller treating an unset `area:` as legal must check for that itself.
+// IsValid reports whether path names a declared area. The empty string does not
+// — check for an unset `area:` separately.
 func (a *Areas) IsValid(path string) bool {
 	return a.Get(path) != nil
 }
 
 // AreaError is an `area:` value the declared vocabulary refuses. Render each
-// field before setting it — all three are file-sourced.
+// field before setting it.
 type AreaError struct {
 	Path string
 
@@ -218,9 +207,7 @@ func (e *AreaError) Error() string {
 	case e.NibID == "":
 		return fmt.Sprintf("invalid area %q: must be one of %s", e.Path, e.Declared)
 	case e.Declared == "":
-		// Only the clear is named. This branch diagnoses a store with no
-		// declared value to put in an `--area`, so prescribing one would name a
-		// command with no satisfiable argument in the very state it reports.
+		// No `--area` here: this store declares no value to put in one.
 		return fmt.Sprintf("invalid area %q: this store declares no areas — if the request set no area, the nib already carries it and every write to that nib is refused until `nibs set %s --clear area` replaces it; otherwise declare an `areas:` block in the store's areas.yml before assigning one",
 			e.Path, e.NibID)
 	default:
@@ -229,9 +216,8 @@ func (e *AreaError) Error() string {
 	}
 }
 
-// ValidateAssignment checks one nib's `area:` value against the declared
-// vocabulary, for a caller that SUPPLIED the value. The empty string passes: an
-// unset area is a normal state.
+// ValidateAssignment checks an `area:` value the caller SUPPLIED against the
+// declared vocabulary. The empty string passes.
 func (a *Areas) ValidateAssignment(path string) error {
 	if path == "" || a.IsValid(path) {
 		return nil
@@ -239,8 +225,8 @@ func (a *Areas) ValidateAssignment(path string) error {
 	return &AreaError{Path: RenderAreaPath(path), Declared: a.declaredList()}
 }
 
-// declaredList renders the vocabulary for a refusal, or the empty string when
-// the store declares none — which is what selects AreaError's no-areas wording.
+// declaredList renders the vocabulary for a refusal, or "" when the store
+// declares none. AreaError's no-areas wording keys on that empty string.
 func (a *Areas) declaredList() string {
 	if !a.Declared() {
 		return ""
@@ -248,10 +234,8 @@ func (a *Areas) declaredList() string {
 	return a.List()
 }
 
-// ValidateStored is ValidateAssignment's counterpart for a write to a nib that
-// ALREADY EXISTS: it re-checks the `area:` the nib holds, which need not have
-// come from the request. It refuses whether or not the store declares a
-// vocabulary, and nibID is what lets the refusal name a runnable escape.
+// ValidateStored re-checks the `area:` a nib ALREADY HOLDS, which need not have
+// come from the request. nibID lets the refusal name the nib to fix.
 func (a *Areas) ValidateStored(nibID, path string) error {
 	if path == "" || a.IsValid(path) {
 		return nil
@@ -259,9 +243,9 @@ func (a *Areas) ValidateStored(nibID, path string) error {
 	return &AreaError{Path: RenderAreaPath(path), Declared: a.declaredList(), NibID: safetext.Strip(nibID)}
 }
 
-// IsWithin reports whether path is ancestor or sits below it — the
-// downward-closed primitive an area filter needs. Over the DECLARED TREE, not
-// the strings: `webhooks` is not within `web`. Both ends must be declared.
+// IsWithin reports whether path is ancestor or sits below it, over the DECLARED
+// TREE rather than the strings: `webhooks` is not within `web`. Returns false
+// unless both ends are declared.
 func (a *Areas) IsWithin(path, ancestor string) bool {
 	if path == "" || ancestor == "" {
 		return false
@@ -280,9 +264,8 @@ func (a *Areas) IsWithin(path, ancestor string) bool {
 	return findArea(node.Children, below) != nil
 }
 
-// findArea descends areas segment by segment, returning the node path names or
-// nil. An empty path, or one with an empty segment, matches nothing: a declared
-// name is never empty.
+// findArea descends segment by segment, returning the node path names or nil. An
+// empty path, or one with an empty segment, matches nothing.
 func findArea(areas []AreaConfig, path string) *AreaConfig {
 	if path == "" {
 		return nil
