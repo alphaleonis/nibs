@@ -88,6 +88,10 @@ type copyNibIDMsg struct {
 	ids []string
 }
 
+// clipboardWriteAll is a variable so tests can make the copy fail on every
+// platform; clipboard.Unsupported only takes effect on Unix.
+var clipboardWriteAll = clipboard.WriteAll
+
 type reorderNibMsg struct {
 	nibID    string
 	afterID  *string
@@ -710,7 +714,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var statusMsg string
 		statusMsgKind := statusOK
 		text := strings.Join(msg.ids, ", ")
-		if err := clipboard.WriteAll(text); err != nil {
+		if err := clipboardWriteAll(text); err != nil {
 			statusMsg = fmt.Sprintf("Failed to copy: %v", err)
 			statusMsgKind = statusWarn
 		} else if len(msg.ids) == 1 {
@@ -725,6 +729,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.list.statusKind = statusMsgKind
 		case viewDetail:
 			a.detail.statusMessage = statusMsg
+			a.detail.statusKind = statusMsgKind
 		}
 
 		return a, nil
