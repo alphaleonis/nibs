@@ -551,6 +551,62 @@ func TestWatcherSameIdSlugRenameNotEvicted(t *testing.T) {
 	}
 }
 
+// TestWatcherSameIdSlugRenameInSubdirectoryNotEvicted is the slug rename above
+// for a nib living in a data/ subdirectory, which Load enrolls: the by-id scan
+// must look where Load looks, or the nib falls through to the genuine-delete
+// path.
+func TestWatcherSameIdSlugRenameInSubdirectoryNotEvicted(t *testing.T) {
+	const nibID = "sb21"
+
+	for _, createFirst := range []bool{false, true} {
+		name := "remove-first"
+		if createFirst {
+			name = "create-first"
+		}
+		t.Run(name, func(t *testing.T) {
+			core, nibsDir, filename := watchingCore(t, nibID)
+
+			subDir := dataPath(nibsDir, "sub")
+			if err := os.MkdirAll(subDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			oldAbs := filepath.Join(subDir, filename)
+			if err := os.Rename(dataPath(nibsDir, filename), oldAbs); err != nil {
+				t.Fatalf("move into subdirectory: %v", err)
+			}
+			if err := core.Load(); err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			wantOld := store.DataDirName + "/sub/" + filename
+			if n, err := core.Get(nibID); err != nil || n.Path != wantOld {
+				t.Fatalf("precondition: Get(%q) = %+v, %v; want Path %q", nibID, n, err, wantOld)
+			}
+
+			newAbs := filepath.Join(subDir, nibID+"--new-slug.md")
+			if err := os.Rename(oldAbs, newAbs); err != nil {
+				t.Fatalf("slug rename: %v", err)
+			}
+
+			setWatching(core)
+			ch, unsub := core.Subscribe()
+			defer unsub()
+
+			driveMove(core, oldAbs, newAbs, createFirst)
+
+			got := collectNibEvents(t, ch, nibID, 150*time.Millisecond)
+			assertNoDeletedFor(t, got, nibID)
+
+			n, err := core.Get(nibID)
+			if err != nil {
+				t.Fatalf("nib evicted from store during slug rename (data loss): Get(%q) = %v", nibID, err)
+			}
+			if want := store.DataDirName + "/sub/" + nibID + "--new-slug.md"; n.Path != want {
+				t.Errorf("stored Path = %q, want %q", n.Path, want)
+			}
+		})
+	}
+}
+
 // TestWatcherSameIdSluglessRenameNotEvicted covers nibs-mccz: a same-id rename
 // that DROPS the slug from a prefixed nib (nibs-x9z2--move-test.md ->
 // nibs-x9z2.md) must NOT evict the nib. Every configured id prefix ends in a
