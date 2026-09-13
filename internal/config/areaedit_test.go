@@ -565,7 +565,7 @@ func TestStoredAreaEditsRefuseAVocabularyTheLoaderCannotRead(t *testing.T) {
     prefix: tnib-
 areas:
     - name: web
-      order: {a: mapping where a string belongs}
+      color: {a: mapping where a string belongs}
       children:
         - name: dashboard
 `
@@ -621,7 +621,7 @@ func TestStoredAreaEditsLeaveAPlainVocabularyAlone(t *testing.T) {
 		t.Fatalf("RemoveStoredArea: %v", err)
 	}
 
-	want := []string{"identity", "api", "web", "web/dashboard", "web/panel"}
+	want := []string{"api", "identity", "web", "web/dashboard", "web/panel"}
 	if got := loadAreaEditConfig(t, storeDir).Paths(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("Paths() = %v, want %v", got, want)
 	}
@@ -1358,11 +1358,7 @@ func TestCreateStoredAreaKeepsEverythingElse(t *testing.T) {
 			t.Errorf("the create wrote the merged read model — %q appeared:\n%s", unwanted, got)
 		}
 	}
-	// A root lands after the last one already declared, so `want` is declaration
-	// order and not alphabetical: Paths() enumerates in the file's own order and
-	// `nibs area list` renders that order, which makes appending the one
-	// placement that leaves every already-declared node where the project put it.
-	want := []string{"auth", "api", "api/webhooks", "web", "web/dashboard", "infra"}
+	want := []string{"api", "api/webhooks", "auth", "infra", "web", "web/dashboard"}
 	if got := loadAreaEditConfig(t, storeDir).Paths(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("Paths() = %v, want %v", got, want)
 	}

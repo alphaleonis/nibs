@@ -124,19 +124,19 @@ func (a *Areas) Save(storeDir string) error {
 	return fsutil.AtomicWriteFile(path, data, perm)
 }
 
-// Equal reports whether two vocabularies declare the same forest, in order. It
-// compares the declared tree alone: two equal vocabularies can still differ in
-// the file they were read from.
+// Equal reports whether two vocabularies declare the same forest, whatever order
+// their files list siblings in. It compares the declared tree alone: two equal
+// vocabularies can still differ in the file they were read from.
 func (a *Areas) Equal(other *Areas) bool {
 	return slices.EqualFunc(a.Roots(), other.Roots(), equalAreaNode)
 }
 
 // equalAreaNode compares every AreaConfig field; extend it when one is added.
+// Both sides come from Roots, so their children are already in one order.
 func equalAreaNode(x, y AreaConfig) bool {
 	return x.Name == y.Name &&
 		x.Description == y.Description &&
 		x.Color == y.Color &&
-		x.Order == y.Order &&
 		slices.EqualFunc(x.Children, y.Children, equalAreaNode)
 }
 

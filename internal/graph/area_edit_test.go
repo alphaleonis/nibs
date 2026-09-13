@@ -41,7 +41,7 @@ func TestRenameAreaRenamesADeclaredArea(t *testing.T) {
 	}
 
 	got := pathsOf(cfg.Areas)
-	want := []string{"platform", "platform/dashboard", "platform/ui", "auth"}
+	want := []string{"auth", "platform", "platform/dashboard", "platform/ui"}
 	if !slices.Equal(got, want) {
 		t.Errorf("areas = %v, want %v", got, want)
 	}
@@ -515,7 +515,7 @@ func TestAreaMutationTicksConfigChanged(t *testing.T) {
 		if got == nil {
 			t.Fatal("the subscription closed instead of delivering the edited vocabulary")
 		}
-		want := []string{"platform", "platform/dashboard", "platform/ui", "auth"}
+		want := []string{"auth", "platform", "platform/dashboard", "platform/ui"}
 		if !slices.Equal(pathsOf(got.Areas), want) {
 			t.Errorf("areas = %v, want %v", pathsOf(got.Areas), want)
 		}

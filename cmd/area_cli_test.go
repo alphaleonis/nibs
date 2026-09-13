@@ -734,7 +734,7 @@ func TestAreaEditsCascadeThroughAreasDeclaredUnderTheLock(t *testing.T) {
 				return runStaleAreaVerb(t, app, areaRenameCmd, runAreaRename, nil, "api", "platform")
 			},
 			wantAreas:      map[string]string{"tnib-b011": "platform", "tnib-f011": "platform/hooks"},
-			wantVocabulary: []string{"auth", "platform", "platform/hooks", "web", "web/dashboard", "infra", "docs"},
+			wantVocabulary: []string{"auth", "docs", "infra", "platform", "platform/hooks", "web", "web/dashboard"},
 		},
 		{
 			name: "rm --unassign",
@@ -742,7 +742,7 @@ func TestAreaEditsCascadeThroughAreasDeclaredUnderTheLock(t *testing.T) {
 				return runStaleAreaVerb(t, app, areaRmCmd, runAreaRm, map[string]string{"unassign": "true"}, "api")
 			},
 			wantAreas:      map[string]string{"tnib-b011": "", "tnib-f011": ""},
-			wantVocabulary: []string{"auth", "web", "web/dashboard", "infra", "docs"},
+			wantVocabulary: []string{"auth", "docs", "infra", "web", "web/dashboard"},
 		},
 	}
 

@@ -1,7 +1,9 @@
 package config
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -23,25 +25,49 @@ type AreaConfig struct {
 	// checked against any known set.
 	Color string `yaml:"color,omitempty"`
 
-	// Not a sort key: Paths enumerates in declaration order.
-	Order    string       `yaml:"order,omitempty"`
 	Children []AreaConfig `yaml:"children,omitempty"`
 }
 
 // Validate returns the first fault in the declared vocabulary. An absent or
 // empty vocabulary is valid.
 func (a *Areas) Validate() error {
-	return validateAreaNodes(a.Roots(), "")
+	// File order, so the "area #N" a fault names counts entries as the file does.
+	return validateAreaNodes(a.fileNodes(), "")
 }
 
 // Roots returns the declared forest's top-level nodes, each carrying its own
-// children. Read through this rather than the Nodes field — the receiver may be
-// nil.
+// children, with every set of siblings sorted by name. Where a node sits in
+// areas.yml carries no meaning; alphabetical is what keeps a name findable as the
+// vocabulary grows. The result is a copy. Read through this rather than the Nodes
+// field — the receiver may be nil.
 func (a *Areas) Roots() []AreaConfig {
+	return sortedAreaNodes(a.fileNodes())
+}
+
+func (a *Areas) fileNodes() []AreaConfig {
 	if a == nil {
 		return nil
 	}
 	return a.Nodes
+}
+
+func sortedAreaNodes(nodes []AreaConfig) []AreaConfig {
+	if len(nodes) == 0 {
+		return nil
+	}
+	sorted := slices.Clone(nodes)
+	for i := range sorted {
+		sorted[i].Children = sortedAreaNodes(sorted[i].Children)
+	}
+	slices.SortFunc(sorted, func(x, y AreaConfig) int {
+		// Case-insensitive first; the byte comparison only orders names that
+		// differ in case alone, so the order is total.
+		return cmp.Or(
+			strings.Compare(strings.ToLower(x.Name), strings.ToLower(y.Name)),
+			strings.Compare(x.Name, y.Name),
+		)
+	})
+	return sorted
 }
 
 // parent is the path these areas hang under, empty at the top level.
@@ -119,8 +145,8 @@ func joinAreaPath(parent, name string) string {
 	return parent + AreaPathSeparator + name
 }
 
-// Paths returns every declared area path in DECLARATION order, a parent
-// immediately before the subtree it heads.
+// Paths returns every declared area path in Roots' order: siblings by name, a
+// parent immediately before the subtree it heads.
 func (a *Areas) Paths() []string {
 	var paths []string
 	appendAreaPaths(&paths, a.Roots(), "")
@@ -175,11 +201,11 @@ func truncateListedArea(path string) string {
 
 // Get returns the declared node at path (`web/dashboard`), or nil.
 func (a *Areas) Get(path string) *AreaConfig {
-	return findArea(a.Roots(), path)
+	return findArea(a.fileNodes(), path)
 }
 
 func (a *Areas) Declared() bool {
-	return len(a.Roots()) > 0
+	return len(a.fileNodes()) > 0
 }
 
 // IsValid reports whether path names a declared area. The empty string does not

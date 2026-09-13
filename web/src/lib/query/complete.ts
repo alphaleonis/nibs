@@ -89,7 +89,7 @@ export interface Completion {
  * - `tags:partial` → matching entries from `availableTags` (substring);
  * - `has:` / `no:` / `is:` → the existence dimensions that word accepts (substring);
  * - `area:` / `area:partial` → the declared area paths the grammar can carry, in
- *   declaration order (case-insensitive substring), from the vocabulary in
+ *   the vocabulary's own order (case-insensitive substring), from the vocabulary in
  *   `options.areas` — paths with interior whitespace are withheld, since there is
  *   no quoting to insert them with (see the `AREA_FIELD` branch below);
  * - an unknown field (`title:`) → `null`;

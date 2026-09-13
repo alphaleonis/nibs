@@ -300,7 +300,7 @@ const NO_AREA_KEY: LeftoverKey = "/__no_area__";
 
 /**
  * The declared forest of an areas vocabulary, read off the DEPTH RUNS of the
- * flat list `sections()` answers: declaration order, a parent immediately before
+ * flat list `sections()` answers: siblings by name, a parent immediately before
  * its subtree, depth on every node. That is the same contract `subtreeOf`
  * reads, so the two derive the tree from one statement of it.
  *

@@ -1121,7 +1121,7 @@ func TestCheckReportsUndeclaredArea(t *testing.T) {
 		}
 		for _, want := range []string{
 			"chk-arst1", "data/chk-arst1--stranded.md", `"retired/thing"`,
-			"web, web/ui, auth",
+			"auth, web, web/ui",
 		} {
 			if !strings.Contains(out, want) {
 				t.Errorf("report should contain %q, got:\n%s", want, out)
@@ -1159,7 +1159,7 @@ func TestCheckReportsUndeclaredArea(t *testing.T) {
 			NibID:    "chk-arst1",
 			Path:     "data/chk-arst1--stranded.md",
 			Area:     "retired/thing",
-			Declared: "web, web/ui, auth",
+			Declared: "auth, web, web/ui",
 		}
 		if !reflect.DeepEqual(got.NibIssues.UndeclaredAreas[0], want) {
 			t.Errorf("undeclared_areas[0] = %+v, want %+v", got.NibIssues.UndeclaredAreas[0], want)

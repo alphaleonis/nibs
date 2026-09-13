@@ -31,7 +31,7 @@ type Config {
   "Configured nib ID prefix (e.g., 'nibs-', 'myproj-'). Empty if unset."
   prefix: String!
   """
-  The declared areas, FLATTENED in declaration order — a parent immediately
+  The declared areas, FLATTENED with siblings sorted by name — a parent immediately
   before the subtree it heads (config.Areas.Paths' order). That ordering is the
   CONTRACT, not an incidental: a node's subtree is the maximal run of following
   entries with a greater `depth`, which is how a client answers the
@@ -259,7 +259,7 @@ type Mutation {
   them refused for it.
 
   Returns the whole Config rather than the edited node. `Config.areas` is
-  flattened in declaration order and a subtree is the maximal following run at
+  flattened with siblings sorted by name and a subtree is the maximal following run at
   greater `depth`, so a client cannot splice one node into its copy correctly.
   It is also the shape `configChanged` delivers, so a client re-renders from one
   shape whether the edit was its own or another process's.

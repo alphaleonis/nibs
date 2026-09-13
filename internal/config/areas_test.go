@@ -151,7 +151,11 @@ func TestLoadAcceptsAbsentOrEmptyAreas(t *testing.T) {
 	}
 }
 
-func TestAreaPathsEnumeratesInDeclarationOrder(t *testing.T) {
+// TestAreaPathsEnumerateSiblingsByName pins the order every surface renders a
+// vocabulary in: siblings by name, each parent immediately before the subtree it
+// heads. The file declares its roots and one set of children out of that order,
+// so an enumeration in file order fails here.
+func TestAreaPathsEnumerateSiblingsByName(t *testing.T) {
 	dir := writeStoreAreas(t, sampleAreasConfig)
 	cfg, err := LoadAreasFromStore(dir)
 	if err != nil {
@@ -159,10 +163,10 @@ func TestAreaPathsEnumeratesInDeclarationOrder(t *testing.T) {
 	}
 
 	want := []string{
+		"api", "api/v2",
+		"auth",
 		"web", "web/dashboard", "web/settings",
 		"webhooks",
-		"auth",
-		"api", "api/v2",
 	}
 	if got := cfg.Paths(); !slices.Equal(got, want) {
 		t.Errorf("Paths() = %v, want %v", got, want)
@@ -170,6 +174,18 @@ func TestAreaPathsEnumeratesInDeclarationOrder(t *testing.T) {
 	if got, want := cfg.List(), strings.Join(want, ", "); got != want {
 		t.Errorf("List() = %q, want %q", got, want)
 	}
+
+	t.Run("children and letter case", func(t *testing.T) {
+		dir := writeStoreAreas(t, "areas:\n    - name: web\n      children:\n        - name: settings\n        - name: Dashboard\n    - name: Infra\n    - name: api\n")
+		cfg, err := LoadAreasFromStore(dir)
+		if err != nil {
+			t.Fatalf("LoadFromStore: %v", err)
+		}
+		want := []string{"api", "Infra", "web", "web/Dashboard", "web/settings"}
+		if got := cfg.Paths(); !slices.Equal(got, want) {
+			t.Errorf("Paths() = %v, want %v", got, want)
+		}
+	})
 }
 
 func TestGetAreaResolvesDeclaredPaths(t *testing.T) {
@@ -260,9 +276,8 @@ func TestAreasSaveRoundTrips(t *testing.T) {
 			Name:        "web",
 			Description: "The browser client",
 			Color:       "blue",
-			Order:       "a",
 			Children: []AreaConfig{
-				{Name: "dashboard", Description: "The landing dashboard", Order: "a0"},
+				{Name: "dashboard", Description: "The landing dashboard"},
 			},
 		},
 		{Name: "auth", Description: "Sign-in and sessions"},
@@ -285,13 +300,13 @@ func TestAreasSaveRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadAreasFromStore: %v", err)
 	}
-	wantPaths := []string{"web", "web/dashboard", "auth"}
+	wantPaths := []string{"auth", "web", "web/dashboard"}
 	if paths := got.Paths(); !slices.Equal(paths, wantPaths) {
 		t.Fatalf("Paths() = %v, want %v", paths, wantPaths)
 	}
 	dashboard := got.Get("web/dashboard")
-	if dashboard.Description != "The landing dashboard" || dashboard.Order != "a0" {
-		t.Errorf("web/dashboard = %+v, want the description and order that were saved", *dashboard)
+	if dashboard.Description != "The landing dashboard" {
+		t.Errorf("web/dashboard = %+v, want the description that was saved", *dashboard)
 	}
 }
 

@@ -22,9 +22,9 @@ func configResultWithAreas(reader NibReader, areas *config.Areas) *model.Config 
 	}
 }
 
-// flattenAreas walks the declared vocabulary into the flat, declaration-ordered
-// list `Config.areas` is specified as: a parent immediately before the subtree
-// it heads, each node carrying its depth from a root.
+// flattenAreas walks the declared vocabulary into the flat list `Config.areas`
+// is specified as: siblings by name (config.Areas.Roots), a parent immediately
+// before the subtree it heads, each node carrying its depth from a root.
 //
 // Emit a node BEFORE recursing into its children. The wire shape carries no
 // `children` field, so a client reads a node's subtree as the maximal run of

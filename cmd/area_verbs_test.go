@@ -83,11 +83,11 @@ func storedAreas(t *testing.T, nibsPath string) map[string]string {
 	return areas
 }
 
-// TestAreaListPrintsTheDeclaredTree is the listing verb's whole job: an agent
+// TestAreaListPrintsTheTreeSortedByName is the listing verb's whole job: an agent
 // has to be able to read the vocabulary to place work in it, so every declared
 // node appears, nested, with the description that says what belongs there — and
 // with the FULL path, which is the value `--area` takes.
-func TestAreaListPrintsTheDeclaredTree(t *testing.T) {
+func TestAreaListPrintsTheTreeSortedByName(t *testing.T) {
 	nibsPath := setupAreaVerbTest(t)
 
 	out, err := runArea(t, nibsPath, "list")
@@ -105,7 +105,8 @@ func TestAreaListPrintsTheDeclaredTree(t *testing.T) {
 		}
 	}
 
-	// Declaration order, and a child indented under its parent.
+	// Siblings by name — the fixture's file declares them in another order — and
+	// a child indented under its parent.
 	var order []string
 	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -118,9 +119,9 @@ func TestAreaListPrintsTheDeclaredTree(t *testing.T) {
 			t.Errorf("the nested area %q is not indented under its parent:\n%s", path, out)
 		}
 	}
-	want := []string{"auth", "api", "api/webhooks", "web", "web/dashboard", "infra", "docs"}
+	want := []string{"api", "api/webhooks", "auth", "docs", "infra", "web", "web/dashboard"}
 	if !slices.Equal(order, want) {
-		t.Errorf("area list printed %v, want the declaration order %v", order, want)
+		t.Errorf("area list printed %v, want siblings by name %v", order, want)
 	}
 }
 
@@ -149,8 +150,8 @@ func TestAreaListJSONCarriesTheTree(t *testing.T) {
 	if len(payload.Areas) != 5 {
 		t.Fatalf("got %d roots, want 5: %s", len(payload.Areas), out)
 	}
-	if payload.Areas[2].Path != "web" || len(payload.Areas[2].Children) != 1 ||
-		payload.Areas[2].Children[0].Path != "web/dashboard" {
+	if payload.Areas[4].Path != "web" || len(payload.Areas[4].Children) != 1 ||
+		payload.Areas[4].Children[0].Path != "web/dashboard" {
 		t.Errorf("the nesting did not survive: %s", out)
 	}
 	if payload.Areas[0].Description == "" {
@@ -188,7 +189,7 @@ func TestAreaRenameCascadesTheWholeSubtree(t *testing.T) {
 	}
 
 	if got, want := areaVocabulary(t, nibsPath),
-		[]string{"auth", "api", "api/webhooks", "frontend", "frontend/dashboard", "infra", "docs"}; !slices.Equal(got, want) {
+		[]string{"api", "api/webhooks", "auth", "docs", "frontend", "frontend/dashboard", "infra"}; !slices.Equal(got, want) {
 		t.Errorf("vocabulary = %v, want %v", got, want)
 	}
 	after := storedAreas(t, nibsPath)
@@ -455,7 +456,7 @@ func TestAreaRetireMovesMembers(t *testing.T) {
 		t.Fatalf("area rm --move-to: %v\nout: %s", err, out)
 	}
 	if got, want := areaVocabulary(t, nibsPath),
-		[]string{"auth", "api", "api/webhooks", "infra", "docs"}; !slices.Equal(got, want) {
+		[]string{"api", "api/webhooks", "auth", "docs", "infra"}; !slices.Equal(got, want) {
 		t.Errorf("vocabulary = %v, want %v", got, want)
 	}
 	// tnib-f008 was assigned to web/dashboard: it lands on api, not api/dashboard.
@@ -692,7 +693,7 @@ func TestAreaRenamePartialCascadeIsRerunnable(t *testing.T) {
 		t.Fatalf("the rerun the message prescribes must finish the job: %v\nout: %s", err, out)
 	}
 	if got, want := areaVocabulary(t, nibsPath),
-		[]string{"auth", "api", "api/webhooks", "frontend", "frontend/dashboard", "infra", "docs"}; !slices.Equal(got, want) {
+		[]string{"api", "api/webhooks", "auth", "docs", "frontend", "frontend/dashboard", "infra"}; !slices.Equal(got, want) {
 		t.Errorf("vocabulary = %v, want %v", got, want)
 	}
 	areas = storedAreas(t, nibsPath)
@@ -728,7 +729,7 @@ func TestAreaRenameVocabularyWriteFailureIsRerunnable(t *testing.T) {
 		t.Fatalf("the rerun the message prescribes must finish the job: %v\nout: %s", err, out)
 	}
 	if got, want := areaVocabulary(t, nibsPath),
-		[]string{"auth", "api", "api/webhooks", "frontend", "frontend/dashboard", "infra", "docs"}; !slices.Equal(got, want) {
+		[]string{"api", "api/webhooks", "auth", "docs", "frontend", "frontend/dashboard", "infra"}; !slices.Equal(got, want) {
 		t.Errorf("vocabulary = %v, want %v", got, want)
 	}
 }

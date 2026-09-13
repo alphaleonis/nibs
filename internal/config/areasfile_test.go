@@ -38,12 +38,34 @@ func TestLoadAreasFromStoreReadsTheAreasFile(t *testing.T) {
 		t.Fatalf("LoadAreasFromStore: %v", err)
 	}
 
-	want := []string{"web", "web/dashboard", "auth"}
+	want := []string{"auth", "web", "web/dashboard"}
 	if got := areas.Paths(); !slices.Equal(got, want) {
 		t.Errorf("Paths() = %v, want %v", got, want)
 	}
 	if !areas.Declared() {
 		t.Error("Declared() = false, want true")
+	}
+}
+
+// A reordered areas.yml declares the same vocabulary, so a reload of it must not
+// count as a change — the watcher would otherwise wake every browser over a
+// rendering that comes out identical.
+func TestAreasEqualIgnoresFileOrder(t *testing.T) {
+	load := func(body string) *Areas {
+		t.Helper()
+		areas, err := LoadAreasFromStore(writeStoreAreas(t, body))
+		if err != nil {
+			t.Fatalf("LoadAreasFromStore: %v", err)
+		}
+		return areas
+	}
+	declared := load("areas:\n    - name: web\n      children:\n        - name: settings\n        - name: dashboard\n    - name: api\n")
+
+	if reordered := load("areas:\n    - name: api\n    - name: web\n      children:\n        - name: dashboard\n        - name: settings\n"); !declared.Equal(reordered) {
+		t.Errorf("Equal = false for vocabularies that differ only in file order: %v vs %v", declared.Paths(), reordered.Paths())
+	}
+	if changed := load("areas:\n    - name: api\n    - name: web\n      children:\n        - name: dashboard\n"); declared.Equal(changed) {
+		t.Errorf("Equal = true for a vocabulary that dropped web/settings: %v", changed.Paths())
 	}
 }
 

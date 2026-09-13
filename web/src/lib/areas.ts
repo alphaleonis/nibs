@@ -53,7 +53,7 @@ export interface AreaVocabulary {
    * project, and they earn different remedies.
    */
   readonly status: "loading" | "none" | "ready" | "unavailable";
-  /** Every declared area in DECLARATION order. */
+  /** Every declared area in the server's order: siblings by name, parents first. */
   sections(): readonly AreaNode[];
   /** What a nib's stored `area:` resolves to, or null when it names no declared
    *  area (`config.GetArea`). Stored values arrive verbatim. */
@@ -63,7 +63,7 @@ export interface AreaVocabulary {
   /** The downward closure, `path` included — `config.IsAreaWithin` read forwards.
    *  Empty when `path` names no declared area. */
   subtreeOf(path: string): readonly AreaNode[];
-  /** What completes `area:<partial>` — declaration order, case-insensitive substring. */
+  /** What completes `area:<partial>` — `sections()` order, case-insensitive substring. */
   completions(partial: string): readonly string[];
 }
 
@@ -94,7 +94,7 @@ const EMPTY_PATHS: readonly string[] = Object.freeze([]);
 /**
  * Build a vocabulary from the flat list the server sends.
  *
- * The list is in DECLARATION order with a parent immediately before the subtree
+ * The list has siblings sorted by name and a parent immediately before the subtree
  * it heads, and that ordering is the contract `subtreeOf` reads: a node's
  * subtree is the maximal run of following entries with a greater `depth`. The
  * client therefore never restates `IsAreaWithin`'s segment descent, and

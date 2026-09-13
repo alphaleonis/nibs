@@ -143,7 +143,6 @@ type areaListNode struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
 	Color       string         `json:"color,omitempty"`
-	Order       string         `json:"order,omitempty"`
 	Children    []areaListNode `json:"children,omitempty"`
 }
 
@@ -212,7 +211,6 @@ func areaListNodes(areas []config.AreaConfig, parent string) []areaListNode {
 			Name:        area.Name,
 			Description: area.Description,
 			Color:       area.Color,
-			Order:       area.Order,
 			Children:    areaListNodes(area.Children, path),
 		})
 	}
