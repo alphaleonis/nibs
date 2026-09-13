@@ -1,26 +1,12 @@
-// Command verify checks release signatures against the public keys compiled
-// into this repository's binaries.
-//
-// It exists because producing a signature proves nothing on its own. The signer
-// signs with whatever private key is in NIBS_SIGNING_KEY; nothing else in the
-// release pipeline checks that the matching public key is one of the keys
-// binaries actually carry. Without that check a mismatched key still produces a
-// well-formed signature, the release goes green, and the failure only surfaces
-// once `nibs upgrade` starts requiring signatures — at which point every
-// installed binary refuses to upgrade and has to be reinstalled by hand. That is
-// precisely the outcome the staged rollout exists to avoid, so the staging is
-// only meaningful with this check in place.
-//
-// Two modes, used at two points in the release:
+// Command verify checks release signatures against the public keys compiled into
+// nibs, so a release signed with an untrusted key fails the release workflow.
 //
 //	-check-key   Sign a canary in memory with NIBS_SIGNING_KEY and verify it
-//	             against the embedded keys. Proves the secret corresponds to a
-//	             key binaries trust. Runs BEFORE goreleaser, so a mismatch
-//	             fails the release before anything is tagged or published.
+//	             against the embedded keys. The release workflow runs it before
+//	             goreleaser.
 //
-//	-in / -sig   Verify a real artifact and its detached signature. Runs after
-//	             goreleaser, covering what -check-key cannot: that the file
-//	             actually published is the one that got signed.
+//	-in / -sig   Verify a file and its detached signature. The release workflow
+//	             runs it on checksums.txt after goreleaser.
 //
 // Neither mode prints key material, and -check-key never writes the key to disk.
 package main
@@ -39,8 +25,7 @@ import (
 
 const keyEnv = "NIBS_SIGNING_KEY"
 
-// canary is the message signed by -check-key. Its content is irrelevant — only
-// that signing and verification agree on it.
+// canary is the message -check-key signs; its content is irrelevant.
 const canary = "nibs release signing key correspondence check"
 
 func main() {
@@ -113,9 +98,7 @@ func runVerifyFile(v *signing.Verifier, in, sig string) error {
 	return nil
 }
 
-// parsePrivateKey mirrors the signer's parser. Kept separate rather than shared
-// so the check reads the secret exactly as documented, independent of any later
-// change to how the signer loads it.
+// parsePrivateKey applies the same checks as cmd/sign's parser; keep them in step.
 func parsePrivateKey(pemBytes []byte) (ed25519.PrivateKey, error) {
 	block, _ := pem.Decode(pemBytes)
 	if block == nil {

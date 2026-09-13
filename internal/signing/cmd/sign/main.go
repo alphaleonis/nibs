@@ -1,14 +1,9 @@
-// Command sign produces a detached Ed25519 signature over a file.
+// Command sign writes a detached Ed25519 signature over a file. GoReleaser runs it
+// on checksums.txt, which covers the archives; `nibs upgrade` checks that chain
+// (cmd/upgrade_validator.go).
 //
-// GoReleaser invokes it for `artifacts: checksum`, so the signature covers
-// checksums.txt and the checksum file in turn covers the archives. That
-// composition is what internal/signing verifies on the way back in.
-//
-// The private key arrives as PEM in NIBS_SIGNING_KEY rather than as a path or a
-// flag: an argument is visible in the process list to every other process on
-// the machine, and a file would have to be written to disk and cleaned up. The
-// program prints nothing derived from the key, and every error message is
-// written to describe the shape of the problem without quoting key material.
+// The private key comes as PEM in NIBS_SIGNING_KEY, never as a flag or a file.
+// Print nothing derived from it, including in errors.
 package main
 
 import (
@@ -39,9 +34,7 @@ func run(in, out string) error {
 		return errors.New("both -in and -out are required")
 	}
 
-	// Absent or empty means the release would otherwise be published unsigned,
-	// which is worse than failing: a binary that requires a signature would
-	// refuse to upgrade to it, and the cause would surface much later.
+	// Fail rather than publish an unsigned release, which `nibs upgrade` cannot see.
 	keyPEM := os.Getenv(keyEnv)
 	if keyPEM == "" {
 		return fmt.Errorf("%s is unset or empty. It must hold the PEM-encoded Ed25519 private key.\n"+
