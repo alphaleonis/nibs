@@ -90,7 +90,9 @@ func TestRolePredicates(t *testing.T) {
 		{RoleDone, true, true, false},
 		{RoleDropped, true, true, false},
 	}
+	classified := make(map[Role]bool, len(cases))
 	for _, c := range cases {
+		classified[c.role] = true
 		if got := c.role.Closed(); got != c.closed {
 			t.Errorf("%v.Closed() = %v, want %v", c.role, got, c.closed)
 		}
@@ -99,6 +101,13 @@ func TestRolePredicates(t *testing.T) {
 		}
 		if got := c.role.Startable(); got != c.startable {
 			t.Errorf("%v.Startable() = %v, want %v", c.role, got, c.startable)
+		}
+	}
+	// A role the predicates do not name answers all three as RoleOpen does, so a
+	// role a status carries must have its answers decided in this table.
+	for _, s := range DefaultStatuses {
+		if !classified[s.Role] {
+			t.Errorf("status %q carries role %v, which this table does not classify — decide its three predicates here and in role.go", s.Name, s.Role)
 		}
 	}
 }
