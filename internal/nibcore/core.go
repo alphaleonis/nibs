@@ -193,12 +193,15 @@ type Core struct {
 	// Warning sink for non-fatal notes, defaulting to stderr through
 	// safetext.Writer: these warnings interpolate FILENAMES, which on Linux are
 	// arbitrary bytes. Keep the boundary on the writer, not at the call sites.
-	warnWriter *safetext.Writer
+	//
+	// An atomic pointer for the same reason as c.areas: the watcher reads it
+	// off any lock SetWarnWriter could take, and a swap publishes a new Writer.
+	warnWriter atomic.Pointer[safetext.Writer]
 }
 
 // New creates a new Core with the given root path and configuration.
 func New(root string, cfg *config.Config) *Core {
-	return &Core{
+	c := &Core{
 		root:              root,
 		layout:            store.NewLayout(root),
 		config:            cfg,
@@ -208,8 +211,9 @@ func New(root string, cfg *config.Config) *Core {
 		subscribers:       make(map[uint64]*subscription),
 		signalSubscribers: make(map[uint64]chan struct{}),
 		areasSubscribers:  make(map[uint64]chan struct{}),
-		warnWriter:        safetext.NewWriter(os.Stderr),
 	}
+	c.warnWriter.Store(safetext.NewWriter(os.Stderr))
+	return c
 }
 
 // acquireWriteLock takes the cross-process advisory write lock for the whole
@@ -240,12 +244,13 @@ func (c *Core) acquireWriteLockContext(ctx context.Context) (func() error, error
 
 // SetWarnWriter sets the writer for warning messages; nil disables warnings.
 // The replacement is wrapped in the same safetext boundary the default carries.
+// Safe to call while the store is being watched.
 func (c *Core) SetWarnWriter(w io.Writer) {
 	if w == nil {
-		c.warnWriter = nil
+		c.warnWriter.Store(nil)
 		return
 	}
-	c.warnWriter = safetext.NewWriter(w)
+	c.warnWriter.Store(safetext.NewWriter(w))
 }
 
 // Warn reports a non-fatal note about this store to the same sink, through the
@@ -319,9 +324,9 @@ func (w *warnBudget) close() {
 // any incomplete rune the safetext boundary holds, so no warning ends one byte
 // short of what Fprintf reported written.
 func (c *Core) logWarn(format string, args ...any) {
-	if c.warnWriter != nil {
-		_, _ = fmt.Fprintf(c.warnWriter, "warning: "+format+"\n", args...)
-		_ = c.warnWriter.Flush()
+	if w := c.warnWriter.Load(); w != nil {
+		_, _ = fmt.Fprintf(w, "warning: "+format+"\n", args...)
+		_ = w.Flush()
 	}
 }
 

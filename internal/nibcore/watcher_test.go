@@ -1108,3 +1108,28 @@ func TestWatcherObservesExternalAtomicWrite(t *testing.T) {
 		t.Errorf("stored Title = %q, want %q — the watcher never applied the external edit", got.Title, newTitle)
 	}
 }
+
+// TestSetWarnWriterWhileWatching swaps the warn writer while the watcher is
+// about to warn about an arriving file. It asserts only that the warning
+// arrives; what fails on an unsynchronized swap is the -race lane.
+//
+// The file is written BEFORE the swapping starts: the race detector treats a
+// file write as preceding every later file read, so a swap made before the
+// write would be ordered ahead of the watcher's read and go unreported.
+func TestSetWarnWriterWhileWatching(t *testing.T) {
+	core, nibsDir := setupTestCore(t)
+	warnings := &syncBuffer{}
+	core.SetWarnWriter(warnings)
+	if err := core.StartWatching(); err != nil {
+		t.Fatalf("StartWatching() error = %v", err)
+	}
+	defer func() { _ = core.StopWatching() }()
+
+	if err := os.WriteFile(filepath.Join(storeData(t, nibsDir), "tnib-bad.md"), []byte("not a nib\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the watcher's warning about the unparseable file", func() bool {
+		core.SetWarnWriter(warnings)
+		return strings.Contains(warnings.String(), "failed to load nib")
+	})
+}
