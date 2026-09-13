@@ -149,6 +149,37 @@ func TestRenderBodyKeepsFirstLineIndent(t *testing.T) {
 	}
 }
 
+func TestMarkdownBodyWrapsToThePaneWidth(t *testing.T) {
+	body := strings.Repeat("lorem ipsum dolor sit amet ", 12)
+	b := &nib.Nib{ID: "nibs-test", Title: "Wrap", Status: "todo", Type: "task", Body: body}
+
+	for _, width := range []int{50, 100, 160} {
+		t.Run(fmt.Sprintf("detail at %d", width), func(t *testing.T) {
+			m := newDetailModel(b, &StubBackend{Nibs: map[string]*nib.Nib{b.ID: b}}, config.Default(), width, 40)
+			vpWidth := width - 4
+			out := m.renderBody(vpWidth)
+			assertLinesFit(t, out, vpWidth)
+			if width > 80 && lipgloss.Height(out) >= lipgloss.Height(m.renderBody(50)) {
+				t.Errorf("body at %d cells is as tall as at 50: it is not using the wider pane", vpWidth)
+			}
+		})
+		t.Run(fmt.Sprintf("preview at %d", width), func(t *testing.T) {
+			p := newPreviewModel(b, width, 40)
+			assertLinesFit(t, p.renderBody(), width-4)
+		})
+	}
+}
+
+func assertLinesFit(t *testing.T, s string, width int) {
+	t.Helper()
+	for _, line := range strings.Split(s, "\n") {
+		if w := lipgloss.Width(line); w > width {
+			t.Errorf("line is %d cells wide, pane holds %d: %q", w, width, stripAnsi(line))
+			return
+		}
+	}
+}
+
 // detailScrollPctRe reads the percentage off a painted frame. The footer's help
 // row is the frame's last line and the percentage is the first thing on it, so
 // the last match is the one the reader sees.

@@ -19,22 +19,28 @@ import (
 	"github.com/alphaleonis/nibs/internal/ui"
 )
 
-// glamourRenderer is built once and wraps at glamour's default width, not the
-// terminal's.
+// glamourRenderers caches one renderer per wrap width: a renderer's width is
+// fixed at construction, and the preview pane renders on every frame.
 var (
-	glamourRenderer     *glamour.TermRenderer
-	glamourRendererOnce sync.Once
+	glamourRenderers   = map[int]*glamour.TermRenderer{}
+	glamourRenderersMu sync.Mutex
 )
 
-func getGlamourRenderer() *glamour.TermRenderer {
-	glamourRendererOnce.Do(func() {
-		var err error
-		glamourRenderer, err = glamour.NewTermRenderer(glamour.WithStylePath("dark"))
-		if err != nil {
-			glamourRenderer = nil
-		}
-	})
-	return glamourRenderer
+// getGlamourRenderer returns a renderer that wraps at width cells, margins
+// included, or nil when one cannot be built.
+func getGlamourRenderer(width int) *glamour.TermRenderer {
+	width = max(1, width)
+	glamourRenderersMu.Lock()
+	defer glamourRenderersMu.Unlock()
+	if r, ok := glamourRenderers[width]; ok {
+		return r
+	}
+	r, err := glamour.NewTermRenderer(glamour.WithStylePath("dark"), glamour.WithWordWrap(width))
+	if err != nil {
+		r = nil
+	}
+	glamourRenderers[width] = r
+	return r
 }
 
 // backToListMsg returns to the previous detail view, or to the list when there
@@ -773,7 +779,7 @@ func compareNibsByStatusPriorityAndType(a, b *nib.Nib, statusNames, typeNames []
 	return strings.ToLower(a.Title) < strings.ToLower(b.Title)
 }
 
-func (m detailModel) renderBody(_ int) string {
+func (m detailModel) renderBody(width int) string {
 	// TrimSpace, not == "": Parse keeps a body of only blank lines as-is, and
 	// glamour renders it to nothing.
 	if strings.TrimSpace(m.nib.Body) == "" {
@@ -783,7 +789,7 @@ func (m detailModel) renderBody(_ int) string {
 			Render("No description")
 	}
 
-	renderer := getGlamourRenderer()
+	renderer := getGlamourRenderer(width)
 	if renderer == nil {
 		return m.nib.Body
 	}
