@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"golang.org/x/mod/semver"
+
+	"github.com/alphaleonis/nibs/internal/fsutil"
 )
 
 // defaultCooldown is how long a cached result is trusted before the next
@@ -169,23 +171,7 @@ func (c *Checker) writeCache(s cacheState) {
 	if err != nil {
 		return
 	}
-	tmp, err := os.CreateTemp(c.cacheDir, "update-check-*.tmp")
-	if err != nil {
-		return
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-		return
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return
-	}
-	if err := os.Rename(tmpName, c.cachePath()); err != nil {
-		_ = os.Remove(tmpName)
-	}
+	_ = fsutil.AtomicWriteFile(c.cachePath(), data, 0o644)
 }
 
 // isNewer reports whether latest is a strictly newer semantic version than
