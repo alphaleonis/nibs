@@ -9,10 +9,8 @@ import (
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
-// NibRef is a lightweight reference to a nib for JSON output.
-// It decouples the context JSON contract from the full nib.Nib shape.
-// ID/Title/Status are always present; Type and Estimate may be absent
-// for untyped/unestimated nibs (matching the nib data model).
+// NibRef is the context JSON's reference to a nib. Type is always the effective
+// type; Estimate is omitted when unset.
 type NibRef struct {
 	ID       string `json:"id"`
 	Title    string `json:"title"`
@@ -21,8 +19,8 @@ type NibRef struct {
 	Estimate string `json:"estimate,omitempty"`
 }
 
-// ContainerSummary is a lightweight summary of a milestone or root container
-// for the no-arg overview mode.
+// ContainerSummary is an open milestone and its active phase, if any, for
+// overview mode.
 type ContainerSummary struct {
 	NibRef
 	ActivePhase *NibRef `json:"active_phase,omitempty"`
@@ -39,23 +37,15 @@ type Summary struct {
 	Containers  []*ContainerSummary `json:"containers,omitempty"`
 }
 
-// BuildSummary constructs a context summary for a specific nib and its descendants.
-// If rootID is non-empty, scopes to that nib's descendants (works for any type).
-// If empty, summarizes all active work with a warning.
-//
-// cfg supplies the closed-status definition (Config.IsClosedStatus) for the
-// active-milestone filter below. The status literals here are not config-derived
-// on purpose: the epic/task selectors match "in-progress"/"todo" — single
-// statuses a group predicate cannot single out.
+// BuildSummary summarizes the membership of rootID, or, when rootID is "", all
+// in-progress leaf work and the open milestones. "in-progress" and "todo" are
+// matched literally; cfg decides only which milestones are closed.
 func BuildSummary(allNibs []*nib.Nib, rootID string, cfg *config.Config) Summary {
 	return BuildSummaryWithView(allNibs, membership.Compute(allNibs), rootID, cfg)
 }
 
-// BuildSummaryWithView is BuildSummary for a caller that already computed the
-// membership view over the same slice, so the summary and the rollups the
-// caller derives from that same view share one Compute rather than taking one
-// per layer. The view MUST be built over allNibs; two different slices here
-// would let the summary and its rollups disagree about the store.
+// BuildSummaryWithView is BuildSummary over a view the caller already computed.
+// Build view from allNibs.
 func BuildSummaryWithView(allNibs []*nib.Nib, view *membership.View, rootID string, cfg *config.Config) Summary {
 	byID := indexByID(allNibs)
 
@@ -65,12 +55,10 @@ func BuildSummaryWithView(allNibs []*nib.Nib, view *membership.View, rootID stri
 	}
 
 	if rootID == "" {
-		// Overview mode: summarize active milestones and all leaf work.
 		active := filterByStatusAndLeaf(allNibs, "in-progress")
 		nib.SortByOrder(active)
 		sum.ActiveTasks = toNibRefs(active)
 
-		// Build per-milestone container summaries for active milestones
 		var milestones []*nib.Nib
 		for _, n := range view.Milestones() {
 			if !cfg.IsClosedStatus(n.Status) {
@@ -84,10 +72,8 @@ func BuildSummaryWithView(allNibs []*nib.Nib, view *membership.View, rootID stri
 				NibRef: *newNibRef(ms),
 			}
 
-			// Active phase: first in-progress epic member, in queue order
 			var phaseCandidates []*nib.Nib
 			for _, n := range view.DirectMembers(ms.ID) {
-				// Classification check — exempt: empty type is never milestone/epic.
 				if n.Type == "epic" && n.Status == "in-progress" {
 					phaseCandidates = append(phaseCandidates, n)
 				}
@@ -111,15 +97,10 @@ func BuildSummaryWithView(allNibs []*nib.Nib, view *membership.View, rootID stri
 	sum.Root = newNibRef(root)
 	sum.Decisions = ExtractDecisions(root.Body)
 
-	// Collect all descendants of the root nib
 	descendants := view.Members(rootID)
 
-	// Active phase: in-progress epic that is a direct member of the root.
-	// Sort candidates by the root's member-order key so the selection is
-	// deterministic (see sortDirectMembers).
 	var phaseCandidates []*nib.Nib
 	for _, n := range view.DirectMembers(rootID) {
-		// Classification check — exempt: empty type is never milestone/epic.
 		if n.Type == "epic" && n.Status == "in-progress" {
 			phaseCandidates = append(phaseCandidates, n)
 		}
@@ -129,13 +110,10 @@ func BuildSummaryWithView(allNibs []*nib.Nib, view *membership.View, rootID stri
 		sum.ActivePhase = newNibRef(phaseCandidates[0])
 	}
 
-	// Active tasks: in-progress leaf work anywhere under root, sorted by Order
 	activeTasks := filterByStatusAndLeaf(descendants, "in-progress")
 	nib.SortByOrder(activeTasks)
 	sum.ActiveTasks = toNibRefs(activeTasks)
 
-	// Next tasks: todo leaf work under the active phase (if any), sorted by Order.
-	// If there's no active phase, fall back to all todo leaf work under root.
 	if len(phaseCandidates) > 0 {
 		phaseDescendants := view.Members(phaseCandidates[0].ID)
 		nextTasks := filterByStatusAndLeaf(phaseDescendants, "todo")
@@ -150,10 +128,8 @@ func BuildSummaryWithView(allNibs []*nib.Nib, view *membership.View, rootID stri
 	return sum
 }
 
-// sortDirectMembers orders a container's direct members by the key that
-// positions them in THAT container: a milestone's members sit in its queue
-// (milestone_order), every other container's in its decomposition (order).
-// Members lacking the key fall to the shared title tiebreak.
+// sortDirectMembers sorts a container's direct members by the key that positions
+// them in it: milestone_order for a milestone, order otherwise.
 func sortDirectMembers(container *nib.Nib, members []*nib.Nib) {
 	if container.EffectiveType() == "milestone" {
 		nib.SortByMilestoneOrder(members)
@@ -182,7 +158,6 @@ func ExtractDecisions(body string) []string {
 	return decisions
 }
 
-// newNibRef converts a full Nib to a lightweight NibRef.
 func newNibRef(n *nib.Nib) *NibRef {
 	return &NibRef{
 		ID:       n.ID,
@@ -193,7 +168,6 @@ func newNibRef(n *nib.Nib) *NibRef {
 	}
 }
 
-// toNibRefs converts a slice of Nibs to NibRefs.
 func toNibRefs(nibs []*nib.Nib) []*NibRef {
 	refs := make([]*NibRef, len(nibs))
 	for i, n := range nibs {
@@ -202,7 +176,6 @@ func toNibRefs(nibs []*nib.Nib) []*NibRef {
 	return refs
 }
 
-// indexByID builds a lookup map from nib ID to nib.
 func indexByID(nibs []*nib.Nib) map[string]*nib.Nib {
 	m := make(map[string]*nib.Nib, len(nibs))
 	for _, n := range nibs {
@@ -211,10 +184,8 @@ func indexByID(nibs []*nib.Nib) map[string]*nib.Nib {
 	return m
 }
 
-// isLeafType returns true for the work types the active/next task lists draw
-// from — containers organize work, they are not work themselves.
-// Mirrors the leaf-type set in internal/nibtypes/hierarchy.go — keep in sync
-// when new leaf types are added to DefaultTypes.
+// isLeafType reports whether typ is a type the active and next task lists draw
+// from. Update it when config.DefaultTypes gains a work type.
 func isLeafType(typ string) bool {
 	return typ == "task" || typ == "bug" || typ == "feature" || typ == "research"
 }
