@@ -81,9 +81,9 @@ func TestUseASCIIGlyphs_OverrideTakesPrecedence(t *testing.T) {
 
 // TestGlyphTreeConnector_3Cells enforces the invariant documented in tree.go
 // (treeIndent = 3) and glyphs.go (every tree connector occupies 3 display
-// cells). RenderTree's indentation math depends on this — if a future glyph
-// change breaks it, every connector at every depth shifts horizontally and
-// alignment regresses silently.
+// cells). Column widths are sized from tree depth on that assumption — if a
+// future glyph change breaks it, every connector at every depth shifts
+// horizontally and alignment regresses silently.
 func TestGlyphTreeConnector_3Cells(t *testing.T) {
 	connectors := []struct {
 		name string

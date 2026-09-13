@@ -7,23 +7,6 @@ import (
 	"strings"
 )
 
-// PositionMap returns each nib's 1-based position, by Order, among the nibs with
-// the same raw Parent string.
-func PositionMap(nibs []*Nib) map[string]int {
-	byParent := make(map[string][]*Nib)
-	for _, b := range nibs {
-		byParent[b.Parent] = append(byParent[b.Parent], b)
-	}
-	positions := make(map[string]int, len(nibs))
-	for _, group := range byParent {
-		SortByOrder(group)
-		for i, b := range group {
-			positions[b.ID] = i + 1
-		}
-	}
-	return positions
-}
-
 // SortByOrder sorts nibs by their Order field lexicographically.
 // Nibs with an order key come first; nibs without one are appended sorted by title.
 func SortByOrder(nibs []*Nib) {
