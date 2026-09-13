@@ -1432,15 +1432,12 @@ func TestStoredAreaEditRefusesAnOutputPastTheConfigLimit(t *testing.T) {
 	if !strings.Contains(err.Error(), "configuration limit") {
 		t.Errorf("error = %q, want it to name the limit it would pass", err)
 	}
-	// The last of the file-naming refusals, held to the same rule as the rest
-	// (see TestAreaEditRefusalsNameNoPathUntilAsked); it is asserted here rather
-	// than there because the fixture that reaches it is 58,000 nodes.
-	if strings.Contains(refusal.Error(), storeDir) {
-		t.Errorf("Error = %q names the store directory, which reaches an HTTP client verbatim", refusal.Error())
+	// Held to TestAreaEditRefusalsNameNoPathUntilAsked's rule here rather than in
+	// its table, because the fixture that reaches it is 58,000 nodes.
+	if areasPath := store.NewLayout(storeDir).AreasPath(); refusal.File != areasPath {
+		t.Errorf("File = %q, want %q", refusal.File, areasPath)
 	}
-	if areasPath := store.NewLayout(storeDir).AreasPath(); !strings.Contains(refusal.Naming(areasPath), areasPath) {
-		t.Errorf("Naming = %q, want it to name %s", refusal.Naming(areasPath), areasPath)
-	}
+	assertAreaEditRefusalRendering(t, err, storeDir)
 	if got := readAreaEditStore(t, storeDir); got != vocab {
 		t.Error("a refused rename rewrote the file")
 	}
@@ -1451,17 +1448,56 @@ func TestStoredAreaEditRefusesAnOutputPastTheConfigLimit(t *testing.T) {
 // client through the area mutations, so Error names no filesystem path, and the
 // one surface entitled to name it asks for it.
 //
-// It drives the refusal shapes that interpolate the path, because the leak this
-// closes was a per-branch one: the wrapper added the path while the inner reason
-// was already path-free, so a reader auditing one branch concluded the whole
-// surface was clean. Not every such branch is covered here.
+// It drives every refusal planning builds, the path-free ones included, because
+// the leak this closes was a per-branch one: the wrapper added the path while the
+// inner reason was already path-free, so a reader auditing one branch concluded
+// the whole surface was clean. The configuration-limit refusal is held to the
+// same helper where its fixture is built.
 func TestAreaEditRefusalsNameNoPathUntilAsked(t *testing.T) {
+	rename := func(path, newName string) func(string) (*StoredAreaEdit, error) {
+		return func(storeDir string) (*StoredAreaEdit, error) {
+			return PlanRenameStoredArea(storeDir, path, newName)
+		}
+	}
+	create := func(path string) func(string) (*StoredAreaEdit, error) {
+		return func(storeDir string) (*StoredAreaEdit, error) {
+			return PlanCreateStoredArea(storeDir, path, "", "")
+		}
+	}
+	const plainVocab = "areas:\n    - name: web\n"
 	tests := []struct {
 		name  string
 		vocab string
 		plan  func(storeDir string) (*StoredAreaEdit, error)
 		want  string
+		// pathFree marks a refusal that has no file to name, so File stays empty.
+		pathFree bool
 	}{
+		{
+			name:  "a store with no areas.yml",
+			vocab: plainVocab,
+			plan: func(storeDir string) (*StoredAreaEdit, error) {
+				if err := os.Remove(store.NewLayout(storeDir).AreasPath()); err != nil {
+					t.Fatal(err)
+				}
+				return PlanRenameStoredArea(storeDir, "web", "frontend")
+			},
+			want: "no areas vocabulary at",
+		},
+		{
+			name:  "an edit whose output the loader cannot read",
+			vocab: "!!binary \"YXJlYXM=\": [{name: web}]\n",
+			plan:  create("platform"),
+			want:  "would leave this store's areas.yml unreadable",
+		},
+		{name: "an undeclared area", vocab: plainVocab, plan: rename("api", "v2"), want: "declares no area", pathFree: true},
+		{name: "a children key that is not a sequence", vocab: "areas:\n    - name: web\n      children:\n", plan: create("web/panel"), want: "not a sequence", pathFree: true},
+		{name: "no new path", vocab: plainVocab, plan: create(""), want: "at a path, and none was given", pathFree: true},
+		{name: "a new path segment with no name", vocab: plainVocab, plan: create("web//panel"), want: "segment with no name", pathFree: true},
+		{name: "a padded new path segment", vocab: plainVocab, plan: create("web/ panel"), want: "leading or trailing whitespace", pathFree: true},
+		{name: "no new name", vocab: plainVocab, plan: rename("web", ""), want: "under a name, and none was given", pathFree: true},
+		{name: "a padded new name", vocab: plainVocab, plan: rename("web", " frontend"), want: "leading or trailing whitespace", pathFree: true},
+		{name: "a new name past the bound", vocab: plainVocab, plan: rename("web", strings.Repeat("a", maxAreaNameRunes+1)), want: "characters long", pathFree: true},
 		{
 			name:  "a file that is not YAML",
 			vocab: "areas: [\n",
@@ -1521,17 +1557,42 @@ func TestAreaEditRefusalsNameNoPathUntilAsked(t *testing.T) {
 			if !strings.Contains(refusal.Error(), tt.want) {
 				t.Errorf("Error = %q, want substring %q — the branch under test is not the one that fired", refusal.Error(), tt.want)
 			}
-			if strings.Contains(refusal.Error(), storeDir) {
-				t.Errorf("Error = %q names the store directory %s, which reaches an HTTP client verbatim", refusal.Error(), storeDir)
+			wantFile := store.NewLayout(storeDir).AreasPath()
+			if tt.pathFree {
+				wantFile = ""
 			}
-			areasPath := store.NewLayout(storeDir).AreasPath()
-			if refusal.File != areasPath {
-				t.Errorf("File = %q, want %q", refusal.File, areasPath)
+			if refusal.File != wantFile {
+				t.Errorf("File = %q, want %q", refusal.File, wantFile)
 			}
-			if named := refusal.Naming(areasPath); !strings.Contains(named, areasPath) {
-				t.Errorf("Naming = %q, want it to name %s", named, areasPath)
-			}
+			assertAreaEditRefusalRendering(t, err, storeDir)
 		})
+	}
+}
+
+// assertAreaEditRefusalRendering holds err to AreaEditRefusal's two renderings:
+// the error names nothing under storeDir, Naming names File, and neither carries
+// a fmt verb error.
+func assertAreaEditRefusalRendering(t *testing.T, err error, storeDir string) {
+	t.Helper()
+	var refusal *AreaEditRefusal
+	if !errors.As(err, &refusal) {
+		t.Fatalf("error = %v (%T), want an *AreaEditRefusal", err, err)
+	}
+	if msg := err.Error(); strings.Contains(msg, storeDir) {
+		t.Errorf("error = %q names the store directory %s, which reaches an HTTP client verbatim", msg, storeDir)
+	}
+	if msg := err.Error(); strings.Contains(msg, "%!") {
+		t.Errorf("error = %q carries a fmt verb error", msg)
+	}
+	if refusal.File == "" {
+		return
+	}
+	named := refusal.Naming(refusal.File)
+	if !strings.Contains(named, refusal.File) {
+		t.Errorf("Naming = %q, want it to name %s", named, refusal.File)
+	}
+	if strings.Contains(named, "%!") {
+		t.Errorf("Naming = %q carries a fmt verb error", named)
 	}
 }
 
