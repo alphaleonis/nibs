@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	"golang.org/x/mod/semver"
@@ -182,8 +183,16 @@ func isNewer(current, latest string) (newer, comparable bool) {
 	if !semver.IsValid(cv) || !semver.IsValid(lv) {
 		return false, false
 	}
+	// semver reads a `git describe` suffix as a prerelease, which sorts before
+	// its base tag, so a build past v0.8.3 would be offered v0.8.3. Such a build
+	// is at or past its base, so compare the base itself.
+	cv = describeSuffix.ReplaceAllString(cv, "")
 	return semver.Compare(cv, lv) < 0, true
 }
+
+// describeSuffix matches what `git describe --tags --dirty` appends to a tag:
+// "-<commits>-g<hash>" when HEAD is past the tag, and "-dirty" for local changes.
+var describeSuffix = regexp.MustCompile(`(-[0-9]+-g[0-9a-f]+)?(-dirty)?$`)
 
 // ensureV normalizes a version to the leading-"v" form semver expects.
 func ensureV(v string) string {
