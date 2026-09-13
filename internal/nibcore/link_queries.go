@@ -139,17 +139,18 @@ func (c *Core) IsBlocked(nibID string) bool {
 
 // isBlockingInMap returns true if the nib with the given ID is actively blocking
 // any nib: neither it nor the dependent may be in a status that releases
-// dependents. Computed from other nibs' blockedBy fields, whose entries are
-// matched to nibID EXACTLY.
+// dependents. Computed from other nibs' blockedBy fields, each entry resolved
+// through normalizeIDInMap as findActiveBlockersInMap resolves it, so a
+// short-form link reads the same from both ends. nibID itself is looked up
+// exactly.
 //
-// It is not the mirror of isBlockedInMap, which never consults the subject's own
-// status and resolves short-form blocker ids through normalizeIDInMap. A
-// released dependent, or a short-form link no canonicalization sweep has
-// reached, makes the two directions of one edge disagree.
+// It is still not the mirror of isBlockedInMap, which never consults the
+// subject's own status: a released dependent makes the two directions of one
+// edge disagree.
 //
 // This is a pure function that operates on a map of nibs without locking, so
-// releasesDependents comes from the caller.
-func isBlockingInMap(nibs map[string]*nib.Nib, nibID string, releasesDependents func(string) bool) bool {
+// releasesDependents and configPrefix come from the caller.
+func isBlockingInMap(nibs map[string]*nib.Nib, nibID, configPrefix string, releasesDependents func(string) bool) bool {
 	b, ok := nibs[nibID]
 	if !ok || releasesDependents(b.Status) {
 		return false
@@ -160,7 +161,7 @@ func isBlockingInMap(nibs map[string]*nib.Nib, nibID string, releasesDependents 
 			continue
 		}
 		for _, blockerID := range other.BlockedBy {
-			if blockerID == nibID {
+			if fullID, ok := normalizeIDInMap(nibs, blockerID, configPrefix); ok && fullID == nibID {
 				return true
 			}
 		}
@@ -175,7 +176,7 @@ func isBlockingInMap(nibs map[string]*nib.Nib, nibID string, releasesDependents 
 func (c *Core) IsBlocking(nibID string) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return isBlockingInMap(c.nibs, nibID, c.releasesDependentsPredicate())
+	return isBlockingInMap(c.nibs, nibID, c.configPrefix(), c.releasesDependentsPredicate())
 }
 
 // findActiveBlockersInMap returns the nibs actively blocking the given nib:

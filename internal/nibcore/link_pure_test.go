@@ -230,6 +230,12 @@ func TestFindActiveBlockersInMapBlockerIDSpelling(t *testing.T) {
 				t.Errorf("isBlockedInMap = %v, want %v (blocked_by: [%s], prefix %q)",
 					got, tt.want, tt.spelling, tt.prefix)
 			}
+			// The blocker's side of the same edge must resolve the spelling the same
+			// way, or the dependent is blocked by a nib that blocks nothing.
+			if got := isBlockingInMap(nibs, "nibs-blk", tt.prefix, releasesDependentsForTest); got != tt.want {
+				t.Errorf("isBlockingInMap(nibs-blk) = %v, want %v (blocked_by: [%s], prefix %q)",
+					got, tt.want, tt.spelling, tt.prefix)
+			}
 		})
 	}
 }
@@ -265,7 +271,7 @@ func TestIsBlockingInMap(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isBlockingInMap(nibs, tt.nibID, releasesDependentsForTest)
+			got := isBlockingInMap(nibs, tt.nibID, "", releasesDependentsForTest)
 			if got != tt.want {
 				t.Errorf("isBlockingInMap(%q) = %v, want %v", tt.nibID, got, tt.want)
 			}

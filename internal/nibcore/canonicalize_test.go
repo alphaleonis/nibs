@@ -32,7 +32,7 @@ func linkTargets(t *testing.T, core *Core, targetID, linkType string) []string {
 // TestLoadCanonicalizesShortFormLinks is the primary guard for nibs-lzch: a
 // hand-written short-form `parent`/`blocked_by` used to resolve when followed
 // FORWARD from the nib holding it and be invisible from the other end, because
-// every reverse traversal walks exact map keys. Canonicalizing at the disk-read
+// the reverse traversals walked exact map keys. Canonicalizing at the disk-read
 // boundary makes both directions agree.
 //
 // It asserts the reverse direction (which was broken) AND the forward direction
@@ -854,7 +854,7 @@ func TestCanonicalizationKeepsAnUpdatedLinkThroughALaterSweep(t *testing.T) {
 
 // TestUpdateCanonicalizesShortFormLinks holds Update to the same rule as Create:
 // a caller handing it a short link id must not leave that spelling in the store,
-// where the reverse traversals — which walk exact map keys — stop seeing the edge.
+// where FindIncomingLinks, which walks exact map keys, stops seeing the edge.
 func TestUpdateCanonicalizesShortFormLinks(t *testing.T) {
 	core, nibsDir := mustLoadPrefixedCore(t)
 
