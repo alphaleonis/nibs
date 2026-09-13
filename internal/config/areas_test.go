@@ -309,10 +309,10 @@ func TestAreasSaveRemovesTheFileWhenNothingIsDeclared(t *testing.T) {
 	}
 }
 
-// TestSetStoredPrefixLeavesTheVocabularyAlone pins the independence the split
+// TestStoredPrefixEditLeavesTheVocabularyAlone pins the independence the split
 // bought: the prefix editor rewrites config.yml, and areas.yml is not its file
 // to touch.
-func TestSetStoredPrefixLeavesTheVocabularyAlone(t *testing.T) {
+func TestStoredPrefixEditLeavesTheVocabularyAlone(t *testing.T) {
 	dir := writeStoreAreas(t, sampleAreasConfig)
 	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte("nibs:\n    prefix: t-\n"), 0o644); err != nil {
 		t.Fatalf("writing config: %v", err)
@@ -322,16 +322,14 @@ func TestSetStoredPrefixLeavesTheVocabularyAlone(t *testing.T) {
 		t.Fatalf("reading areas: %v", err)
 	}
 
-	if _, err := SetStoredPrefix(dir, "new-"); err != nil {
-		t.Fatalf("SetStoredPrefix: %v", err)
-	}
+	setStoredPrefix(t, dir, "new-")
 
 	after, err := os.ReadFile(filepath.Join(dir, "areas.yml"))
 	if err != nil {
 		t.Fatalf("reading areas after the edit: %v", err)
 	}
 	if string(before) != string(after) {
-		t.Errorf("SetStoredPrefix rewrote areas.yml:\n--- before ---\n%s\n--- after ---\n%s", before, after)
+		t.Errorf("the prefix edit rewrote areas.yml:\n--- before ---\n%s\n--- after ---\n%s", before, after)
 	}
 
 	cfg, err := LoadFromStore(dir)

@@ -100,15 +100,6 @@ func PlanSetStoredPrefix(storeDir, prefix string) (*StoredPrefixEdit, error) {
 	return &StoredPrefixEdit{path: path, out: out}, nil
 }
 
-// SetStoredPrefix plans and writes a prefix change in one step.
-func SetStoredPrefix(storeDir, prefix string) (staleLinkTarget string, err error) {
-	edit, err := PlanSetStoredPrefix(storeDir, prefix)
-	if err != nil {
-		return "", err
-	}
-	return edit.Write()
-}
-
 // setNestedScalar sets doc's section.key to value, creating the document, the
 // section or the key when any of them is absent, and converting a section
 // written with no value into a mapping.

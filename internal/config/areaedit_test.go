@@ -248,7 +248,7 @@ func TestRenameStoredAreaRefusesAResultTheLoaderWouldReject(t *testing.T) {
 }
 
 // TestStoredAreaEditsPreserveMode holds the edits to the same contract
-// SetStoredPrefix has: a config kept private stays private.
+// StoredPrefixEdit has: a config kept private stays private.
 func TestStoredAreaEditsPreserveMode(t *testing.T) {
 	testskip.NeedPosixFileModes(t, t.TempDir())
 	storeDir := writeAreaEditStore(t, areaEditFixture)

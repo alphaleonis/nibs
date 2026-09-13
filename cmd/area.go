@@ -720,9 +720,9 @@ func areaDeclaredAtStartup(app *App, path string) bool {
 	return path != "" && app.StartupAreas().IsValid(path)
 }
 
-// reportAreaEdit prints what an area edit did, adding the stale-symlink note
-// Areas.Save and SetStoredPrefix both owe: the atomic write replaced a link, so
-// whatever manages the target still holds the old vocabulary and will restore it.
+// reportAreaEdit prints what an area edit did, adding a note when
+// config.StoredAreaEdit.Write replaced a symlink at areas.yml: the link's target
+// still holds the old vocabulary, and whatever manages it may restore that.
 //
 // It names no live `nibs serve`, unlike `nibs config set-prefix` beside it. A
 // server watches the store's areas.yml and reloads it, so this edit reaches one
