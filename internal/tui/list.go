@@ -785,11 +785,18 @@ func (m *listModel) restoreCursor(nibID string, items []list.Item) {
 
 // buildParentMap maps each child ID in the tree to its parent's ID.
 func buildParentMap(nodes []*ui.TreeNode, m map[string]string) {
+	walkTreeEdges(nodes, func(parent, child *ui.TreeNode) {
+		m[child.Nib.ID] = parent.Nib.ID
+	})
+}
+
+// walkTreeEdges calls visit once for every parent-child edge in the tree.
+func walkTreeEdges(nodes []*ui.TreeNode, visit func(parent, child *ui.TreeNode)) {
 	for _, node := range nodes {
 		for _, child := range node.Children {
-			m[child.Nib.ID] = node.Nib.ID
-			buildParentMap(node.Children, m)
+			visit(node, child)
 		}
+		walkTreeEdges(node.Children, visit)
 	}
 }
 
