@@ -28,9 +28,10 @@ func reportErr(jsonMode bool, code string, err error) error {
 //
 // Not-found is recognized through nib.ErrNotFound rather than a concrete type,
 // the same channel cmd/serve.go's error presenter keys on, so the CLI and the
-// HTTP server classify one filter failure alike. Branch order is inert: no
-// graph.FilterTarget* refusal type implements Unwrap, so none carries the
-// sentinel and no branch can claim another's error.
+// HTTP server classify one filter failure alike. Keep that sentinel test last:
+// graph.FilterTargetNotFoundError unwraps to nib.ErrNotFound, so the channel is
+// live, and every typed class above it must be decided before it can claim an
+// error.
 //
 // CANONICAL INVARIANT (the read-path filter-failure error classes). Decide a
 // filter failure's class only here. The filter-error types in internal/graph

@@ -254,4 +254,18 @@ func TestQueueLintWithoutCollector(t *testing.T) {
 	if QueueInversionsFrom(context.Background()) != nil {
 		t.Error("QueueInversionsFrom(bare context) = non-nil, want nil")
 	}
+
+	t.Run("nil context returns nil without panic", func(t *testing.T) {
+		// context.Value panics on a nil receiver, so the accessor answers nil for
+		// a nil context the way RequestCacheFrom does.
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("QueueInversionsFrom(nil) panicked: %v", r)
+			}
+		}()
+		//nolint:staticcheck // SA1012: passing nil is the point of this test.
+		if got := QueueInversionsFrom(nil); got != nil {
+			t.Errorf("QueueInversionsFrom(nil) = %v, want nil", got)
+		}
+	})
 }
