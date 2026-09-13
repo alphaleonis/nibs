@@ -86,7 +86,7 @@ type CreateNibInput struct {
 	Title string `json:"title"`
 	// Nib type (defaults to 'task')
 	Type *string `json:"type,omitempty"`
-	// Status (defaults to 'todo')
+	// Status; omitted or empty takes the store's nibs.default_status ('todo' unless configured)
 	Status *string `json:"status,omitempty"`
 	// Priority level (defaults to 'normal')
 	Priority *string `json:"priority,omitempty"`

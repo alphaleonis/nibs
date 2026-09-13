@@ -27,7 +27,12 @@ func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibI
 	if input.Type != nil {
 		b.Type = *input.Type
 	}
-	if input.Status != nil {
+	// Written into the file, as `nibs new` does: Nib.status has no read-side
+	// default to supply it later.
+	if cfg := r.Reader.Config(); cfg != nil {
+		b.Status = cfg.GetDefaultStatus()
+	}
+	if input.Status != nil && *input.Status != "" {
 		b.Status = *input.Status
 	}
 	if input.Priority != nil {

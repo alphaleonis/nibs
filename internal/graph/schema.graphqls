@@ -323,7 +323,7 @@ input CreateNibInput {
   title: String!
   "Nib type (defaults to 'task')"
   type: String
-  "Status (defaults to 'todo')"
+  "Status; omitted or empty takes the store's nibs.default_status ('todo' unless configured)"
   status: String
   "Priority level (defaults to 'normal')"
   priority: String

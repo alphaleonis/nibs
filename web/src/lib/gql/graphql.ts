@@ -53,7 +53,7 @@ export type CreateNibInput = {
   prefix?: string | null | undefined;
   /** Priority level (defaults to 'normal') */
   priority?: string | null | undefined;
-  /** Status (defaults to 'todo') */
+  /** Status; omitted or empty takes the store's nibs.default_status ('todo' unless configured) */
   status?: string | null | undefined;
   /** Tags for categorization */
   tags?: Array<string> | null | undefined;
