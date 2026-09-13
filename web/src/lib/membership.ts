@@ -160,7 +160,7 @@ export function resolvedMilestoneId(subject: MembershipNib, lookup: MembershipLo
  * the backlog — the mirror of Go's `(*membership.View).MilestoneOf`, and the
  * rule the server's own `noMilestone` filter answers over
  * (internal/graph/filters.go). Group by anything else and the client disagrees
- * with `no:milestone` about which nibs are backlog.
+ * with `is:backlog` about which nibs are backlog.
  *
  * The subject's own resolved assignment when it has one, else the nearest
  * resolved assignment up the structural parent chain. The walk stops at a
