@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/safetext"
 )
 
 // maxEchoedIDBytes caps how much of a caller-supplied id a refusal message
@@ -30,16 +31,34 @@ func echoID(id string) string {
 	if len(id) <= maxEchoedIDBytes {
 		return strconv.Quote(id)
 	}
+	return fmt.Sprintf("%s... (truncated from %d bytes)", strconv.Quote(id[:echoCut(id)]), len(id))
+}
+
+// echoCut returns where to cut an s longer than maxEchoedIDBytes: at the cap,
+// backed off to a rune boundary. Already-invalid input exhausts the backoff and
+// is cut anyway.
+func echoCut(s string) int {
 	// cut indexes the first EXCLUDED byte, so the slice ends on a boundary
 	// exactly when that byte starts a rune.
 	cut := maxEchoedIDBytes
 	for range utf8.UTFMax - 1 {
-		if utf8.RuneStart(id[cut]) {
+		if utf8.RuneStart(s[cut]) {
 			break
 		}
 		cut--
 	}
-	return fmt.Sprintf("%s... (truncated from %d bytes)", strconv.Quote(id[:cut]), len(id))
+	return cut
+}
+
+// echoStoredScalar renders a value read from a nib's file for a refusal message
+// that prints it unquoted: under echoID's byte cap, and through safetext.Strip so
+// the file cannot put a control sequence into the message. Strip never lengthens
+// its input, so the cap still holds afterwards.
+func echoStoredScalar(s string) string {
+	if len(s) <= maxEchoedIDBytes {
+		return safetext.Strip(s)
+	}
+	return fmt.Sprintf("%s... (truncated from %d bytes)", safetext.Strip(s[:echoCut(s)]), len(s))
 }
 
 // FilterTargetNotFoundError reports that a filter field naming a single nib was
@@ -130,9 +149,18 @@ type FilterTargetTypeError struct {
 	// ID is the normalized (full) target id — the spelling is fine, so the
 	// resolved form is the useful one.
 	ID string
-	// Got is the target's effective type; Want is the type the field requires.
+	// Got is the target's effective type as echoStoredScalar renders it: the
+	// value comes from the target's file, so it is bounded here rather than in
+	// Error(), and a field added beside it should be too. Want is the type the
+	// field requires.
 	Got  string
 	Want string
+}
+
+// newFilterTargetTypeError builds the refusal with its file-sourced type
+// already bounded.
+func newFilterTargetTypeError(field, id, got, want string) *FilterTargetTypeError {
+	return &FilterTargetTypeError{Field: field, ID: id, Got: echoStoredScalar(got), Want: want}
 }
 
 func (e *FilterTargetTypeError) Error() string {

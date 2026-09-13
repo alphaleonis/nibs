@@ -214,7 +214,7 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 			return nil, &FilterTargetUnreadableError{Field: "milestone", ID: fullID, ReaderErr: err}
 		}
 		if typ := target.EffectiveType(); typ != "milestone" {
-			return nil, &FilterTargetTypeError{Field: "milestone", ID: fullID, Got: typ, Want: "milestone"}
+			return nil, newFilterTargetTypeError("milestone", fullID, typ, "milestone")
 		}
 		result = filterByField(result, []string{fullID}, func(b *nib.Nib) string {
 			return resolvedMilestoneID(b, reader)
