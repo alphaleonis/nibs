@@ -1,7 +1,5 @@
-// Package reprefix computes a plan for renaming all nibs and their
-// cross-references when a project's nib prefix changes. It performs no disk
-// I/O — callers supply an in-memory snapshot and the planner returns a
-// RenamePlan that an executor (or a dry-run printer) can consume.
+// Package reprefix renames every nib and its references when a store's prefix
+// changes: BuildPlan plans from an in-memory snapshot, and Execute applies the plan.
 package reprefix
 
 import (
@@ -11,40 +9,19 @@ import (
 	"strings"
 )
 
-// prefixPattern is the regex a valid nib prefix must match: lowercase
-// alphanumerics followed by zero or more lowercase alphanumerics or dashes,
-// ending in a trailing dash.
-// The short-ID charset [0-9a-z] this pattern builds on is owned by
-// internal/nib (nib.IsIDChar / idAlphabet, the single source of truth);
-// consumers such as nibcore's search gate derive from it. Revisit those
-// derived charset checks if this pattern loosens.
+// prefixPattern matches lowercase alphanumerics and dashes that start with an
+// alphanumeric and end in a dash. Charset checks elsewhere derive from
+// nib.IsIDChar; revisit them if this loosens.
 var prefixPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*-$`)
 
 const (
-	// minPrefixLen is one letter plus trailing dash ("a-").
-	minPrefixLen = 2
-	// maxPrefixLen is a soft cap: prefixes this long already crowd ID display
-	// in lists and filenames. Loosen if a project has a legitimate need.
-	maxPrefixLen = 16
+	minPrefixLen = 2  // one character plus the dash
+	maxPrefixLen = 16 // a soft cap; long prefixes crowd id display
 )
 
-// ValidatePrefix checks a prefix against the repo's convention:
-// lowercase alphanumerics followed by a trailing dash, length 2–16, and no
-// internal double dash.
-// Returns nil if valid, or a descriptive error.
-//
-// The double-dash clause is separate from prefixPattern rather than folded into
-// it because the two refusals have different things to say: the pattern's
-// message is the pattern, which tells a caller who typed "a--b" nothing about
-// why those characters are the problem. It is checked last so the more basic
-// failures — a prefix of the wrong length, or one carrying an uppercase letter
-// or an underscore — still report themselves first.
-//
-// nib.ValidateIDRoundTrip is the general form of this rule and the one that
-// actually holds the line: it runs in Core.Create, so it also covers the shapes
-// that reach a file name without passing through here — `nibs new --prefix`
-// composes an id from its flag directly, and a hand-edited config.yml reaches
-// the minting path with no validation of any kind.
+// ValidatePrefix checks a new prefix: 2 to 16 characters matching prefixPattern,
+// with no double dash. Ids minted without it, from `nibs new --prefix` or a
+// hand-edited config, are still checked by nib.ValidateIDRoundTrip in Core.Create.
 func ValidatePrefix(s string) error {
 	if len(s) < minPrefixLen || len(s) > maxPrefixLen {
 		return fmt.Errorf("invalid prefix %q: length must be between %d and %d characters", s, minPrefixLen, maxPrefixLen)
@@ -58,58 +35,28 @@ func ValidatePrefix(s string) error {
 	return nil
 }
 
-// NibSnapshot is a minimal view of a loaded nib — just what the builder needs.
-// It decouples reprefix from nibcore.
-//
-// The link fields below are exactly nib.LinkSpelling's four, and that is the
-// completeness bar FOR FRONT MATTER: an id-valued front-matter field missing
-// here is a reference left naming a nib the rename retired. The other
-// path-shaped fields are deliberately absent because none of them holds an id —
-// Area is a plain path, Documents are repo-relative paths, MilestoneOrder is a
-// fractional index, and Extra is opaque unknown keys.
-//
-// Each link is an id as SOME SOURCE SPELLS IT, and the plan preserves that
-// spelling: only a reference carrying oldPrefix is rewritten, so a short-form id
-// passes through untouched — it names the same nib under either prefix. Callers
-// whose store resolves short ids in memory therefore have to supply the
-// spelling they want written back (see nib.RawLinks), because Execute writes
-// these values over whatever the file said.
-//
-// A nib BODY carries ids too, and they are NOT planned here: Execute rewrites
-// them from the plan's prefix pair while it re-renders each file, because they
-// live in prose this planner never reads and a plan that does no disk I/O cannot
-// describe. The grammar it rewrites is the `#<id>` sigil — the only mention form
-// nib.ExtractMentionSpans recognizes and the only one the web renderer links.
-// `[[id]]` is not a reference to anything; nothing in the codebase reads it, so
-// rewriting it would be inventing a grammar rather than following one.
+// NibSnapshot is the part of a loaded nib BuildPlan needs. Its link fields are
+// nib.LinkSpelling's four, the id-valued front-matter fields. Supply each as it
+// should be written back (see nib.RawLinks): only ids carrying the old prefix are
+// rewritten. Body mentions are not planned; Execute rewrites them.
 type NibSnapshot struct {
 	ID string // e.g. "nibs-abc123"
-	// Path is the forward-slash relative path to the nib file under the nibs
-	// root. The basename MUST begin with ID — e.g. "archive/tnib-abc--slug.md"
-	// for ID "tnib-abc". BuildPlan enforces this invariant.
+	// Path is the forward-slash path under the store root; its basename must
+	// begin with ID (BuildPlan checks).
 	Path      string
 	Parent    string   // empty if no parent
 	Milestone string   // empty if not enqueued in a milestone
 	BlockedBy []string // empty/nil if no blockers
-	// Blocking is the legacy v0 spelling of the blocked-by edge. v1+ derives
-	// blocking from other nibs' BlockedBy and never writes it, but nib.Render
-	// re-emits whatever a v0 file carries, so a store with the v0→v1 migration
-	// still deferred has real `blocking:` ids that must be retargeted too.
-	//
-	// It is retargeted rather than dropped: clearing the field belongs to that
-	// migration, which transfers each edge onto its target first (see
-	// nibcore's v0→v1 step and the same stance in nibcore/link_health.go).
-	// A rename dropping it would destroy edges no other field records yet.
+	// Blocking is legacy v0 data. Retarget it, do not drop it; clearing it belongs
+	// to the v0→v1 migration.
 	Blocking []string
 }
 
-// TargetExistsFunc reports whether a relative path already exists under the
-// nibs root. Tests pass a stub; a real executor will pass an os.Stat-backed impl.
+// TargetExistsFunc reports whether a path under the store root already exists.
 type TargetExistsFunc func(relPath string) bool
 
-// RenamePlan is the complete set of changes required to retarget a snapshot
-// from one prefix to another. It carries no hidden state — callers consume it
-// directly.
+// RenamePlan is every change needed to move a snapshot from OldPrefix to
+// NewPrefix.
 type RenamePlan struct {
 	OldPrefix  string
 	NewPrefix  string
@@ -117,17 +64,8 @@ type RenamePlan struct {
 	Collisions []string // target paths that already exist; non-empty means the plan is not executable
 }
 
-// FilePlan describes the rename and front-matter reference updates for a single
-// nib. Equal Old/New values for a link field mean "no change needed", and
-// HasReferenceUpdates folds the four fields into that one question.
-//
-// It is not a complete account of what Execute writes to a file: the body
-// rewrite is driven by the plan's prefix pair, not by anything here, so a
-// FilePlan reporting no reference updates can still describe a file whose prose
-// changes.
-//
-// The four link pairs mirror NibSnapshot's; see its doc comment for why those
-// four and no others.
+// FilePlan is one nib's rename and front-matter link updates; equal Old and New
+// values mean no change. Execute may still rewrite the body's mentions.
 type FilePlan struct {
 	OldPath string
 	NewPath string
@@ -159,13 +97,7 @@ func (fp FilePlan) HasReferenceUpdates() bool {
 // snapshot. The targetExists callback must be non-nil; pass a stub that always
 // returns false if collision detection is not relevant to the caller.
 func BuildPlan(snapshot []NibSnapshot, oldPrefix, newPrefix string, targetExists TargetExistsFunc) (*RenamePlan, error) {
-	// The old prefix is whatever a past `nibs init` produced for this
-	// project. It may not match the strict rules we apply to new prefixes
-	// (e.g. projects initialized from a dir named "boardGameTracker" end
-	// up with "boardGameTracker-" — 17 chars, uppercase). Accepting such
-	// prefixes is the entire point of this command. We only reject the
-	// empty case, which would otherwise cause `strings.CutPrefix(id, "")`
-	// to succeed on every ID and double-prefix every file.
+	// Accept any existing prefix except "": CutPrefix succeeds with it on every id.
 	if oldPrefix == "" {
 		return nil, fmt.Errorf("old prefix: must not be empty")
 	}
@@ -184,8 +116,6 @@ func BuildPlan(snapshot []NibSnapshot, oldPrefix, newPrefix string, targetExists
 		Files:     make([]FilePlan, 0, len(snapshot)),
 	}
 
-	// Track collisions in a set so on-disk and intra-plan collisions
-	// never produce duplicate entries.
 	collided := make(map[string]bool)
 	addCollision := func(path string) {
 		if collided[path] {
@@ -200,7 +130,6 @@ func BuildPlan(snapshot []NibSnapshot, oldPrefix, newPrefix string, targetExists
 		if !strings.HasPrefix(n.ID, oldPrefix) {
 			return nil, fmt.Errorf("snapshot contains nib %q which does not have the expected prefix %q", n.ID, oldPrefix)
 		}
-		// Enforce the NibSnapshot.Path invariant: the basename must begin with ID.
 		basename := n.Path
 		if idx := strings.LastIndex(n.Path, "/"); idx >= 0 {
 			basename = n.Path[idx+1:]
@@ -226,7 +155,6 @@ func BuildPlan(snapshot []NibSnapshot, oldPrefix, newPrefix string, targetExists
 		if targetExists(fp.NewPath) {
 			addCollision(fp.NewPath)
 		}
-		// Intra-plan collision: two snapshot rows mapped to the same NewPath.
 		if seenNewPath[fp.NewPath] {
 			addCollision(fp.NewPath)
 		}
