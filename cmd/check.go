@@ -122,9 +122,14 @@ and require manual intervention.`,
 		if err != nil {
 			return err
 		}
-		// Exit with error code if validation failed
+		// Findings are not a failure to report: the report is already on stdout,
+		// so the boundary sets exit 1 and prints nothing more.
 		if totalIssues > 0 {
-			os.Exit(1)
+			return &output.CodedError{
+				Code:     output.ErrUncategorized,
+				Msg:      fmt.Sprintf("check found %d issue(s)", totalIssues),
+				Reported: true,
+			}
 		}
 		return nil
 	},
@@ -132,9 +137,6 @@ and require manual intervention.`,
 
 // runCheck runs every check and renders the report (text or --json), returning
 // the number of issues left outstanding.
-//
-// Split out of checkCmd.RunE so tests can drive the whole report: RunE exits the
-// process on a non-zero count, which would take a test binary down with it.
 func runCheck(app *App) (int, error) {
 	var configErrors []string
 	var fixed int

@@ -77,8 +77,7 @@ func runWithinDeadline(t *testing.T, args ...string) (string, error) {
 // withinDeadline runs work and fails if it has not returned in time.
 //
 // EVERY call that can reach an opener in this file goes through a deadline, not
-// only the CLI ones: the check row drives core.Load directly (checkCmd.RunE
-// os.Exit(1)s on findings and would take the test binary with it), and a bare
+// only the CLI ones: the check row drives core.Load directly, and a bare
 // core.Load there hung the whole suite under the mutation this file's guards are
 // verified against — which is the outcome the deadline exists to prevent.
 //
@@ -156,10 +155,6 @@ func TestCommandsDoNotHangOnAnIrregularNibFile(t *testing.T) {
 	// exists because a silently missing nib is indistinguishable from a nib that
 	// was never there; an irregular file must not re-open that hole for a
 	// different cause.
-	//
-	// runCheck rather than the command: checkCmd.RunE calls os.Exit(1) when there
-	// are findings, which would take the test binary with it — the split exists
-	// for exactly this (see runCheck's doc).
 	t.Run("nibs check names the file", func(t *testing.T) {
 		t.Cleanup(resetCheckFlags)
 		resetCheckFlags()

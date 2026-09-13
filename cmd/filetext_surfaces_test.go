@@ -243,8 +243,6 @@ func TestFileSourcedTextNeverReachesAnEchoSurfaceRaw(t *testing.T) {
 			name: "check link diagnostics",
 			emit: func(t *testing.T) string {
 				escaped := strings.ReplaceAll(deceptivePayload, "\x1b", `\e`)
-				// runCheck rather than the command: checkCmd's RunE calls
-				// os.Exit(1) whenever the report is non-empty, and this one is.
 				app, _ := setupCheckTest(t, map[string]string{
 					"tnib-0001--one.md": "---\nversion: 2\ntitle: One\nstatus: todo\ndocuments:\n  - \"" +
 						escaped + "\"\nblocked_by:\n  - \"" + escaped + "\"\n---\n\nBody.\n",
