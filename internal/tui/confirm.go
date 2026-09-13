@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/alphaleonis/nibs/internal/ui"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // confirmDialog holds the state for an archive/delete confirmation modal.
@@ -111,12 +112,10 @@ func buildConfirmDialog(action string, nibTitle string, nibIDs []string, descend
 	}
 }
 
-func truncateTitle(s string, maxLen int) string {
-	runes := []rune(s)
-	if len(runes) <= maxLen {
-		return s
-	}
-	return string(runes[:maxLen-3]) + "..."
+// truncateTitle cuts s to at most width display cells, ending a cut title with
+// "...".
+func truncateTitle(s string, width int) string {
+	return ansi.Truncate(s, width, "...")
 }
 
 // gatherNibAndDescendants returns the nib ID plus all its descendant IDs.
