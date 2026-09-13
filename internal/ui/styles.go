@@ -91,7 +91,7 @@ func RenderTags(tags []string) string {
 }
 
 // RenderTagsCompact renders up to maxTags badges, then "+N" for the rest. A tag
-// over 12 bytes is cut to its first 10 bytes plus "..".
+// over 12 display cells is cut to at most 10 cells plus "..".
 func RenderTagsCompact(tags []string, maxTags int) string {
 	if len(tags) == 0 {
 		return ""
@@ -110,8 +110,8 @@ func RenderTagsCompact(tags []string, maxTags int) string {
 	rendered := make([]string, len(showTags))
 	for i, tag := range showTags {
 		displayTag := tag
-		if len(displayTag) > 12 {
-			displayTag = displayTag[:10] + ".."
+		if lipgloss.Width(displayTag) > 12 {
+			displayTag = truncateCells(displayTag, 10) + ".."
 		}
 		rendered[i] = RenderTag(displayTag)
 	}
