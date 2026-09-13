@@ -1,12 +1,8 @@
-// Package updatecheck answers a single question for every nibs surface
-// (CLI, TUI, web): is there a newer released version than the one running?
+// Package updatecheck reports whether a newer nibs release exists than the
+// running version, for the CLI, TUI and web.
 //
-// It is deliberately dependency-light and platform-agnostic. It compares
-// version strings only — it never downloads or matches platform-specific
-// release assets. Downloading and replacing the binary for the current
-// platform is the job of the `nibs upgrade` command, which owns the
-// go-selfupdate integration; a version comparison is correct even for a web
-// banner viewed from a different OS than the server binary runs on.
+// It compares version strings only and never downloads release assets; `nibs
+// upgrade` replaces the binary.
 package updatecheck
 
 import (
@@ -20,11 +16,10 @@ import (
 )
 
 // defaultCooldown is how long a cached result is trusted before the next
-// network check. Keeps the notifier to at most one request per window.
+// network check.
 const defaultCooldown = 24 * time.Hour
 
-// devVersion is the version string used for detached / `go run` builds, for
-// which no meaningful upgrade check can be made.
+// devVersion is the version cmd reports when the build set none (e.g. `go run`).
 const devVersion = "dev"
 
 // Result is the outcome of a successful check.
@@ -38,19 +33,18 @@ type Result struct {
 	UpdateAvailable bool
 }
 
-// Fetcher retrieves the latest released version tag. It is an interface so
-// tests can supply a fake and the real implementation can be swapped.
+// Fetcher retrieves the latest released version tag. Tests substitute a fake.
 type Fetcher interface {
 	// LatestVersion returns the latest released version tag (e.g. "v0.6.0").
 	LatestVersion(ctx context.Context) (string, error)
 }
 
-// Checker performs cached, gated update checks. It is safe to construct with
-// NewChecker and use once per command; it is not designed for concurrent use.
+// Checker performs cached, gated update checks. Construct one per check; it is
+// not safe for concurrent use.
 type Checker struct {
 	current  string
 	fetcher  Fetcher
-	cacheDir string // "" disables persistence (and therefore checking)
+	cacheDir string // "" disables checking
 	cooldown time.Duration
 	now      func() time.Time
 }
@@ -70,9 +64,8 @@ func NewChecker(current string) *Checker {
 	return c
 }
 
-// enabled reports whether a check should run at all. It is silent by design:
-// detached/dev builds, CI, an explicit opt-out, or a missing cache directory
-// all disable the check with no error.
+// enabled reports whether a check may run: not for an empty version or
+// devVersion, without a cache directory, with NIBS_NO_UPDATE_CHECK set, or in CI.
 func (c *Checker) enabled() bool {
 	if c.current == "" || c.current == devVersion {
 		return false
@@ -83,7 +76,7 @@ func (c *Checker) enabled() bool {
 	if os.Getenv("NIBS_NO_UPDATE_CHECK") != "" {
 		return false
 	}
-	// Common CI convention (GitHub Actions, GitLab, etc. set CI=true).
+	// GitHub Actions, GitLab CI and others set CI=true.
 	if v := os.Getenv("CI"); v != "" && v != "false" && v != "0" {
 		return false
 	}
@@ -91,14 +84,12 @@ func (c *Checker) enabled() bool {
 }
 
 // Check returns the update Result and true when it has an opinion. It returns
-// ok=false — with no error — whenever the check is gated off, the cache is
-// stale and the network fetch fails, or the versions cannot be compared. The
-// caller is expected to treat "no opinion" as "say nothing".
+// ok=false, never an error, when the check is disabled, the fetch fails, a fresh
+// cache holds no version, or the versions are not comparable. Say nothing then.
 //
-// When the cache is fresh (within the cooldown) no network request is made.
-// When it is stale, a single request is made and the result is cached for the
-// next window; a failed request still records the attempt time so a flaky or
-// offline network does not trigger a request on every command.
+// A fresh cache (within the cooldown) answers without a request. Otherwise one
+// request is made and its outcome cached; a failed request records the attempt
+// and keeps the previously cached version.
 func (c *Checker) Check(ctx context.Context) (Result, bool) {
 	if !c.enabled() {
 		return Result{}, false
@@ -116,9 +107,7 @@ func (c *Checker) Check(ctx context.Context) (Result, bool) {
 	return Result{Current: c.current, Latest: latest, UpdateAvailable: newer}, true
 }
 
-// latestVersion returns the latest version from cache when fresh, otherwise
-// from the network (updating the cache). ok is false when there is no usable
-// version to report.
+// latestVersion returns the latest version from a fresh cache or the network.
 func (c *Checker) latestVersion(ctx context.Context) (string, bool) {
 	cached, haveCache := c.readCache()
 	if haveCache && c.now().Sub(cached.CheckedAt) < c.cooldown {
@@ -130,8 +119,8 @@ func (c *Checker) latestVersion(ctx context.Context) (string, bool) {
 
 	latest, err := c.fetcher.LatestVersion(ctx)
 	if err != nil {
-		// Record the attempt time so repeated failures do not hammer the
-		// network; preserve any previously cached version.
+		// Record the attempt so failures wait out the cooldown; keep the
+		// cached version.
 		prev := ""
 		if haveCache {
 			prev = cached.Latest
@@ -167,8 +156,8 @@ func (c *Checker) readCache() (cacheState, bool) {
 	return s, true
 }
 
-// writeCache persists the state atomically, best-effort (errors are ignored:
-// a failure to cache only costs an extra network check next time).
+// writeCache replaces the cache file atomically. Errors are ignored; the next
+// command checks again.
 func (c *Checker) writeCache(s cacheState) {
 	if c.cacheDir == "" {
 		return
@@ -200,8 +189,7 @@ func (c *Checker) writeCache(s cacheState) {
 }
 
 // isNewer reports whether latest is a strictly newer semantic version than
-// current. comparable is false when either value is not valid semver, in which
-// case the caller should stay silent rather than guess.
+// current. comparable is false when either is not valid semver.
 func isNewer(current, latest string) (newer, comparable bool) {
 	cv := ensureV(current)
 	lv := ensureV(latest)

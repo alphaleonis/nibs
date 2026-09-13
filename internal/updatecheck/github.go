@@ -9,14 +9,12 @@ import (
 	"time"
 )
 
-// defaultLatestURL is the GitHub API endpoint for the latest published,
-// non-prerelease release. GitHub's "latest" already excludes prereleases and
-// drafts, so the notifier only ever compares against a stable tag — matching
-// what install.sh resolves.
+// defaultLatestURL answers with the newest release that is neither a prerelease
+// nor a draft, the same release install.sh resolves.
 const defaultLatestURL = "https://api.github.com/repos/alphaleonis/nibs/releases/latest"
 
-// fetchTimeout bounds the single network request so an unreachable or slow
-// GitHub never delays the command by more than a moment.
+// fetchTimeout bounds the network request, and with it how long a check can
+// delay a command.
 const fetchTimeout = 3 * time.Second
 
 // githubFetcher retrieves the latest release tag from the GitHub API.
@@ -51,8 +49,7 @@ func (g *githubFetcher) LatestVersion(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("github releases API returned %s", resp.Status)
 	}
 
-	// Cap the read: the payload of interest is tiny; guard against a
-	// misbehaving endpoint streaming a huge body.
+	// Cap the read against an endpoint streaming an oversized body.
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return "", err
