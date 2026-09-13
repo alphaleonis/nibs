@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/99designs/gqlgen/graphql"
@@ -192,6 +193,36 @@ func (a *App) isTwoColumnMode() bool {
 	return a.width >= TwoColumnMinWidth && !a.list.wideMode
 }
 
+// activeListFiltering reports whether the active view's list is taking filter
+// input, in which case every printable key belongs to that filter.
+func (a *App) activeListFiltering() bool {
+	var l *list.Model
+	switch a.state {
+	case viewList:
+		l = &a.list.list
+	case viewDetail:
+		if !a.detail.linksActive {
+			return false
+		}
+		l = &a.detail.linkList
+	case viewTagPicker:
+		l = &a.tagPicker.list
+	case viewParentPicker:
+		l = &a.parentPicker.list
+	case viewStatusPicker:
+		l = &a.statusPicker.list
+	case viewPriorityPicker:
+		l = &a.priorityPicker.list
+	case viewEstimatePicker:
+		l = &a.estimatePicker.list
+	case viewBlockingPicker:
+		l = &a.blockingPicker.list
+	default:
+		return false
+	}
+	return l.FilterState() == list.Filtering
+}
+
 // Update handles messages
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
@@ -256,8 +287,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, tea.Quit
 		case "?":
 			// Toggle non-modal help panel (skip if user is typing in a filter)
-			if a.state == viewList && a.list.list.FilterState() == 1 {
-				break // let list handle the keystroke
+			if a.activeListFiltering() {
+				break // let the view's list take the keystroke
 			}
 			if a.state == viewList || a.state == viewDetail {
 				a.helpExpanded = !a.helpExpanded
@@ -278,11 +309,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return a, nil
 			}
 		case "q":
-			if a.state == viewDetail || a.state == viewTagPicker || a.state == viewParentPicker || a.state == viewStatusPicker || a.state == viewTypePicker || a.state == viewCreateTypePicker || a.state == viewBlockingPicker || a.state == viewPriorityPicker || a.state == viewEstimatePicker {
-				return a, tea.Quit
+			if a.activeListFiltering() {
+				break
 			}
-			// For list, only quit if not filtering
-			if a.state == viewList && a.list.list.FilterState() != 1 {
+			if a.state == viewList || a.state == viewDetail || a.state == viewTagPicker || a.state == viewParentPicker || a.state == viewStatusPicker || a.state == viewTypePicker || a.state == viewCreateTypePicker || a.state == viewBlockingPicker || a.state == viewPriorityPicker || a.state == viewEstimatePicker {
 				return a, tea.Quit
 			}
 		}
