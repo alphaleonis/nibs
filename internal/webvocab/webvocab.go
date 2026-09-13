@@ -1,13 +1,10 @@
-// Package webvocab renders the web UI's copy of the compiled-in vocabulary —
-// statuses with their roles, types with their hierarchy rules, priorities,
-// estimates, status groups and creation defaults — as a TypeScript module the
-// web imports instead of hand-mirroring the Go definitions. `task codegen`
-// (via go:generate) writes the file; the committed output is pinned by
-// TestGeneratedVocabularyIsFresh, so the web never depends on running Go and a
-// vocabulary change fails the suite until the file is regenerated.
+// Package webvocab renders the compiled-in vocabulary (statuses with their
+// roles, types with their hierarchy rules, priorities, estimates, status groups
+// and creation defaults) as a TypeScript module the web imports. `task codegen`
+// writes it through go:generate; TestGeneratedVocabularyIsFresh fails until the
+// committed file matches.
 //
-// Colors and icons deliberately do not cross this boundary: they are
-// presentation, owned by each surface's theme.
+// Colors and icons stay out: each surface's theme owns them.
 package webvocab
 
 //go:generate go run ./gen
@@ -24,9 +21,8 @@ import (
 // OutputPath is the module-root-relative path of the generated file.
 const OutputPath = "web/src/lib/generated/vocabulary.ts"
 
-// roleNames lists every config.Role the generator knows how to spell, in the
-// order the TS union declares them. Render errors on a role outside this list
-// rather than emitting a name the TS side never classified.
+// roleNames lists the config.Roles the generator can spell, in StatusRole union
+// order. Render refuses a status whose role is missing here.
 var roleNames = []config.Role{
 	config.RoleOpen,
 	config.RoleStartable,
@@ -47,9 +43,9 @@ func Render() (string, error) {
 	b.WriteString("// (internal/config, internal/nibtypes, internal/estimate). The committed\n")
 	b.WriteString("// file is pinned byte-for-byte by TestGeneratedVocabularyIsFresh.\n\n")
 
-	// The role union. A new Go role lands here on regeneration, and every
-	// exhaustive switch over StatusRole in the web then fails svelte-check
-	// until the new role is classified — the NibFilter-guard philosophy.
+	// A role added to roleNames reaches the StatusRole union on regeneration,
+	// and the web's exhaustive StatusRole switches fail svelte-check until they
+	// classify it.
 	names := make([]string, len(roleNames))
 	for i, r := range roleNames {
 		names[i] = fmt.Sprintf("%q", r.String())
@@ -145,19 +141,14 @@ func priorityNames() []string {
 	return names
 }
 
-// typeRanks derives the container→leaf rank of every type from the hierarchy
-// rules: a type with no legal children ranks 0, a container one above its
-// highest-ranked possible child. The hierarchy is acyclic by construction (a
-// type never appears among its own descendants' children), so the recursion
-// terminates.
+// typeRanks derives each type's container→leaf rank from the hierarchy: a type
+// with no legal children ranks 0, a container one above its highest-ranked
+// child. The recursion assumes the hierarchy is acyclic.
 //
-// Milestone is the one pinned exception. Presentation bridge: the hierarchy
-// defines no rank for milestones (they take no children), so they would fall to
-// the LEAF tier, where the web's type lenses would sweep a milestone row into
-// their leftover section instead of hiding it — a type lens hides only what
-// ranks ABOVE its tier (typeLens.place in web/src/lib/tree.ts). Pinning them
-// above every container is what keeps a milestone out of "No epic". The
-// Milestones view itself does not read rank at all: it groups by membership.
+// Milestone takes no children, so it would rank 0; it is pinned above every
+// container instead. A type lens (typeLens in web/src/lib/viewSpine.ts) hides
+// only rows ranked above its tier, so a rank-0 milestone would fall into the
+// lens's leftover section, such as "No epic".
 func typeRanks() map[string]int {
 	ranks := make(map[string]int, len(config.DefaultTypes))
 	var rank func(t string) int
@@ -187,9 +178,8 @@ func typeRanks() map[string]int {
 	return ranks
 }
 
-// estimateLabel derives an estimate's display label from its declared
-// description, which carries the label followed by a parenthesized weight
-// ("Small (1 point)"). TestEstimateLabels pins the results.
+// estimateLabel returns the part of an estimate's description before " (", e.g.
+// "Small" from "Small (1 point)".
 func estimateLabel(name string) string {
 	for _, e := range config.DefaultEstimates {
 		if e.Name == name {

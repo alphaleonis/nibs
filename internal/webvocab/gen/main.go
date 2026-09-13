@@ -1,6 +1,5 @@
 // Command gen writes the generated web vocabulary module to its committed
-// location. Run through `task codegen` (go:generate in internal/webvocab), not
-// by hand.
+// location. Run it through `task codegen`.
 package main
 
 import (
