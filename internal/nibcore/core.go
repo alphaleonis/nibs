@@ -553,6 +553,11 @@ func readRegularFile(path string) ([]byte, error) {
 	return io.ReadAll(f)
 }
 
+// errFilenameNamesNoID refuses a file whose name parses to an empty id: every
+// lookup is by id, so a nib loaded under "" could be neither addressed nor
+// reported.
+var errFilenameNamesNoID = errors.New("its file name yields no nib id")
+
 // loadNib reads and parses a single nib file.
 func (c *Core) loadNib(path string) (*nib.Nib, error) {
 	// OpenRegularFile, not os.Open: this is reached from the fsnotify watcher
@@ -577,6 +582,9 @@ func (c *Core) loadNib(path string) (*nib.Nib, error) {
 
 	filename := filepath.Base(path)
 	b.ID, b.Slug = nib.ParseFilename(filename, c.configPrefix())
+	if b.ID == "" {
+		return nil, errFilenameNamesNoID
+	}
 
 	// Type and Priority are deliberately not defaulted here: synthesizing them in
 	// memory while computeStoredETag bare-parses the file would diverge the

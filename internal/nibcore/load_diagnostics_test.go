@@ -41,6 +41,53 @@ Body.
 `
 )
 
+// TestLoadRecordsFileNamingNoID pins a well-formed nib under a filename that
+// parses to an empty id. Nothing can address such a nib, so it is reported as
+// unparseable rather than loaded, and the loaded map and storedIDs agree that
+// the store holds no empty id.
+func TestLoadRecordsFileNamingNoID(t *testing.T) {
+	for _, filename := range []string{"--probe.md", "-probe.md", ".md"} {
+		t.Run(filename, func(t *testing.T) {
+			core, nibsDir := mustLoadPrefixedCore(t)
+			data := storeData(t, nibsDir)
+			writeNibFile(t, data, "nibs-good1--ok.md", diagValidNib)
+			writeNibFile(t, data, filename, diagValidNib)
+
+			if err := core.Load(); err != nil {
+				t.Fatalf("Load() error = %v, want nil", err)
+			}
+
+			result := core.CheckAllLinks()
+			if len(result.UnparseableFiles) != 1 || result.UnparseableFiles[0].Path != "data/"+filename {
+				t.Fatalf("UnparseableFiles = %+v, want exactly data/%s", result.UnparseableFiles, filename)
+			}
+			if result.UnparseableFiles[0].Reason == "" {
+				t.Error("UnparseableFiles[0].Reason is empty; want a reason naming the filename problem")
+			}
+
+			stored, err := core.storedIDs()
+			if err != nil {
+				t.Fatalf("storedIDs() error = %v", err)
+			}
+			core.mu.RLock()
+			loaded := make([]string, 0, len(core.nibs))
+			for id := range core.nibs {
+				loaded = append(loaded, id)
+			}
+			core.mu.RUnlock()
+			slices.Sort(loaded)
+			storedList := make([]string, 0, len(stored))
+			for id := range stored {
+				storedList = append(storedList, id)
+			}
+			slices.Sort(storedList)
+			if !slices.Equal(loaded, storedList) {
+				t.Errorf("loaded ids %q, storedIDs %q; want the same set", loaded, storedList)
+			}
+		})
+	}
+}
+
 // TestCheckAllLinksReportsUnparseableFile pins the first half of the gap this
 // surface closes: a file skipped at load time is absent from every query, and
 // before this the ONLY trace was a logWarn line on stderr that no production
