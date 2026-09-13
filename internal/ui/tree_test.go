@@ -415,54 +415,6 @@ func TestBuildTreeCyclePromotionContract(t *testing.T) {
 	}
 }
 
-func TestTreeNodeToJSON(t *testing.T) {
-	b := &nib.Nib{
-		ID:       "test-id",
-		Slug:     "test-slug",
-		Path:     "test.md",
-		Title:    "Test Title",
-		Status:   "todo",
-		Type:     "task",
-		Priority: "high",
-		Tags:     []string{"tag1", "tag2"},
-		Body:     "Test body content",
-	}
-
-	node := &TreeNode{
-		Nib:     b,
-		Matched: true,
-		Children: []*TreeNode{
-			{
-				Nib:     &nib.Nib{ID: "child-id", Title: "Child"},
-				Matched: false,
-			},
-		},
-	}
-
-	t.Run("without full body", func(t *testing.T) {
-		json := node.ToJSON(false)
-		if json.ID != "test-id" {
-			t.Errorf("expected id 'test-id', got %s", json.ID)
-		}
-		if json.Body != "" {
-			t.Error("body should be empty when includeFull is false")
-		}
-		if !json.Matched {
-			t.Error("matched should be true")
-		}
-		if len(json.Children) != 1 {
-			t.Errorf("expected 1 child, got %d", len(json.Children))
-		}
-	})
-
-	t.Run("with full body", func(t *testing.T) {
-		json := node.ToJSON(true)
-		if json.Body != "Test body content" {
-			t.Errorf("expected body content, got %s", json.Body)
-		}
-	})
-}
-
 func TestFlattenTreeFiltered(t *testing.T) {
 	// Build a tree:
 	// m1 (milestone)

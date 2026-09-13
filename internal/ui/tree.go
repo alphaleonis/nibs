@@ -11,46 +11,6 @@ type TreeNode struct {
 	Matched  bool // true if this nib matched the filter (vs. shown for context)
 }
 
-// TreeNodeJSON is the JSON-serializable version of TreeNode.
-type TreeNodeJSON struct {
-	ID       string          `json:"id"`
-	Slug     string          `json:"slug,omitempty"`
-	Path     string          `json:"path"`
-	Title    string          `json:"title"`
-	Status   string          `json:"status"`
-	Type     string          `json:"type,omitempty"`
-	Priority string          `json:"priority,omitempty"`
-	Tags     []string        `json:"tags,omitempty"`
-	Body     string          `json:"body,omitempty"`
-	Matched  bool            `json:"matched"`
-	Children []*TreeNodeJSON `json:"children,omitempty"`
-}
-
-// ToJSON converts a TreeNode to its JSON-serializable form.
-func (n *TreeNode) ToJSON(includeFull bool) *TreeNodeJSON {
-	json := &TreeNodeJSON{
-		ID:       n.Nib.ID,
-		Slug:     n.Nib.Slug,
-		Path:     n.Nib.Path,
-		Title:    n.Nib.Title,
-		Status:   n.Nib.Status,
-		Type:     n.Nib.EffectiveType(),
-		Priority: n.Nib.EffectivePriority(),
-		Tags:     n.Nib.Tags,
-		Matched:  n.Matched,
-	}
-	if includeFull {
-		json.Body = n.Nib.Body
-	}
-	if len(n.Children) > 0 {
-		json.Children = make([]*TreeNodeJSON, len(n.Children))
-		for i, child := range n.Children {
-			json.Children[i] = child.ToJSON(includeFull)
-		}
-	}
-	return json
-}
-
 // BuildTree builds a tree of matchedNibs plus their ancestors from allNibs,
 // sorting each level with sortFn.
 //
@@ -229,56 +189,6 @@ type FlatItem struct {
 	TreePrefix  string // pre-computed tree prefix
 	HasChildren bool   // true if this node has children in the tree
 	Collapsed   bool   // true if this node is collapsed (children hidden)
-}
-
-// FlattenTree converts a tree into a flat slice with tree context preserved.
-// Each item includes the pre-computed tree prefix for rendering.
-func FlattenTree(nodes []*TreeNode) []FlatItem {
-	var items []FlatItem
-	flattenNodes(nodes, 0, nil, &items)
-	return items
-}
-
-// flattenNodes recursively flattens tree nodes.
-// ancestry tracks whether each parent level was a last child (true = last, no continuation line needed)
-func flattenNodes(nodes []*TreeNode, depth int, ancestry []bool, items *[]FlatItem) {
-	for i, node := range nodes {
-		isLast := i == len(nodes)-1
-
-		var prefix string
-		if depth > 0 {
-			for _, wasLast := range ancestry {
-				if wasLast {
-					prefix += treeSpace()
-				} else {
-					prefix += treePipe()
-				}
-			}
-			if isLast {
-				prefix += treeLastBranch()
-			} else {
-				prefix += treeBranch()
-			}
-		}
-
-		*items = append(*items, FlatItem{
-			Nib:         node.Nib,
-			Depth:       depth,
-			IsLast:      isLast,
-			Matched:     node.Matched,
-			TreePrefix:  prefix,
-			HasChildren: len(node.Children) > 0,
-		})
-
-		// Only add to ancestry when depth > 0 (roots have no connectors to continue)
-		if len(node.Children) > 0 {
-			var newAncestry []bool
-			if depth > 0 {
-				newAncestry = append(ancestry, isLast)
-			}
-			flattenNodes(node.Children, depth+1, newAncestry, items)
-		}
-	}
 }
 
 // MaxTreeDepth returns the maximum depth of the flattened tree.

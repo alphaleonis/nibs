@@ -290,6 +290,33 @@ func TestTheLinksBoxFitsAShortTerminal(t *testing.T) {
 	}
 }
 
+// A link row's title budget has to subtract the type and status columns the row
+// actually draws. Sized from narrower columns, the row outgrows the box and is
+// clipped, and the title loses its ellipsis.
+func TestALinkRowTruncatesItsTitleInsteadOfBeingClipped(t *testing.T) {
+	parent := &nib.Nib{ID: "p1", Title: strings.Repeat("Long parent title ", 12), Status: "todo", Type: "epic"}
+	child := &nib.Nib{ID: "c1", Title: "Child", Status: "todo", Type: "task", Parent: "p1"}
+	backend := &StubBackend{Nibs: map[string]*nib.Nib{parent.ID: parent, child.ID: child}}
+
+	for _, width := range []int{100, 160} {
+		t.Run(fmt.Sprintf("width %d", width), func(t *testing.T) {
+			m := newDetailModel(child, backend, config.Default(), width, 40)
+			var row string
+			for _, line := range strings.Split(stripAnsi(m.linksBox()), "\n") {
+				if strings.Contains(line, "p1") {
+					row = line
+				}
+			}
+			if row == "" {
+				t.Fatalf("premise failed: no link row for p1 in the links box")
+			}
+			if !strings.Contains(row, "...") {
+				t.Errorf("the link row was clipped rather than truncated: %q", row)
+			}
+		})
+	}
+}
+
 // A body that is only blank lines renders to nothing, and since Parse now hands
 // the body back verbatim it is a stable value rather than one that converges to
 // empty on the next write. So the placeholder has to key off what the body

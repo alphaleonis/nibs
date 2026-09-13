@@ -692,9 +692,7 @@ func (m *listModel) updateDelegate() {
 // applyWideMode forces full type/status column widths when wide mode is active
 func (m *listModel) applyWideMode() {
 	if m.wideMode {
-		m.cols.UseFullTypeStatus = true
-		m.cols.Status = 12
-		m.cols.Type = 12
+		m.cols = m.cols.WithFullNames()
 	}
 }
 

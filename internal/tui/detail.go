@@ -95,9 +95,11 @@ func (d linkDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	// differs between them is never drawn.
 	colors := d.cfg.GetNibColors(link.nib.Status, link.nib.EffectiveType(), link.nib.Priority)
 
-	baseWidth := d.cols.ID + d.cols.Status + d.cols.Type + 12 + 4 // label + cursor + padding
+	// The cursor (2), the label (12) and RenderNibRow's three column separators.
+	// MaxTitleWidth covers the indicator column as well as the title.
+	baseWidth := 2 + 12 + d.cols.ID + d.cols.Status + d.cols.Type + 3
 	if d.cols.ShowTags {
-		baseWidth += d.cols.Tags
+		baseWidth += 1 + d.cols.Tags // its separator and the column
 	}
 	maxTitleWidth := max(10, d.width-baseWidth-8) // 8 for border padding
 
@@ -119,7 +121,7 @@ func (d linkDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 			ShowTags:      d.cols.ShowTags,
 			TagsColWidth:  d.cols.Tags,
 			MaxTags:       d.cols.MaxTags,
-			UseFullNames:  true,
+			UseFullNames:  d.cols.UseFullTypeStatus,
 		},
 	)
 
@@ -170,7 +172,7 @@ func newDetailModel(b *nib.Nib, backend Backend, cfg *config.Config, width, heig
 
 	// The label column (12), cursor (2) and border padding (8).
 	linkAreaWidth := width - 12 - 2 - 8
-	m.cols = ui.CalculateResponsiveColumns(linkAreaWidth, hasTags)
+	m.cols = ui.CalculateResponsiveColumns(linkAreaWidth, hasTags).WithFullNames()
 
 	m.linkList = m.createLinkList()
 
@@ -327,7 +329,7 @@ func (m detailModel) route(msg tea.Msg) (detailModel, tea.Cmd) {
 			}
 		}
 		linkAreaWidth := msg.Width - 12 - 2 - 8
-		m.cols = ui.CalculateResponsiveColumns(linkAreaWidth, hasTags)
+		m.cols = ui.CalculateResponsiveColumns(linkAreaWidth, hasTags).WithFullNames()
 
 		m.updateLinkListDelegate()
 
