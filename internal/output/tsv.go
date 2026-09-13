@@ -5,12 +5,8 @@ import (
 	"strings"
 )
 
-// FormatTSV renders a pre-stringified grid as tab-separated values: cells in a
-// row are joined by '\t', and each row is terminated by '\n' (so N rows yield N
-// newlines; an empty grid yields ""). It is the byte-level TSV primitive shared
-// by the column projection (FormatColumns) and the list projection's default
-// output (FormatListTSV) — the single place the tab/newline convention lives so
-// the two renderers cannot drift apart.
+// FormatTSV joins each row's cells with '\t' and ends every row with '\n'; an
+// empty grid yields "".
 func FormatTSV(rows [][]string) string {
 	var sb strings.Builder
 	for _, row := range rows {
@@ -25,22 +21,9 @@ func FormatTSV(rows [][]string) string {
 	return sb.String()
 }
 
-// FormatListTSV renders a projected list grid as the default list output: an
-// optional "# <n> nibs" comment header (n = number of rows, "# 0 nibs" when the
-// grid is empty) followed by the tab-separated rows (see FormatTSV). Passing
-// includeHeader=false drops the comment line — the --no-header form.
-//
-// When hiddenClosed > 0 the header is annotated to disclose that the open
-// default silently suppressed that many closed rows, e.g.
-// "# 8 nibs (43 hidden: deferred/completed/scrapped — --all to include)".
-// hiddenLabel names the suppressed statuses ("deferred/completed/scrapped"). The caller passes
-// hiddenClosed = 0 whenever the annotation does not apply (an explicit status
-// selection, --all, --ready, or nothing hidden), which suppresses the note.
-//
-// The grid is supplied by the caller (produced by
-// projection.ProjectedList.Rows) so this stays free of any projection or
-// transport dependency: it is pure string assembly, reused by list/rel/recipe
-// views.
+// FormatListTSV renders list output: an optional "# <n> nibs" header, noting
+// hiddenClosed rows of the hiddenLabel statuses when hiddenClosed > 0, then the
+// rows. Pass 0 when no open-status default hid anything.
 func FormatListTSV(rows [][]string, includeHeader bool, hiddenClosed int, hiddenLabel string) string {
 	body := FormatTSV(rows)
 	if !includeHeader {

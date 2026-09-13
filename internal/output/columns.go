@@ -11,11 +11,8 @@ import (
 // Column is a selectable nib field for tabular output.
 type Column string
 
-// Typed Column constants. Using these in the renderField switch turns a
-// typo into a compile error (vs bare string literals which fail silently).
-// Add a new column ↔ add a constant ↔ append to AvailableColumns ↔ extend
-// renderField. The exhaustiveness test in columns_test.go verifies every
-// entry in AvailableColumns has a renderField case.
+// To add a column, add a constant, append it to AvailableColumns and extend
+// renderField; a test fails for a column renderField does not handle.
 const (
 	ColumnID        Column = "id"
 	ColumnSlug      Column = "slug"
@@ -31,16 +28,13 @@ const (
 	ColumnUpdatedAt Column = "updated_at"
 )
 
-// AvailableColumns lists the supported column names in canonical order
-// (for --help text and error messages).
+// AvailableColumns lists the supported columns in canonical order.
 var AvailableColumns = []Column{
 	ColumnID, ColumnSlug, ColumnTitle, ColumnStatus, ColumnType,
 	ColumnPriority, ColumnEstimate, ColumnOrder, ColumnParent,
 	ColumnTags, ColumnCreatedAt, ColumnUpdatedAt,
 }
 
-// availableSet is a fast-lookup set of valid column names, derived from
-// AvailableColumns at init time.
 var availableSet = func() map[Column]struct{} {
 	m := make(map[Column]struct{}, len(AvailableColumns))
 	for _, c := range AvailableColumns {
@@ -49,13 +43,9 @@ var availableSet = func() map[Column]struct{} {
 	return m
 }()
 
-// ParseColumns parses a comma-separated spec ("id,status,title") into a
-// validated column list. Whitespace around names is trimmed; empty entries
-// (including a fully empty spec) are rejected. Unknown column names error
-// with the available set listed. Duplicate entries are rejected so agent
-// consumers that split lines on tab can rely on a stable column index per
-// name (e.g. "id,id,title" would otherwise place "title" at index 2 — the
-// silent-bug class the comment in TestFormatColumns_EmptyFields wards off).
+// ParseColumns parses a comma-separated column list, trimming spaces. It rejects
+// an empty spec, empty entries, unknown names and duplicates, so each name has one
+// column index.
 func ParseColumns(spec string) ([]Column, error) {
 	if strings.TrimSpace(spec) == "" {
 		return nil, fmt.Errorf("--columns is empty; available columns: %s", availableNames())
@@ -81,16 +71,7 @@ func ParseColumns(spec string) ([]Column, error) {
 	return out, nil
 }
 
-// FormatColumns renders one row per nib, fields tab-joined, rows joined by
-// '\n' with a single trailing '\n'.
-//
-// Multi-value fields (tags) are joined internally with ',' (commas don't
-// collide with the tab separator). Empty fields render as the empty string.
-// time.Time fields render as RFC3339, or "" when nil.
-//
-// It builds a string grid via renderField and delegates the tab/newline
-// assembly to FormatTSV — the same primitive the list projection uses — so the
-// two TSV renderers share one convention.
+// FormatColumns renders one row per nib through FormatTSV; tags are comma-joined.
 func FormatColumns(nibs []*nib.Nib, columns []Column) string {
 	rows := make([][]string, len(nibs))
 	for i, n := range nibs {
@@ -103,10 +84,7 @@ func FormatColumns(nibs []*nib.Nib, columns []Column) string {
 	return FormatTSV(rows)
 }
 
-// renderField extracts the string representation of a single column from a
-// nib. Time fields use time.RFC3339 — sort-friendly and matches existing
-// JSON output (internal/nib encodes timestamps via the standard json
-// package, also RFC3339).
+// renderField returns column c of n; timestamps use time.RFC3339.
 func renderField(n *nib.Nib, c Column) string {
 	switch c {
 	case ColumnID:
@@ -143,9 +121,7 @@ func renderField(n *nib.Nib, c Column) string {
 	return ""
 }
 
-// AvailableColumnsString returns AvailableColumns as a comma-separated string,
-// suitable for embedding in CLI --help text and error messages. Single source
-// of truth so the help text and error envelopes can never drift apart.
+// AvailableColumnsString returns AvailableColumns joined with ", ".
 func AvailableColumnsString() string {
 	names := make([]string, 0, len(AvailableColumns))
 	for _, c := range AvailableColumns {
@@ -154,6 +130,4 @@ func AvailableColumnsString() string {
 	return strings.Join(names, ", ")
 }
 
-// availableNames is a short alias for AvailableColumnsString used at
-// error-message sites.
 func availableNames() string { return AvailableColumnsString() }
