@@ -80,10 +80,7 @@ func PlanRenameStoredArea(storeDir, path, newName string) (*StoredAreaEdit, erro
 		if err != nil {
 			return err
 		}
-		name := mappingValueNode(found.node, "name")
-		if name == nil {
-			return refuseAreaEdit("the declared area %q has no `name:` key to rename", RenderAreaPath(path))
-		}
+		name := found.name
 		name.Kind = yaml.ScalarNode
 		name.Tag = "!!str"
 		name.Value = newName
@@ -131,6 +128,7 @@ func RemoveStoredArea(storeDir, path string) (staleLinkTarget string, err error)
 // storedArea is one declared node found in the vocabulary's node tree.
 type storedArea struct {
 	node  *yaml.Node
+	name  *yaml.Node // the `name:` value node matched to find node; never nil
 	seq   *yaml.Node // the sequence holding node; the `areas:` block at top level
 	index int        // node's position in seq
 	owner *yaml.Node // the mapping whose `children:` key seq is; nil at top level
@@ -313,10 +311,10 @@ func findStoredArea(areas *yaml.Node, path string) (storedArea, error) {
 	rest := path
 	for rest != "" {
 		name, tail, nested := strings.Cut(rest, AreaPathSeparator)
-		index := -1
+		index, nameNode := -1, (*yaml.Node)(nil)
 		for i, item := range seq.Content {
 			if n := mappingValueNode(item, "name"); n != nil && n.Value == name {
-				index = i
+				index, nameNode = i, n
 				break
 			}
 		}
@@ -325,7 +323,7 @@ func findStoredArea(areas *yaml.Node, path string) (storedArea, error) {
 		}
 		node := seq.Content[index]
 		if !nested {
-			return storedArea{node: node, seq: seq, index: index, owner: owner}, nil
+			return storedArea{node: node, name: nameNode, seq: seq, index: index, owner: owner}, nil
 		}
 		children := mappingValueNode(node, "children")
 		if children == nil || children.Kind != yaml.SequenceNode {
