@@ -1,25 +1,13 @@
-// Package store defines the on-disk layout of a nibs store and the rule for
-// finding one.
-//
-// A store is the `.nibs` DIRECTORY itself: it holds the project's config, its
-// active nib files and its archive, so locating that one directory resolves
-// everything else. Nothing outside it identifies a nibs project — which is why
-// the locator stats for a directory rather than a marker file, and why every
-// path a store owns is derived here rather than configured.
+// Package store defines the on-disk layout of a nibs store and how to find one.
+// A store is the `.nibs` directory itself; derive every path it owns from Layout.
 //
 //	<project>/.nibs/config.yml   the project's configuration
+//	<project>/.nibs/areas.yml    the declared areas vocabulary
 //	<project>/.nibs/data/        active nib files
 //	<project>/.nibs/archive/     archived nib files
 //
-// The package is deliberately stdlib-only and depends on nothing else in this
-// module, so both internal/config and internal/nibcore can derive their paths
-// from the same definitions (nibcore imports config, so config must not import
-// nibcore).
-//
-// CANONICAL INVARIANT (the store layout, and the stdlib-only constraint that
-// keeps it importable). This doc is its single authoritative statement; comments
-// across cmd, internal/config, internal/fsutil and internal/nibcore defer here
-// rather than re-derive it.
+// Keep it stdlib-only: internal/config and internal/nibcore both import it, and
+// nibcore imports config.
 package store
 
 import (
@@ -33,27 +21,17 @@ const (
 	DirName = ".nibs"
 	// ConfigFileName is the project config file, stored INSIDE the store.
 	ConfigFileName = "config.yml"
-	// AreasFileName holds the project's declared areas vocabulary, stored
-	// INSIDE the store beside the config.
-	//
-	// It is a separate file because it has a separate LIFETIME: everything in
-	// config.yml is read once and fixed for the life of a process, while this
-	// vocabulary is reloaded whenever it changes on disk. Keeping the two apart
-	// makes that difference a property of the file rather than a convention a
-	// reader has to know, which is what stops the next field added beside a
-	// live one from being assumed live too.
-	//
-	// It is deliberately NOT evidence that a directory is a store: config.yml
-	// answers that question alone, so a stray areas.yml authorizes nothing.
+	// AreasFileName holds the declared areas vocabulary. Unlike config.yml, which a
+	// process reads once, it is reloaded when it changes on disk. It is not
+	// evidence that a directory is a store.
 	AreasFileName = "areas.yml"
 	// DataDirName holds the active nib files.
 	DataDirName = "data"
 	// ArchiveDirName holds the archived nib files.
 	ArchiveDirName = "archive"
-	// LegacyProjectConfigFileName is the pre-layout project config, which sat
-	// beside the store rather than inside it. Recognized only so the migration
-	// gate can refuse an unmigrated store and `nibs migrate` can relocate it;
-	// no command reads a store through it.
+	// LegacyProjectConfigFileName is the pre-layout project config beside the
+	// store. It is recognized to refuse such a project and for `nibs migrate` to
+	// move; no command reads a store through it.
 	LegacyProjectConfigFileName = ".nibs.yml"
 )
 
@@ -101,9 +79,8 @@ func (l Layout) ArchiveRel(base string) string {
 	return ArchiveDirName + "/" + filepath.ToSlash(base)
 }
 
-// IsArchivedRel reports whether a store-relative path names an archived nib.
-// Both separators are accepted because a caller may hand over a path built
-// with filepath.Join before normalization.
+// IsArchivedRel reports whether a store-relative path names an archived nib,
+// separated by '/' or the OS separator.
 func (l Layout) IsArchivedRel(rel string) bool {
 	return hasDirPrefix(rel, ArchiveDirName)
 }
@@ -114,8 +91,8 @@ func (l Layout) IsDataRel(rel string) bool {
 	return hasDirPrefix(rel, DataDirName)
 }
 
-// hasDirPrefix reports whether rel begins with the named directory component,
-// tolerating either path separator.
+// hasDirPrefix reports whether rel starts with dir followed by '/' or the OS
+// separator.
 func hasDirPrefix(rel, dir string) bool {
 	if len(rel) <= len(dir) || rel[:len(dir)] != dir {
 		return false
@@ -124,10 +101,9 @@ func hasDirPrefix(rel, dir string) bool {
 	return sep == '/' || sep == filepath.Separator
 }
 
-// WatchableDirs returns the directories a file watcher should observe: the
-// store root plus data/ and archive/ where they exist. The ROOT is included
-// even though it holds no nib files, so a data/ or archive/ directory created
-// after the watch starts is observable as a create event in its parent.
+// WatchableDirs returns the store root plus data/ and archive/ where they exist.
+// Watch the root too, so a data/ or archive/ created later arrives as a create
+// event.
 func (l Layout) WatchableDirs() []string {
 	dirs := []string{l.root}
 	for _, dir := range []string{l.DataDir(), l.ArchiveDir()} {
@@ -146,9 +122,8 @@ const (
 	MarkerNone MarkerKind = iota
 	// MarkerStore means a `.nibs` DIRECTORY: a store in the current layout.
 	MarkerStore
-	// MarkerLegacyProject means a pre-layout `.nibs.yml` FILE. Its DIRECTORY is
-	// the project; where that project's nibs live is whatever the retired
-	// `nibs.path` key says, so this marker names a project and not a store.
+	// MarkerLegacyProject means a pre-layout `.nibs.yml` FILE. It names the
+	// project directory, not a store.
 	MarkerLegacyProject
 )
 
@@ -160,35 +135,10 @@ type Marker struct {
 	Path string
 }
 
-// FindNearestMarker walks upward from startDir and reports the FIRST nibs
-// marker it meets, of either kind, in ONE pass.
-//
-// ONE PASS IS THE WHOLE POINT, and it is why this exists alongside FindStore.
-// "Which marker is nearer" is only answerable while the walk is running: two
-// independent walks each report a path, and comparing those paths afterwards
-// means re-deriving each one's depth — which nothing did. A pre-layout
-// sub-project nested under an unrelated ancestor store therefore bound to the
-// ancestor, and `nibs migrate` moved and rewrote a store the user had never
-// named while their own project stayed untouched.
-//
-// WITHIN one directory the store wins. A project can legitimately hold both: the
-// pre-layout default shape is `.nibs.yml` beside a `.nibs` store whose nib files
-// sit at its root, and a project migrated by hand can leave the retired file
-// behind. Binding to the store there is what lets the migration gate see the
-// store and say what is pending; preferring the file would refuse every such
-// project with no store bound to migrate.
-//
-// WHAT THIS DOES NOT DECIDE: whether the `.nibs` it matched really is a store.
-// It matches on the NAME, which is evidence for a real directory and none at all
-// for a SYMLINK wearing that name — a committed `.nibs -> /outside` resolves as a
-// directory here and is reported as a marker. Answering that needs the config
-// parsing this package is deliberately stdlib-only to stay out of, so the check
-// lives in the caller: cmd's bindNamedStore, which every route to a store shares.
-// Do not add a second copy here — two evidence rules is the disagreement that
-// defect was.
-//
-// The walk and its NIBS_CONFIG_ROOT ceiling are findUpward's, which is where
-// they are described.
+// FindNearestMarker walks upward from startDir and returns the first nibs marker
+// of either kind, in one pass; resolve a store through it. Within one directory a
+// `.nibs` store wins over `.nibs.yml`. It matches `.nibs` by name, symlinks
+// included: cmd's bindNamedStore decides whether the match is a store.
 func FindNearestMarker(startDir string) (Marker, error) {
 	return findUpward(startDir, func(dir string) (Marker, bool) {
 		if candidate := filepath.Join(dir, DirName); isDir(candidate) {
@@ -201,18 +151,9 @@ func FindNearestMarker(startDir string) (Marker, error) {
 	})
 }
 
-// FindStore searches upward from startDir for a `.nibs` DIRECTORY and returns
-// its absolute path, or an empty string when none is found. A `.nibs` FILE is
-// not a store and does not stop the walk.
-//
-// It answers "where is the nearest store", which is a narrower question than the
-// one a command has to answer — a pre-layout project above the nearest store is
-// invisible here. Store RESOLUTION must therefore go through FindNearestMarker;
-// this remains for the callers that only need a store's config (internal/config)
-// or a yes/no on whether a project exists at all.
-//
-// The walk and its NIBS_CONFIG_ROOT ceiling are findUpward's, which is where
-// they are described.
+// FindStore searches upward from startDir for a `.nibs` directory and returns its
+// absolute path, or "" when there is none. It ignores pre-layout projects, so use
+// it only for diagnostics, never to resolve a store.
 func FindStore(startDir string) (string, error) {
 	return findUpward(startDir, func(dir string) (string, bool) {
 		candidate := filepath.Join(dir, DirName)
@@ -226,31 +167,16 @@ func isDir(path string) bool {
 	return err == nil && info.IsDir()
 }
 
-// isNonDir reports whether path can be stat'd and is not a directory — the test
-// a marker FILE has to pass, mirroring isDir's insistence for a marker directory.
+// isNonDir reports whether path can be stat'd and is not a directory.
 func isNonDir(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
 }
 
-// findUpward walks from startDir toward the filesystem root, returning the first
-// value match reports, or the zero value when the walk finds none.
-//
-// match answers with the value it found and whether it found one. The found flag
-// is separate from the value so a matcher whose result has no useful zero — a
-// struct rather than a path — cannot be misread as a match.
-//
-// THE CEILING is applied here, once, for every locator. The NIBS_CONFIG_ROOT
-// environment variable, when set to a non-empty path, bounds the walk: each
-// directory up to and including that ceiling is checked, but the walk never
-// ascends above it. Comparison is on absolute paths, so a ceiling that is not an
-// ancestor of startDir simply never triggers and the walk proceeds to the
-// filesystem root as usual.
-//
-// It is a sandboxing knob rather than only a test-isolation one: it bounds every
-// upward walk in the tree, including the diagnostic second walk a refusal makes
-// to name the store its answer shadowed. In tests it keeps a stray ancestor store
-// (e.g. /tmp/.nibs) from leaking into cases that expect no store to be found.
+// findUpward walks from startDir toward the filesystem root and returns the first
+// value match reports, or the zero value. A non-empty NIBS_CONFIG_ROOT bounds every
+// locator here: that directory is checked but nothing above it, and a ceiling
+// that is not an ancestor of startDir has no effect.
 func findUpward[T any](startDir string, match func(dir string) (T, bool)) (T, error) {
 	var zero T
 
