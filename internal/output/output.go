@@ -35,7 +35,6 @@ func (e *CodedError) Is(target error) bool {
 // Error codes for JSON responses
 const (
 	ErrNotFound      = "NOT_FOUND"
-	ErrNoNibsDir     = "NO_BEANS_DIR"
 	ErrInvalidStatus = "INVALID_STATUS"
 	ErrFileError     = "FILE_ERROR"
 	ErrValidation    = "VALIDATION_ERROR"
@@ -56,7 +55,7 @@ const (
 	ExitValidation = 2 // VALIDATION_ERROR, INVALID_STATUS, HIERARCHY, TEXT_*
 	ExitNotFound   = 3 // NOT_FOUND
 	ExitConflict   = 4 // CONFLICT (etag / optimistic-concurrency)
-	ExitIO         = 5 // FILE_ERROR, NO_*_DIR (filesystem / IO)
+	ExitIO         = 5 // FILE_ERROR (filesystem / IO)
 )
 
 // exitCodes classifies every error code. Add each new Err* constant here: a code
@@ -70,7 +69,6 @@ var exitCodes = map[string]int{
 	ErrTextAmbiguous: ExitValidation,
 	ErrConflict:      ExitConflict,
 	ErrFileError:     ExitIO,
-	ErrNoNibsDir:     ExitIO,
 	ErrUncategorized: ExitError,
 }
 
@@ -130,13 +128,6 @@ func Success(b *nib.Nib, message string) error {
 		Nib:     b,
 		Message: message,
 	})
-}
-
-// SuccessSingle outputs a single nib with no envelope.
-func SuccessSingle(b *nib.Nib) error {
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(b)
 }
 
 // SuccessMultiple outputs a nib array with no envelope.
@@ -243,9 +234,4 @@ func JSONRaw(v any) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
-}
-
-// ErrorFrom outputs an error response from an existing error.
-func ErrorFrom(code string, err error) error {
-	return Error(code, err.Error())
 }
