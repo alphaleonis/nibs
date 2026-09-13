@@ -937,6 +937,22 @@ describe("milestone membership lens", () => {
     expect(m2.children.map((c) => c.nib.id)).toEqual(["e2", "p1"]);
   });
 
+  it("draws a scheduled child of an unscheduled epic in its milestone, not under the Backlog epic", () => {
+    // Go's `(*membership.View).Backlog` leaves such a child out of the epic's
+    // Items; the lens has to agree about where the row belongs.
+    const nibs = [
+      makeTreeNib({ id: "m1", type: "milestone", title: "v1.0" }),
+      makeTreeNib({ id: "e1", type: "epic", title: "Unscheduled epic" }),
+      makeTreeNib({ id: "t1", type: "task", title: "Unscheduled child", parentId: "e1" }),
+      makeTreeNib({ id: "t2", type: "task", title: "Scheduled child", parentId: "e1", milestone: "m1" }),
+    ];
+    const tree = buildViewTree(nibs, "milestones");
+    expect(tree.map((r) => r.nib.id)).toEqual(["m1", BACKLOG]);
+    expect(tree[0].children.map((c) => c.nib.id)).toEqual(["t2"]);
+    const e1 = tree[1].children.find((c) => c.nib.id === "e1")!;
+    expect(e1.children.map((c) => c.nib.id)).toEqual(["t1"]);
+  });
+
   describe("a closed milestone is a section like any other", () => {
     // The decision this feature owed. Status is not consulted: which milestones
     // exist is the response's call, and `(*membership.View).Backlog` settles it

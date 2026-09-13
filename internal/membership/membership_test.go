@@ -155,6 +155,27 @@ func TestBacklog(t *testing.T) {
 	wantIDs(t, "Backlog().Other", rem.Other, "t3", "t4")
 }
 
+// TestBacklogEpicItemsExcludeScheduledChildren: an unscheduled epic may carry a
+// child assigned to a milestone — exclusivity only refuses a nib and an ancestor
+// both being assigned — and that child is scheduled work, so it is not one of
+// the backlog epic's Items.
+func TestBacklogEpicItemsExcludeScheduledChildren(t *testing.T) {
+	v := Compute([]*nib.Nib{
+		n("m1", "milestone", ""),
+		n("e1", "epic", ""),
+		n("t1", "task", "e1"),
+		{ID: "t2", Title: "t2", Type: "task", Parent: "e1", Milestone: "m1"},
+	})
+	rem := v.Backlog()
+	if len(rem.Epics) != 1 || rem.Epics[0].Epic.ID != "e1" {
+		t.Fatalf("Backlog().Epics = %v, want [e1]", rem.Epics)
+	}
+	wantIDs(t, "Backlog().Epics[0].Items", rem.Epics[0].Items, "t1")
+	if got := v.MilestoneOf("t2"); got != "m1" {
+		t.Fatalf(`premise failed: MilestoneOf("t2") = %q, want "m1"`, got)
+	}
+}
+
 // TestMilestoneTypedNibsAreNeverMembers pins the container exclusion on BOTH
 // axes: a milestone-typed nib is a container of its own and never a member —
 // not through an illegal structural nest, and not through a hand-authored
