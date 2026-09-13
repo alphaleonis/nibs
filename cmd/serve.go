@@ -505,8 +505,8 @@ func newGraphQLHandler(app *App, wsPingPong time.Duration) http.Handler {
 //     rather than as the failure it is.
 //
 //   - "FILTER_CONTRADICTION" on the typed *graph.FilterTargetContradictionError —
-//     an id-valued filter field combined with its presence twin set to false
-//     (parentId + hasParent:false). It needs a code of its own because both
+//     an id-valued filter field combined with a tri-state field set to the value
+//     no nib it matches can have (parentId + hasParent:false). It needs a code of its own because both
 //     alternatives misinform: NOT_FOUND routes it to the "no such nib" empty
 //     state, whose wording blames an id when both halves may name real nibs,
 //     while leaving it uncoded lands it in the destructive error box. The web

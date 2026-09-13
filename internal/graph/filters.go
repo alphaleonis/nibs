@@ -38,22 +38,29 @@ func resolveFilterTarget(reader NibReader, field, id string) (string, error) {
 }
 
 // refuseContradiction reports *FilterTargetContradictionError when an id-valued
-// filter field is combined with the presence field covering the same
-// relationship, set to false. Two pairs qualify, each empty by construction:
+// filter field is combined with a tri-state field set to contradicting, the
+// value no nib the id field matches can have. These pairs qualify, each empty by
+// construction:
 //
-//   - parentId + hasParent. Both read the resolved parent (see resolvedParent).
-//   - blockedById + hasBlockedBy. blockedById requires the target in
+//   - parentId + hasParent: false. Both read the resolved parent (see
+//     resolvedParent).
+//   - ancestorId + hasParent: false. A descendant is found by walking resolved
+//     parents, so it has one.
+//   - blockedById + hasBlockedBy: false. blockedById requires the target in
 //     b.BlockedBy, which forces len(b.BlockedBy) > 0.
+//   - milestone + noMilestone: true. milestone matches a resolved direct
+//     assignment, and View.MilestoneOf answers a nib's own resolved assignment
+//     first, so every match belongs to a milestone.
 //
-// Do not add blockingId + hasBlocking as a third. hasBlocking asks whether a nib
-// is ACTIVELY blocking (nibcore's isBlockingInMap releases on the status at BOTH
+// Do not add blockingId + hasBlocking: false. hasBlocking asks whether a nib is
+// ACTIVELY blocking (nibcore's isBlockingInMap releases on the status at BOTH
 // ends) while blockingId matches the target's stored blocked_by whatever the
 // candidate's status, so the pair is a real query.
-func refuseContradiction(field string, id *string, presenceField string, presence *bool) error {
-	if id == nil || *id == "" || presence == nil || *presence {
+func refuseContradiction(field string, id *string, presenceField string, presence *bool, contradicting bool) error {
+	if id == nil || *id == "" || presence == nil || *presence != contradicting {
 		return nil
 	}
-	return &FilterTargetContradictionError{Field: field, PresenceField: presenceField, ID: *id}
+	return &FilterTargetContradictionError{Field: field, PresenceField: presenceField, PresenceValue: contradicting, ID: *id}
 }
 
 // hasBoundingFilter reports whether the filter names a nib whose relationships
@@ -102,10 +109,16 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 
 	// Refused first: an unresolvable id in a contradictory pair reports the
 	// contradiction, not the not-found.
-	if err := refuseContradiction("parentId", filter.ParentID, "hasParent", filter.HasParent); err != nil {
+	if err := refuseContradiction("parentId", filter.ParentID, "hasParent", filter.HasParent, false); err != nil {
 		return nil, err
 	}
-	if err := refuseContradiction("blockedById", filter.BlockedByID, "hasBlockedBy", filter.HasBlockedBy); err != nil {
+	if err := refuseContradiction("ancestorId", filter.AncestorID, "hasParent", filter.HasParent, false); err != nil {
+		return nil, err
+	}
+	if err := refuseContradiction("blockedById", filter.BlockedByID, "hasBlockedBy", filter.HasBlockedBy, false); err != nil {
+		return nil, err
+	}
+	if err := refuseContradiction("milestone", filter.Milestone, "noMilestone", filter.NoMilestone, true); err != nil {
 		return nil, err
 	}
 

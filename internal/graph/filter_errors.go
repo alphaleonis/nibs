@@ -112,8 +112,8 @@ func (e *FilterTargetEmptyError) Error() string {
 }
 
 // FilterTargetContradictionError reports that an id-valued filter field was
-// combined with the presence field covering the same relationship, set to false
-// — `nibs(filter:{parentId:"nibs-9kvw", hasParent:false})`. It is the validation
+// combined with a tri-state field set to the value no nib it matches can have —
+// `nibs(filter:{parentId:"nibs-9kvw", hasParent:false})`. It is the validation
 // class (exit 2), the class cmd/list.go gives the flag spelling (`--parent X
 // --no-parent`).
 //
@@ -124,14 +124,17 @@ type FilterTargetContradictionError struct {
 	Field string
 	// PresenceField is the tri-state field it contradicts, e.g. "hasParent".
 	PresenceField string
+	// PresenceValue is the value of PresenceField that was refused: false for
+	// hasParent, true for noMilestone.
+	PresenceValue bool
 	// ID is the target exactly as supplied, never the empty string —
 	// refuseContradiction leaves an empty id to FilterTargetEmptyError.
 	ID string
 }
 
 func (e *FilterTargetContradictionError) Error() string {
-	return fmt.Sprintf("%s filter: contradicts %s: false — every nib matching %s %s satisfies %s: true, so nothing can match both",
-		e.Field, e.PresenceField, e.Field, echoID(e.ID), e.PresenceField)
+	return fmt.Sprintf("%s filter: contradicts %s: %t — every nib matching %s %s satisfies %s: %t, so nothing can match both",
+		e.Field, e.PresenceField, e.PresenceValue, e.Field, echoID(e.ID), e.PresenceField, !e.PresenceValue)
 }
 
 // FilterTargetTypeError reports that a filter field naming a nib of one

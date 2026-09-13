@@ -664,6 +664,19 @@ describe("TreeTable", () => {
       expect(screen.queryByRole("button", { name: /clear hierarchy filters/i })).not.toBeInTheDocument();
     });
 
+    // The assignment pair's refused half is `is:backlog`, a true-valued token, and
+    // the axis is outside the hierarchy the escape hatch clears.
+    it("names a milestone/backlog pair but omits the hierarchy escape hatch", () => {
+      renderWithError(contradictionError("milestone filter: contradicts noMilestone: true"), {
+        filter: { milestone: "nibs-m", noMilestone: true },
+      });
+
+      const explanation = screen.getByTestId("empty-contradiction");
+      expect(explanation).toHaveTextContent("milestone:nibs-m");
+      expect(explanation).toHaveTextContent("is:backlog");
+      expect(screen.queryByRole("button", { name: /clear hierarchy filters/i })).not.toBeInTheDocument();
+    });
+
     // The calm treatment is earned by the code AND by the client being able to
     // name the pair. If the two disagree — a filter that no longer holds the pair
     // the server refused — falling through to the generic error shows the server's

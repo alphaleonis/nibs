@@ -89,12 +89,11 @@ describe("relations — the ordered vocabulary drives recognition", () => {
     }
   });
 
-  // Two derived structures read a bool entry's VALUE and report it as a spelling:
-  // `NEGATIVE_EXISTENCE_TOKENS` maps each `!value` entry to "the `no:` spelling",
-  // and the `_PairsKeep*` compile-time guards read a paired field as present in a
-  // true-writing and a false-writing entry. Both are wrong the moment a word and
-  // its polarity disagree — which is exactly what a `has:`/`no:milestone` pair
-  // over the `noMilestone` field would do, and why the backlog is `is:backlog`.
+  // The `_PairsKeep*` compile-time guards read a bool entry's VALUE and report it as
+  // a spelling: a paired field counts as present in a true-writing and a
+  // false-writing entry. That is wrong the moment a word and its polarity disagree
+  // — which is exactly what a `has:`/`no:milestone` pair over the `noMilestone`
+  // field would do, and why the backlog is `is:backlog`.
   it("writes the polarity its existence word claims", () => {
     const polarity = new Map([
       ["has", true],
@@ -156,13 +155,13 @@ describe("relations — the assignment axis", () => {
     });
   });
 
-  // `CONTRADICTORY_PAIRS` mirrors the server's `refuseContradiction`, which names
-  // two pairs and not this one (internal/graph/filters.go). Nor is this pair empty
-  // by construction: a milestone-typed nib carrying an assignment resolves into
-  // that queue while derived membership still reads it as backlog
-  // (internal/graph/schema.graphqls, the noMilestone field doc).
-  it("is not a contradictory pair", () => {
-    expect(contradictionTokens({ milestone: "tnib-1", noMilestone: true })).toEqual([]);
+  // A nib in a milestone's queue belongs to that milestone, so it is never
+  // backlog: the server refuses the pair, and the refused half is the `true` one.
+  it("is a contradictory pair with backlog, and only with backlog set", () => {
+    expect(contradictionTokens({ milestone: "tnib-1", noMilestone: true })).toEqual([
+      ["milestone:tnib-1", "is:backlog"],
+    ]);
+    expect(contradictionTokens({ milestone: "tnib-1", noMilestone: false })).toEqual([]);
   });
 });
 
@@ -236,6 +235,9 @@ describe("relations — contradictory pairs", () => {
     ]);
     expect(contradictionTokens({ blockedById: "tnib-9", hasBlockedBy: false })).toEqual([
       ["blocked-by:tnib-9", "no:blocked-by"],
+    ]);
+    expect(contradictionTokens({ ancestorId: "tnib-2", hasParent: false })).toEqual([
+      ["ancestor:tnib-2", "no:parent"],
     ]);
   });
 
