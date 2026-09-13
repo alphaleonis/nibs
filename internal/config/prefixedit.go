@@ -95,7 +95,7 @@ func PlanSetStoredPrefix(storeDir, prefix string) (*StoredPrefixEdit, error) {
 	if edited.Nibs.Prefix != prefix {
 		return nil, refusePrefixEdit(
 			"%s would still read its prefix as %q after the edit, because this edit can only address a literal `nibs:` mapping — write `prefix: %s` out under `nibs:`, then rerun",
-			path, edited.Nibs.Prefix, prefix)
+			path, echoedYAMLName(edited.Nibs.Prefix), prefix)
 	}
 	return &StoredPrefixEdit{path: path, out: out}, nil
 }

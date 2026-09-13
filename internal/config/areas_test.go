@@ -647,8 +647,7 @@ func TestValidateAreaAssignmentRendersTheRefusedValue(t *testing.T) {
 	// The backtick is the rune the %q around the value does NOT answer: it is
 	// printable, so strconv.Quote passes it through, and it closes the code span
 	// an agent transcript renders the message inside. safetext.Strip is what
-	// substitutes it (non-printables are already covered by %q — see
-	// internal/safetext).
+	// substitutes it.
 	t.Run("a backtick cannot close the message's code span", func(t *testing.T) {
 		err := areas.ValidateAssignment("we`b")
 		if err == nil {

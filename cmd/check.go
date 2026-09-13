@@ -574,10 +574,10 @@ func renderLoadDiagnostics(result *nibcore.LinkCheckResult, partialLoad *bool) {
 	for _, d := range result.DuplicateIDs {
 		if checkFix {
 			ui.Printf("  %s Cannot auto-fix duplicate id %q: %s shadows %s (choose which file to keep)\n",
-				ui.Warning.Render("!"), d.NibID, stripControlChars(d.Loaded), stripControlChars(d.Shadowed))
+				ui.Warning.Render("!"), stripControlChars(d.NibID), stripControlChars(d.Loaded), stripControlChars(d.Shadowed))
 		} else {
 			ui.Printf("  %s Duplicate id %q: %s shadows %s (the shadowed file is unreachable)\n",
-				ui.Danger.Render("✗"), d.NibID, stripControlChars(d.Loaded), stripControlChars(d.Shadowed))
+				ui.Danger.Render("✗"), stripControlChars(d.NibID), stripControlChars(d.Loaded), stripControlChars(d.Shadowed))
 		}
 	}
 	if result.LoadIssues() == 0 && partialLoad != nil && !*partialLoad {

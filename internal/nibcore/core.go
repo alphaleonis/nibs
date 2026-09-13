@@ -38,7 +38,7 @@ type IDExistsError struct {
 }
 
 func (e *IDExistsError) Error() string {
-	return fmt.Sprintf("nib id %q is already claimed by a file in the store — creating it again would leave two files wearing one id", e.ID)
+	return fmt.Sprintf("nib id %q is already claimed by a file in the store — creating it again would leave two files wearing one id", safetext.Strip(e.ID))
 }
 
 // StoreRePrefixedError reports a Create refused because the store's config
@@ -65,7 +65,7 @@ func (e *StoreRePrefixedError) Error() string {
 		remedy = "restart the nibs process holding this store — it read the prefix once at startup and nothing reloads it, so every later create refuses the same way"
 	}
 	return fmt.Sprintf("nothing was created: this store's prefix changed from %q to %q while this create waited for the store's write lock, so every id this process loaded is retired — %s",
-		e.Loaded, e.Declared, remedy)
+		safetext.Strip(e.Loaded), safetext.Strip(e.Declared), remedy)
 }
 
 // ETagMismatchError is returned when an ETag validation fails.
@@ -450,7 +450,7 @@ func (c *Core) loadFromDisk() error {
 		// the retained diagnostic in nib.Path form.
 		if existing, ok := nibs[b.ID]; ok {
 			warns.warn("duplicate nib id %q on disk: %s shadows %s (last file loaded wins; resolve the duplicate)",
-				b.ID, path, filepath.Join(c.root, existing.Path))
+				safetext.Strip(b.ID), path, filepath.Join(c.root, existing.Path))
 			duplicates = append(duplicates, DuplicateID{
 				NibID:    b.ID,
 				Loaded:   b.Path,
@@ -930,16 +930,16 @@ func (c *Core) ValidateEnums(b *nib.Nib) error {
 		return nil
 	}
 	if b.Type != "" && !c.config.IsValidType(b.Type) {
-		return fmt.Errorf("invalid type %q: must be one of %s", b.Type, c.config.TypeList())
+		return fmt.Errorf("invalid type %q: must be one of %s", safetext.Strip(b.Type), c.config.TypeList())
 	}
 	if b.Status != "" && !c.config.IsValidStatus(b.Status) {
-		return fmt.Errorf("invalid status %q: must be one of %s", b.Status, c.config.StatusList())
+		return fmt.Errorf("invalid status %q: must be one of %s", safetext.Strip(b.Status), c.config.StatusList())
 	}
 	if b.Priority != "" && !c.config.IsValidPriority(b.Priority) {
-		return fmt.Errorf("invalid priority %q: must be one of %s", b.Priority, c.config.PriorityList())
+		return fmt.Errorf("invalid priority %q: must be one of %s", safetext.Strip(b.Priority), c.config.PriorityList())
 	}
 	if b.Estimate != "" && !c.config.IsValidEstimate(b.Estimate) {
-		return fmt.Errorf("invalid estimate %q: must be one of %s", b.Estimate, c.config.EstimateList())
+		return fmt.Errorf("invalid estimate %q: must be one of %s", safetext.Strip(b.Estimate), c.config.EstimateList())
 	}
 	return nil
 }
@@ -1203,7 +1203,7 @@ func (c *Core) mintingVocabulary() (string, int, error) {
 	if err != nil {
 		// A failed read is evidence of nothing, least of all that the prefix
 		// changed; a silent fallback would look like the misnaming this catches.
-		c.logWarn("could not re-read %s while minting a nib id (%v); using the prefix %q and id length %d this process loaded", configPath, err, prefix, length)
+		c.logWarn("could not re-read %s while minting a nib id (%v); using the prefix %q and id length %d this process loaded", configPath, err, safetext.Strip(prefix), length)
 		return prefix, length, nil
 	}
 	if !stored.LoadedFromFile() {

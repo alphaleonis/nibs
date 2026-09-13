@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/alphaleonis/nibs/internal/safetext"
 )
 
 // prefixPattern matches lowercase alphanumerics and dashes that start with an
@@ -128,14 +130,15 @@ func BuildPlan(snapshot []NibSnapshot, oldPrefix, newPrefix string, targetExists
 
 	for _, n := range snapshot {
 		if !strings.HasPrefix(n.ID, oldPrefix) {
-			return nil, fmt.Errorf("snapshot contains nib %q which does not have the expected prefix %q", n.ID, oldPrefix)
+			return nil, fmt.Errorf("snapshot contains nib %q which does not have the expected prefix %q", safetext.Strip(n.ID), safetext.Strip(oldPrefix))
 		}
 		basename := n.Path
 		if idx := strings.LastIndex(n.Path, "/"); idx >= 0 {
 			basename = n.Path[idx+1:]
 		}
 		if !strings.HasPrefix(basename, n.ID) {
-			return nil, fmt.Errorf("nib %q: path basename %q does not start with id %q", n.ID, basename, n.ID)
+			id := safetext.Strip(n.ID)
+			return nil, fmt.Errorf("nib %q: path basename %q does not start with id %q", id, safetext.Strip(basename), id)
 		}
 		fp := FilePlan{
 			OldPath:      n.Path,

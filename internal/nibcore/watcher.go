@@ -11,6 +11,7 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/safetext"
 	"github.com/alphaleonis/nibs/internal/store"
 	"github.com/fsnotify/fsnotify"
 )
@@ -689,7 +690,7 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 			existing, existed := c.nibs[newNib.ID]
 			if existed && c.arrivingShadowsStored(newNib.Path, existing.Path) {
 				warns.warn("duplicate nib id %q on disk: %s shadows %s (the arriving file wins; resolve the duplicate)",
-					newNib.ID, path, filepath.Join(c.root, existing.Path))
+					safetext.Strip(newNib.ID), path, filepath.Join(c.root, existing.Path))
 			}
 			c.nibs[newNib.ID] = newNib
 

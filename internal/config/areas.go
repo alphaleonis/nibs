@@ -80,21 +80,21 @@ func validateAreaNodes(areas []AreaConfig, parent string) error {
 		}
 		if name != area.Name {
 			return fmt.Errorf("area %q %s has leading or trailing whitespace in its name; an `area:` value would have to carry the same spaces to match it",
-				area.Name, areaLocation(parent))
+				RenderAreaPath(area.Name), areaLocation(parent))
 		}
 		// INTERIOR whitespace is permitted: this runs on every load, so tightening
 		// it would fail a config valid today.
 		path := joinAreaPath(parent, name)
 		if strings.Contains(name, AreaPathSeparator) {
 			return fmt.Errorf("area %q %s has a %q in its name; nest the child under its parent instead, which is what makes the path",
-				name, areaLocation(parent), AreaPathSeparator)
+				RenderAreaPath(name), areaLocation(parent), AreaPathSeparator)
 		}
 		if _, dup := seen[name]; dup {
-			return fmt.Errorf("duplicate area %q; two siblings with one name make one path mean two nodes", path)
+			return fmt.Errorf("duplicate area %q; two siblings with one name make one path mean two nodes", RenderAreaPath(path))
 		}
 		seen[name] = struct{}{}
 		if err := ValidateAreaColor(area.Color); err != nil {
-			return fmt.Errorf("area %q: %w", path, err)
+			return fmt.Errorf("area %q: %w", RenderAreaPath(path), err)
 		}
 		if err := validateAreaNodes(area.Children, path); err != nil {
 			return err
@@ -107,7 +107,7 @@ func areaLocation(parent string) string {
 	if parent == "" {
 		return "at the top level"
 	}
-	return fmt.Sprintf("under %q", parent)
+	return fmt.Sprintf("under %q", RenderAreaPath(parent))
 }
 
 // ValidateAreaColor checks a color against the shape AreaConfig.Color permits.
@@ -119,12 +119,12 @@ func ValidateAreaColor(color string) error {
 		switch len(rest) {
 		case 3, 4, 6, 8:
 		default:
-			return fmt.Errorf("color %q is not a usable hex code; use #RGB, #RGBA, #RRGGBB or #RRGGBBAA", color)
+			return fmt.Errorf("color %q is not a usable hex code; use #RGB, #RGBA, #RRGGBB or #RRGGBBAA", echoedYAMLName(color))
 		}
 		for _, r := range rest {
 			isHex := (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
 			if !isHex {
-				return fmt.Errorf("color %q is not a usable hex code; use #RGB, #RGBA, #RRGGBB or #RRGGBBAA", color)
+				return fmt.Errorf("color %q is not a usable hex code; use #RGB, #RGBA, #RRGGBB or #RRGGBBAA", echoedYAMLName(color))
 			}
 		}
 		return nil
@@ -132,7 +132,7 @@ func ValidateAreaColor(color string) error {
 	for _, r := range color {
 		isLetter := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
 		if !isLetter {
-			return fmt.Errorf("color %q is neither a color name nor a hex code", color)
+			return fmt.Errorf("color %q is neither a color name nor a hex code", echoedYAMLName(color))
 		}
 	}
 	return nil

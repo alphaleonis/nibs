@@ -3,6 +3,8 @@ package nib
 import (
 	"fmt"
 	"strings"
+
+	"github.com/alphaleonis/nibs/internal/safetext"
 )
 
 // Order keys are base-62 fractional indexes (0-9, A-Z, a-z) that sort
@@ -30,7 +32,8 @@ func charIndex(c byte) int {
 func ValidateOrderKey(key string) error {
 	for i := 0; i < len(key); i++ {
 		if charIndex(key[i]) == -1 {
-			return fmt.Errorf("invalid character %q at position %d in order key %q", key[i], i, key)
+			return fmt.Errorf("invalid character %q at position %d in order key %q",
+				safetext.Strip(string(rune(key[i]))), i, safetext.Strip(key))
 		}
 	}
 	return nil

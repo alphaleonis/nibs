@@ -234,7 +234,7 @@ func runSetPrefix(cmd *cobra.Command, args []string) error {
 			newPrefix, configFile, err, configFile, newPrefix)
 	}
 
-	msg := fmt.Sprintf("Changed prefix from %q to %q; renamed %d file(s)", oldPrefix, newPrefix, len(plan.Files))
+	msg := fmt.Sprintf("Changed prefix from %q to %q; renamed %d file(s)", stripControlChars(oldPrefix), newPrefix, len(plan.Files))
 	if staleLink != "" {
 		// The atomic write replaced a symlink, so whatever manages that target
 		// still holds the old prefix and will restore it (see config.Save).
@@ -350,12 +350,12 @@ func printPlan(plan *reprefix.RenamePlan, jsonMode bool) error {
 	if jsonMode {
 		return output.JSONRaw(dryRunResponse{
 			Success:      true,
-			Message:      fmt.Sprintf("Would change prefix from %q to %q (%d files)", plan.OldPrefix, plan.NewPrefix, len(plan.Files)),
+			Message:      fmt.Sprintf("Would change prefix from %q to %q (%d files)", stripControlChars(plan.OldPrefix), plan.NewPrefix, len(plan.Files)),
 			Plan:         plan,
 			BodyMentions: bodies,
 		})
 	}
-	fmt.Printf("Would change prefix from %q to %q\n", plan.OldPrefix, plan.NewPrefix)
+	fmt.Printf("Would change prefix from %q to %q\n", stripControlChars(plan.OldPrefix), plan.NewPrefix)
 	fmt.Printf("Plan: %d file(s) to rename\n", len(plan.Files))
 	for _, fp := range plan.Files {
 		fmt.Printf("  %s -> %s\n", stripControlChars(fp.OldPath), stripControlChars(fp.NewPath))
@@ -366,7 +366,7 @@ func printPlan(plan *reprefix.RenamePlan, jsonMode bool) error {
 	// maintainers and not by the person standing in front of the run. It is a
 	// statement of scope, not a count — see previewBodyMentions.
 	fmt.Printf("Note: %s. Every full-form %q mention in prose becomes %q; mentions inside code spans, code fences, link URLs and HTML blocks are left as written.\n",
-		bodyMentionNote, bodies.From, bodies.To)
+		bodyMentionNote, stripControlChars(bodies.From), bodies.To)
 	return nil
 }
 

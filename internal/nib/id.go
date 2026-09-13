@@ -8,6 +8,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/alphaleonis/nibs/internal/safetext"
 	gonanoid "github.com/matoous/go-nanoid/v2"
 )
 
@@ -38,7 +39,7 @@ var ErrIDNotFilename = errors.New("unusable nib id")
 // applies both.
 func ValidateIDForFilename(id string) error {
 	if i := strings.IndexAny(id, `/\`); i >= 0 {
-		return fmt.Errorf("%w %q: an id must not contain the path separator %q — it becomes the nib's filename, so anything before a separator turns into a directory and the id no longer reads back as itself; check --prefix and the store's nibs.prefix", ErrIDNotFilename, id, id[i:i+1])
+		return fmt.Errorf("%w %q: an id must not contain the path separator %q — it becomes the nib's filename, so anything before a separator turns into a directory and the id no longer reads back as itself; check --prefix and the store's nibs.prefix", ErrIDNotFilename, safetext.Strip(id), id[i:i+1])
 	}
 	if id == "." || id == ".." {
 		return fmt.Errorf("%w %q: an id must name a file, and %q names a directory entry", ErrIDNotFilename, id, id)
@@ -64,7 +65,7 @@ func ValidateIDRoundTrip(id, slug, prefix string) error {
 	if slug == "" && slugWouldFix(id, prefix) {
 		remedy = "check the title as well as --prefix and the store's nibs.prefix — the slug comes from the title, and one with no letters or digits leaves no slug to separate the id from"
 	}
-	return fmt.Errorf("%w %q: its file name %q reads back as %q, so the nib would not be reachable by the id it was created under — a nib's id comes from its file name on every load; %s", ErrIDNotRoundTrip, id, name, got, remedy)
+	return fmt.Errorf("%w %q: its file name %q reads back as %q, so the nib would not be reachable by the id it was created under — a nib's id comes from its file name on every load; %s", ErrIDNotRoundTrip, safetext.Strip(id), safetext.Strip(name), safetext.Strip(got), remedy)
 }
 
 // slugWouldFix reports whether the id would read back as itself given a slug.

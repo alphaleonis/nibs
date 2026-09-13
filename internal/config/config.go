@@ -334,7 +334,7 @@ func loadRaw(configPath string) (*Config, error) {
 	var probe retiredPathProbe
 	if err := yaml.Unmarshal(data, &probe); err == nil && probe.Nibs.Path != "" {
 		return nil, fmt.Errorf("%s sets the retired `nibs.path` key (%q); the store directory now holds the config, the data and the archive together — remove the key, and run `nibs migrate` if this project still uses the old layout",
-			configPath, probe.Nibs.Path)
+			configPath, echoedYAMLName(probe.Nibs.Path))
 	}
 
 	// An `areas:` block here is refused, not ignored: ignoring it leaves a block
