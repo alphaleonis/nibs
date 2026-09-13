@@ -22,20 +22,10 @@ var (
 	ColorBlue      = lipgloss.Color("#3B82F6") // Blue
 	ColorCyan      = lipgloss.Color("14")      // Bright Cyan (ANSI)
 
-	// The closed-status ramp. These three exist to tell deferred, completed and
-	// scrapped apart, which all rendered as the same gray before.
-	//
-	// They sit where they do because the TUI has ONE color per status for every
-	// terminal, light or dark, unlike the web which carries a value per theme.
-	// Measured against #1c1c1c, #000000, #fdfdfd and #ffffff, neutral grays
-	// clearing 3:1 on all four span only #67 to #93 — so completed and scrapped
-	// are near the ends of that band, which is as far apart as they can be while
-	// both stay legible either way. Their order matches the web's: completed is
-	// the lighter of the two, scrapped the dimmer.
-	//
-	// The web's own values are close but not identical (its completed is
-	// #99A1AF), because with a separate light-theme value it can afford a
-	// lighter gray than a single-value palette can.
+	// The closed-status ramp: one color per status for dark and light terminals
+	// alike. Neutral grays clearing 3:1 against #1c1c1c, #000000, #fdfdfd and
+	// #ffffff span #67 to #93; completed and scrapped sit near its ends, with
+	// completed the lighter, as on the web.
 	ColorMagenta   = lipgloss.Color("#AA6693") // Deferred — set aside, not finished
 	ColorGrayLight = lipgloss.Color("#90939B") // Completed
 	ColorGrayDim   = lipgloss.Color("#64676F") // Scrapped — dimmer than completed
@@ -51,8 +41,7 @@ var NamedColors = map[string]color.Color{
 	"blue":   ColorBlue,
 	"purple": ColorPrimary,
 	"cyan":   ColorCyan,
-	// "gray" stays #6B7280: the `low` priority uses it, so the closed-status
-	// ramp gets its own names rather than redefining it out from under them.
+	// The low priority uses "gray"; the closed-status ramp has its own names.
 	"magenta":   ColorMagenta,
 	"lightgray": ColorGrayLight,
 	"dimgray":   ColorGrayDim,
@@ -69,17 +58,16 @@ func ResolveColor(name string) color.Color {
 	return ColorMuted
 }
 
-// IsValidColor returns true if the color is a valid named color or hex code.
+// IsValidColor reports whether color is a named color, or starts with "#" and
+// is 4 or 7 bytes long. The characters after "#" are not checked.
 func IsValidColor(color string) bool {
 	if strings.HasPrefix(color, "#") {
-		// Valid hex: #RGB or #RRGGBB
 		return len(color) == 4 || len(color) == 7
 	}
 	_, ok := NamedColors[strings.ToLower(color)]
 	return ok
 }
 
-// Tag badge style - black text on gray background
 var TagBadge = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("#000")).
 	Background(ColorMuted).
@@ -102,9 +90,8 @@ func RenderTags(tags []string) string {
 	return strings.Join(rendered, " ")
 }
 
-// RenderTagsCompact renders tags for list views with a max count.
-// Shows up to maxTags badges, with "+N" indicator if there are more.
-// Tags longer than 12 chars are truncated.
+// RenderTagsCompact renders up to maxTags badges, then "+N" for the rest. A tag
+// over 12 bytes is cut to its first 10 bytes plus "..".
 func RenderTagsCompact(tags []string, maxTags int) string {
 	if len(tags) == 0 {
 		return ""
@@ -122,7 +109,6 @@ func RenderTagsCompact(tags []string, maxTags int) string {
 
 	rendered := make([]string, len(showTags))
 	for i, tag := range showTags {
-		// Truncate long tags
 		displayTag := tag
 		if len(displayTag) > 12 {
 			displayTag = displayTag[:10] + ".."
@@ -151,7 +137,6 @@ func RenderDocuments(docs []string) string {
 	return label + " " + strings.Join(rendered, "  ")
 }
 
-// Text styles
 var (
 	Bold      = lipgloss.NewStyle().Bold(true)
 	Muted     = lipgloss.NewStyle().Foreground(ColorMuted)
@@ -162,21 +147,16 @@ var (
 	Secondary = lipgloss.NewStyle().Foreground(ColorSecondary)
 )
 
-// ID style - distinctive for nib IDs
 var ID = lipgloss.NewStyle().
 	Foreground(ColorPrimary).
 	Bold(true)
 
-// TreeLine style - subtle for tree connectors
 var TreeLine = lipgloss.NewStyle().Foreground(ColorSubtle)
 
-// Title style
 var Title = lipgloss.NewStyle().Bold(true)
 
-// Path style - subdued
 var Path = lipgloss.NewStyle().Foreground(ColorMuted)
 
-// Header style for section headers
 var Header = lipgloss.NewStyle().
 	Foreground(ColorPrimary).
 	Bold(true).
@@ -197,7 +177,7 @@ func RenderStatusWithColor(status, color string, isClosedStatus bool) string {
 	return style.Render(status)
 }
 
-// RenderStatusTextWithColor returns styled status text (for tables) using the specified color.
+// RenderStatusTextWithColor returns styled status text using the specified color.
 func RenderStatusTextWithColor(status, color string, isClosedStatus bool) string {
 	c := ResolveColor(color)
 	style := lipgloss.NewStyle().Foreground(c)
@@ -259,7 +239,7 @@ func RenderPriorityWithColor(priority, color string) string {
 	return style.Render("[" + priority + "]")
 }
 
-// RenderPriorityText returns styled priority text for tables.
+// RenderPriorityText returns styled priority text.
 func RenderPriorityText(priority, color string) string {
 	if priority == "" {
 		return ""
@@ -272,9 +252,8 @@ func RenderPriorityText(priority, color string) string {
 	return style.Render(priority)
 }
 
-// ShortType returns a single-character code for the nib type.
-// Derived from the first letter of each entry in config.DefaultTypes,
-// uppercased. Returns "?" for unknown or empty values.
+// ShortType returns the uppercased first letter of a type in
+// config.DefaultTypes, or "?".
 func ShortType(t string) string {
 	if t == "" {
 		return "?"
@@ -287,19 +266,12 @@ func ShortType(t string) string {
 	return "?"
 }
 
-// ShortStatus returns a single-character code for the nib status.
-// Derived from the first letter of each entry in config.DefaultStatuses,
-// uppercased — with one exception: "deferred" maps to "F" (not "D") so it does
-// not collide with "draft", which keeps "D". Returns "?" for unknown or empty
-// values.
+// ShortStatus returns the uppercased first letter of a status in
+// config.DefaultStatuses, or "?". deferred is "F", since draft has "D".
 func ShortStatus(s string) string {
 	if s == "" {
 		return "?"
 	}
-	// "deferred" and "draft" share a first letter. Draft keeps "D" (established);
-	// deferred is disambiguated to "F" (from "deFerred") so the single-char status
-	// column stays unambiguous. The final glyph/label is a TUI-slice concern; this
-	// only guarantees uniqueness (see TestShortStatus_NoCollisions).
 	if s == "deferred" {
 		return "F"
 	}
@@ -312,8 +284,7 @@ func ShortStatus(s string) string {
 }
 
 // GetPrioritySymbol returns the raw symbol for a priority without styling.
-// Returns empty string for normal/empty priority. Uses ASCII fallbacks when
-// the terminal cannot display UTF-8 (see glyphs.go).
+// Returns empty string for normal/empty priority.
 func GetPrioritySymbol(priority string) string {
 	switch priority {
 	case "critical":
@@ -327,8 +298,8 @@ func GetPrioritySymbol(priority string) string {
 	}
 }
 
-// RenderPrioritySymbol returns a compact symbol for priority (used in TUI).
-// Returns empty string for normal/empty priority.
+// RenderPrioritySymbol returns the styled priority symbol, or "" for
+// normal/empty priority.
 func RenderPrioritySymbol(priority, color string) string {
 	symbol := GetPrioritySymbol(priority)
 	if symbol == "" {
@@ -358,7 +329,7 @@ type NibRowConfig struct {
 	ShowTags      bool     // Whether to show tags column
 	TagsColWidth  int      // Width of tags column (0 = default)
 	MaxTags       int      // Max tags to show (0 = default of 1)
-	TreePrefix    string   // Tree prefix (e.g., "├─" or "  └─") to prepend to ID
+	TreePrefix    string   // Tree prefix to prepend to the ID, e.g. "│  └─ "
 	Dimmed        bool     // Render row dimmed (for unmatched ancestor nibs in tree)
 	IDColWidth    int      // Width of ID column (0 = default of ColWidthID)
 	UseFullNames  bool     // Use full type/status names instead of single-char abbreviations
@@ -387,7 +358,7 @@ type ResponsiveColumns struct {
 }
 
 // CalculateResponsiveColumns determines column widths based on available width.
-// Prioritizes title width - tags are only shown when there's plenty of room.
+// Tags are shown only when the title keeps at least 50 cells.
 func CalculateResponsiveColumns(totalWidth int, hasTags bool) ResponsiveColumns {
 	cols := ResponsiveColumns{
 		ID:       ColWidthID,
@@ -398,7 +369,6 @@ func CalculateResponsiveColumns(totalWidth int, hasTags bool) ResponsiveColumns 
 		ShowTags: false,
 	}
 
-	// Use full type/status names when terminal is wide enough
 	const minWidthForFullNames = 120
 	if totalWidth >= minWidthForFullNames {
 		cols.UseFullTypeStatus = true
@@ -406,21 +376,16 @@ func CalculateResponsiveColumns(totalWidth int, hasTags bool) ResponsiveColumns 
 		cols.Type = 10   // "milestone" needs 9 chars
 	}
 
-	// Don't show tags in narrow viewports - prioritize title space
-	// Only consider showing tags if terminal is wide enough (140+ columns)
 	const minWidthForTags = 140
 
 	if !hasTags || totalWidth < minWidthForTags {
 		return cols
 	}
 
-	// At this point we have at least 140 columns
-	// Base usage: cursor (2) + ID + status + type (use responsive widths)
 	cursorWidth := 2
 	baseWidth := cursorWidth + cols.ID + cols.Status + cols.Type
 	available := totalWidth - baseWidth
 
-	// Reserve generous space for title, then allocate remaining to tags
 	minTitleWidth := 50
 	spaceForTags := available - minTitleWidth
 
@@ -428,23 +393,18 @@ func CalculateResponsiveColumns(totalWidth int, hasTags bool) ResponsiveColumns 
 		cols.ShowTags = true
 
 		if spaceForTags >= 80 {
-			// Lots of space: show all tags (up to 5)
 			cols.Tags = 70
 			cols.MaxTags = 5
 		} else if spaceForTags >= 60 {
-			// Good space: show 4 tags
 			cols.Tags = 55
 			cols.MaxTags = 4
 		} else if spaceForTags >= 45 {
-			// Moderate space: show 3 tags
 			cols.Tags = 42
 			cols.MaxTags = 3
 		} else if spaceForTags >= 35 {
-			// Limited space: show 2 tags
 			cols.Tags = 32
 			cols.MaxTags = 2
 		} else {
-			// Minimal: show 1 tag
 			cols.Tags = ColWidthTags
 			cols.MaxTags = 1
 		}
@@ -453,9 +413,8 @@ func CalculateResponsiveColumns(totalWidth int, hasTags bool) ResponsiveColumns 
 	return cols
 }
 
-// truncateCells cuts s to at most width display cells, leaving it whole when it
-// already fits. Terminal layout is measured in cells, so a rune is kept or
-// dropped entire rather than sliced through.
+// truncateCells cuts s to at most width display cells, keeping or dropping each
+// rune whole.
 func truncateCells(s string, width int) string {
 	if width <= 0 {
 		return ""
@@ -465,7 +424,6 @@ func truncateCells(s string, width int) string {
 
 // RenderNibRow renders a nib as a single row with ID, Type, Status, Tags (optional), Title
 func RenderNibRow(id, status, typeName, title string, cfg NibRowConfig) string {
-	// Column styles - use responsive widths if provided
 	idColWidth := ColWidthID
 	if cfg.IDColWidth > 0 {
 		idColWidth = cfg.IDColWidth
@@ -484,13 +442,10 @@ func RenderNibRow(id, status, typeName, title string, cfg NibRowConfig) string {
 		maxTags = cfg.MaxTags
 	}
 
-	// Highlight style for marked rows
 	highlightStyle := lipgloss.NewStyle().Foreground(ColorWarning)
 
-	// Build ID column with manual padding
-	// (lipgloss Width() doesn't correctly handle Unicode box-drawing characters)
 	var idCol string
-	// Calculate visual width: tree prefix (in runes) + ID length
+	// Runes, not bytes: each tree glyph is one cell.
 	visualWidth := len([]rune(cfg.TreePrefix)) + len(id)
 	padding := ""
 	if idColWidth > visualWidth {
@@ -499,17 +454,16 @@ func RenderNibRow(id, status, typeName, title string, cfg NibRowConfig) string {
 	if cfg.Dimmed {
 		idCol = Muted.Render(cfg.TreePrefix) + Muted.Render(id) + padding
 	} else if cfg.IsMarked {
-		// Only highlight the ID when marked
+		// Marking highlights the ID column only.
 		idCol = highlightStyle.Render(cfg.TreePrefix) + highlightStyle.Render(id) + padding
 	} else {
 		idCol = TreeLine.Render(cfg.TreePrefix) + ID.Render(id) + padding
 	}
 
-	// Type column - single character or full name
 	var typeStr string
 	if cfg.UseFullNames {
 		typeStr = typeName
-		typeStyle = typeStyle.Width(12) // wider for full names
+		typeStyle = typeStyle.Width(12)
 	} else {
 		typeStr = ShortType(typeName)
 	}
@@ -520,11 +474,10 @@ func RenderNibRow(id, status, typeName, title string, cfg NibRowConfig) string {
 		typeCol = typeStyle.Render(RenderTypeText(typeStr, cfg.TypeColor))
 	}
 
-	// Status column - single character or full name
 	var statusStr string
 	if cfg.UseFullNames {
 		statusStr = status
-		statusStyle = statusStyle.Width(12) // wider for full names
+		statusStyle = statusStyle.Width(12)
 	} else {
 		statusStr = ShortStatus(status)
 	}
@@ -535,7 +488,6 @@ func RenderNibRow(id, status, typeName, title string, cfg NibRowConfig) string {
 		statusCol = statusStyle.Render(RenderStatusTextWithColor(statusStr, cfg.StatusColor, cfg.IsClosed))
 	}
 
-	// Tags column (optional)
 	var tagsCol string
 	if cfg.ShowTags {
 		if cfg.Dimmed {
@@ -549,16 +501,11 @@ func RenderNibRow(id, status, typeName, title string, cfg NibRowConfig) string {
 		}
 	}
 
-	// Fixed-width indicator column (always indicatorColWidth display cells).
-	// Slot 1 (2 cells): blocked or blocking (mutually exclusive; blocked wins)
-	// Slot 2 (2 cells): priority symbol
-	// Each slot is filled with either <glyph><space> for 1-cell glyphs, or
-	// <glyph> alone for glyphs that already occupy 2 cells (e.g. ASCII "!!").
-	// Empty slots are 2 spaces.
+	// The indicator column is indicatorColWidth cells, right-aligned: a 2-cell
+	// slot for blocked or blocking (blocked wins), then a 2-cell priority slot.
 	const indicatorColWidth = 4
 
-	// padSlot returns rendered text padded with a trailing space so the slot
-	// always occupies 2 display cells.
+	// padSlot pads a one-cell glyph to fill its 2-cell slot.
 	padSlot := func(rendered, raw string) string {
 		if lipgloss.Width(raw) >= 2 {
 			return rendered
@@ -591,25 +538,15 @@ func RenderNibRow(id, status, typeName, title string, cfg NibRowConfig) string {
 	indicatorCol := slot1 + slot2
 	indicatorWidth := slot1Width + slot2Width
 
-	// Right-align indicators: pad on the left so symbols sit adjacent to the title
 	if indicatorWidth < indicatorColWidth {
 		indicatorCol = strings.Repeat(" ", indicatorColWidth-indicatorWidth) + indicatorCol
 	}
 
-	// Title (truncate if needed, always accounting for fixed indicator column).
-	//
-	// Whether to truncate at all is decided on the caller's own MaxTitleWidth,
-	// not on what survives subtracting the indicator column: zero is the
-	// documented "no limit" sentinel, so a budget the indicators exhaust would
-	// otherwise come back out as unlimited. A caller with no room left is the
-	// one that most needs the cut — the over-long row it gets instead is wrapped
-	// by whatever box it is rendered into, which grows that box past the height
-	// it was handed.
-	//
-	// Cuts are measured in display cells rather than bytes: a byte count places
-	// the cut wrong for a non-ASCII title and can split a rune in half.
+	// The title shares MaxTitleWidth with the indicator column. A budget the
+	// indicators use up yields an empty title, not an unlimited one. Cuts are
+	// measured in display cells.
 	displayTitle := title
-	titleColWidth := cfg.MaxTitleWidth // Save original for padding
+	titleColWidth := cfg.MaxTitleWidth
 	if cfg.MaxTitleWidth > 0 {
 		maxWidth := cfg.MaxTitleWidth - indicatorColWidth
 		switch {
@@ -623,7 +560,6 @@ func RenderNibRow(id, status, typeName, title string, cfg NibRowConfig) string {
 		}
 	}
 
-	// Cursor and title styling
 	var cursor string
 	var titleStyled string
 	if cfg.ShowCursor {
@@ -648,7 +584,7 @@ func RenderNibRow(id, status, typeName, title string, cfg NibRowConfig) string {
 	}
 
 	if cfg.ShowTags {
-		// Pad title column to fixed width so tags align in a column
+		// Pad the title column so the tags line up.
 		titleLen := lipgloss.Width(displayTitle) + indicatorColWidth
 		padding := ""
 		if titleColWidth > titleLen {

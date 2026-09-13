@@ -57,85 +57,60 @@ func (n *TreeNode) ToJSON(includeFull bool) *TreeNodeJSON {
 	return json
 }
 
-// BuildTree builds a tree structure from filtered nibs, including ancestors for context.
-// matchedNibs: nibs that matched the filter
-// allNibs: all nibs (needed to find ancestors)
-// sortFn: function to sort nibs at each level
+// BuildTree builds a tree of matchedNibs plus their ancestors from allNibs,
+// sorting each level with sortFn.
 //
-// A parent cycle is the one place where the rendered tree deliberately departs
-// from the stored hierarchy, and three properties of that departure are a
-// contract other packages read the tree through:
+// Where a parent cycle breaks the hierarchy, internal/tui's inParentCycle relies
+// on three properties, pinned by TestBuildTreeCyclePromotionContract:
 //
-//  1. Exactly one member of every parent cycle is promoted to a root
-//     (promotedCycleRoots picks the lowest id).
-//  2. Promotion severs the tree edge only. The promoted nib keeps its stored
-//     Nib.Parent, and the rest of the cycle nests underneath it — so the stored
-//     parent lies inside the promoted nib's own subtree.
-//  3. addAncestors closes the built set upward, so a cycle is never partially
-//     present: any member that enters drags the rest in along its parent chain,
-//     whether it matched the filter or arrived as ancestor context.
-//
-// The known consumer is internal/tui's reorder scoping (inParentCycle in
-// blockmove.go), which reads (2) as its tell that a nib belongs to no parent's
-// sibling list and refuses the reorder by naming the cycle. Break any of the
-// three and that detection quietly answers false, sending the refusal back to
-// describing a sibling list — which is why TestBuildTreeCyclePromotionContract
-// pins all three here, next to the code that produces them, rather than leaving
-// the failure to surface a package away in the TUI's message assertions.
+//  1. Exactly one member of each cycle is promoted to a root: the lowest id.
+//  2. The promoted nib keeps its stored Nib.Parent; only the tree edge is
+//     severed, and the rest of the cycle nests beneath it.
+//  3. Ancestors are closed upward, so a cycle is never partially present.
 func BuildTree(matchedNibs []*nib.Nib, allNibs []*nib.Nib, sortFn func([]*nib.Nib)) []*TreeNode {
-	// Build index of all nibs by ID
 	nibByID := make(map[string]*nib.Nib)
 	for _, b := range allNibs {
 		nibByID[b.ID] = b
 	}
 
-	// Build set of matched nib IDs
 	matchedSet := make(map[string]bool)
 	for _, b := range matchedNibs {
 		matchedSet[b.ID] = true
 	}
 
-	// Find all ancestors needed for context
-	// Start with matched nibs, then walk up parent links
 	neededNibs := make(map[string]*nib.Nib)
 	for _, b := range matchedNibs {
 		neededNibs[b.ID] = b
 	}
 
-	// Add ancestors of matched nibs
 	for _, b := range matchedNibs {
 		addAncestors(b, nibByID, neededNibs)
 	}
 
-	// One member of every parent cycle is promoted to a root; without that, no
-	// member of a cycle qualifies as a root and the whole cycle is dropped.
+	// No member of a cycle meets the root rule below, so without a promoted
+	// member the whole cycle is dropped.
 	promoted := promotedCycleRoots(neededNibs)
 
-	// Build children index (parent ID -> children)
 	children := make(map[string][]*nib.Nib)
 	for _, b := range neededNibs {
-		// A promoted nib's edge to its parent is severed — that is what breaks
-		// the cycle, so the recursive walk below terminates.
+		// Severing a promoted nib's parent edge breaks its cycle, so buildNodes
+		// terminates.
 		if b.Parent != "" && !promoted[b.ID] {
-			// Only add as child if parent is in our needed set
 			if _, ok := neededNibs[b.Parent]; ok {
 				children[b.Parent] = append(children[b.Parent], b)
 			}
 		}
 	}
 
-	// Sort children at each level
 	for parentID := range children {
 		sortFn(children[parentID])
 	}
 
-	// Find root nibs (no parent, parent not in needed set, or promoted out of a cycle)
 	var roots []*nib.Nib
 	for _, b := range neededNibs {
 		if b.Parent == "" || promoted[b.ID] {
 			roots = append(roots, b)
 		} else {
-			// Check if parent is in the tree
 			if _, ok := neededNibs[b.Parent]; !ok {
 				roots = append(roots, b)
 			}
@@ -143,32 +118,17 @@ func BuildTree(matchedNibs []*nib.Nib, allNibs []*nib.Nib, sortFn func([]*nib.Ni
 	}
 	sortFn(roots)
 
-	// Build tree nodes recursively
 	return buildNodes(roots, children, matchedSet)
 }
 
-// promotedCycleRoots picks one member of every parent cycle lying wholly inside
-// nibs. Every member of such a cycle has its parent present, so none satisfies
-// the ordinary root rule and the cycle would render nowhere at all; promoting
-// one member and severing its parent edge turns the cycle into an ordinary
-// chain, so a malformed hierarchy shows up as an oddity instead of a
-// disappearance.
+// promotedCycleRoots picks the lowest-id member of every parent cycle lying
+// wholly inside nibs, for BuildTree to promote to a root.
 //
-// The member with the lowest id wins. That keeps the choice independent of Go's
-// randomized map iteration order, and matches web/src/lib/tree.ts, which applies
-// the same rule — so both views promote the same member and nest a cycle
-// identically. Sibling ORDER still follows each view's own sort, as it does for
-// ordinary trees.
+// web/src/lib/tree.ts applies the same rule; keep the two in agreement. Go
+// compares bytes and TypeScript UTF-16 code units, so ids holding
+// supplementary-plane characters can promote different members.
 //
-// Comparison is over bytes here and UTF-16 code units there. Those orders differ
-// only for supplementary-plane characters, which ids drawn from idAlphabet never
-// contain — but ParseFilename applies no charset gate, so an imported file can
-// carry one. If that ever happens the two views root the cycle at different
-// members; nothing else breaks.
-//
-// A nib has at most one parent, so cycles are disjoint and each is discovered
-// exactly once. Every nib is walked once — unseen -> onPath -> settled — making
-// the pass linear in the size of the set.
+// Each nib is walked once: unseen -> onPath -> settled.
 func promotedCycleRoots(nibs map[string]*nib.Nib) map[string]bool {
 	const (
 		unseen = iota
@@ -182,13 +142,13 @@ func promotedCycleRoots(nibs map[string]*nib.Nib) map[string]bool {
 		if state[id] != unseen {
 			continue
 		}
-		// Follow this nib's parent chain until it leaves the set, ends, or
-		// re-enters itself.
+		// Follow the parent chain until it leaves the set, ends, or revisits
+		// the path.
 		var path []string
 		for cur := id; ; {
 			if state[cur] == onPath {
-				// The chain closed on itself: the cycle is the path from this
-				// nib onward. Anything before it merely leads into the cycle.
+				// The cycle is the path from cur onward; entries before it lead
+				// into the cycle.
 				start := 0
 				for i, m := range path {
 					if m == cur {
@@ -206,7 +166,7 @@ func promotedCycleRoots(nibs map[string]*nib.Nib) map[string]bool {
 				break
 			}
 			if state[cur] == settled {
-				// Already fully explored, along with any cycle beyond it.
+				// Explored already, along with any cycle beyond it.
 				break
 			}
 			state[cur] = onPath
@@ -257,22 +217,16 @@ func buildNodes(nibs []*nib.Nib, children map[string][]*nib.Nib, matchedSet map[
 	return nodes
 }
 
-// Tree rendering connector width (cells per indentation level). The actual
-// glyphs are returned by the glyph accessors in glyphs.go so they can switch
-// to ASCII fallbacks when the terminal cannot display UTF-8.
+// treeIndent is the cell width of one tree connector.
 const treeIndent = 3
 
-// Tree connectors. Each accessor returns the appropriate variant (UTF-8 or
-// ASCII) at call time based on the current detection state.
 func treeBranch() string     { return glyphTreeBranch() }
 func treeLastBranch() string { return glyphTreeLastBranch() }
 func treePipe() string       { return glyphTreePipe() }
 func treeSpace() string      { return glyphTreeSpace() }
 
-// treeMetrics returns the maximum depth of the tree and the largest visible
-// position value sourced from positions (0 when positions is nil or no node
-// has an entry). Single traversal — replaces the previous separate
-// calculateMaxDepth + maxVisiblePosition walks.
+// treeMetrics returns the tree's depth in levels (1 for roots alone) and the
+// largest value positions holds for any of its nodes (0 when none).
 func treeMetrics(nodes []*TreeNode, positions map[string]int) (depth, maxPos int) {
 	for _, node := range nodes {
 		if positions != nil {
@@ -299,43 +253,30 @@ func treeMetrics(nodes []*TreeNode, positions map[string]int) (depth, maxPos int
 func RenderTree(nodes []*TreeNode, cfg *config.Config, maxIDWidth int, hasTags bool, termWidth int, positions map[string]int) string {
 	var sb strings.Builder
 
-	// One walk gives both: tree depth (for ID column width) and the largest
-	// visible position (for the # column width).
 	maxDepth, maxPos := treeMetrics(nodes, positions)
-	// ID column needs: indent (3 chars per level beyond depth 1) + connector (3 chars) + ID width
-	// depth 0: 0 extra chars
-	// depth 1: 3 chars (connector only)
-	// depth 2: 6 chars (3 indent + 3 connector)
-	// depth N: (N-1)*3 + 3 = N*3 chars
+	// One treeIndent per level. Roots draw no connector, so this is one indent
+	// wider than the deepest prefix.
 	treeColWidth := maxIDWidth
 	if maxDepth > 0 {
 		treeColWidth = maxIDWidth + maxDepth*treeIndent
 	}
 
-	// Position column: width is digits in the largest visible position.
-	// 0 means "do not render column" — covers both nil positions and the
-	// "no visible node has a position entry" case (treeMetrics returns 0).
+	// 0 hides the position column.
 	posColWidth := 0
 	if maxPos > 0 {
 		posColWidth = len(strconv.Itoa(maxPos))
 	}
-	// Total cells the position column occupies on each row, including the
-	// trailing space separating it from the ID column.
+	// The position column plus its trailing separator.
 	posColTotal := 0
 	if posColWidth > 0 {
 		posColTotal = posColWidth + 1
 	}
 
-	// Calculate responsive columns based on terminal width
-	// Adjust for tree column width vs default ID column width
 	adjustedWidth := termWidth - treeColWidth + ColWidthID - posColTotal
 	cols := CalculateResponsiveColumns(adjustedWidth, hasTags)
 
-	// Calculate title width from remaining space.
-	// Approximate near the responsive thresholds: posColTotal is subtracted
-	// directly here AND influenced cols.Tags via adjustedWidth above, so the
-	// title may be 2-4 cells off when crossing the tags-shown/hidden boundary.
-	// Clamped to 20 below so layout stays sane.
+	// Approximate near the tag thresholds, where posColTotal also moved
+	// adjustedWidth; kept at least 20.
 	titleWidth := termWidth - posColTotal - treeColWidth - ColWidthType - ColWidthStatus - 3
 	if cols.ShowTags {
 		titleWidth -= cols.Tags
@@ -344,11 +285,10 @@ func RenderTree(nodes []*TreeNode, cfg *config.Config, maxIDWidth int, hasTags b
 		titleWidth = 20
 	}
 
-	// Header with manual padding (lipgloss Width doesn't handle styled strings well)
 	headerCol := lipgloss.NewStyle().Foreground(ColorMuted)
 	var posHeader string
 	if posColWidth > 0 {
-		// Right-align "#" within the position column so it sits over the digits.
+		// Right-align "#" over the digits.
 		posHeader = strings.Repeat(" ", posColWidth-1) + headerCol.Render("#") + " "
 	}
 	idHeader := headerCol.Render("ID") + strings.Repeat(" ", treeColWidth-2)
@@ -357,7 +297,7 @@ func RenderTree(nodes []*TreeNode, cfg *config.Config, maxIDWidth int, hasTags b
 
 	header := posHeader + idHeader + typeHeader + statusHeader + headerCol.Render("TITLE")
 	if cols.ShowTags && titleWidth > 5 {
-		header += strings.Repeat(" ", titleWidth-5+3) + headerCol.Render("TAGS") // +3 for priority/spacing
+		header += strings.Repeat(" ", titleWidth-5+3) + headerCol.Render("TAGS")
 	}
 	dividerWidth := termWidth - 1 // -1 to avoid wrapping on exact terminal width
 	sb.WriteString(header)
@@ -365,7 +305,6 @@ func RenderTree(nodes []*TreeNode, cfg *config.Config, maxIDWidth int, hasTags b
 	sb.WriteString(Muted.Render(strings.Repeat(glyphHRule(), dividerWidth)))
 	sb.WriteString("\n")
 
-	// Build render config from responsive columns
 	renderCfg := treeRenderConfig{
 		treeColWidth: treeColWidth,
 		titleWidth:   titleWidth,
@@ -374,7 +313,6 @@ func RenderTree(nodes []*TreeNode, cfg *config.Config, maxIDWidth int, hasTags b
 		posColWidth:  posColWidth,
 	}
 
-	// Render nodes (depth 0 = root level, no ancestry yet)
 	renderNodes(&sb, nodes, 0, nil, cfg, renderCfg)
 
 	return sb.String()
@@ -413,7 +351,7 @@ func renderNodes(sb *strings.Builder, nodes []*TreeNode, depth int, ancestry []b
 func renderNode(sb *strings.Builder, node *TreeNode, depth int, isLast bool, ancestry []bool, cfg *config.Config, renderCfg treeRenderConfig) {
 	b := node.Nib
 
-	// Position column (right-aligned numeric, blank when this nib has no entry)
+	// Right-aligned position, blank when this nib has none.
 	if renderCfg.posColWidth > 0 {
 		var cell string
 		if pos, ok := renderCfg.positions[b.ID]; ok {
@@ -425,7 +363,6 @@ func renderNode(sb *strings.Builder, node *TreeNode, depth int, isLast bool, anc
 		sb.WriteString(" ")
 	}
 
-	// Build tree prefix from ancestry
 	var prefix string
 	if depth > 0 {
 		for _, wasLast := range ancestry {
@@ -442,16 +379,10 @@ func renderNode(sb *strings.Builder, node *TreeNode, depth int, isLast bool, anc
 		}
 	}
 
-	// Get colors from config. Use EffectiveType so a type-less nib renders its
-	// "task" badge (and color) as it did when loadNib synthesized the default. Raw
-	// Priority is safe here despite the missing default: GetNibColors -> GetPriority
-	// yields a DIFFERENT PriorityColor for "" (none) vs "normal" ("white"), but that
-	// color is only ever consumed by RenderPrioritySymbol, which returns "" (discarding
-	// the color) whenever GetPrioritySymbol is empty — and the symbol is empty for both
-	// "" and "normal", so the rendered result is identical.
+	// Raw Priority is fine: "" and "normal" both render no priority symbol, so
+	// the color that differs between them is never drawn.
 	colors := cfg.GetNibColors(b.Status, b.EffectiveType(), b.Priority)
 
-	// Use shared RenderNibRow function with responsive columns
 	row := RenderNibRow(b.ID, b.Status, b.EffectiveType(), b.Title, NibRowConfig{
 		StatusColor:   colors.StatusColor,
 		TypeColor:     colors.TypeColor,
@@ -480,7 +411,7 @@ type FlatItem struct {
 	Depth       int    // 0 = root, 1+ = nested
 	IsLast      bool   // last child at this level
 	Matched     bool   // true if nib matched filter (vs. shown for context)
-	TreePrefix  string // pre-computed tree prefix (e.g., "  └─")
+	TreePrefix  string // pre-computed tree prefix
 	HasChildren bool   // true if this node has children in the tree
 	Collapsed   bool   // true if this node is collapsed (children hidden)
 }
@@ -499,18 +430,15 @@ func flattenNodes(nodes []*TreeNode, depth int, ancestry []bool, items *[]FlatIt
 	for i, node := range nodes {
 		isLast := i == len(nodes)-1
 
-		// Compute tree prefix
 		var prefix string
 		if depth > 0 {
-			// Build prefix from ancestry - each level adds either │ or space
 			for _, wasLast := range ancestry {
 				if wasLast {
-					prefix += treeSpace() // parent was last child, no continuation line
+					prefix += treeSpace()
 				} else {
-					prefix += treePipe() // parent has more siblings, show continuation line
+					prefix += treePipe()
 				}
 			}
-			// Add connector for this node
 			if isLast {
 				prefix += treeLastBranch()
 			} else {
@@ -527,7 +455,6 @@ func flattenNodes(nodes []*TreeNode, depth int, ancestry []bool, items *[]FlatIt
 			HasChildren: len(node.Children) > 0,
 		})
 
-		// Recurse into children, passing updated ancestry
 		// Only add to ancestry when depth > 0 (roots have no connectors to continue)
 		if len(node.Children) > 0 {
 			var newAncestry []bool
@@ -550,10 +477,8 @@ func MaxTreeDepth(items []FlatItem) int {
 	return maxDepth
 }
 
-// Collapse/expand indicator accessors. The collapsed/expanded glyphs degrade
-// to ASCII fallbacks on terminals that cannot display UTF-8 (see glyphs.go).
-// The leaf indicator is purely whitespace and identical in both modes.
-const CollapseIndicatorLeaf = "  " // leaf node (no children) - keeps columns aligned
+// CollapseIndicatorLeaf pads a leaf to the width of the collapse indicators.
+const CollapseIndicatorLeaf = "  "
 
 func CollapseIndicatorCollapsed() string { return glyphCollapseCollapsed() }
 func CollapseIndicatorExpanded() string  { return glyphCollapseExpanded() }
@@ -573,7 +498,6 @@ func flattenNodesFiltered(nodes []*TreeNode, depth int, ancestry []bool, collaps
 		hasChildren := len(node.Children) > 0
 		isCollapsed := hasChildren && collapsedIDs[node.Nib.ID]
 
-		// Compute tree prefix
 		var prefix string
 		if depth > 0 {
 			for _, wasLast := range ancestry {
@@ -590,7 +514,6 @@ func flattenNodesFiltered(nodes []*TreeNode, depth int, ancestry []bool, collaps
 			}
 		}
 
-		// Append collapse indicator
 		if isCollapsed {
 			prefix += CollapseIndicatorCollapsed()
 		} else if hasChildren {
@@ -609,7 +532,6 @@ func flattenNodesFiltered(nodes []*TreeNode, depth int, ancestry []bool, collaps
 			Collapsed:   isCollapsed,
 		})
 
-		// Recurse into children only if not collapsed
 		if hasChildren && !isCollapsed {
 			var newAncestry []bool
 			if depth > 0 {

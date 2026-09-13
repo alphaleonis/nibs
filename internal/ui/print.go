@@ -6,17 +6,13 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// Print, Printf and Println write to stdout through Lip Gloss, which downsamples
-// styled text to whatever the destination can actually show — truecolor, 256
-// colors, or no color at all for a pipe, a file, or NO_COLOR.
+// Print, Printf and Println write to os.Stdout through Lip Gloss, which
+// downsamples styled text to what the destination supports: no color for a
+// pipe, a file or NO_COLOR. Style.Render output printed through fmt keeps its
+// escape sequences, so print styled text through these.
 //
-// Style.Render emits full-fidelity ANSI unconditionally, so printing its result
-// with the fmt equivalents leaks raw escape sequences into redirected output.
-// Every command that renders a style must print through these.
-//
-// The destination is read from os.Stdout on each call rather than captured once,
-// because tests swap os.Stdout to capture command output and a writer bound at
-// package init would write past them to the real terminal.
+// os.Stdout is read on each call, not captured once: tests swap it to capture
+// output.
 
 func Print(a ...any) {
 	_, _ = lipgloss.Fprint(os.Stdout, a...)

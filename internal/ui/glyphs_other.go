@@ -2,9 +2,8 @@
 
 package ui
 
-// detectASCIIRequired reports whether the platform requires ASCII fallbacks.
-// On non-Windows systems modern terminals are UTF-8 by convention, so this
-// always returns false.
+// detectASCIIRequired reports false: terminals outside Windows are assumed to
+// display UTF-8.
 func detectASCIIRequired() bool {
 	return false
 }
