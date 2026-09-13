@@ -57,12 +57,12 @@ func DefaultKeyMap() KeyMap {
 	}
 }
 
-// ShortHelp returns the short help for the list view
+// ShortHelp implements help.KeyMap.
 func (k KeyMap) ShortHelp() []key.Binding {
 	return []key.Binding{k.Enter, k.Filter, k.Quit}
 }
 
-// FullHelp returns the full help for the list view
+// FullHelp implements help.KeyMap.
 func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Enter},
@@ -101,12 +101,12 @@ func DefaultDetailKeyMap() DetailKeyMap {
 	}
 }
 
-// ShortHelp returns the short help for the detail view
+// ShortHelp implements help.KeyMap.
 func (k DetailKeyMap) ShortHelp() []key.Binding {
 	return []key.Binding{k.Back, k.Quit}
 }
 
-// FullHelp returns the full help for the detail view
+// FullHelp implements help.KeyMap.
 func (k DetailKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down},

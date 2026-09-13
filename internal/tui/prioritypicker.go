@@ -23,7 +23,7 @@ type closePriorityPickerMsg struct{}
 // openPriorityPickerMsg requests opening the priority picker for nib(s)
 type openPriorityPickerMsg struct {
 	nibIDs          []string // IDs of nibs to update
-	nibTitle        string   // Display title (single title or "N nibs")
+	nibTitle        string   // Display title (single title or "N selected nibs")
 	currentPriority string   // Only meaningful for single nib
 }
 
@@ -59,11 +59,9 @@ func (d priorityItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 		cursor = "  "
 	}
 
-	// Render priority with color
 	priorityStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(item.color))
 	priorityText := priorityStyle.Render(item.name)
 
-	// Add current indicator
 	var currentIndicator string
 	if item.isCurrent {
 		currentIndicator = ui.Muted.Render(" (current)")
@@ -83,12 +81,10 @@ type priorityPickerModel struct {
 }
 
 func newPriorityPickerModel(nibIDs []string, nibTitle, currentPriority string, cfg *config.Config, width, height int) priorityPickerModel {
-	// Get all priorities (hardcoded in config package)
 	priorities := config.DefaultPriorities
 
 	delegate := priorityItemDelegate{}
 
-	// Build items list
 	items := make([]list.Item, 0, len(priorities))
 	selectedIndex := 0
 
@@ -105,7 +101,6 @@ func newPriorityPickerModel(nibIDs []string, nibTitle, currentPriority string, c
 		})
 	}
 
-	// Calculate modal dimensions
 	modalWidth := pickerModalWidth(width, 0, 0)
 	modalHeight := pickerModalHeight(height, 0, 0)
 	listWidth := modalWidth - 6
@@ -121,7 +116,6 @@ func newPriorityPickerModel(nibIDs []string, nibTitle, currentPriority string, c
 	l.Styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 0, 0)
 	applyFilterStyles(&l.Styles)
 
-	// Select the current priority
 	if selectedIndex < len(items) {
 		l.Select(selectedIndex)
 	}
@@ -179,8 +173,6 @@ func (m priorityPickerModel) View() string {
 		return "Loading..."
 	}
 
-	// Reserve a fixed description-area height so the modal keeps a constant
-	// height regardless of which priority is selected.
 	var selected string
 	var allDescs []string
 	for _, li := range m.list.Items() {
@@ -193,7 +185,6 @@ func (m priorityPickerModel) View() string {
 	}
 	description := reservePickerDescription(selected, allDescs, pickerModalWidth(m.width, 0, 0))
 
-	// For multi-select, don't show individual nib ID
 	var nibID string
 	if len(m.nibIDs) == 1 {
 		nibID = m.nibIDs[0]
@@ -209,7 +200,7 @@ func (m priorityPickerModel) View() string {
 	})
 }
 
-// ModalView returns the picker rendered as a centered modal overlay on top of the background
+// ModalView returns the picker centered over bgView.
 func (m priorityPickerModel) ModalView(bgView string, fullWidth, fullHeight int) string {
 	modal := m.View()
 	return overlayModal(bgView, modal, fullWidth, fullHeight)

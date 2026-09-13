@@ -173,8 +173,6 @@ func (m estimatePickerModel) View() string {
 		return "Loading..."
 	}
 
-	// Reserve a fixed description-area height so the modal keeps a constant
-	// height regardless of which estimate is selected.
 	var selected string
 	var allDescs []string
 	for _, li := range m.list.Items() {
@@ -202,7 +200,7 @@ func (m estimatePickerModel) View() string {
 	})
 }
 
-// ModalView returns the picker rendered as a centered modal overlay on top of the background
+// ModalView returns the picker centered over bgView.
 func (m estimatePickerModel) ModalView(bgView string, fullWidth, fullHeight int) string {
 	modal := m.View()
 	return overlayModal(bgView, modal, fullWidth, fullHeight)

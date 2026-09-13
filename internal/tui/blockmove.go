@@ -5,37 +5,26 @@ import (
 	"github.com/alphaleonis/nibs/internal/ui"
 )
 
-// effectiveSelection returns the SPACE-marked items whose ancestors are NOT
-// also marked. Descendants of a marked ancestor ride along inside their
-// parent's subtree and never move independently for block-move purposes.
-//
-// The returned slice is ordered by tree traversal (parent-before-child,
-// sibling order).
+// effectiveSelection returns the marked nibs that have no marked ancestor, in
+// tree order. A marked nib's descendants move with it.
 func effectiveSelection(marked map[string]bool, tree []*ui.TreeNode) []*nib.Nib {
 	var out []*nib.Nib
 	walkEffective(tree, marked, false, &out)
 	return out
 }
 
-// walkEffective walks the tree in-order. If ancestorMarked is true, skip
-// recording nodes in this subtree (they ride along with the marked ancestor).
-// When we hit a marked node, include it and stop descending into its children
-// for the purpose of this collection (they are definitionally subsumed).
+// walkEffective appends to out every marked node that has no marked ancestor.
 func walkEffective(nodes []*ui.TreeNode, marked map[string]bool, ancestorMarked bool, out *[]*nib.Nib) {
 	for _, node := range nodes {
 		isMarked := marked[node.Nib.ID]
 		if isMarked && !ancestorMarked {
 			*out = append(*out, node.Nib)
 		}
-		// If this node (or any ancestor) is marked, descendants ride along —
-		// don't include them independently.
 		walkEffective(node.Children, marked, ancestorMarked || isMarked, out)
 	}
 }
 
-// statusKind selects how the footer colors a status message. It rides
-// alongside the message rather than being inferred from its text, so a
-// rewording cannot silently turn a refusal green.
+// statusKind selects how the footer colors a status message.
 type statusKind int
 
 const (
@@ -43,18 +32,11 @@ const (
 	statusWarn
 )
 
-// Reasons a reorder is refused. They are shown verbatim in the list footer, so
-// they describe the selection in the user's terms rather than the code's.
+// Reasons a reorder is refused, shown verbatim in the list footer.
 //
-// The last three are defensive: every nib a reorder can reach is drawn from the
-// tree and therefore appears under its own resolved parent, so no selection the
-// UI can produce reaches them. The one shape that would — a nib promoted out of
-// a parent cycle, whose stored parent link outlives the tree edge BuildTree
-// severed — is caught by inParentCycle and refused with
-// reorderReasonInParentCycle, which names that cause instead. The three are
-// kept because they guard the assumption rather than restate it — reaching one
-// means the tree and the sibling lookup have diverged, which is worth saying
-// out loud instead of moving nothing.
+// The last three are defensive: reaching one means the tree and the sibling
+// lookup disagree. A nib promoted out of a parent cycle is refused with
+// reorderReasonInParentCycle instead.
 const (
 	reorderReasonNothingSelected  = "Nothing to move"
 	reorderReasonDifferentParents = "Can't move: selected nibs have different parents"
@@ -77,11 +59,8 @@ func blockMovable(effective []*nib.Nib, tree []*ui.TreeNode) (siblings []*nib.Ni
 		return nil, 0, 0, reorderReasonNothingSelected
 	}
 
-	// A nib promoted out of a parent cycle reorders within no sibling list at
-	// all. The scan runs ahead of both the parent-scope check and the sibling
-	// lookup below, so it decides the message for a mixed selection too: with
-	// such a nib marked alongside an ordinary root, the cycle is the cause and
-	// "different parents" only restates the symptom the severed edge produced.
+	// Ahead of the parent-scope check, so a mixed selection names the cycle
+	// rather than "different parents".
 	for _, n := range effective {
 		if inParentCycle(n, tree) {
 			return nil, 0, 0, reorderReasonInParentCycle
@@ -89,7 +68,6 @@ func blockMovable(effective []*nib.Nib, tree []*ui.TreeNode) (siblings []*nib.Ni
 	}
 
 	parentID := treeResolvedParentID(effective[0], tree)
-	// All effective items must share the same parent scope.
 	for _, n := range effective[1:] {
 		if treeResolvedParentID(n, tree) != parentID {
 			return nil, 0, 0, reorderReasonDifferentParents
@@ -101,7 +79,6 @@ func blockMovable(effective []*nib.Nib, tree []*ui.TreeNode) (siblings []*nib.Ni
 		return nil, 0, 0, reorderReasonNoSiblings
 	}
 
-	// Locate each effective item's index in the sibling slice.
 	indices := make([]int, 0, len(effective))
 	effectiveIDs := make(map[string]bool, len(effective))
 	for _, n := range effective {
@@ -113,16 +90,10 @@ func blockMovable(effective []*nib.Nib, tree []*ui.TreeNode) (siblings []*nib.Ni
 		}
 	}
 	if len(indices) != len(effective) {
-		// Defensive: a promoted cycle root is refused above with its own reason,
-		// so reaching this point means the tree and the sibling lookup disagree
-		// for some other cause. Refusing is correct either way — a reorder is
-		// only meaningful within one parent's sibling list, and this selection is
-		// not in one.
 		return nil, 0, 0, reorderReasonNotAmongSiblings
 	}
 
-	// Indices come out sorted because we iterate siblings in order. Check
-	// contiguity: last - first + 1 == count.
+	// indices is ascending: siblings are scanned in order.
 	startIdx = indices[0]
 	endIdx = indices[len(indices)-1]
 	if endIdx-startIdx+1 != len(indices) {
@@ -132,26 +103,16 @@ func blockMovable(effective []*nib.Nib, tree []*ui.TreeNode) (siblings []*nib.Ni
 	return siblings, startIdx, endIdx, ""
 }
 
-// treeResolvedParentID applies internal/graph's resolved-parent rule at the
-// presentation layer, deciding the sibling set a nib actually reorders within.
-// The TUI holds no NibReader at this point — only a tree already fetched from
-// the backend — so it answers "does this parent link resolve" by tree
-// membership. This is a re-derivation of graph.resolvedParent, which is the
-// canonical rule; keep the two in agreement.
+// treeResolvedParentID returns n's parent ID when that parent is in the tree,
+// otherwise "" for the root scope. It mirrors graph.resolvedParent using tree
+// membership; keep the two in agreement.
 //
-// Membership is equivalent to resolution only while the tree is built from the
-// full, unfiltered nib set (see the loadNibs fetch that feeds ui.BuildTree).
-// Under a filtered set a hidden parent would be indistinguishable from one
-// that does not exist, and its children would be offered for reorder among
-// unrelated roots.
+// Membership matches resolution because ui.BuildTree adds every ancestor from
+// the unfiltered nib set loadNibs passes it.
 //
-// For a nib promoted out of a parent cycle this answers with a parent whose
-// children no longer hold the nib, because BuildTree severed that edge. This
-// function does not detect that case itself; each caller that turns the answer
-// into a user-facing refusal consults inParentCycle so it can name the cycle
-// rather than describe the sibling list — blockMovable ahead of resolving the
-// parent scope, singleReorderCmd after its index scan comes up empty. A caller
-// that only needs the sibling slice (findSiblings) does not ask at all.
+// For a nib promoted out of a parent cycle this returns a parent whose children
+// no longer hold the nib. Callers that report a refusal consult inParentCycle to
+// name the cycle.
 func treeResolvedParentID(n *nib.Nib, tree []*ui.TreeNode) string {
 	if n.Parent == "" || ui.FindNode(tree, n.Parent) == nil {
 		return ""
@@ -160,32 +121,12 @@ func treeResolvedParentID(n *nib.Nib, tree []*ui.TreeNode) string {
 }
 
 // inParentCycle reports whether n is the member of a parent cycle that
-// ui.BuildTree promoted to a root. Such a nib keeps its stored parent link
-// while the tree edge that link would draw is severed, so it renders at root
-// level and belongs to no parent's sibling list — the one nib for which the
-// tree offers a reorder scope that does not exist.
+// ui.BuildTree promoted to a root. Such a nib keeps its stored parent but belongs
+// to no parent's sibling list.
 //
-// The tell is that the stored parent lies inside n's own subtree: BuildTree
-// nests the rest of the cycle underneath the promoted member, so n.Parent is n
-// itself (a nib parented to itself) or one of its descendants. Every tree edge
-// below n is a stored parent link, so following them from n.Parent back up
-// reaches n — that is the cycle, read off the rendered tree rather than assumed
-// from it.
-//
-// A cycle member that was NOT promoted keeps its edge and sits among its real
-// parent's children, where a reorder is meaningful; it is deliberately not
-// caught here.
-//
-// The tree properties this rests on — one promoted member per cycle, promotion
-// severing the tree edge while the stored Nib.Parent survives, and the upward
-// closure that keeps a cycle from ever being partially present under a filtered
-// tree — belong to ui.BuildTree, which states them and pins them in
-// TestBuildTreeCyclePromotionContract. Read them there rather than trusting a
-// restatement here.
-//
-// Worth noting locally: that closure is a narrower guarantee than the one
-// treeResolvedParentID relies on above. Outside a cycle, a filtered-out parent
-// is still indistinguishable from one that does not exist.
+// The tell is that n.Parent lies inside n's own subtree. A cycle member that was
+// not promoted keeps its tree edge and is not reported. The tree properties this
+// relies on are stated on ui.BuildTree.
 func inParentCycle(n *nib.Nib, tree []*ui.TreeNode) bool {
 	if n == nil || n.Parent == "" {
 		return false
@@ -194,8 +135,7 @@ func inParentCycle(n *nib.Nib, tree []*ui.TreeNode) bool {
 	if node == nil {
 		return false
 	}
-	// Search n's subtree with n included, so a nib parented to itself — the
-	// degenerate one-member cycle — is recognized too.
+	// The subtree includes n, so a nib parented to itself is caught.
 	return ui.FindNode([]*ui.TreeNode{node}, n.Parent) != nil
 }
 

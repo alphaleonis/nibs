@@ -65,15 +65,8 @@ func (d parentItemDelegate) Render(w io.Writer, m list.Model, index int, listIte
 		_, _ = fmt.Fprint(w, cursor+text)
 
 	case parentItem:
-		// Get colors from config. EffectiveType so a type-less nib keeps its "task"
-		// badge. Raw Priority is safe here despite the missing default: GetNibColors ->
-		// GetPriority yields a different PriorityColor for "" (none) vs "normal"
-		// ("white"), but that color is only ever consumed by RenderPrioritySymbol, which
-		// returns "" (discarding the color) whenever GetPrioritySymbol is empty — and the
-		// symbol is empty for both "" and "normal", so the rendered result is identical.
 		colors := d.cfg.GetNibColors(item.nib.Status, item.nib.EffectiveType(), item.nib.Priority)
 
-		// Format: [type] title (id)
 		typeBadge := ui.RenderTypeText(item.nib.EffectiveType(), colors.TypeColor)
 		title := item.nib.Title
 		if colors.IsClosed {
@@ -91,7 +84,7 @@ type parentPickerModel struct {
 	nibIDs        []string   // the nibs we're setting the parent for
 	nibTitle      string     // display title (single title or "N selected nibs")
 	nibTypes      []string   // types of the nibs (to filter eligible parents)
-	currentParent string     // current parent ID (to highlight, only for single nib)
+	currentParent string     // preselected parent ID; empty for a multi-selection
 	hideCompleted bool       // whether to hide nibs in a closed status
 	allEligible   []*nib.Nib // all eligible nibs before status filtering
 	width         int
@@ -100,22 +93,20 @@ type parentPickerModel struct {
 }
 
 func newParentPickerModel(nibIDs []string, nibTitle string, nibTypes []string, currentParent string, backend Backend, cfg *config.Config, width, height int) parentPickerModel {
-	// Get valid parent types - for multi-select, find types valid for ALL nibs
+	// The parent types valid for every selected nib.
 	var validParentTypes []string
 	for i, nibType := range nibTypes {
 		typeParents := nibtypes.ValidParentTypes(nibType)
 		if i == 0 {
 			validParentTypes = typeParents
 		} else {
-			// Intersect with existing valid types
 			validParentTypes = intersectStrings(validParentTypes, typeParents)
 		}
 	}
 
-	// Fetch all nibs and filter to eligible parents
 	allNibs, _ := backend.ListNibs(context.Background(), nil)
 
-	// Collect all descendants of all selected nibs (to prevent cycles)
+	// A descendant of a selected nib would create a cycle.
 	allDescendants := make(map[string]bool)
 	for _, nibID := range nibIDs {
 		for descID := range collectDescendants(nibID, allNibs) {
@@ -123,27 +114,19 @@ func newParentPickerModel(nibIDs []string, nibTitle string, nibTypes []string, c
 		}
 	}
 
-	// Create set of selected nib IDs for quick lookup
 	selectedSet := make(map[string]bool)
 	for _, id := range nibIDs {
 		selectedSet[id] = true
 	}
 
-	// Filter to eligible parents:
-	// 1. Must be of a valid parent type for ALL selected nibs
-	// 2. Must not be any of the selected nibs
-	// 3. Must not be a descendant of any selected nib (to prevent cycles)
 	var eligibleNibs []*nib.Nib
 	for _, b := range allNibs {
-		// Skip selected nibs
 		if selectedSet[b.ID] {
 			continue
 		}
-		// Skip descendants (would create cycle)
 		if allDescendants[b.ID] {
 			continue
 		}
-		// Check if type is valid
 		isValidType := false
 		for _, validType := range validParentTypes {
 			if b.EffectiveType() == validType {
@@ -157,23 +140,21 @@ func newParentPickerModel(nibIDs []string, nibTitle string, nibTypes []string, c
 		eligibleNibs = append(eligibleNibs, b)
 	}
 
-	// Sort by type order (milestone > epic > feature), then by title
+	// Vocabulary type order, then case-insensitive title.
 	typeNames := cfg.TypeNames()
 	typeOrder := make(map[string]int)
 	for i, t := range typeNames {
 		typeOrder[t] = i
 	}
 	sort.Slice(eligibleNibs, func(i, j int) bool {
-		// Primary: type order (EffectiveType so a type-less nib sorts as "task")
 		ti, tj := typeOrder[eligibleNibs[i].EffectiveType()], typeOrder[eligibleNibs[j].EffectiveType()]
 		if ti != tj {
 			return ti < tj
 		}
-		// Secondary: title (case-insensitive)
 		return strings.ToLower(eligibleNibs[i].Title) < strings.ToLower(eligibleNibs[j].Title)
 	})
 
-	// Create the initial list model (rebuildList will populate items)
+	// rebuildList populates the items.
 	delegate := parentItemDelegate{cfg: cfg}
 	modalWidth := max(40, min(80, width*60/100))
 	modalHeight := max(10, min(20, height*60/100))
@@ -219,8 +200,7 @@ func hideCompletedHelpText(hiding bool) string {
 	return "hide completed"
 }
 
-// rebuildList reconstructs the list items from allEligible, applying the hideCompleted filter.
-// Uses SetItems to preserve any active text filter state.
+// rebuildList rebuilds the list items from allEligible, applying hideCompleted.
 func (m *parentPickerModel) rebuildList() {
 	var filtered []*nib.Nib
 	for _, b := range m.allEligible {
@@ -273,7 +253,6 @@ func intersectStrings(a, b []string) []string {
 func collectDescendants(nibID string, allNibs []*nib.Nib) map[string]bool {
 	descendants := make(map[string]bool)
 
-	// Build parent->children map
 	children := make(map[string][]string)
 	for _, b := range allNibs {
 		if b.Parent != "" {
@@ -281,7 +260,6 @@ func collectDescendants(nibID string, allNibs []*nib.Nib) map[string]bool {
 		}
 	}
 
-	// BFS to collect all descendants
 	queue := children[nibID]
 	for len(queue) > 0 {
 		childID := queue[0]
@@ -306,7 +284,6 @@ func (m parentPickerModel) Update(msg tea.Msg) (parentPickerModel, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		// Recalculate modal dimensions
 		modalWidth := max(40, min(80, msg.Width*60/100))
 		modalHeight := max(10, min(20, msg.Height*60/100))
 		listWidth := modalWidth - 6
@@ -331,7 +308,6 @@ func (m parentPickerModel) Update(msg tea.Msg) (parentPickerModel, tea.Cmd) {
 				m.toggleHideCompleted()
 				return m, nil
 			case "esc", "backspace":
-				// Return without selecting
 				return m, func() tea.Msg {
 					return closeParentPickerMsg{}
 				}
@@ -348,7 +324,6 @@ func (m parentPickerModel) View() string {
 		return "Loading..."
 	}
 
-	// For multi-select, don't show individual nib ID
 	var nibID string
 	if len(m.nibIDs) == 1 {
 		nibID = m.nibIDs[0]
@@ -365,7 +340,7 @@ func (m parentPickerModel) View() string {
 	})
 }
 
-// ModalView returns the picker rendered as a centered modal overlay on top of the background
+// ModalView returns the picker centered over bgView.
 func (m parentPickerModel) ModalView(bgView string, fullWidth, fullHeight int) string {
 	modal := m.View()
 	return overlayModal(bgView, modal, fullWidth, fullHeight)

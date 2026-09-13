@@ -15,7 +15,6 @@ import (
 // validTypesForNib computes the valid types a nib can be changed to,
 // considering both its parent (above) and its children (below).
 func validTypesForNib(n *nib.Nib, backend Backend) []string {
-	// Constraint from parent
 	parentType := ""
 	if n.Parent != "" {
 		if p, err := backend.GetNib(context.Background(), n.Parent); err == nil && p != nil {
@@ -24,7 +23,6 @@ func validTypesForNib(n *nib.Nib, backend Backend) []string {
 	}
 	validFromParent := nibtypes.ValidChildTypes(parentType)
 
-	// Constraint from children
 	children, _ := backend.GetChildren(context.Background(), n, nil)
 	var childTypes []string
 	for _, c := range children {
@@ -47,7 +45,7 @@ type closeTypePickerMsg struct{}
 // openTypePickerMsg requests opening the type picker for nib(s)
 type openTypePickerMsg struct {
 	nibIDs      []string // IDs of nibs to update
-	nibTitle    string   // Display title (single title or "N nibs")
+	nibTitle    string   // Display title (single title or "N selected nibs")
 	currentType string   // Only meaningful for single nib
 	validTypes  []string // If non-empty, only show these types
 }
@@ -60,9 +58,8 @@ type typeItem struct {
 	isCurrent   bool
 }
 
-// typePickerModel is the model for the type picker view.
-// Uses a simple cursor instead of bubbles/list to avoid overhead from
-// title bars, pagination, and filter chrome that can't be fully suppressed.
+// typePickerModel is the model for the type picker view: a cursor over items,
+// with first-letter shortcuts.
 type typePickerModel struct {
 	items       []typeItem
 	cursor      int
@@ -76,7 +73,6 @@ type typePickerModel struct {
 func newTypePickerModel(nibIDs []string, nibTitle, currentType string, validTypes []string, cfg *config.Config, width, height int) typePickerModel {
 	types := config.DefaultTypes
 
-	// Build valid types set for filtering
 	var validSet map[string]bool
 	if len(validTypes) > 0 {
 		validSet = make(map[string]bool, len(validTypes))
@@ -165,7 +161,7 @@ func (m typePickerModel) Update(msg tea.Msg) (typePickerModel, tea.Cmd) {
 	return m, nil
 }
 
-// SelectedItem returns the currently highlighted typeItem, or nil-like zero value.
+// SelectedItem returns the highlighted item, or false when there are no items.
 func (m typePickerModel) SelectedItem() (typeItem, bool) {
 	if m.cursor < len(m.items) {
 		return m.items[m.cursor], true
@@ -178,7 +174,6 @@ func (m typePickerModel) View() string {
 		return "Loading..."
 	}
 
-	// Render list items
 	var lines []string
 	for i, item := range m.items {
 		var cursor string
@@ -199,8 +194,6 @@ func (m typePickerModel) View() string {
 	}
 	listContent := strings.Join(lines, "\n")
 
-	// Description of selected item, padded to a fixed number of lines so the
-	// dialog never changes height when moving between items.
 	allDescs := make([]string, len(m.items))
 	for i, item := range m.items {
 		allDescs[i] = item.description
@@ -228,7 +221,7 @@ func (m typePickerModel) View() string {
 	})
 }
 
-// ModalView returns the picker rendered as a centered modal overlay on top of the background
+// ModalView returns the picker centered over bgView.
 func (m typePickerModel) ModalView(bgView string, fullWidth, fullHeight int) string {
 	modal := m.View()
 	return overlayModal(bgView, modal, fullWidth, fullHeight)

@@ -19,7 +19,8 @@ import (
 	"github.com/alphaleonis/nibs/internal/ui"
 )
 
-// Cached glamour renderer - initialized once per width
+// glamourRenderer is built once and wraps at glamour's default width, not the
+// terminal's.
 var (
 	glamourRenderer     *glamour.TermRenderer
 	glamourRendererOnce sync.Once
@@ -28,8 +29,6 @@ var (
 func getGlamourRenderer() *glamour.TermRenderer {
 	glamourRendererOnce.Do(func() {
 		var err error
-		// Use DarkStyle instead of WithAutoStyle() to avoid slow terminal detection
-		// that can cause multi-second delays in some terminals
 		glamourRenderer, err = glamour.NewTermRenderer(glamour.WithStylePath("dark"))
 		if err != nil {
 			glamourRenderer = nil
@@ -38,30 +37,28 @@ func getGlamourRenderer() *glamour.TermRenderer {
 	return glamourRenderer
 }
 
-// backToListMsg signals navigation back to the list
+// backToListMsg returns to the previous detail view, or to the list when there
+// is none.
 type backToListMsg struct{}
 
-// resolvedLink represents a link with the target nib resolved
 type resolvedLink struct {
 	linkType string
 	nib      *nib.Nib
 	incoming bool // true if another nib links TO this one
 }
 
-// linkItem wraps a resolvedLink to implement list.Item
 type linkItem struct {
 	link  resolvedLink
 	cfg   *config.Config
 	width int
 	cols  ui.ResponsiveColumns
-	label string // pre-computed label like "Blocks:" or "Blocked by:"
+	label string // from formatLinkLabel
 }
 
 func (i linkItem) Title() string       { return i.link.nib.Title }
 func (i linkItem) Description() string { return i.link.nib.ID }
 func (i linkItem) FilterValue() string { return i.link.nib.Title + " " + i.link.nib.ID + " " + i.label }
 
-// linkDelegate handles rendering of link list items
 type linkDelegate struct {
 	cfg   *config.Config
 	width int
@@ -80,31 +77,24 @@ func (d linkDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 
 	link := item.link
 
-	// Cursor indicator
 	cursor := "  "
 	if index == m.Index() {
 		cursor = ui.Primary.Render(ui.GlyphSectionCursor())
 	}
 
-	// Format the link type label
 	labelCol := lipgloss.NewStyle().Width(12).Render(ui.Muted.Render(item.label + ":"))
 
-	// Get colors from config. EffectiveType so a type-less nib keeps its "task"
-	// badge. Raw Priority is safe here despite the missing default: GetNibColors ->
-	// GetPriority yields a different PriorityColor for "" (none) vs "normal" ("white"),
-	// but that color is only ever consumed by RenderPrioritySymbol, which returns ""
-	// (discarding the color) whenever GetPrioritySymbol is empty — and the symbol is
-	// empty for both "" and "normal", so the rendered result is identical.
+	// EffectiveType so a type-less nib keeps its "task" badge. Raw Priority is
+	// fine: "" and "normal" both render no priority symbol, so the color that
+	// differs between them is never drawn.
 	colors := d.cfg.GetNibColors(link.nib.Status, link.nib.EffectiveType(), link.nib.Priority)
 
-	// Calculate max title width using responsive columns
 	baseWidth := d.cols.ID + d.cols.Status + d.cols.Type + 12 + 4 // label + cursor + padding
 	if d.cols.ShowTags {
 		baseWidth += d.cols.Tags
 	}
 	maxTitleWidth := max(10, d.width-baseWidth-8) // 8 for border padding
 
-	// Use shared nib row rendering (without cursor, we handle it separately)
 	row := ui.RenderNibRow(
 		link.nib.ID,
 		link.nib.Status,
@@ -123,14 +113,13 @@ func (d linkDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 			ShowTags:      d.cols.ShowTags,
 			TagsColWidth:  d.cols.Tags,
 			MaxTags:       d.cols.MaxTags,
-			UseFullNames:  true, // Full type/status names in detail view
+			UseFullNames:  true,
 		},
 	)
 
-	// Clipped, not left to wrap. maxTitleWidth has a floor of ten cells, so on a
-	// narrow terminal the row is wider than the box whatever the title says —
-	// and a wrapped row makes the box taller than the height it was sized to,
-	// which is the one thing everything stacked around it is measured against.
+	// Clip rather than wrap: maxTitleWidth's ten-cell floor can make the row
+	// wider than the box, and a wrapped row makes the box taller than it was
+	// sized.
 	_, _ = fmt.Fprint(w, clipToWidth(cursor+labelCol+row, m.Width()))
 }
 
@@ -143,13 +132,13 @@ type detailModel struct {
 	width         int
 	height        int
 	ready         bool
-	links         []resolvedLink       // combined outgoing + incoming links
-	linkList      list.Model           // list component for links (supports filtering)
-	linksActive   bool                 // true = links section focused
-	cols          ui.ResponsiveColumns // responsive column widths for links
-	statusMessage string               // Status message to display in footer
-	statusKind    statusKind           // How the footer colors that message
-	helpExpanded  bool                 // Help panel state — set by App when ? is toggled
+	links         []resolvedLink // combined outgoing + incoming links
+	linkList      list.Model
+	linksActive   bool // links box has focus, not the body
+	cols          ui.ResponsiveColumns
+	statusMessage string
+	statusKind    statusKind
+	helpExpanded  bool // set by App
 }
 
 func newDetailModel(b *nib.Nib, backend Backend, cfg *config.Config, width, height int) detailModel {
@@ -163,10 +152,8 @@ func newDetailModel(b *nib.Nib, backend Backend, cfg *config.Config, width, heig
 		linksActive: false,
 	}
 
-	// Resolve all links
 	m.links = m.resolveAllLinks()
 
-	// Check if any linked nibs have tags
 	hasTags := false
 	for _, link := range m.links {
 		if len(link.nib.Tags) > 0 {
@@ -175,15 +162,12 @@ func newDetailModel(b *nib.Nib, backend Backend, cfg *config.Config, width, heig
 		}
 	}
 
-	// Calculate responsive columns for links section
-	// Account for the label column (12 chars) + cursor (2 chars) + border padding
+	// The label column (12), cursor (2) and border padding (8).
 	linkAreaWidth := width - 12 - 2 - 8
 	m.cols = ui.CalculateResponsiveColumns(linkAreaWidth, hasTags)
 
-	// Initialize link list with items
 	m.linkList = m.createLinkList()
 
-	// Calculate header height dynamically
 	headerHeight := m.calculateHeaderHeight()
 	footerHeight := 2
 	vpWidth := width - 4
@@ -192,37 +176,27 @@ func newDetailModel(b *nib.Nib, backend Backend, cfg *config.Config, width, heig
 	m.viewport = viewport.New(viewport.WithWidth(vpWidth), viewport.WithHeight(vpHeight))
 	m.viewport.SetContent(m.renderBody(vpWidth))
 
-	// The view opens focused on the links list, but only where the frame can
-	// hold the box. Update asks the same question of every message after this
-	// one, and answers it after routing — so without the answer here the first
-	// key the reader presses is one that reaches a list no row on screen carries.
+	// Open focused on the links list only if the frame holds its box. Update
+	// re-checks this after every message, but only after routing it.
 	m.linksActive = len(m.links) > 0 && m.linksSection() != ""
 
 	return m
 }
 
-// linkRows is how many link entries the box shows: all of them, up to a third
-// of the terminal.
-//
-// It is the whole of the list's height. The list draws no title — "Linked Nibs"
-// is redundant beside a list of nibs, and the row it took, plus the padding row
-// beside it, is what held the box's floor at five: taller than an eight-row
-// terminal can spare once the header and the footer have been paid for. The
-// filter input shares that row and is drawn only while there is a filter to
-// read, which is where linksBox adds the row back.
+// linkRows is the links list's height: one row per link, up to
+// max(3, height/3). The list draws no title; the filter input takes a row only
+// while filtering (see linksBox).
 func (m detailModel) linkRows() int {
 	return min(len(m.links), max(3, m.height/3))
 }
 
 // linksBox renders the bordered links box, or "" when the nib has no links.
 //
-// The border is the only thing on screen that says whether the links pane has
-// focus, so it is drawn whatever the height; what gives instead is the box as a
-// whole, which linksSection drops when the frame cannot hold it.
+// The border color shows focus, so the border is never dropped on its own;
+// linksSection drops the whole box when it does not fit.
 //
-// The list is sized on a copy rather than in place: contentFloor renders the
-// box too, and a View that resized the stored list would move the floor the
-// footer region was already measured against.
+// It sizes a copy of the list: contentFloor renders this box too, and the
+// stored list must keep its size.
 func (m detailModel) linksBox() string {
 	if len(m.links) == 0 {
 		return ""
@@ -232,8 +206,7 @@ func (m detailModel) linksBox() string {
 	rows := m.linkRows()
 	filtering := l.FilterState() == list.Filtering
 	if filtering {
-		// The filter input takes over the title's row, so the box grows by it —
-		// and only for as long as there is a query to read.
+		// The filter input needs a row of its own.
 		rows++
 	}
 	l.SetShowFilter(filtering)
@@ -252,27 +225,15 @@ func (m detailModel) linksBox() string {
 
 // contentAvail is the rows the header and the footer region leave for the links
 // box and the body.
-//
-// The frame is exactly as tall as the terminal, so the rows a wrapped status
-// message takes have to come from somewhere; measuring the footer first is what
-// makes their share a budget rather than a guess corrected afterwards.
 func (m detailModel) contentAvail() int {
 	return m.height - lipgloss.Height(m.renderHeader()) - lipgloss.Height(m.measuredFooterRegion())
 }
 
-// linksSection is the links box as the frame can hold it: the box, or "" when
-// there are fewer rows left than it occupies.
+// linksSection is the links box if contentAvail can hold it, else "". The box
+// takes its rows before the body.
 //
-// The box takes its rows first, being the pane the view opens focused on, and
-// below its floor it goes whole rather than showing a box with no link in it.
-// That floor still does not always fit: on an eight-row terminal the header,
-// three rows of box and a footer wrapping a refusal across two rows above its
-// help row come to ten, so something has to go, and it is not the message or
-// the keys the reader acts on it with.
-//
-// This is the one answer to "is the links box on screen" — View paints what it
-// returns, and Update holds the list's filter to it, so the two cannot disagree
-// about a box the reader can see.
+// Ask this, not linksBox, whether the box is on screen: View paints what it
+// returns and Update holds focus and the filter to it.
 func (m detailModel) linksSection() string {
 	box := m.linksBox()
 	if blockLines(box) > m.contentAvail() {
@@ -281,7 +242,6 @@ func (m detailModel) linksSection() string {
 	return box
 }
 
-// createLinkList creates a new list.Model for the links
 func (m detailModel) createLinkList() list.Model {
 	delegate := linkDelegate{
 		cfg:   m.config,
@@ -289,7 +249,6 @@ func (m detailModel) createLinkList() list.Model {
 		cols:  m.cols,
 	}
 
-	// Convert links to list items
 	items := make([]list.Item, len(m.links))
 	for i, link := range m.links {
 		items[i] = linkItem{
@@ -306,17 +265,13 @@ func (m detailModel) createLinkList() list.Model {
 	l.SetShowHelp(false)
 	l.SetShowPagination(false)
 	l.SetShowTitle(false)
-	// Hidden, not disabled: filtering still runs, and linksBox turns the input
-	// back on for the copy it paints. The stored list has to agree with that
-	// copy about its own height, and bubbles charges a title row for a shown
-	// filter whether or not the row it renders carries anything — so leaving it
-	// on here paginated the stored list one entry shorter than the box drawn
-	// from it, and a page step moved by a boundary nothing on screen marked.
+	// Hidden, not disabled: linksBox shows the input on the copy it paints while
+	// filtering. bubbles reserves a row for a shown filter even when it is empty,
+	// so a shown filter here would page the stored list one entry short of the
+	// painted box.
 	l.SetShowFilter(false)
 	l.SetFilteringEnabled(true)
 
-	// The title bar's row is spent on the filter input alone — see linkRows —
-	// so what is styled here is that input's surroundings, not a label.
 	l.Styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 0, 1) // Left padding to align with header title
 	applyFilterStyles(&l.Styles)
 	l.Styles.NoItems = lipgloss.NewStyle()
@@ -328,42 +283,27 @@ func (m detailModel) Init() tea.Cmd {
 	return nil
 }
 
-// Update routes msg through the detail view, then holds the links list to the
-// one thing it must never do: capture keys with nothing on screen to show for
-// them.
+// Update routes msg, then drops a links filter whose box no longer fits and
+// links focus with no links box on screen.
 //
-// While the list is filtering it takes every keystroke, and the frame drops the
-// links box whole when it does not fit — including because the filter input's
-// own row is what pushed it over. That left a filter no row on screen carried,
-// swallowing the keys the footer was advertising at that moment. The list is
-// what decides a key starts filtering, so the state is unwound here rather than
-// refused up front; at a height too short for the grown box, / is a no-op. Every
-// path that moves the frame's arithmetic — a resize, the help panel's toggle —
-// arrives as a message, so this one place answers for all of them.
-//
-// Focus is the same question asked of the whole box rather than of its filter:
-// the pane taking the keys has to be one the frame drew. The view opens on the
-// links list, so at the heights where the box is dropped and the body is not,
-// j and k would move a list nothing on screen carries while the visible body
-// sat still, and enter would jump to a link the reader never saw.
+// The filter's own row can be what pushes the box out, so at such heights / is a
+// no-op.
 func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 	m, cmd := m.route(msg)
 	if m.linkList.FilterState() == list.Filtering && m.linksSection() == "" {
 		m.linkList.ResetFilter()
-		// The only command reaching here is the list's own — the cursor blink
-		// belonging to the input just discarded.
+		// cmd is the list's, for the input just discarded.
 		cmd = nil
 	}
-	// Asked after the reset above rather than beside it: dropping the filter
-	// input gives the box back the row it borrowed, which can be the row that
-	// makes it fit.
+	// After the reset: dropping the filter input frees a row, which can make the
+	// box fit.
 	if m.linksActive && m.linksSection() == "" {
 		m.linksActive = false
 	}
 	return m, cmd
 }
 
-// route is everything the detail view does with a message; Update wraps it.
+// route handles msg; Update wraps it.
 func (m detailModel) route(msg tea.Msg) (detailModel, tea.Cmd) {
 	var cmd tea.Cmd
 	var cmds []tea.Cmd
@@ -373,7 +313,6 @@ func (m detailModel) route(msg tea.Msg) (detailModel, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-		// Recalculate responsive columns for links
 		hasTags := false
 		for _, link := range m.links {
 			if len(link.nib.Tags) > 0 {
@@ -384,21 +323,19 @@ func (m detailModel) route(msg tea.Msg) (detailModel, tea.Cmd) {
 		linkAreaWidth := msg.Width - 12 - 2 - 8
 		m.cols = ui.CalculateResponsiveColumns(linkAreaWidth, hasTags)
 
-		// Update link list delegate with new dimensions
 		m.updateLinkListDelegate()
 
 		m.linkList.SetSize(msg.Width-8, m.linkRows())
 
 		headerHeight := m.calculateHeaderHeight()
 		helpHt := m.currentHelpHeight()
-		footerHeight := 2 // "\n" + compact footer
+		footerHeight := 2
 		if helpHt > 0 {
-			footerHeight = 1 + helpHt // "\n" + panel (replaces footer)
+			footerHeight = 1 + helpHt
 		}
 		vpWidth := msg.Width - 4
 		vpHeight := msg.Height - headerHeight - footerHeight
 
-		// Ensure vpHeight doesn't go negative
 		if vpHeight < 1 {
 			vpHeight = 1
 		}
@@ -414,7 +351,7 @@ func (m detailModel) route(msg tea.Msg) (detailModel, tea.Cmd) {
 		}
 
 	case tea.KeyPressMsg:
-		// If links list is filtering, let it handle all keys except quit
+		// A filtering links list takes every key that reaches this view.
 		if m.linksActive && m.linkList.FilterState() == list.Filtering {
 			m.linkList, cmd = m.linkList.Update(msg)
 			return m, cmd
@@ -427,14 +364,12 @@ func (m detailModel) route(msg tea.Msg) (detailModel, tea.Cmd) {
 			}
 
 		case "tab":
-			// Toggle focus between links and body
 			if len(m.links) > 0 {
 				m.linksActive = !m.linksActive
 			}
 			return m, nil
 
 		case "enter":
-			// Navigate to selected link
 			if m.linksActive {
 				if item, ok := m.linkList.SelectedItem().(linkItem); ok {
 					targetNib := item.link.nib
@@ -445,7 +380,6 @@ func (m detailModel) route(msg tea.Msg) (detailModel, tea.Cmd) {
 			}
 
 		case "p":
-			// Open parent picker
 			return m, func() tea.Msg {
 				return openParentPickerMsg{
 					nibIDs:        []string{m.nib.ID},
@@ -456,7 +390,6 @@ func (m detailModel) route(msg tea.Msg) (detailModel, tea.Cmd) {
 			}
 
 		case "s":
-			// Open status picker
 			return m, func() tea.Msg {
 				return openStatusPickerMsg{
 					nibIDs:        []string{m.nib.ID},
@@ -466,7 +399,6 @@ func (m detailModel) route(msg tea.Msg) (detailModel, tea.Cmd) {
 			}
 
 		case "t":
-			// Open type picker — filter to types valid for this nib's parent and children
 			validTypes := validTypesForNib(m.nib, m.backend)
 			return m, func() tea.Msg {
 				return openTypePickerMsg{
@@ -478,7 +410,6 @@ func (m detailModel) route(msg tea.Msg) (detailModel, tea.Cmd) {
 			}
 
 		case "P":
-			// Open priority picker
 			return m, func() tea.Msg {
 				return openPriorityPickerMsg{
 					nibIDs:          []string{m.nib.ID},
@@ -488,7 +419,6 @@ func (m detailModel) route(msg tea.Msg) (detailModel, tea.Cmd) {
 			}
 
 		case "b":
-			// Open blocking picker — compute current blocking from blockedBy scan
 			currentBlocking := computeCurrentBlocking(m.backend, m.nib.ID)
 			return m, func() tea.Msg {
 				return openBlockingPickerMsg{
@@ -499,7 +429,6 @@ func (m detailModel) route(msg tea.Msg) (detailModel, tea.Cmd) {
 			}
 
 		case "E":
-			// Open estimate picker
 			return m, func() tea.Msg {
 				return openEstimatePickerMsg{
 					nibIDs:          []string{m.nib.ID},
@@ -509,7 +438,6 @@ func (m detailModel) route(msg tea.Msg) (detailModel, tea.Cmd) {
 			}
 
 		case "e":
-			// Open editor for this nib
 			return m, func() tea.Msg {
 				return openEditorMsg{
 					nibID:   m.nib.ID,
@@ -518,14 +446,12 @@ func (m detailModel) route(msg tea.Msg) (detailModel, tea.Cmd) {
 			}
 
 		case "y":
-			// Copy nib ID to clipboard
 			return m, func() tea.Msg {
 				return copyNibIDMsg{ids: []string{m.nib.ID}}
 			}
 		}
 	}
 
-	// Forward updates to the appropriate component
 	if m.linksActive && len(m.links) > 0 {
 		m.linkList, cmd = m.linkList.Update(msg)
 		cmds = append(cmds, cmd)
@@ -537,7 +463,6 @@ func (m detailModel) route(msg tea.Msg) (detailModel, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// updateLinkListDelegate updates the link list delegate with current dimensions
 func (m *detailModel) updateLinkListDelegate() {
 	delegate := linkDelegate{
 		cfg:   m.config,
@@ -552,11 +477,8 @@ func (m detailModel) View() string {
 		return "Loading..."
 	}
 
-	// Header (nib info only, no links)
 	header := m.renderHeader()
 
-	// The links box and the body are drawn into whatever the header and the
-	// footer region leave, and each is dropped when that is less than a box.
 	avail := m.contentAvail()
 	linksSection := m.linksSection()
 
@@ -566,15 +488,10 @@ func (m detailModel) View() string {
 	}
 	avail -= blockLines(linksSection)
 
-	// The body is rendered BEFORE the footer even though it is drawn above it,
-	// because rendering it is what sizes the viewport to the height it is
-	// painted at, and the footer's scroll percentage has to describe the body
-	// the reader is looking at. Update's height is only an estimate — it
-	// reserves for a header taller than the one that renders — so a percentage
-	// taken against it says there is more below the fold when the whole body is
-	// on screen. Measuring the footer above and painting it here are the same
-	// rows either way: nothing in its height depends on the viewport, nor on
-	// which of the boxes above it were painted — see measuredFooterRegion.
+	// Render the body before the footer, though it is drawn above it: rendering
+	// sizes the viewport, and the footer's scroll percentage must describe the
+	// painted body, not the height Update estimated. The footer's height does not
+	// depend on this (see measuredFooterRegion).
 	body := m.renderBodyBox(avail)
 	footer := m.footerRegion(paintedFrame{links: linksSection != "", body: body != ""})
 	if body != "" {
@@ -584,19 +501,11 @@ func (m detailModel) View() string {
 }
 
 // renderBodyBox draws the body into avail rows, or nothing at all when there
-// are fewer of them than the box occupies.
+// are fewer of them than the box occupies. The body is the first thing dropped;
+// the header, the status message and the keys keep their rows.
 //
-// The body is what gives when the frame cannot hold everything. At the heights
-// where that happens a status message is up, and what the reader needs is the
-// nib's identity, the message, and the keys to act on it — prose is not legible
-// in the row or two that would be left anyway. Taking the rows from the message
-// instead would cut a refusal down to its first line, which is the defect the
-// footer was taught to wrap for.
-//
-// The receiver is a pointer so the height it gives the viewport outlives the
-// call: View renders the footer afterwards, and the percentage there has to be
-// measured against the body that was actually painted. The model View was
-// called on is untouched — View's own receiver is a copy.
+// The pointer receiver keeps the viewport height set here for View's footer,
+// whose scroll percentage reads it. View's own receiver is a copy.
 func (m *detailModel) renderBodyBox(avail int) string {
 	if avail < minBodyHeight {
 		return ""
@@ -615,10 +524,8 @@ func (m *detailModel) renderBodyBox(avail int) string {
 
 // footerRegion is everything drawn below the body: the compact footer, or —
 // when the help panel is expanded — the status message with the panel beneath.
-//
-// The expanded panel carries esc/q/? and so replaces the footer's help row, but
-// not its status message: a refusal the user cannot read is the defect the
-// footer was taught to wrap for in the first place.
+// The expanded panel lists esc, ? and q itself, so it replaces the help row but
+// not the status message.
 func (m detailModel) footerRegion(painted paintedFrame) string {
 	if !m.helpExpanded {
 		return m.renderFooter(painted)
@@ -627,68 +534,37 @@ func (m detailModel) footerRegion(painted paintedFrame) string {
 }
 
 // paintedFrame is which of the two droppable boxes View drew above the footer.
-// The footer describes the frame the reader is looking at — it names tab only
-// for a links box on screen, and reports a scroll position only for a body it
-// can be a position within.
 type paintedFrame struct {
 	links bool
 	body  bool
 }
 
-// measuredFooterRegion is the region rendered for its height alone, which is
-// the call contentAvail makes.
+// measuredFooterRegion renders the footer region for contentAvail to measure.
 //
-// It passes the zero value, and that is deliberately not the frame View will
-// paint: contentAvail is what decides whether the two boxes fit, so a footer
-// that asked for the answer would be measuring itself — linksSection reaches
-// contentAvail, contentAvail reaches the region, and the region would reach
-// linksSection again. Passing an answer the height cannot depend on is what
-// cuts that loop.
-//
-// The height cannot depend on it because neither piece has a row of its own:
-// both sit in the help row, which is a single row whatever it carries, since
-// clipToWidth cuts a long one rather than wrapping it. The status message above
-// it is sized from the message, the width and the terminal height, none of
-// which move with what was painted.
-// TestTheDetailFooterRegionHeightIgnoresWhatWasPainted holds that.
+// It passes a zero paintedFrame, since contentAvail is what decides the painted
+// frame. Keep the region's height independent of paintedFrame: everything it
+// toggles sits in the help row, which is one row because renderFooter clips it.
 func (m detailModel) measuredFooterRegion() string {
 	return m.footerRegion(paintedFrame{})
 }
 
 // minBodyHeight is the fewest rows the body box occupies: its border, around a
-// viewport of one row. Below it there is no box to draw, so View draws none.
+// viewport of one row.
 const minBodyHeight = 3
 
-// contentFloor is the rows the frame keeps above the footer region — the
-// header, the links box when there is one, and the body's minimum — and is what
-// the help panel's budget is held back for.
+// contentFloor is the rows the help panel's budget holds back: the rendered
+// header, the links box when there is one, and the body's minimum.
 //
-// The body does give its rows back to a taller region, but not to the panel: a
-// reader looking up keybindings is looking them up for the nib in front of them,
-// so the panel is budgeted as though the body stays. Only the status message
-// takes them, and only when what is left cannot hold a box.
-//
-// The header is measured rather than taken from calculateHeaderHeight, which
-// reserves two rows more than it renders: the sizing estimate may be generous,
-// but a hold-back derived from it would narrow the panel for rows that are not
-// actually spoken for.
-//
-// The links box is counted even at the geometries where View ends up dropping
-// it. Whether it is dropped depends on the region's height, which is what this
-// is being measured for, so counting it is the answer that does not chase its
-// own tail — and it errs toward a smaller panel, never a frame that overruns.
+// Both the links box and the body's minimum are counted even where View drops
+// them, which errs toward a smaller panel.
 func (m detailModel) contentFloor() int {
 	return lipgloss.Height(m.renderHeader()) + minBodyHeight + blockLines(m.linksBox())
 }
 
 // renderFooter returns the abbreviated footer for the detail view.
 //
-// Both of the pieces that come and go answer to painted rather than to the
-// model: a percentage is a position WITHIN a body, so with no body on screen
-// there is no position for it to name, and tab is the way to a links box the
-// frame may not have drawn. Neither is replaced by a placeholder — the cells
-// are scarcest at exactly the widths where a box gets dropped, and a dash where
-// a number was is one more thing to read past.
+// The scroll percentage appears only for a painted body and tab only for a
+// painted links box; neither leaves a placeholder.
 func (m detailModel) renderFooter(painted paintedFrame) string {
 	var footer string
 	if painted.body {
@@ -705,14 +581,11 @@ func (m detailModel) renderFooter(painted paintedFrame) string {
 		renderHelpKey("q", "quit")
 
 	if m.statusMessage != "" {
-		// Above the help row, not in front of it: prepending pushed the row off
-		// the right edge for as long as the message was up, and the keys it
-		// names are how the reader acts on what the message says.
+		// On its own lines above the help row, so the keys stay on screen.
 		footer = renderStatusMessage(m.statusMessage, m.statusKind, m.width, maxStatusFooterLines(m.height)) + "\n" + footer
 	}
-	// The help row is a fixed set of key hints, so it is the same cells wide at
-	// every terminal width and overruns a narrow one on its own. The status
-	// message above it already wraps to the width; this is the row that does not.
+	// The help row does not wrap, so clip it; the status message is already
+	// wrapped to width.
 	return clipToWidth(footer, m.width)
 }
 
@@ -724,18 +597,16 @@ func (m detailModel) currentHelpHeight() int {
 	return helpPanelHeight(detailExpandedEntries(), m.width, helpRowBudget(m.height, m.contentFloor(), 0))
 }
 
+// calculateHeaderHeight estimates the header and links box height to size the
+// viewport before View resizes it to the rendered frame.
 func (m detailModel) calculateHeaderHeight() int {
-	// Base: title line + ID/status line + borders/padding = ~6
 	baseHeight := 6
 
-	// Documents line adds 1 extra line when present
 	if len(m.nib.Documents) > 0 {
 		baseHeight++
 	}
 
-	// Add height for links section (separate bordered box)
 	if len(m.links) > 0 {
-		// Link entries + 3 for borders and spacing
 		baseHeight += m.linkRows() + 3
 	}
 
@@ -743,13 +614,10 @@ func (m detailModel) calculateHeaderHeight() int {
 }
 
 func (m detailModel) renderHeader() string {
-	// Title
 	title := detailTitleStyle.Render(m.nib.Title)
 
-	// ID
 	id := ui.ID.Render(m.nib.ID)
 
-	// Status badge
 	statusCfg := m.config.GetStatus(m.nib.Status)
 	statusColor := "gray"
 	if statusCfg != nil {
@@ -758,7 +626,6 @@ func (m detailModel) renderHeader() string {
 	isClosed := m.config.IsClosedStatus(m.nib.Status)
 	status := ui.RenderStatusWithColor(m.nib.Status, statusColor, isClosed)
 
-	// Estimate badge
 	var estimate string
 	if m.nib.Estimate != "" {
 		estimateCfg := m.config.GetEstimate(m.nib.Estimate)
@@ -769,7 +636,6 @@ func (m detailModel) renderHeader() string {
 		estimate = ui.RenderEstimateWithColor(m.nib.Estimate, estimateColor)
 	}
 
-	// Build header content
 	var headerContent strings.Builder
 	headerContent.WriteString(title)
 	headerContent.WriteString("\n")
@@ -778,19 +644,17 @@ func (m detailModel) renderHeader() string {
 		headerContent.WriteString(" " + estimate)
 	}
 
-	// Add tags if present
 	if len(m.nib.Tags) > 0 {
 		headerContent.WriteString("  ")
 		headerContent.WriteString(ui.RenderTags(m.nib.Tags))
 	}
 
-	// Add documents if present
 	if len(m.nib.Documents) > 0 {
 		headerContent.WriteString("\n")
 		headerContent.WriteString(ui.RenderDocuments(m.nib.Documents))
 	}
 
-	// Header box style - always muted border (not focused, links section is separate)
+	// Always muted: the header never takes focus.
 	headerBox := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ui.ColorMuted).
@@ -813,7 +677,6 @@ func (m detailModel) formatLinkLabel(linkType string, incoming bool) string {
 		}
 	}
 
-	// Outgoing labels - capitalize first letter
 	switch linkType {
 	case "blocking":
 		return "Blocking"
@@ -828,16 +691,12 @@ func (m detailModel) resolveAllLinks() []resolvedLink {
 	var links []resolvedLink
 	ctx := context.Background()
 
-	// Drop satisfied blocking relationships. This is the *releasing* set
-	// (completed, scrapped) — narrower than closed, because a deferred nib is
-	// closed but still blocks. Derived from config so it tracks the status
-	// model, not a literal, and matches what the blockedBy/blocking resolvers
-	// already filter on.
+	// Releasing statuses, not closed ones: a deferred blocker still blocks. The
+	// blockedBy and blocking resolvers apply the same rule themselves.
 	activeOnly := &model.NibFilter{
 		ExcludeStatus: m.config.ReleasingStatusNames(),
 	}
 
-	// Resolve outgoing links via backend
 	if blocking, _ := m.backend.GetBlocking(ctx, m.nib, activeOnly); blocking != nil {
 		for _, b := range blocking {
 			links = append(links, resolvedLink{linkType: "blocking", nib: b, incoming: false})
@@ -847,7 +706,6 @@ func (m detailModel) resolveAllLinks() []resolvedLink {
 		links = append(links, resolvedLink{linkType: "parent", nib: parent, incoming: false})
 	}
 
-	// Resolve incoming links via backend
 	if blockedBy, _ := m.backend.GetBlockedBy(ctx, m.nib, activeOnly); blockedBy != nil {
 		for _, b := range blockedBy {
 			links = append(links, resolvedLink{linkType: "blocking", nib: b, incoming: true})
@@ -859,27 +717,24 @@ func (m detailModel) resolveAllLinks() []resolvedLink {
 		}
 	}
 
-	// Sort all links by link type label first, then by nib status/type/title
-	// This keeps link categories together while ordering nibs consistently with the main list
+	// Group by label, then order each group as nib.SortByStatusPriorityAndType does.
 	statusNames := m.config.StatusNames()
 	typeNames := m.config.TypeNames()
 	sort.Slice(links, func(i, j int) bool {
-		// First: group by link label (e.g., "Child", "Parent", "Blocks", etc.)
 		labelI := m.formatLinkLabel(links[i].linkType, links[i].incoming)
 		labelJ := m.formatLinkLabel(links[j].linkType, links[j].incoming)
 		if labelI != labelJ {
 			return labelI < labelJ
 		}
-		// Within same link type: sort by status, priority, type, then title
 		return compareNibsByStatusPriorityAndType(links[i].nib, links[j].nib, statusNames, typeNames, m.config)
 	})
 
 	return links
 }
 
-// compareNibsByStatusPriorityAndType compares two nibs using the same ordering as nib.SortByStatusPriorityAndType.
+// compareNibsByStatusPriorityAndType reports whether a sorts before b in the
+// order nib.SortByStatusPriorityAndType uses.
 func compareNibsByStatusPriorityAndType(a, b *nib.Nib, statusNames, typeNames []string, ranker nib.PriorityRanker) bool {
-	// Build order maps
 	statusOrder := make(map[string]int)
 	for i, s := range statusNames {
 		statusOrder[s] = i
@@ -889,7 +744,7 @@ func compareNibsByStatusPriorityAndType(a, b *nib.Nib, statusNames, typeNames []
 		typeOrder[t] = i
 	}
 
-	// Helper to get order with unrecognized values sorted last
+	// Unrecognized values sort last.
 	getStatusOrder := func(status string) int {
 		if order, ok := statusOrder[status]; ok {
 			return order
@@ -903,29 +758,24 @@ func compareNibsByStatusPriorityAndType(a, b *nib.Nib, statusNames, typeNames []
 		return len(typeNames)
 	}
 
-	// Primary: status order
 	oi, oj := getStatusOrder(a.Status), getStatusOrder(b.Status)
 	if oi != oj {
 		return oi < oj
 	}
-	// Secondary: priority order
 	pi, pj := ranker.PriorityRank(a.Priority), ranker.PriorityRank(b.Priority)
 	if pi != pj {
 		return pi < pj
 	}
-	// Tertiary: type order (EffectiveType so a type-less nib sorts as "task")
 	ti, tj := getTypeOrder(a.EffectiveType()), getTypeOrder(b.EffectiveType())
 	if ti != tj {
 		return ti < tj
 	}
-	// Quaternary: title (case-insensitive)
 	return strings.ToLower(a.Title) < strings.ToLower(b.Title)
 }
 
 func (m detailModel) renderBody(_ int) string {
-	// TrimSpace, not == "": Parse hands the body back verbatim, so a body
-	// that is only blank lines is a stable value rather than one that
-	// converges to empty, and it renders to nothing at all.
+	// TrimSpace, not == "": Parse keeps a body of only blank lines as-is, and
+	// glamour renders it to nothing.
 	if strings.TrimSpace(m.nib.Body) == "" {
 		return lipgloss.NewStyle().
 			Foreground(ui.ColorMuted).
@@ -943,9 +793,7 @@ func (m detailModel) renderBody(_ int) string {
 		return m.nib.Body
 	}
 
-	// Trim only the blank lines glamour pads the document with. TrimSpace would
-	// also eat the left margin off the first line: glamour v2 writes that margin
-	// as plain spaces ahead of any style escape, so the opening heading would sit
-	// flush against the pane border while every line below it stayed indented.
+	// Trim newlines only: glamour writes the first line's left margin as plain
+	// spaces, which TrimSpace would remove.
 	return strings.Trim(rendered, "\n")
 }

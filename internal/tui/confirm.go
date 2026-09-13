@@ -51,14 +51,11 @@ func (d confirmDialog) Update(msg tea.Msg) (confirmDialog, tea.Cmd) {
 func (d confirmDialog) View(width, height int) string {
 	modalWidth := max(40, min(60, width*50/100))
 
-	// Title
 	header := lipgloss.NewStyle().Bold(true).Render(d.title)
 
-	// Help footer
 	help := helpKeyStyle.Render("y") + " " + helpStyle.Render("confirm") + "  " +
 		helpKeyStyle.Render("n/esc") + " " + helpStyle.Render("cancel")
 
-	// Border style
 	borderColor := ui.ColorPrimary
 	if d.action == "delete" {
 		borderColor = lipgloss.Color("#ff5555")
@@ -97,7 +94,6 @@ func buildConfirmDialog(action string, nibTitle string, nibIDs []string, descend
 			message = fmt.Sprintf("%d nibs will be archived (including children).", total)
 		}
 	} else {
-		// delete
 		if total == 1 && descendantCount == 0 {
 			title = "Permanently delete nib?"
 			message = fmt.Sprintf("Permanently delete \"%s\"? This cannot be undone.", truncateTitle(nibTitle, 40))

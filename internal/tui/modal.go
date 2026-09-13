@@ -7,23 +7,21 @@ import (
 	"github.com/alphaleonis/nibs/internal/ui"
 )
 
-// pickerModalConfig holds configuration for rendering a picker modal
+// pickerModalConfig configures renderPickerModal.
 type pickerModalConfig struct {
-	Title       string      // e.g., "Select Status"
+	Title       string      // header when NibTitle is empty, e.g. "Select Status"
 	NibTitle    string      // the nib's title
 	NibID       string      // the nib's ID
 	ListContent string      // the rendered list
 	Description string      // optional description shown below list
 	ExtraHelp   []helpEntry // additional help entries shown before esc/cancel
 	Width       int         // screen width
-	WidthPct    int         // modal width percentage (default 50)
-	MaxWidth    int         // max modal width (default 60)
+	WidthPct    int         // modal width percentage (0 means 50)
+	MaxWidth    int         // max modal width (0 means 60)
 }
 
-// pickerModalWidth computes a picker modal's outer width from the screen width,
-// honoring the width-percentage / max-width settings (0 selects the defaults of
-// 50% / 60 columns). Pickers use it so their description-reservation math is
-// measured against the width the modal is actually rendered at.
+// pickerModalWidth returns the width inside a picker modal's border for a
+// screen width. A zero widthPct or maxWidth selects 50% or 60 columns.
 func pickerModalWidth(screenWidth, widthPct, maxWidth int) int {
 	if widthPct == 0 {
 		widthPct = 50
@@ -34,11 +32,9 @@ func pickerModalWidth(screenWidth, widthPct, maxWidth int) int {
 	return max(40, min(maxWidth, screenWidth*widthPct/100))
 }
 
-// pickerModalHeight computes a picker modal's outer height from the screen
-// height, honoring the height-percentage / max-height settings (0 selects the
-// defaults of 50% / 16 rows, floored at 10). List-based pickers use it to size
-// the embedded bubbles/list so the whole modal stays within the screen. It is
-// the height sibling of pickerModalWidth — keep the two in step.
+// pickerModalHeight returns the rows a picker modal may take on a screen of the
+// given height, for sizing its list. A zero heightPct or maxHeight selects 50%
+// or 16 rows; the result is at least 10.
 func pickerModalHeight(screenHeight, heightPct, maxHeight int) int {
 	if heightPct == 0 {
 		heightPct = 50
@@ -49,21 +45,13 @@ func pickerModalHeight(screenHeight, heightPct, maxHeight int) int {
 	return max(10, min(maxHeight, screenHeight*heightPct/100))
 }
 
-// reservePickerDescription wraps the selected description to the modal's content
-// width and pads it with blank lines to the tallest wrapped height among all the
-// picker's descriptions. This keeps a picker modal's total height constant no
-// matter which item is selected — otherwise landing on an item with a longer
-// (more-wrapped) description grows the modal and makes the list items jump. The
-// returned block is unstyled so callers can apply their own styling. Returns ""
-// when there are no non-empty descriptions.
+// reservePickerDescription wraps the selected description and pads it to the
+// height of the tallest wrapped description in all, so the modal's height does
+// not change with the selection. The block is unstyled. Returns "" when every
+// description is empty.
 func reservePickerDescription(selected string, all []string, modalWidth int) string {
-	// modalWidth-6 matches the list's content width (border + padding + a small
-	// right margin), so the description aligns under the list items and the
-	// pre-wrapped block fits inside the modal without being re-wrapped. The -6
-	// must stay within renderPickerModal's chrome budget (its Border + Padding(0,1)
-	// around modalWidth of content) — if that padding/border ever widens, this must
-	// track it or the pre-wrapped block gets re-wrapped and the height-jump bug returns.
-	// See the matching note at renderPickerModal's border block.
+	// The list's width. It must not exceed renderPickerModal's content width,
+	// modalWidth-2, or the block is re-wrapped there and the height changes.
 	descWidth := modalWidth - 6
 	style := lipgloss.NewStyle().Width(descWidth)
 
@@ -87,11 +75,10 @@ func reservePickerDescription(selected string, all []string, modalWidth int) str
 	return rendered
 }
 
-// renderPickerModal renders a standard picker modal with consistent styling
+// renderPickerModal renders a picker modal around cfg.ListContent.
 func renderPickerModal(cfg pickerModalConfig) string {
 	modalWidth := pickerModalWidth(cfg.Width, cfg.WidthPct, cfg.MaxWidth)
 
-	// Header with nib title (or modal title as fallback)
 	titleWidth := modalWidth - 4
 	nibTitle := cfg.NibTitle
 	if nibTitle == "" {
@@ -102,10 +89,8 @@ func renderPickerModal(cfg pickerModalConfig) string {
 	}
 	header := lipgloss.NewStyle().Bold(true).Render(nibTitle)
 
-	// Subtitle with nib ID
 	subtitle := ui.Muted.Render(cfg.NibID)
 
-	// Help footer
 	help := helpKeyStyle.Render("enter") + " " + helpStyle.Render("select") + "  " +
 		helpKeyStyle.Render("/") + " " + helpStyle.Render("filter") + "  "
 	for _, e := range cfg.ExtraHelp {
@@ -113,23 +98,19 @@ func renderPickerModal(cfg pickerModalConfig) string {
 	}
 	help += helpKeyStyle.Render("esc") + " " + helpStyle.Render("cancel")
 
-	// Border style. The Border + Padding(0,1) here is the chrome budget that
-	// reservePickerDescription's descWidth (modalWidth-6) is measured against;
-	// keep the two in sync so pre-wrapped descriptions aren't re-wrapped inside
-	// the border (which would reintroduce the picker height-jump bug).
+	// reservePickerDescription's width depends on this border and padding.
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ui.ColorPrimary).
 		Padding(0, 1).
 		Width(withBorder(modalWidth))
 
-	// Assemble content
 	var parts []string
 	parts = append(parts, header)
 	if cfg.NibID != "" {
 		parts = append(parts, subtitle)
 	}
-	parts = append(parts, "") // blank separator
+	parts = append(parts, "")
 	parts = append(parts, cfg.ListContent)
 	if cfg.Description != "" {
 		parts = append(parts, "", cfg.Description)
@@ -140,12 +121,10 @@ func renderPickerModal(cfg pickerModalConfig) string {
 	return border.Render(content)
 }
 
-// overlayModal places a modal on top of a background view
+// overlayModal draws modal centered over a dimmed, height-line copy of bgView.
 func overlayModal(bgView, modal string, width, height int) string {
-	// Split background into lines
 	bgLines := strings.Split(bgView, "\n")
 
-	// Pad or truncate background to fill the screen
 	for len(bgLines) < height {
 		bgLines = append(bgLines, "")
 	}
@@ -153,18 +132,15 @@ func overlayModal(bgView, modal string, width, height int) string {
 		bgLines = bgLines[:height]
 	}
 
-	// Dim the background
 	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555"))
 	for i, line := range bgLines {
 		bgLines[i] = dimStyle.Render(stripAnsi(line))
 	}
 
-	// Split modal into lines
 	modalLines := strings.Split(modal, "\n")
 	modalHeight := len(modalLines)
 	modalWidth := lipgloss.Width(modal)
 
-	// Calculate center position
 	startY := (height - modalHeight) / 2
 	startX := (width - modalWidth) / 2
 	if startY < 0 {
@@ -174,7 +150,6 @@ func overlayModal(bgView, modal string, width, height int) string {
 		startX = 0
 	}
 
-	// Overlay modal onto background
 	for i, modalLine := range modalLines {
 		bgY := startY + i
 		if bgY >= 0 && bgY < len(bgLines) {
@@ -185,7 +160,7 @@ func overlayModal(bgView, modal string, width, height int) string {
 	return strings.Join(bgLines, "\n")
 }
 
-// overlayLine places a modal line on top of a background line at position x
+// overlayLine draws modalLine over a dimmed bgLine, starting at column startX.
 func overlayLine(bgLine, modalLine string, startX, maxWidth int) string {
 	bgRunes := []rune(stripAnsi(bgLine))
 	for len(bgRunes) < maxWidth {
@@ -204,7 +179,8 @@ func overlayLine(bgLine, modalLine string, startX, maxWidth int) string {
 	return dimStyle.Render(prefix) + modalLine + dimStyle.Render(suffix)
 }
 
-// stripAnsi removes ANSI escape codes from a string
+// stripAnsi removes escape sequences, taking each to run from ESC through the
+// next ASCII letter.
 func stripAnsi(s string) string {
 	result := strings.Builder{}
 	inEscape := false

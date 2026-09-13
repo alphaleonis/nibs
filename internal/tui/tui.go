@@ -22,7 +22,6 @@ import (
 	"github.com/atotto/clipboard"
 )
 
-// viewState represents which view is currently active
 type viewState int
 
 const (
@@ -40,17 +39,15 @@ const (
 	viewConfirmDialog
 )
 
-// Two-column layout constants
 const (
-	TwoColumnMinWidth = 120 // minimum terminal width for two-column layout
-	RightPaneMaxWidth = 80  // max width of preview pane (text files follow 80 char convention)
+	TwoColumnMinWidth = 120
+	RightPaneMaxWidth = 80 // the 80-column text convention
 )
 
-// calculatePaneWidths returns (leftWidth, rightWidth) for two-column layout.
-// Right pane is capped at RightPaneMaxWidth, left pane gets remaining space.
+// calculatePaneWidths returns (leftWidth, rightWidth) for the two-column layout.
 func calculatePaneWidths(totalWidth int) (int, int) {
 	rightWidth := RightPaneMaxWidth
-	if totalWidth-rightWidth < 40 { // ensure left pane has reasonable minimum
+	if totalWidth-rightWidth < 40 {
 		rightWidth = totalWidth - 40
 	}
 	leftWidth := totalWidth - rightWidth - 1 // 1 for separator
@@ -60,17 +57,13 @@ func calculatePaneWidths(totalWidth int) (int, int) {
 // nibsChangedMsg is sent when nibs change on disk (via file watcher)
 type nibsChangedMsg struct{}
 
-// updateCheckMsg carries the result of the background "is a newer release
-// available?" check.
 type updateCheckMsg struct {
 	available bool
 	latest    string
 }
 
-// checkForUpdateCmd runs the update check off the render loop (Bubbletea runs
-// each tea.Cmd in its own goroutine). It is entirely best-effort: a gated-off
-// (dev build / CI / opt-out) or failed check simply yields available=false, so
-// the indicator stays hidden and the UI is never blocked.
+// checkForUpdateCmd reports whether a newer release exists. A check that is
+// gated off or fails reports available=false.
 func checkForUpdateCmd(version string) tea.Cmd {
 	return func() tea.Msg {
 		res, ok := updatecheck.NewChecker(version).Check(context.Background())
@@ -83,23 +76,18 @@ type cursorChangedMsg struct {
 	nibID string
 }
 
-// openTagPickerMsg requests opening the tag picker
 type openTagPickerMsg struct{}
 
-// tagSelectedMsg is sent when a tag is selected from the picker
 type tagSelectedMsg struct {
 	tag string
 }
 
-// clearFilterMsg is sent to clear any active filter
 type clearFilterMsg struct{}
 
-// copyNibIDMsg requests copying nib ID(s) to the clipboard
 type copyNibIDMsg struct {
 	ids []string
 }
 
-// reorderNibMsg requests reordering a nib among its siblings
 type reorderNibMsg struct {
 	nibID    string
 	afterID  *string
@@ -107,11 +95,10 @@ type reorderNibMsg struct {
 	first    *bool
 }
 
-// reorderBlockMsg requests a block-move: swap a single "displaced" sibling
-// past a contiguous block of selected siblings using one backend ReorderNib
-// call. Move-up sets afterID (the last item of the block); move-down sets
-// beforeID (the first item of the block). focusID is the list row to re-
-// select after the reload.
+// reorderBlockMsg moves a contiguous block of siblings by reordering the one
+// sibling it displaces: after the block's last item when moving up (afterID),
+// before its first when moving down (beforeID). focusID is the row to select
+// after the reload.
 type reorderBlockMsg struct {
 	displacedID string
 	afterID     *string
@@ -119,38 +106,28 @@ type reorderBlockMsg struct {
 	focusID     string
 }
 
-// reorderRefusedMsg reports why a requested reorder cannot happen. Without it
-// a refused reorder is indistinguishable from a dropped keypress.
 type reorderRefusedMsg struct {
 	reason string
 }
 
-// openEditorMsg requests opening the editor for a nib
 type openEditorMsg struct {
 	nibID   string
 	nibPath string
 }
 
-// editorFinishedMsg is sent when the editor closes, or when it could not be
-// opened at all.
-//
-// started says which of those two happened, and it is a separate field because
-// err cannot answer it. tea.ExecProcess hands its callback whatever went wrong
-// anywhere in the suspend-run-resume sequence, so the terminal's release and
-// restore errors arrive on the same wire as the process's own — meaning "not an
-// *exec.ExitError" is not the same claim as "the editor never ran", and would
-// report a finished editing session as a launch that never happened.
+// editorFinishedMsg ends an $EDITOR session. started reports whether the editor
+// process ran; do not infer it from err, which also carries the errors of
+// releasing and restoring the terminal.
 type editorFinishedMsg struct {
 	err     error
 	started bool
 }
 
-// openParentPickerMsg requests opening the parent picker for nib(s)
 type openParentPickerMsg struct {
-	nibIDs        []string // IDs of nibs to update
-	nibTitle      string   // Display title (single title or "N selected nibs")
-	nibTypes      []string // Types of the nibs (to filter eligible parents)
-	currentParent string   // Only meaningful for single nib
+	nibIDs        []string
+	nibTitle      string   // the nib's title, or "N selected nibs"
+	nibTypes      []string // filters the eligible parents
+	currentParent string   // set only for a single nib
 }
 
 // App is the main TUI application model
@@ -174,24 +151,23 @@ type App struct {
 	config         *config.Config
 	width          int
 	height         int
-	program        *tea.Program // reference to program for sending messages from watcher
+	program        *tea.Program // receives watcher events; see Run
 
-	// Key chord state - tracks partial key sequences like "g" waiting for "t"
+	// First key of a pending chord, e.g. "g" awaiting "t".
 	pendingKey string
 
-	// Modal state - tracks view behind modal pickers
+	// The view drawn behind a modal, restored when it closes.
 	previousState viewState
 
-	// Editor state - tracks nib being edited to update updated_at on save
+	// The $EDITOR session in progress: the nib, and its file's mtime at launch.
 	editingNibID      string
 	editingNibModTime time.Time
 
-	// Running binary version, used for the background update check.
-	version string
+	version string // running binary version, for the update check
 }
 
-// New creates a new TUI application. version is the running binary version,
-// used for the best-effort "update available" indicator.
+// New creates the TUI application. version is the running binary version, for
+// the update-available indicator.
 func New(backend Backend, cfg *config.Config, version string) *App {
 	return &App{
 		state:   viewList,
@@ -208,8 +184,6 @@ func (a *App) Init() tea.Cmd {
 	return tea.Batch(a.list.Init(), checkForUpdateCmd(a.version))
 }
 
-// isTwoColumnMode returns true if the terminal width supports two-column layout
-// and wide mode is not active (wide mode uses full width for the list)
 func (a *App) isTwoColumnMode() bool {
 	return a.width >= TwoColumnMinWidth && !a.list.wideMode
 }
@@ -223,11 +197,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.width = msg.Width
 		a.height = msg.Height
 
-		// Propagate help state to sub-models so their sizing accounts for the panel
+		// Sub-models size themselves around the help panel.
 		a.list.helpExpanded = a.helpExpanded
 		a.detail.helpExpanded = a.helpExpanded
 
-		// Resize list to account for the footer region (help panel or footer)
 		if a.helpExpanded {
 			footerH := a.list.footerHeight()
 			if a.isTwoColumnMode() {
@@ -239,7 +212,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Update preview dimensions if in two-column mode
 		if a.isTwoColumnMode() {
 			_, rightWidth := calculatePaneWidths(a.width)
 			a.preview.width = rightWidth
@@ -253,13 +225,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.detail.statusMessage = ""
 		a.detail.statusKind = statusOK
 
-		// Handle key chord sequences
+		// "g t" chord, unless the list filter is taking input (1 is list.Filtering).
 		if a.state == viewList && a.list.list.FilterState() != 1 {
 			if a.pendingKey == "g" {
 				a.pendingKey = ""
 				switch msg.String() {
 				case "t":
-					// "g t" - go to tags
 					return a, func() tea.Msg { return openTagPickerMsg{} }
 				default:
 					// Invalid second key, ignore the chord
@@ -268,14 +239,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return a, nil
 			}
 
-			// Start of potential chord
 			if msg.String() == "g" {
 				a.pendingKey = "g"
 				return a, nil
 			}
 		}
 
-		// Clear pending key on any other key press
 		a.pendingKey = ""
 
 		switch msg.String() {
@@ -315,7 +284,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case cursorChangedMsg:
-		// Update preview with the newly highlighted nib
 		_, rightWidth := calculatePaneWidths(a.width)
 		if msg.nibID != "" {
 			nib, err := a.backend.GetNib(context.Background(), msg.nibID)
@@ -328,9 +296,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case nibsLoadedMsg:
-		// Forward to list view
 		a.list, cmd = a.list.Update(msg)
-		// Update preview with current cursor position
 		_, rightWidth := calculatePaneWidths(a.width)
 		if len(msg.items) == 0 {
 			a.preview = newPreviewModel(nil, rightWidth, a.height-2)
@@ -340,7 +306,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, cmd
 
 	case updateCheckMsg:
-		// Best-effort: surface the indicator when a newer release exists.
 		if msg.available {
 			a.list.updateAvailable = true
 			a.list.updateLatest = msg.latest
@@ -348,36 +313,26 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case nibsChangedMsg:
-		// Nibs changed on disk - refresh
 		if a.state == viewDetail {
-			// Try to reload the current nib via backend
 			updatedNib, err := a.backend.GetNib(context.Background(), a.detail.nib.ID)
 			if err != nil || updatedNib == nil {
-				// Nib was deleted - return to list
+				// The nib was deleted.
 				a.state = viewList
 				a.history = nil
 			} else {
-				// Recreate detail view with fresh nib data, carrying the footer
-				// across: the rebuild starts from an empty one, and a nib file
-				// changing on disk is not the user acknowledging a refusal.
-				// Agents and the CLI write nibs while a session is open, so
-				// without this a watcher tick puts the swallow back within
-				// seconds. The keypress clear stays the sole owner of when a
-				// message goes away.
+				// Carry the footer across the rebuild: a file changing on disk
+				// does not dismiss a status message.
 				message, kind := a.detail.statusMessage, a.detail.statusKind
 				a.detail = a.initDetailModel(updatedNib)
 				a.detail.statusMessage = message
 				a.detail.statusKind = kind
 			}
 		}
-		// Trigger list refresh
 		return a, a.list.loadNibs
 
 	case openTagPickerMsg:
-		// Collect all tags with their counts
 		tags := a.collectTagsWithCounts()
 		if len(tags) == 0 {
-			// No tags in system, don't open picker
 			return a, nil
 		}
 		a.tagPicker = newTagPickerModel(tags, a.width, a.height)
@@ -390,20 +345,19 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.list.loadNibs
 
 	case openParentPickerMsg:
-		// A root-only type (milestone or epic) has no legal parent, so there is
-		// nothing to pick.
+		// A type that cannot take a parent has nothing to pick.
 		for _, nibType := range msg.nibTypes {
 			if !nibtypes.CanHaveParent(nibType) {
 				return a, nil
 			}
 		}
-		a.previousState = a.state // Remember where we came from for the modal background
+		a.previousState = a.state
 		a.parentPicker = newParentPickerModel(msg.nibIDs, msg.nibTitle, msg.nibTypes, msg.currentParent, a.backend, a.config, a.width, a.height)
 		a.state = viewParentPicker
 		return a, a.parentPicker.Init()
 
 	case closeParentPickerMsg:
-		// Return to previous view and refresh in case nibs changed while picker was open
+		// Nibs may have changed while the picker was open.
 		a.state = a.previousState
 		return a, a.list.loadNibs
 
@@ -414,26 +368,21 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.statusPicker.Init()
 
 	case closeStatusPickerMsg:
-		// Return to previous view and refresh in case nibs changed while picker was open
+		// Nibs may have changed while the picker was open.
 		a.state = a.previousState
 		return a, a.list.loadNibs
 
 	case statusSelectedMsg:
-		// Update all nibs' status via backend mutations
 		var errs []error
 		for _, nibID := range msg.nibIDs {
 			_, err := a.backend.UpdateNib(context.Background(), nibID, model.UpdateNibInput{
 				Status: &msg.status,
 			})
 			if err != nil {
-				// Carry on with the other nibs, but keep the error: the picker
-				// closes over it and nothing else would show it.
 				errs = append(errs, err)
 			}
 		}
-		// Return to the previous view and refresh
 		a.state = a.previousState
-		// Clear selection after batch edit
 		clear(a.list.selectedNibs)
 		if a.state == viewDetail && len(msg.nibIDs) == 1 {
 			updatedNib, _ := a.backend.GetNib(context.Background(), msg.nibIDs[0])
@@ -446,7 +395,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case openCreateTypePickerMsg:
 		a.previousState = a.state
-		// Open type picker for creation (no nibIDs, all types valid)
+		// For creation: no nibIDs, and every type is valid.
 		a.typePicker = newTypePickerModel(nil, "", msg.defaultType, nil, a.config, a.width, a.height)
 		a.state = viewCreateTypePicker
 		return a, a.typePicker.Init()
@@ -458,19 +407,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.typePicker.Init()
 
 	case closeTypePickerMsg:
-		// Return to previous view and refresh
 		a.state = a.previousState
 		return a, a.list.loadNibs
 
 	case typeSelectedMsg:
-		// Check if this came from the create flow
+		// In the create flow the type opens the create modal instead.
 		if a.state == viewCreateTypePicker {
-			// Transition to create modal with the chosen type
 			return a, func() tea.Msg {
 				return createTypeSelectedMsg{nibType: msg.nibType}
 			}
 		}
-		// Update all nibs' type via backend mutations
 		var errs []error
 		for _, nibID := range msg.nibIDs {
 			_, err := a.backend.UpdateNib(context.Background(), nibID, model.UpdateNibInput{
@@ -480,9 +426,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				errs = append(errs, err)
 			}
 		}
-		// Return to the previous view and refresh
 		a.state = a.previousState
-		// Clear selection after batch edit
 		clear(a.list.selectedNibs)
 		if a.state == viewDetail && len(msg.nibIDs) == 1 {
 			updatedNib, _ := a.backend.GetNib(context.Background(), msg.nibIDs[0])
@@ -494,7 +438,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.list.loadNibs
 
 	case createTypeSelectedMsg:
-		// Type selected during create flow → open title input modal
 		a.createModal = newCreateModalModel(msg.nibType, a.config, a.width, a.height)
 		a.state = viewCreateModal
 		return a, a.createModal.Init()
@@ -506,12 +449,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.priorityPicker.Init()
 
 	case closePriorityPickerMsg:
-		// Return to previous view and refresh in case nibs changed while picker was open
+		// Nibs may have changed while the picker was open.
 		a.state = a.previousState
 		return a, a.list.loadNibs
 
 	case prioritySelectedMsg:
-		// Update all nibs' priority via backend mutations
 		var errs []error
 		for _, nibID := range msg.nibIDs {
 			_, err := a.backend.UpdateNib(context.Background(), nibID, model.UpdateNibInput{
@@ -521,9 +463,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				errs = append(errs, err)
 			}
 		}
-		// Return to the previous view and refresh
 		a.state = a.previousState
-		// Clear selection after batch edit
 		clear(a.list.selectedNibs)
 		if a.state == viewDetail && len(msg.nibIDs) == 1 {
 			updatedNib, _ := a.backend.GetNib(context.Background(), msg.nibIDs[0])
@@ -572,14 +512,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.blockingPicker.Init()
 
 	case closeBlockingPickerMsg:
-		// Return to previous view and refresh in case nibs changed while picker was open
+		// Nibs may have changed while the picker was open.
 		a.state = a.previousState
 		return a, a.list.loadNibs
 
 	case blockingConfirmedMsg:
-		// Apply all blocking changes via backend mutations. Both loops report
-		// through one call: the footer holds a single message, so a second
-		// report would overwrite the first and re-hide whatever it named.
+		// Both loops collect into one errs: the footer holds one message, and a
+		// second report would overwrite the first.
 		var errs []error
 		for _, targetID := range msg.toAdd {
 			_, err := a.backend.AddBlocking(context.Background(), msg.nibID, targetID)
@@ -593,7 +532,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				errs = append(errs, err)
 			}
 		}
-		// Return to previous view and refresh
 		a.state = a.previousState
 		if a.state == viewDetail {
 			updatedNib, _ := a.backend.GetNib(context.Background(), msg.nibID)
@@ -605,30 +543,26 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.list.loadNibs
 
 	case reorderNibMsg:
-		// Execute reorder via backend
 		result, err := a.backend.ReorderNib(context.Background(), msg.nibID, msg.afterID, msg.beforeID, msg.first)
 		if err != nil {
 			a.list.statusMessage = fmt.Sprintf("Reorder failed: %v", err)
 			a.list.statusKind = statusWarn
 			return a, nil
 		}
-		// Set selectByID synchronously before loadNibs to guarantee re-selection
+		// Set before loadNibs runs so the reloaded list selects the moved nib.
 		if result != nil {
 			a.list.selectByID = result.ID
 		}
 		return a, a.list.loadNibs
 
 	case reorderBlockMsg:
-		// Block move: move the single displaced sibling past the selected block
-		// in one ReorderNib call. Preserves the block's internal order
-		// automatically.
 		_, err := a.backend.ReorderNib(context.Background(), msg.displacedID, msg.afterID, msg.beforeID, nil)
 		if err != nil {
 			a.list.statusMessage = fmt.Sprintf("Reorder failed: %v", err)
 			a.list.statusKind = statusWarn
 			return a, nil
 		}
-		// Preserve focus on the originally-focused row (not the displaced sibling).
+		// Keep focus on the user's row, not the displaced sibling.
 		a.list.selectByID = msg.focusID
 		return a, a.list.loadNibs
 
@@ -644,7 +578,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case confirmActionMsg:
-		// Execute the confirmed action, collecting any errors
 		var errs []string
 		for _, nibID := range msg.nibIDs {
 			var err error
@@ -673,7 +606,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case nibCreatedMsg:
-		// Create the nib via backend mutation with draft status
 		draftStatus := "draft"
 		nibType := msg.nibType
 		if nibType == "" {
@@ -684,11 +616,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Status: &draftStatus,
 			Type:   &nibType,
 		}
-		// Pre-fill body with template stubs based on the chosen type
 		if tmpl := bodytemplate.BodyTemplate(nibType); tmpl != "" {
 			input.Body = &tmpl
 		}
-		// Infer parent from chosen type and currently selected nib
 		var selectedNib *nib.Nib
 		if item, ok := a.list.list.SelectedItem().(nibItem); ok {
 			selectedNib = item.nib
@@ -707,7 +637,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.list.statusKind = statusWarn
 			return a, nil
 		}
-		// Return to list and open the new nib in editor
 		a.state = viewList
 		return a, tea.Batch(
 			a.list.loadNibs,
@@ -717,11 +646,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 
 	case openEditorMsg:
-		// Launch editor for the nib file
 		editor := getEditor()
 		fullPath := filepath.Join(a.backend.Root(), msg.nibPath)
 
-		// Record the nib ID and file mod time before editing
 		a.editingNibID = msg.nibID
 		if info, err := os.Stat(fullPath); err == nil {
 			a.editingNibModTime = info.ModTime()
@@ -731,13 +658,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, tea.ExecProcess(c, editorFinished(c))
 
 	case editorFinishedMsg:
-		// An editor that never started is not a session to take back: no text
-		// was written, and the file the write-back would stat is untouched. So
-		// the failure is reported instead — without this the user gets a screen
-		// flicker and no reason for it. The id/mtime pair is consumed here too,
-		// because this msg ends the openEditorMsg that set it and holding it
-		// would let the next editor exit write this nib against a timestamp
-		// taken for a launch that never happened.
+		// The editor never started, so nothing was written: report the launch
+		// failure instead of a write-back.
 		if msg.err != nil && !msg.started {
 			a.reportFailure(editorLaunchFailure(msg.err))
 			a.editingNibID = ""
@@ -745,26 +667,19 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 
-		// Editor closed - take what was written back into the store. A non-zero
-		// exit is not reported: the user chose it, `vi` quit with :cq being the
-		// ordinary way, and what matters is whether the file moved.
+		// A non-zero exit is not a failure (`:cq` in vi exits non-zero); the
+		// write-back depends only on whether the file changed.
 		if a.editingNibID != "" {
 			if err := a.recordExternalEdit(a.editingNibID, a.editingNibModTime); err != nil {
 				a.reportFailure(editorWriteRefusal(a.editingNibID, err))
 			}
-			// Cleared whether or not the store took the edit. The pair is a
-			// one-shot guard for the session that just ended, so holding it
-			// past a refusal would make the NEXT editor exit write this nib
-			// again, against a timestamp from a different session — and there
-			// is nothing here to retry with anyway: the file already holds the
-			// user's text, which is why the id goes into the message instead.
+			// Cleared whether or not the store accepted the edit.
 			a.editingNibID = ""
 			a.editingNibModTime = time.Time{}
 		}
 		return a, nil
 
 	case parentSelectedMsg:
-		// Set the new parent via backend mutation for all nibs
 		var parentID *string
 		if msg.parentID != "" {
 			parentID = &msg.parentID
@@ -776,12 +691,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				errs = append(errs, err)
 			}
 		}
-		// Return to the previous view and refresh
 		a.state = a.previousState
-		// Clear selection after batch edit
 		clear(a.list.selectedNibs)
 		if a.state == viewDetail && len(msg.nibIDs) == 1 {
-			// Refresh the nib to show updated parent
 			updatedNib, _ := a.backend.GetNib(context.Background(), msg.nibIDs[0])
 			if updatedNib != nil {
 				a.detail = a.initDetailModel(updatedNib)
@@ -807,7 +719,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			statusMsg = fmt.Sprintf("Copied %d nib IDs to clipboard", len(msg.ids))
 		}
 
-		// Set status on current view
 		switch a.state {
 		case viewList:
 			a.list.statusMessage = statusMsg
@@ -819,7 +730,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case selectNibMsg:
-		// Push current detail view to history if we're already viewing a nib
 		if a.state == viewDetail {
 			a.history = append(a.history, a.detail)
 		}
@@ -828,23 +738,22 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.detail.Init()
 
 	case backToListMsg:
-		// Pop from history if available, otherwise go to list
 		if len(a.history) > 0 {
 			a.detail = a.history[len(a.history)-1]
 			a.history = a.history[:len(a.history)-1]
-			// Re-sync help state and layout in case it was toggled since push
+			// Help may have been toggled since this view was pushed.
 			a.detail.helpExpanded = a.helpExpanded
 			a.detail, _ = a.detail.Update(tea.WindowSizeMsg{Width: a.width, Height: a.height})
 		} else {
 			a.state = viewList
-			// Force list to pick up any size changes that happened while in detail view
+			// The list missed any resize that happened in the detail view.
 			a.list, cmd = a.list.Update(tea.WindowSizeMsg{Width: a.width, Height: a.height})
 			return a, cmd
 		}
 		return a, nil
 	}
 
-	// Forward all messages to the current view
+	// Everything not handled above goes to the active view.
 	switch a.state {
 	case viewList:
 		a.list, cmd = a.list.Update(msg)
@@ -873,7 +782,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return a, cmd
 }
 
-// collectTagsWithCounts returns all tags with their usage counts
 func (a *App) collectTagsWithCounts() []tagWithCount {
 	nibs, _ := a.backend.ListNibs(context.Background(), nil)
 	tagCounts := make(map[string]int)
@@ -891,33 +799,27 @@ func (a *App) collectTagsWithCounts() []tagWithCount {
 	return tags
 }
 
-// renderTwoColumnView renders the list and preview side by side with app-global footer
+// renderTwoColumnView renders the list and preview side by side above a
+// full-width footer.
 func (a *App) renderTwoColumnView() string {
 	leftWidth, rightWidth := calculatePaneWidths(a.width)
 
-	// Footer region: the expanded panel with any status message above it, or the
-	// compact footer — one line unless a status message wrapped onto more.
+	// The footer may be several lines tall.
 	footer := a.list.footerRegion()
 	contentHeight := a.height - max(1, lipgloss.Height(footer))
 
-	// Render left pane (list) with constrained width, no footer
 	leftPane := a.list.ViewConstrained(leftWidth, contentHeight)
 
-	// Render right pane (preview) with same height
 	a.preview.width = rightWidth
 	a.preview.height = contentHeight
 	rightPane := a.preview.View()
 
-	// Compose columns
 	columns := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
 
 	return columns + "\n" + footer
 }
 
-// View renders the current view
-// View renders the current screen. Terminal features that v1 set once at
-// program construction are declared here instead, so the alt screen is
-// re-asserted on every frame rather than by a NewProgram option.
+// View renders the current screen in the alt screen.
 func (a *App) View() tea.View {
 	v := tea.NewView(a.render())
 	v.AltScreen = true
@@ -971,7 +873,8 @@ func (a *App) getBackgroundView() string {
 	}
 }
 
-// initDetailModel creates a new detail model with the current help state propagated.
+// initDetailModel creates a detail model with the current help state and an
+// empty footer.
 func (a *App) initDetailModel(n *nib.Nib) detailModel {
 	m := newDetailModel(n, a.backend, a.config, a.width, a.height)
 	m.helpExpanded = a.helpExpanded
@@ -981,25 +884,13 @@ func (a *App) initDetailModel(n *nib.Nib) detailModel {
 	return m
 }
 
-// reportMutationFailures surfaces the errors a picker's mutations collected, in
-// the footer of whichever view the app has just returned to. Without it a
-// refusal leaves with the closing picker and the user is shown an edit that
-// never happened. Call it AFTER any detail-model rebuild, which starts from an
-// empty footer and would drop the message.
+// reportMutationFailures reports a picker's failed mutations in the footer of
+// the view the app returned to. Call it after any detail-model rebuild, which
+// empties the footer.
 //
-// One failure carries its reason verbatim, since a refusal's reason is what says
-// how to proceed, and the footer wraps it across its own lines rather than
-// letting the terminal cut it unmarked. Several fall back to a count because the
-// footer buys its rows from the list they are about: two of the milestone queue
-// guard's refusals wrap to six lines at 80 columns, a quarter of the screen, and
-// the count is the part that says the batch did not apply whole. Re-applying to
-// one nib at a time is what shows each reason.
-//
-// unit names what ONE error is about, because that is not the same thing at
-// every caller: the status, type, priority, estimate and parent pickers collect
-// one error per nib they were applying to, while the blocking picker confirms
-// one subject's diff and collects one error per LINK in it. Counting links as
-// nibs would tell a user that two nibs refused when one did.
+// One failure is shown with its reason, several as a count. unit names what one
+// error is about: "nib", or "link" for the blocking picker, which collects one
+// error per link.
 func (a *App) reportMutationFailures(action, unit string, errs []error) {
 	if len(errs) == 0 {
 		return
@@ -1011,23 +902,11 @@ func (a *App) reportMutationFailures(action, unit string, errs []error) {
 	a.reportFailure(message)
 }
 
-// reportFailure writes an already-composed refusal into the footer of whichever
-// view is on screen, warning-colored. Callers whose failure is not a picker's
-// "<action> failed: <reason>" compose their own sentence and come here directly:
-// the editor path's is a write over a file the user has ALREADY saved, and the
-// picker phrasing would name it a reload and imply the text is safely in.
+// reportFailure shows an already-composed failure message in the footer of the
+// view on screen. Call it after any detail-model rebuild.
 //
-// The same ordering rule applies — call it AFTER any detail-model rebuild.
-//
-// READS are deliberately not routed here, and the discarded ones left in this
-// file are an accepted silence rather than an oversight: the GetNib refreshes
-// that rebuild the detail model after a picker's write, and the ListNibs behind
-// the tag picker's counts. Each re-reads state the store already holds, so
-// failing leaves the value the view loaded a moment ago on screen — stale, not
-// wrong — while the write that preceded it is reported here and the list reload
-// each of those cases returns re-reads regardless. Spending the footer's one row
-// on a condition the user cannot act on would cost the row a refusal needs. A
-// discarded WRITE is the opposite and belongs here.
+// Report every failed write. Do not report a failed read that only refreshes
+// what is on screen.
 func (a *App) reportFailure(message string) {
 	if a.state == viewDetail {
 		a.detail.statusMessage = message
@@ -1038,20 +917,12 @@ func (a *App) reportFailure(message string) {
 	a.list.statusKind = statusWarn
 }
 
-// recordExternalEdit takes an $EDITOR session's file back into the store: the
-// nib is re-read and its updated_at bumped, because a file-level edit bypasses
-// the mutation layer that would otherwise set it. Despite the backend method's
-// name this is a WRITE, and the store can turn it down.
+// recordExternalEdit takes an $EDITOR session's file back into the store by
+// re-reading the nib and bumping its updated_at. This is a write, and the store
+// can refuse it. Nothing is written unless the file's mtime is after since.
 //
-// The lookup that locates the nib is reported alongside the write, unlike this
-// file's other reads. After `nibs config set-prefix` has run in another process
-// the nib no longer answers to the id this session opened the editor with, and
-// that is exactly the case the user has to hear about — swallowing it would
-// leave the edit unrecorded with nothing on screen, the same silence one call
-// earlier.
-//
-// An unchanged file is not an edit: since is the mtime taken before the editor
-// launched, and no write is attempted when the file has not moved past it.
+// A failed lookup is returned too: after `nibs config set-prefix` in another
+// process, id may no longer resolve.
 func (a *App) recordExternalEdit(id string, since time.Time) error {
 	n, err := a.backend.GetNib(context.Background(), id)
 	if err != nil {
@@ -1071,34 +942,20 @@ func (a *App) recordExternalEdit(id string, since time.Time) error {
 	return err
 }
 
-// nibFileUnreadableError marks the one leg of an $EDITOR write-back where the
-// file the store says the nib lives in could not be read at all. It is a type
-// of its own because the reassurance the other legs carry — that the user's
-// text is sitting safely in that file — is the one claim this leg cannot make.
+// nibFileUnreadableError is a write-back whose nib file could not be stat'd, so
+// its message cannot say the user's text is in that file.
 type nibFileUnreadableError struct{ err error }
 
 func (e *nibFileUnreadableError) Error() string { return e.err.Error() }
 
 func (e *nibFileUnreadableError) Unwrap() error { return e.err }
 
-// editorWriteRefusal words an $EDITOR session the store did not record.
+// editorWriteRefusal describes an $EDITOR session the store did not record.
+// The lead says what to do and comes first, because an overflowing footer is
+// cut from the end.
 //
-// The lead carries the whole of what the user has to act on — where their text
-// is and what to do next — and the detail follows it. renderStatusMessage caps
-// the footer at height/3 rows and cuts the overflow with an ellipsis, which on
-// an eight-row terminal is two rows of message: whatever the sentence ends with
-// is the half the user does not get, so what ends it has to be the half they can
-// afford to lose.
-//
-// The lead is not one sentence for every leg. A stat that failed says the file
-// the store points at could not be read, so the text the other legs correctly
-// promise is in it cannot be promised at all.
-//
-// Nor can the opposite be claimed. The stat fails on paths where the text is
-// perfectly safe — a concurrent `nibs config set-prefix` renames the file while
-// the TUI is suspended under tea.ExecProcess, and the stale Path the store hands
-// back stats ENOENT over an intact file — so the unreadable lead reports what
-// the store did and leaves the text's fate to the restart it prescribes.
+// A failed stat gets a lead that claims neither that the text is safe nor that
+// it is lost: the file may have been renamed while the editor was open.
 func editorWriteRefusal(id string, err error) string {
 	var unreadable *nibFileUnreadableError
 	if errors.As(err, &unreadable) {
@@ -1107,42 +964,24 @@ func editorWriteRefusal(id string, err error) string {
 	return editorTextSafeLead + fmt.Sprintf(" The store did not accept the edit to %s: %v", id, err)
 }
 
-// editorFinished builds the callback tea.ExecProcess invokes once the editor
-// session is over, reading from c the one thing the error it is handed cannot
-// say: whether the editor ran at all. exec records a ProcessState only for a
-// process it started, so a nil one is the launch that never happened.
+// editorFinished builds the tea.ExecProcess callback. started is c.ProcessState
+// != nil, which holds only for a process that was started.
 //
-// It is a named function because tea.ExecProcess invokes the callback itself,
-// out of reach of a test driving Update — so this is the only seam where the
-// flag's wiring, rather than the handler's use of it, can be checked.
-//
-// Reading c here is safe despite the goroutine tea.Exec sends from: `go
-// p.Send(fn(err))` evaluates fn's call in the goroutine that ran c, not in the
-// new one.
+// Reading c does not race: bubbletea's `go p.Send(fn(err))` evaluates fn(err) in
+// the goroutine that ran c.
 func editorFinished(c *exec.Cmd) tea.ExecCallback {
 	return func(err error) tea.Msg {
 		return editorFinishedMsg{err: err, started: c.ProcessState != nil}
 	}
 }
 
-// editorLaunchFailure words an $EDITOR that never opened.
-//
-// It shares neither lead with editorWriteRefusal, and the reason is not tone.
-// Both of those speak for a session the user has already typed into: they exist
-// to say where that text ended up, and they prescribe a restart because the
-// store is the thing that may now disagree with the file. Here there is no text,
-// the file was never opened, and the store was never asked for anything — so a
-// restart is a remedy for a problem the user does not have, and the editor
-// lookup is the one they do. That is what the lead carries, since the footer cuts
-// from the end.
+// editorLaunchFailure describes an $EDITOR that never started. Nothing was
+// written, so its lead points at the editor setting, not a restart.
 func editorLaunchFailure(err error) string {
 	return editorNotStartedLead + fmt.Sprintf(" The editor could not be started: %v", err)
 }
 
-// The leads the editor's failure messages are built from: the two
-// editorWriteRefusal picks between, and the one editorLaunchFailure uses. They
-// are named so the sweep that renders them at the geometries the footer actually
-// gets can ask for the real string rather than a copy of it.
+// Leads of the editor failure messages; see editorWriteRefusal.
 const (
 	editorTextSafeLead       = "Your text is still in the file. Restart nibs to re-read the store."
 	editorFileUnreadableLead = "Nothing was recorded; the file cannot be read. Restart nibs to re-read the store."
@@ -1158,36 +997,30 @@ func getEditor() string {
 	if editor := os.Getenv("EDITOR"); editor != "" {
 		return editor
 	}
-	// Fallback chain: vi is more universal, nano as last resort
 	if _, err := exec.LookPath("vi"); err == nil {
 		return "vi"
 	}
 	return "nano"
 }
 
-// Run starts the TUI application with file watching. version is the running
-// binary version, used for the best-effort update-available indicator.
+// Run starts the TUI and forwards store changes to it until it exits. version is
+// as for New.
 func Run(backend Backend, cfg *config.Config, version string) error {
 	app := New(backend, cfg, version)
 	p := tea.NewProgram(app)
 
-	// Store reference to program for sending messages from watcher
 	app.program = p
 
-	// Start file watching
 	if err := backend.StartWatching(); err != nil {
 		return err
 	}
 	defer backend.StopWatching()
 
-	// Subscribe to nib events
 	eventCh, unsubscribe := backend.Subscribe()
 	defer unsubscribe()
 
-	// Forward events to TUI in a goroutine
 	go func() {
 		for range eventCh {
-			// Send message to TUI when nibs change
 			if app.program != nil {
 				app.program.Send(nibsChangedMsg{})
 			}

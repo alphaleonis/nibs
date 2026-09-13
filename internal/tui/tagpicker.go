@@ -62,7 +62,6 @@ type tagPickerModel struct {
 }
 
 func newTagPickerModel(tags []tagWithCount, width, height int) tagPickerModel {
-	// Sort by count descending, then alphabetically
 	sort.Slice(tags, func(i, j int) bool {
 		if tags[i].count != tags[j].count {
 			return tags[i].count > tags[j].count
@@ -117,7 +116,6 @@ func (m tagPickerModel) Update(msg tea.Msg) (tagPickerModel, tea.Cmd) {
 					}
 				}
 			case "esc", "backspace":
-				// Return to list without selecting a tag
 				return m, func() tea.Msg {
 					return backToListMsg{}
 				}
@@ -134,7 +132,6 @@ func (m tagPickerModel) View() string {
 		return "Loading..."
 	}
 
-	// Simple bordered container
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ui.ColorPrimary).
@@ -143,7 +140,6 @@ func (m tagPickerModel) View() string {
 
 	content := border.Render(m.list.View())
 
-	// Footer
 	help := helpKeyStyle.Render("enter") + " " + helpStyle.Render("select") + "  " +
 		helpKeyStyle.Render("/") + " " + helpStyle.Render("filter") + "  " +
 		helpKeyStyle.Render("esc") + " " + helpStyle.Render("cancel") + "  " +

@@ -17,18 +17,12 @@ type createTypeSelectedMsg struct {
 	nibType string
 }
 
-// defaultTypeForContext computes the smart default type for a new nib from the
-// hierarchy rules rather than a hand-kept ladder, so a rule change reshapes the
-// suggestions instead of stranding them:
+// defaultTypeForContext suggests a type for a new nib from the hierarchy rules:
 //
-//   - a selection that can take children suggests its preferred legal child —
-//     feature before task, the primary decomposition at each tier (this also
-//     covers no selection: ValidChildTypes("") is every type, so it suggests
-//     the generic starting point, a feature)
-//   - a childless selection at the task level (task, research, an unknown
-//     type) suggests more task-level work beside it
-//   - a milestone takes no children and sits at no work level, so it suggests
-//     another waypoint
+//   - a selection that can take children: feature if legal, else task (no
+//     selection counts, since ValidChildTypes("") is every type)
+//   - a childless task-level selection (task, research, an unknown type): task
+//   - otherwise (a milestone): the selected type
 func defaultTypeForContext(selectedNibType string) string {
 	children := nibtypes.ValidChildTypes(selectedNibType)
 	for _, candidate := range []string{"feature", "task"} {
@@ -42,22 +36,19 @@ func defaultTypeForContext(selectedNibType string) string {
 	return selectedNibType
 }
 
-// inferParent determines the appropriate parent and afterID for a new nib
-// based on the chosen type and the currently selected nib.
+// inferParent returns the parent and afterID for a new nib of chosenType:
 //
-// Rules:
-//   - If chosen type is a valid child of the selected nib's type → parent = selected nib
-//   - If chosen type is the same level as selected nib → sibling (parent = selected's parent, afterID = selected's ID)
-//   - If chosen type is higher level → no parent (root level)
-//   - If no nib is selected → no parent (root level)
+//   - a valid child of the selected nib's type: under the selected nib
+//   - the same level (identical valid parent types): after the selected nib,
+//     under its parent; at root with no position when it has no parent
+//   - otherwise, or with nothing selected: at root
 func inferParent(chosenType string, selectedNib *nib.Nib) (parentID string, afterID string) {
 	if selectedNib == nil {
 		return "", ""
 	}
 
-	// Check if chosen type can be a child of the selected nib's type. EffectiveType
-	// so a type-less nib is treated as "task" (ValidChildTypes special-cases "" as
-	// "no parent → all types", which would be wrong for an existing leaf nib).
+	// EffectiveType: ValidChildTypes("") means every type, which is wrong for an
+	// existing type-less nib.
 	validChildren := nibtypes.ValidChildTypes(selectedNib.EffectiveType())
 	for _, childType := range validChildren {
 		if childType == chosenType {
@@ -65,22 +56,20 @@ func inferParent(chosenType string, selectedNib *nib.Nib) (parentID string, afte
 		}
 	}
 
-	// Check if chosen type is the same level (same valid parent types) → sibling
 	selectedParentTypes := nibtypes.ValidParentTypes(selectedNib.EffectiveType())
 	chosenParentTypes := nibtypes.ValidParentTypes(chosenType)
 	if sameParentTypes(selectedParentTypes, chosenParentTypes) {
 		if selectedNib.Parent != "" {
 			return selectedNib.Parent, selectedNib.ID
 		}
-		// Both at root level — no parent, no positioning
 		return "", ""
 	}
 
-	// Higher level or incompatible → root level
 	return "", ""
 }
 
-// sameParentTypes returns true if both slices contain the same elements.
+// sameParentTypes reports whether a and b hold the same types, ignoring order.
+// It assumes neither holds duplicates.
 func sameParentTypes(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

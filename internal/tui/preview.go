@@ -8,8 +8,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/ui"
 )
 
-// previewModel is a read-only detail preview for the two-column layout.
-// It has no focus, no interaction - just renders nib details.
+// previewModel is the read-only nib preview in the two-column layout.
 type previewModel struct {
 	nib    *nib.Nib
 	width  int
@@ -42,13 +41,11 @@ func (m previewModel) renderEmpty() string {
 }
 
 func (m previewModel) renderNib() string {
-	// Header: ID and Title
 	idStyle := lipgloss.NewStyle().Foreground(ui.ColorPrimary).Bold(true)
 	titleStyle := lipgloss.NewStyle().Bold(true)
 
 	header := idStyle.Render(m.nib.ID) + "\n" + titleStyle.Render(m.nib.Title)
 
-	// Metadata: Status, Type, Priority
 	metaStyle := lipgloss.NewStyle().Foreground(ui.ColorMuted)
 	meta := metaStyle.Render("Status: " + m.nib.Status + "  Type: " + m.nib.EffectiveType())
 	if m.nib.Priority != "" && m.nib.Priority != "normal" {
@@ -58,19 +55,15 @@ func (m previewModel) renderNib() string {
 		meta += metaStyle.Render("  Estimate: " + m.nib.Estimate)
 	}
 
-	// Tags
 	var tagsLine string
 	if len(m.nib.Tags) > 0 {
 		tagsLine = ui.RenderTags(m.nib.Tags)
 	}
 
-	// Documents
 	docsLine := ui.RenderDocuments(m.nib.Documents)
 
-	// Body (truncated to fit)
 	body := m.renderBody()
 
-	// Compose
 	var parts []string
 	parts = append(parts, header)
 	parts = append(parts, "")
@@ -86,8 +79,7 @@ func (m previewModel) renderNib() string {
 
 	content := lipgloss.JoinVertical(lipgloss.Left, parts...)
 
-	// Truncate content to fit within available height
-	// Border takes 2 lines (top + bottom), padding takes 0 vertical
+	// The border takes two rows.
 	innerHeight := m.height - 2
 	contentLines := strings.Split(content, "\n")
 	if len(contentLines) > innerHeight {
@@ -95,7 +87,6 @@ func (m previewModel) renderNib() string {
 	}
 	content = strings.Join(contentLines, "\n")
 
-	// Border - use exact height to prevent overflow
 	borderStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ui.ColorMuted).
@@ -105,11 +96,9 @@ func (m previewModel) renderNib() string {
 
 	result := borderStyle.Render(content)
 
-	// Ensure output is exactly m.height lines
-	// When truncating, preserve the bottom border (last line)
+	// Cut to m.height lines, keeping the bottom border.
 	resultLines := strings.Split(result, "\n")
 	if len(resultLines) > m.height {
-		// Keep first (m.height-1) lines + the last line (bottom border)
 		bottomBorder := resultLines[len(resultLines)-1]
 		resultLines = resultLines[:m.height-1]
 		resultLines = append(resultLines, bottomBorder)
@@ -120,14 +109,12 @@ func (m previewModel) renderNib() string {
 }
 
 func (m previewModel) renderBody() string {
-	// TrimSpace, not == "": Parse hands the body back verbatim, so a body
-	// that is only blank lines is a stable value rather than one that
-	// converges to empty, and it renders to nothing at all.
+	// TrimSpace: a body of only blank lines survives parsing and renders to
+	// nothing.
 	if strings.TrimSpace(m.nib.Body) == "" {
 		return lipgloss.NewStyle().Foreground(ui.ColorMuted).Render("No description")
 	}
 
-	// Render markdown (reuse existing glamour renderer from detail.go)
 	renderer := getGlamourRenderer()
 	if renderer == nil {
 		return m.nib.Body
@@ -138,10 +125,9 @@ func (m previewModel) renderBody() string {
 		return m.nib.Body
 	}
 
-	// Truncate to available height
 	lines := strings.Split(rendered, "\n")
-	// Account for header (2 lines), blank line, meta (1 line), tags (0-1), docs (0-1), blank line, borders/padding
-	// Base ~8 lines for header/meta, +1 each for optional tags and docs lines
+	// About 8 rows go to the header, meta line, blank lines and border, plus one
+	// each for the optional tags and documents lines.
 	headerLines := 8
 	if len(m.nib.Tags) > 0 {
 		headerLines++

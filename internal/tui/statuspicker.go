@@ -23,7 +23,7 @@ type closeStatusPickerMsg struct{}
 // openStatusPickerMsg requests opening the status picker for nib(s)
 type openStatusPickerMsg struct {
 	nibIDs        []string // IDs of nibs to update
-	nibTitle      string   // Display title (single title or "N nibs")
+	nibTitle      string   // Display title (single title or "N selected nibs")
 	currentStatus string   // Only meaningful for single nib
 }
 
@@ -60,10 +60,8 @@ func (d statusItemDelegate) Render(w io.Writer, m list.Model, index int, listIte
 		cursor = "  "
 	}
 
-	// Render status with color (text only)
 	statusText := ui.RenderStatusTextWithColor(item.name, item.color, item.isClosed)
 
-	// Add current indicator
 	var currentIndicator string
 	if item.isCurrent {
 		currentIndicator = ui.Muted.Render(" (current)")
@@ -83,14 +81,10 @@ type statusPickerModel struct {
 }
 
 func newStatusPickerModel(nibIDs []string, nibTitle, currentStatus string, cfg *config.Config, width, height int) statusPickerModel {
-	// All statuses (hardcoded in config package), in transition order rather
-	// than the sort order of DefaultStatuses — a picker reads as the path the
-	// work takes, not as the list's most-active-first ranking.
 	statuses := cfg.WorkflowStatuses()
 
 	delegate := statusItemDelegate{}
 
-	// Build items list
 	items := make([]list.Item, 0, len(statuses))
 	selectedIndex := 0
 
@@ -108,7 +102,6 @@ func newStatusPickerModel(nibIDs []string, nibTitle, currentStatus string, cfg *
 		})
 	}
 
-	// Calculate modal dimensions
 	modalWidth := pickerModalWidth(width, 0, 0)
 	modalHeight := pickerModalHeight(height, 0, 0)
 	listWidth := modalWidth - 6
@@ -124,7 +117,6 @@ func newStatusPickerModel(nibIDs []string, nibTitle, currentStatus string, cfg *
 	l.Styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 0, 0)
 	applyFilterStyles(&l.Styles)
 
-	// Select the current status
 	if selectedIndex < len(items) {
 		l.Select(selectedIndex)
 	}
@@ -182,9 +174,6 @@ func (m statusPickerModel) View() string {
 		return "Loading..."
 	}
 
-	// Reserve a fixed description-area height so the modal keeps a constant
-	// height regardless of which status is selected (longer descriptions like
-	// "deferred" would otherwise wrap to more lines and make items jump).
 	var selected string
 	var allDescs []string
 	for _, li := range m.list.Items() {
@@ -197,7 +186,6 @@ func (m statusPickerModel) View() string {
 	}
 	description := reservePickerDescription(selected, allDescs, pickerModalWidth(m.width, 0, 0))
 
-	// For multi-select, don't show individual nib ID
 	var nibID string
 	if len(m.nibIDs) == 1 {
 		nibID = m.nibIDs[0]
@@ -213,7 +201,7 @@ func (m statusPickerModel) View() string {
 	})
 }
 
-// ModalView returns the picker rendered as a centered modal overlay on top of the background
+// ModalView returns the picker centered over bgView.
 func (m statusPickerModel) ModalView(bgView string, fullWidth, fullHeight int) string {
 	modal := m.View()
 	return overlayModal(bgView, modal, fullWidth, fullHeight)

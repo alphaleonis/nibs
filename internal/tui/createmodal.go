@@ -33,8 +33,7 @@ func newCreateModalModel(nibType string, cfg *config.Config, width, height int) 
 	ti.CharLimit = 200
 	ti.SetWidth(50)
 	ti.Focus()
-	// The modal is drawn on the dark palette the whole TUI assumes, so start
-	// from the dark defaults rather than probing the terminal background.
+	// Dark defaults, matching the dark glamour style getGlamourRenderer uses.
 	tiStyles := textinput.DefaultDarkStyles()
 	tiStyles.Focused.Prompt = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
 	tiStyles.Focused.Text = lipgloss.NewStyle()
@@ -78,7 +77,7 @@ func (m createModalModel) Update(msg tea.Msg) (createModalModel, tea.Cmd) {
 					return nibCreatedMsg{title: title, nibType: nibType}
 				}
 			}
-			// Empty title - just close
+			// An empty title cancels.
 			return m, func() tea.Msg {
 				return closeCreateModalMsg{}
 			}
@@ -101,10 +100,8 @@ func (m createModalModel) View() string {
 
 	modalWidth := max(40, min(60, m.width*50/100))
 
-	// Header
 	header := lipgloss.NewStyle().Bold(true).Render("Create New ") + ui.RenderTypeText(m.nibType, m.typeColor)
 
-	// Input field
 	inputBox := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ui.ColorMuted).
@@ -112,14 +109,11 @@ func (m createModalModel) View() string {
 		Width(withBorder(modalWidth - 6)).
 		Render(m.textInput.View())
 
-	// Help text
 	help := helpKeyStyle.Render("enter") + " " + helpStyle.Render("create") + "  " +
 		helpKeyStyle.Render("esc") + " " + helpStyle.Render("cancel")
 
-	// Assemble content
 	content := header + "\n\n" + inputBox + "\n\n" + help
 
-	// Border style
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ui.ColorPrimary).
