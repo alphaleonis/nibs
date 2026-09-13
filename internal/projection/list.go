@@ -6,32 +6,18 @@ import (
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
-// ProjectedList is the projection of a slice of nibs through one Selection: the
-// list-output analogue of Projected. It is the shared shape every list-producing
-// view (list, rel, recipes) emits — a {nibs,count,truncated} JSON envelope for
-// --json and a menu-ordered string grid for the default TSV output.
-//
-// It is built by applying the single-nib Project to each element with the same
-// Selection + Resolver, so a list stays byte-for-byte consistent with a single
-// get of the same field set. The single-read {nib} contract (one id) is a
-// different, wrapper-free shape and is unaffected by this type.
+// ProjectedList is nibs projected one by one through a single Selection, for list
+// output: a {nibs,count,truncated} JSON envelope or a menu-ordered TSV grid.
 type ProjectedList struct {
 	nibs      []*Projected
 	truncated bool
-	// hiddenClosed is the number of closed nibs the open-by-default
-	// status filter silently removed (matching every other active filter). It is
-	// disclosed in the JSON envelope as "hidden_closed" and omitted when 0. It is
-	// set by the caller (SetHiddenClosed) after projection because it depends on a
-	// widened, pre-limit re-query the projection layer does not perform.
+	// closed nibs the open-status default hid; set by the caller (SetHiddenClosed)
 	hiddenClosed int
 }
 
-// ProjectList projects each nib through the same Selection + Resolver via the
-// single-nib Project, applying an optional limit. A limit <= 0 means unlimited;
-// when a positive limit is smaller than len(nibs) only the first limit elements
-// are projected and Truncated reports true. The input slice is never mutated (a
-// local copy of the slice header is resliced). A per-element projection error
-// (e.g. a computed field with a nil Resolver) is returned rather than swallowed.
+// ProjectList projects each nib with Project. A positive limit keeps only the
+// first limit nibs, and Truncated reports whether any were dropped. The first
+// projection error is returned.
 func ProjectList(nibs []*nib.Nib, sel Selection, r Resolver, limit int) (*ProjectedList, error) {
 	truncated := false
 	if limit > 0 && len(nibs) > limit {
@@ -49,17 +35,14 @@ func ProjectList(nibs []*nib.Nib, sel Selection, r Resolver, limit int) (*Projec
 	return &ProjectedList{nibs: projected, truncated: truncated}, nil
 }
 
-// Count returns the number of projected nibs (post-limit) — the envelope's
-// "count". This is the size of the rendered list, not the pre-limit input size;
-// for the bare -c count use the Count package function.
+// Count returns the number of projected nibs, after any limit.
 func (pl *ProjectedList) Count() int { return len(pl.nibs) }
 
 // Truncated reports whether a limit dropped elements from the input.
 func (pl *ProjectedList) Truncated() bool { return pl.truncated }
 
-// SetHiddenClosed records how many closed nibs the open-by-default
-// filter suppressed, for disclosure in the JSON envelope. A value <= 0 means
-// "not applicable" and is omitted from the envelope.
+// SetHiddenClosed records how many closed nibs the open-status default hid. The
+// JSON envelope omits hidden_closed when it is 0.
 func (pl *ProjectedList) SetHiddenClosed(n int) { pl.hiddenClosed = n }
 
 // HiddenClosed returns the suppressed closed-nib count (0 when none).
@@ -73,11 +56,7 @@ func (pl *ProjectedList) Nibs() []*Projected {
 	return out
 }
 
-// Rows returns the TSV grid: one []string per projected nib, each cell the
-// menu-ordered leaf rendered via TextValue (multi-value fields comma-joined,
-// missing values ""). Every row has the same columns in the same order because
-// all elements share one Selection. The byte-level assembly (header + tabs +
-// newlines) is output.FormatListTSV's job; this stays transport-agnostic.
+// Rows returns one row per projected nib, each cell rendered by TextValue.
 func (pl *ProjectedList) Rows() [][]string {
 	rows := make([][]string, len(pl.nibs))
 	for i, p := range pl.nibs {
@@ -95,10 +74,7 @@ func (pl *ProjectedList) Rows() [][]string {
 //
 //	{"nibs":[ <projected>, … ], "count": <n>, "truncated": <bool>, "hidden_closed": <n>}
 //
-// Each element reuses Projected.MarshalJSON (a flat, menu-ordered object). An
-// empty list marshals to "nibs":[] (never null) so a consumer can index it
-// unconditionally. hidden_closed is omitted when 0 (not applicable) so its
-// presence signals that the open default suppressed closed rows.
+// An empty list writes "nibs":[], and hidden_closed is omitted when 0.
 func (pl *ProjectedList) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Nibs         []*Projected `json:"nibs"`
@@ -113,7 +89,5 @@ func (pl *ProjectedList) MarshalJSON() ([]byte, error) {
 	})
 }
 
-// Count returns the number of nibs, the value the bare -c/count path emits. It
-// counts the raw input independent of any limit or projection — unlike
-// ProjectedList.Count, which is the post-limit size of a rendered list.
+// Count returns len(nibs), before any limit: the number -c prints.
 func Count(nibs []*nib.Nib) int { return len(nibs) }

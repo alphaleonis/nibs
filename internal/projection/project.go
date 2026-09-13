@@ -11,26 +11,17 @@ import (
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
-// Resolver is the store accessor the projection engine depends on for anything
-// it cannot read off a single nib: nested relation expansion and the computed
-// fields. It is an interface so the engine stays unit-testable against a fake;
-// a later feature supplies the real implementation backed by internal/nibcore.
-//
-// All methods take a nib ID. Relation methods return the related nib IDs (in
-// whatever order the implementation defines); the engine preserves that order.
+// Resolver answers what the engine cannot read off one nib: computed fields and
+// relations. Relation methods return ids in an order the engine keeps.
 type Resolver interface {
-	// NibByID returns the nib with the given ID and whether it exists. Used to
-	// expand a nested relation sub-selection.
+	// NibByID returns the nib with the given id and whether it exists.
 	NibByID(id string) (*nib.Nib, bool)
-	// ParentID returns the nib's RESOLVED parent id, or "" when it has no parent
-	// — including when its stored link names no nib. Reading the stored link
-	// instead is the `stored_parent` field, which needs no resolver.
+	// ParentID returns the resolved parent id, or "" when there is none or the
+	// stored link names no nib.
 	ParentID(id string) string
 	// ChildCount returns the number of direct children of the nib.
 	ChildCount(id string) int
-	// Progress returns the progress rollup value for the nib. The engine treats
-	// it as an opaque, JSON-serializable value; the concrete shape (a percentage,
-	// an acceptance-count struct, …) is defined by the implementation.
+	// Progress returns the progress value, serialized as is.
 	Progress(id string) any
 	// Ready reports whether the nib is ready (startable / unblocked).
 	Ready(id string) bool
@@ -42,32 +33,21 @@ type Resolver interface {
 	MentionedBy(id string) []string
 }
 
-// ProjectedField is one projected (JSON key, value) pair. Value is the typed Go
-// value (string, *time.Time, []string, int, bool, []*Projected, or an opaque
-// computed value), so callers can render it as text or serialize it as JSON.
+// ProjectedField is one projected JSON key and its typed value.
 type ProjectedField struct {
 	Key   string
 	Value any
 }
 
-// Projected is the projection of one nib: an ordered set of selected fields.
-// Field order is the canonical menu order, stable regardless of how the caller
-// listed its fields, and used for both text rendering and JSON. It marshals to
-// a flat JSON object of the selected fields with NO wrapper — the inner object
-// of the later {nib} contract.
+// Projected is one nib's selected fields in menu order. It marshals to a flat
+// JSON object with no wrapper.
 type Projected struct {
 	fields []ProjectedField
 }
 
-// Project projects a single nib through a selection. A nil Resolver is allowed
-// as long as the selection touches only scalar fields (and bare blocked-by,
-// which is read directly off the nib); a computed field, a resolver-backed
-// relation, or any nested relation with a nil Resolver returns an error rather
-// than silently omitting data.
-//
-// `parent` is computed, so the card and full view tiers both need a Resolver.
-// Only `stored_parent` reads a parent link without one, and it reads the raw
-// stored id rather than the parent.
+// Project projects n through sel. r may be nil only when sel holds scalar fields
+// and bare blocked-by; otherwise it returns an error. `parent` is computed, so the
+// card and full views need a resolver.
 func Project(n *nib.Nib, sel Selection, r Resolver) (*Projected, error) {
 	if n == nil {
 		return nil, fmt.Errorf("cannot project a nil nib")
@@ -124,13 +104,9 @@ func projectRelation(n *nib.Nib, f Field, sub map[Field]struct{}, r Resolver) (a
 		return nil, err
 	}
 	if len(sub) == 0 {
-		// Bare / id-list form.
 		return ids, nil
 	}
-	// Nested form: expand each related nib and project the sub-selection. This
-	// always needs NibByID; a dangling reference (id resolves to no nib) is
-	// skipped rather than erroring, since a stored id may point at a deleted or
-	// archived nib.
+	// Nested form: project each related nib; an id naming no nib is skipped.
 	if r == nil {
 		return nil, resolverRequired(f)
 	}
@@ -150,9 +126,8 @@ func projectRelation(n *nib.Nib, f Field, sub map[Field]struct{}, r Resolver) (a
 	return out, nil
 }
 
-// relationIDs returns the related nib IDs for a relation field. blocked-by is
-// read straight off the nib (no Resolver needed for the bare form); the other
-// three are computed from the rest of the store via the Resolver.
+// relationIDs returns a relation's ids. blocked-by is read off the nib; the others
+// need the Resolver.
 func relationIDs(n *nib.Nib, f Field, r Resolver) ([]string, error) {
 	switch f {
 	case FieldBlockedBy:
@@ -177,9 +152,8 @@ func relationIDs(n *nib.Nib, f Field, r Resolver) ([]string, error) {
 	}
 }
 
-// subSelection builds a Selection from a validated sub-field set. The parser
-// guarantees the set holds only scalar/computed fields, so the resulting child
-// projection never recurses into another relation.
+// subSelection builds a Selection from a parsed sub-field set, which holds no
+// relations.
 func subSelection(sub map[Field]struct{}) Selection {
 	s := newSelection()
 	for f := range sub {
@@ -218,9 +192,7 @@ func (p *Projected) Get(key string) (any, bool) {
 	return nil, false
 }
 
-// MarshalJSON serializes the projection as a flat JSON object of the selected
-// fields in menu order (an ordinary map would lose that order). There is no
-// wrapper: this is the inner object of the later {nib} contract.
+// MarshalJSON writes the fields as a flat JSON object in menu order.
 func (p *Projected) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	buf.WriteByte('{')
@@ -244,12 +216,8 @@ func (p *Projected) MarshalJSON() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// TextValue renders a projected leaf value as a single stable string, following
-// the internal/output conventions (RFC3339 timestamps, comma-joined string
-// lists, empty string for a missing value). It is the leaf formatter for a
-// later TSV renderer. Non-leaf values (a nested relation's []*Projected, or an
-// opaque computed value) fall back to their JSON encoding so text output stays
-// lossless.
+// TextValue renders a value as text: RFC3339 timestamps, comma-joined string
+// lists, "" for nil, and JSON for anything else.
 func TextValue(v any) string {
 	switch t := v.(type) {
 	case nil:

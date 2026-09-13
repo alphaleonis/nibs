@@ -1,20 +1,6 @@
-// Package projection is the transport-agnostic field-set projection engine over
-// the nib resource. It compiles a view tier (id/ref/card/full) plus an additive
-// `-f`/--fields selection into an ordered, JSON-serializable projection of a
-// single nib, resolving computed fields (children/progress/ready) and one level
-// of nested relation projection (blocking/blocked-by/mentions/mentioned-by)
-// through a small Resolver accessor.
-//
-// It is deliberately free of any CLI/transport concern: the CLI, TUI, and a
-// future MCP adapter all reuse this same engine. `internal/output/columns.go`
-// (flat TSV column projection) is the narrow seed this generalizes; this package
-// is kept separate because the field-mask engine needs a store accessor
-// (Resolver) and an ordered result type that a pure string-formatting package
-// like internal/output has no business depending on.
-//
-// CANONICAL INVARIANT (one projection engine for every transport). This doc is
-// its single authoritative statement; comments in cmd and internal/graph defer
-// here rather than re-derive it.
+// Package projection turns a view tier (id/ref/card/full) plus an additive `-f`
+// field selection into an ordered, JSON-serializable projection of a nib.
+// Computed fields and relations reach the store through Resolver.
 package projection
 
 import (
@@ -24,18 +10,11 @@ import (
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
-// Field is a token in the closed, code-defined projection menu. The menu is the
-// single source of truth for both the `-f` vocabulary and the canonical output
-// ordering; an unknown token is rejected with an error naming the whole menu.
-//
-// The mask vocabulary is human-friendly kebab-case for the relation fields
-// (blocked-by, mentioned-by); the two timestamp scalars keep the snake_case
-// spelling the nib already serializes (created_at, updated_at). The JSON output
-// key of each field is normalized to the nib's own serialization spelling (see
-// fieldDef.jsonKey): blocked-by → "blocked_by", mentioned-by → "mentioned_by".
+// Field is a token in the closed projection menu. Relation tokens are kebab-case
+// (blocked-by) and serialize with underscores (blocked_by); see fieldDef.jsonKey.
 type Field string
 
-// The closed field menu. Kept in menu order in the registry below.
+// The field menu; registry holds the canonical order.
 const (
 	// Scalars — read directly off the nib.
 	FieldID       Field = "id"
@@ -46,14 +25,10 @@ const (
 	FieldPriority Field = "priority"
 	FieldEstimate Field = "estimate"
 	FieldTags     Field = "tags"
-	// The parent link exactly as stored on disk, unresolved — including one
-	// naming no nib. The inspection counterpart to FieldParent, which reports
-	// who the parent actually is; see the registry entry for FieldParent.
+	// The parent link as stored, even when it names no nib; FieldParent resolves it.
 	FieldStoredParent Field = "stored_parent"
 	FieldOrder        Field = "order"
-	// The assignment axis as stored: the milestone id, the queue key beside
-	// the sibling key, and the area path. milestone_order keeps the nib's own
-	// serialization spelling, like the timestamps.
+	// The assignment axis, as stored.
 	FieldMilestone      Field = "milestone"
 	FieldMilestoneOrder Field = "milestone_order"
 	FieldArea           Field = "area"
@@ -63,11 +38,8 @@ const (
 	FieldBody           Field = "body"
 	FieldETag           Field = "etag"
 
-	// Computed scalars — need the Resolver; not nestable.
-	//
-	// FieldParent is computed rather than scalar because "the parent" is the
-	// RESOLVED link, which no accessor on a single nib can answer — a stored id
-	// has to be looked up in the store before it counts as a parent.
+	// Computed scalars need the Resolver and cannot be nested. FieldParent is the
+	// resolved parent, so it is computed.
 	FieldParent   Field = "parent"
 	FieldChildren Field = "children"
 	FieldProgress Field = "progress"
@@ -87,18 +59,14 @@ type fieldKind int
 const (
 	// kindScalar is read straight off the nib (no Resolver required).
 	kindScalar fieldKind = iota
-	// kindComputed is a derived scalar (children/progress/ready) resolved via
-	// the Resolver; it is not nestable.
+	// kindComputed is a scalar resolved via the Resolver; it is not nestable.
 	kindComputed
 	// kindRelation is an id-list of related nibs, optionally projected one level
 	// deep via a parenthesized sub-selection.
 	kindRelation
 )
 
-// String renders a field kind as its stable, external-facing token. It is the
-// single source of truth for the kind vocabulary surfaced by FieldCatalog (and
-// thus the `nibs catalog fields` view), so introspection cannot drift from the
-// engine's own classification.
+// String returns the kind name FieldCatalog reports.
 func (k fieldKind) String() string {
 	switch k {
 	case kindScalar:
@@ -129,12 +97,9 @@ func (d fieldDef) key() string {
 	return string(d.name)
 }
 
-// registry is the closed field menu in canonical order. It is the single source
-// of truth for the `-f` vocabulary, the JSON key mapping, and the stable output
-// ordering (both JSON and text render fields in this order regardless of the
-// order the caller listed them). Adding a field here is the only place a new
-// field needs to be declared; the exhaustiveness test pins that every entry is
-// projectable.
+// registry is the field menu in canonical order: the `-f` vocabulary, the JSON
+// keys, and the output order for JSON and text. A new field also needs its Field
+// constant and, when computed or a relation, a case in project.go.
 var registry = []fieldDef{
 	{name: FieldID, kind: kindScalar, extract: func(n *nib.Nib) any { return n.ID }},
 	{name: FieldSlug, kind: kindScalar, extract: func(n *nib.Nib) any { return n.Slug }},
@@ -144,11 +109,7 @@ var registry = []fieldDef{
 	{name: FieldPriority, kind: kindScalar, extract: func(n *nib.Nib) any { return n.EffectivePriority() }},
 	{name: FieldEstimate, kind: kindScalar, extract: func(n *nib.Nib) any { return n.Estimate }},
 	{name: FieldTags, kind: kindScalar, extract: func(n *nib.Nib) any { return normStrings(n.Tags) }},
-	// parent is computed, not scalar: it reports the RESOLVED parent id (empty
-	// when the stored link names no nib), which needs the store. It keeps its
-	// position here — the registry is MENU order, not an ordering by kind — so
-	// existing output layouts are unchanged. stored_parent sits beside it as the
-	// raw stored link, the field that keeps a broken one diagnosable.
+	// Menu order, not kind order: the computed parent sits beside stored_parent.
 	{name: FieldParent, kind: kindComputed},
 	{name: FieldStoredParent, kind: kindScalar, extract: func(n *nib.Nib) any { return n.Parent }},
 	{name: FieldOrder, kind: kindScalar, extract: func(n *nib.Nib) any { return n.Order }},
@@ -189,26 +150,20 @@ func FieldMenu() []Field {
 	return out
 }
 
-// FieldMenuString returns the field menu as a comma-separated list, for
-// embedding in --help text and the "unknown field" error envelope. Single
-// source of truth so help and error messages cannot drift from the menu.
+// FieldMenuString returns the field menu as a comma-separated list for error
+// messages.
 func FieldMenuString() string {
 	return joinFields(FieldMenu())
 }
 
-// FieldInfo describes one projectable field for external introspection: its
-// mask token, its kind (scalar/computed/relation), and the JSON key it
-// serializes to. It is the shape the `nibs catalog fields` view renders.
+// FieldInfo is one field's catalog entry: token, kind and JSON key.
 type FieldInfo struct {
 	Name    Field
 	Kind    string
 	JSONKey string
 }
 
-// FieldCatalog returns every projectable field in canonical menu order with
-// its kind and JSON output key. It is derived from the same registry that
-// drives projection, so a catalog built from it can never disagree with what
-// `-f`/--fields actually projects or the key each field serializes to.
+// FieldCatalog returns every field in menu order, derived from registry.
 func FieldCatalog() []FieldInfo {
 	out := make([]FieldInfo, len(registry))
 	for i, d := range registry {
@@ -263,9 +218,7 @@ func normStrings(s []string) []string {
 	return s
 }
 
-// timeText centralizes the RFC3339 rendering of a timestamp field (empty for a
-// nil pointer), matching the internal/output column conventions. It is the leaf
-// formatter TextValue delegates timestamps to.
+// timeText renders a timestamp as RFC3339, or "" for nil.
 func timeText(t *time.Time) string {
 	if t == nil {
 		return ""

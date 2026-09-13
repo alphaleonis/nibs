@@ -20,14 +20,9 @@ const (
 // viewOrder fixes the display order of view names in error messages.
 var viewOrder = []View{ViewID, ViewRef, ViewCard, ViewFull}
 
-// viewSets maps each view tier to its field list (§5.2). All fields are in
-// id-list form for relations. `full` is every field except the opt-in rollups
-// (children/progress/ready), which are never in a tier and are reachable only
-// via an explicit `-f`.
-//
-// `parent` is in card and full and is a COMPUTED field (it resolves the stored
-// link through the store), so both tiers require a non-nil Resolver — see
-// Project.
+// viewSets maps each view tier to its fields, relations in id-list form. `full` is
+// every field except the rollups. card and full include the computed `parent`, so
+// both need a Resolver.
 var viewSets = map[View][]Field{
 	ViewID:  {FieldID},
 	ViewRef: {FieldID, FieldTitle, FieldStatus, FieldType, FieldPriority},
@@ -38,10 +33,8 @@ var viewSets = map[View][]Field{
 	ViewFull: fullViewFields(),
 }
 
-// rollupFields are the fields no view tier carries: each costs a store walk and
-// is wanted only when named explicitly. Membership is by NAME rather than by
-// kind because `parent` is computed too — it resolves its stored link — yet is a
-// plain identifying field that belongs in a full read.
+// rollupFields are in no view tier; they are projected only when named. They are
+// listed by name because the computed `parent` belongs in full.
 var rollupFields = map[Field]bool{FieldChildren: true, FieldProgress: true, FieldReady: true}
 
 // fullViewFields is every field except the opt-in rollups, in menu order.
@@ -64,15 +57,11 @@ func viewNames() string {
 	return strings.Join(names, ", ")
 }
 
-// Selection is a parsed, validated field selection: the set of fields to
-// project, each relation optionally carrying a one-level sub-selection. It is a
-// set (not an ordered list): output order is always the canonical menu order,
-// so a Selection is stable regardless of how the caller listed its fields, and
-// merging view + `-f` (or re-listing a field) is idempotent.
+// Selection is a validated set of fields to project; a relation may carry a
+// one-level sub-selection. Output follows menu order, so re-listing a field
+// changes nothing.
 type Selection struct {
-	// sel maps each selected field to its sub-selection set. The sub-selection
-	// is non-empty only for a relation selected in nested form; scalar, computed,
-	// and id-list-form relation fields map to an empty (but present) set.
+	// field → sub-selection, empty unless a relation was selected in nested form
 	sel map[Field]map[Field]struct{}
 }
 
@@ -157,19 +146,9 @@ func ViewFields(name string) (Selection, error) {
 	return s, nil
 }
 
-// ParseFields parses a `-f`/--fields spec: a comma-separated list where each
-// token is a bare field, a view/preset name (expanded to its field set), or a
-// relation with a one-level parenthesized sub-selection (e.g.
-// "blocked-by(id,status)"). An empty spec, an unknown token, a scalar given a
-// sub-selection, a relation nested inside a sub-selection, or nesting deeper
-// than one level are all rejected — the "unknown token" error names the whole
-// menu so the surface is self-documenting.
-//
-// Fields are a set: duplicates (including a field already implied by an expanded
-// view name) merge idempotently. This is deliberately unlike
-// output.ParseColumns, whose duplicate-rejection guards TSV column indices;
-// here output is keyed by name and menu-ordered, and the additive view + `-f`
-// model requires idempotent re-listing.
+// ParseFields parses a `-f` spec: comma-separated field names, view names, and
+// relations with one level of sub-selection such as "blocked-by(id,status)".
+// Duplicates merge.
 func ParseFields(spec string) (Selection, error) {
 	if strings.TrimSpace(spec) == "" {
 		return Selection{}, fmt.Errorf("fields spec is empty; valid fields: %s", FieldMenuString())
@@ -187,11 +166,8 @@ func ParseFields(spec string) (Selection, error) {
 	return s, nil
 }
 
-// Compile builds a Selection from an optional view tier and an optional additive
-// `-f` fields spec. The view (if any) is applied first, then the fields are
-// merged on top (§5.2: `-f` is additive over the view). Either argument may be
-// empty; if both are empty the result is an empty Selection and the caller
-// decides on a default.
+// Compile applies view, then merges fields on top. Either may be empty; with both
+// empty the Selection is empty.
 func Compile(view, fields string) (Selection, error) {
 	sel := newSelection()
 	if strings.TrimSpace(view) != "" {
