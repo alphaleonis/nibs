@@ -220,7 +220,7 @@ func areaListNodes(areas []config.AreaConfig, parent string) []areaListNode {
 }
 
 // joinAreaPathForDisplay rebuilds a node's path from the tree it was walked in.
-// config.AreaPaths already enumerates the same paths, but the walk here has to
+// Areas.Paths already enumerates the same paths, but the walk here has to
 // carry each node's own fields alongside its path, which a flat list of strings
 // cannot give back.
 func joinAreaPathForDisplay(parent, name string) string {

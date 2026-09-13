@@ -142,10 +142,10 @@ func TestLoadAcceptsAbsentOrEmptyAreas(t *testing.T) {
 				t.Fatalf("LoadFromStore: %v", err)
 			}
 			if got := cfg.Paths(); len(got) != 0 {
-				t.Errorf("AreaPaths() = %v, want none", got)
+				t.Errorf("Paths() = %v, want none", got)
 			}
 			if cfg.IsValid("web") {
-				t.Error("IsValidArea(\"web\") = true with no declared vocabulary")
+				t.Error("IsValid(\"web\") = true with no declared vocabulary")
 			}
 		})
 	}
@@ -165,10 +165,10 @@ func TestAreaPathsEnumeratesInDeclarationOrder(t *testing.T) {
 		"api", "api/v2",
 	}
 	if got := cfg.Paths(); !slices.Equal(got, want) {
-		t.Errorf("AreaPaths() = %v, want %v", got, want)
+		t.Errorf("Paths() = %v, want %v", got, want)
 	}
 	if got, want := cfg.List(), strings.Join(want, ", "); got != want {
-		t.Errorf("AreaList() = %q, want %q", got, want)
+		t.Errorf("List() = %q, want %q", got, want)
 	}
 }
 
@@ -200,19 +200,19 @@ func TestGetAreaResolvesDeclaredPaths(t *testing.T) {
 		t.Run("path="+tt.path, func(t *testing.T) {
 			node := cfg.Get(tt.path)
 			if (node != nil) != tt.wantFound {
-				t.Fatalf("GetArea(%q) found = %v, want %v", tt.path, node != nil, tt.wantFound)
+				t.Fatalf("Get(%q) found = %v, want %v", tt.path, node != nil, tt.wantFound)
 			}
 			if got := cfg.IsValid(tt.path); got != tt.wantFound {
-				t.Errorf("IsValidArea(%q) = %v, want %v", tt.path, got, tt.wantFound)
+				t.Errorf("IsValid(%q) = %v, want %v", tt.path, got, tt.wantFound)
 			}
 			if tt.wantFound && node.Description != tt.wantDescription {
-				t.Errorf("GetArea(%q).Description = %q, want %q", tt.path, node.Description, tt.wantDescription)
+				t.Errorf("Get(%q).Description = %q, want %q", tt.path, node.Description, tt.wantDescription)
 			}
 		})
 	}
 
 	if got := cfg.Get("web").Color; got != "blue" {
-		t.Errorf("GetArea(\"web\").Color = %q, want \"blue\"", got)
+		t.Errorf("Get(\"web\").Color = %q, want \"blue\"", got)
 	}
 }
 
@@ -365,13 +365,13 @@ func TestAreaListRendersFileSourcedNames(t *testing.T) {
 	}
 
 	if got, want := areas.List(), "a b, c d, e f"; got != want {
-		t.Errorf("AreaList() = %q, want %q", got, want)
+		t.Errorf("List() = %q, want %q", got, want)
 	}
-	// AreaPaths is the data accessor and must stay verbatim: resolution compares
+	// Paths is the data accessor and must stay verbatim: resolution compares
 	// a nib's `area:` value against it byte for byte.
 	wantPaths := []string{"a\x1bb", "c`d", "e\nf"}
 	if got := areas.Paths(); !slices.Equal(got, wantPaths) {
-		t.Errorf("AreaPaths() = %q, want %q", got, wantPaths)
+		t.Errorf("Paths() = %q, want %q", got, wantPaths)
 	}
 }
 
@@ -389,13 +389,13 @@ func TestAreaListBoundsWhatItRepeats(t *testing.T) {
 
 		got := vocab.List()
 		if !strings.HasSuffix(got, "…and 5 more") {
-			t.Errorf("AreaList() = %q, want it to end by stating the elided count", got)
+			t.Errorf("List() = %q, want it to end by stating the elided count", got)
 		}
 		if !strings.Contains(got, fmt.Sprintf("a%03d", maxListedAreas-1)) {
-			t.Errorf("AreaList() = %q, want the first %d paths listed", got, maxListedAreas)
+			t.Errorf("List() = %q, want the first %d paths listed", got, maxListedAreas)
 		}
 		if first := fmt.Sprintf("a%03d", maxListedAreas); strings.Contains(got, first) {
-			t.Errorf("AreaList() = %q, want %q elided", got, first)
+			t.Errorf("List() = %q, want %q elided", got, first)
 		}
 	})
 
@@ -411,10 +411,10 @@ func TestAreaListBoundsWhatItRepeats(t *testing.T) {
 
 		got := vocab.List()
 		if strings.Contains(got, "more") {
-			t.Errorf("AreaList() = %q, want no elision claim when every path fits", got)
+			t.Errorf("List() = %q, want no elision claim when every path fits", got)
 		}
 		if last := fmt.Sprintf("a%03d", maxListedAreas-1); !strings.Contains(got, last) {
-			t.Errorf("AreaList() = %q, want the last path %q listed", got, last)
+			t.Errorf("List() = %q, want the last path %q listed", got, last)
 		}
 	})
 
@@ -424,7 +424,7 @@ func TestAreaListBoundsWhatItRepeats(t *testing.T) {
 
 		got := vocab.List()
 		if got != name {
-			t.Errorf("AreaList() = %q, want %q returned whole and unmarked", got, name)
+			t.Errorf("List() = %q, want %q returned whole and unmarked", got, name)
 		}
 	})
 
@@ -433,10 +433,10 @@ func TestAreaListBoundsWhatItRepeats(t *testing.T) {
 
 		got := vocab.List()
 		if n := utf8.RuneCountInString(got); n != maxListedAreaRunes+1 {
-			t.Errorf("AreaList() is %d runes, want %d plus the truncation marker", n, maxListedAreaRunes)
+			t.Errorf("List() is %d runes, want %d plus the truncation marker", n, maxListedAreaRunes)
 		}
 		if !strings.HasSuffix(got, "…") {
-			t.Errorf("AreaList() = %q, want the truncation marked", got)
+			t.Errorf("List() = %q, want the truncation marked", got)
 		}
 	})
 }

@@ -142,7 +142,7 @@ func TestRemoveStoredAreaTakesTheSubtree(t *testing.T) {
 	cfg := loadAreaEditConfig(t, storeDir)
 	want := []string{"auth", "web", "web/dashboard"}
 	if got := cfg.Paths(); strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Errorf("AreaPaths() = %v, want %v", got, want)
+		t.Errorf("Paths() = %v, want %v", got, want)
 	}
 	got := readAreaEditStore(t, storeDir)
 	if strings.Contains(got, "webhooks") {
