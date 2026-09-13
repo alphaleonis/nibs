@@ -80,7 +80,7 @@ type priorityPickerModel struct {
 	height          int
 }
 
-func newPriorityPickerModel(nibIDs []string, nibTitle, currentPriority string, cfg *config.Config, width, height int) priorityPickerModel {
+func newPriorityPickerModel(nibIDs []string, nibTitle, currentPriority string, width, height int) priorityPickerModel {
 	priorities := config.DefaultPriorities
 
 	delegate := priorityItemDelegate{}

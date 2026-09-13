@@ -329,20 +329,20 @@ func TestSortNibs(t *testing.T) {
 	})
 }
 
-func TestCompareNibsByStatusPriorityAndType(t *testing.T) {
+func TestLessByStatusPriorityAndType(t *testing.T) {
 	statusNames := []string{"draft", "todo", "in-progress", "completed", "scrapped"}
-
 	typeNames := []string{"milestone", "epic", "bug", "feature", "task"}
+	less := nib.LessByStatusPriorityAndType(statusNames, typeNames, config.Default())
 
 	t.Run("compares by status first", func(t *testing.T) {
 		a := &nib.Nib{ID: "1", Status: "todo", Type: "task", Title: "A"}
 		b := &nib.Nib{ID: "2", Status: "draft", Type: "task", Title: "B"}
 
 		// draft < todo, so b should come before a
-		if compareNibsByStatusPriorityAndType(a, b, statusNames, typeNames, config.Default()) {
+		if less(a, b) {
 			t.Error("draft nib should come before todo nib")
 		}
-		if !compareNibsByStatusPriorityAndType(b, a, statusNames, typeNames, config.Default()) {
+		if !less(b, a) {
 			t.Error("draft nib should come before todo nib")
 		}
 	})
@@ -352,10 +352,10 @@ func TestCompareNibsByStatusPriorityAndType(t *testing.T) {
 		b := &nib.Nib{ID: "2", Status: "todo", Type: "task", Priority: "high", Title: "B"}
 
 		// high < low, so b should come before a
-		if compareNibsByStatusPriorityAndType(a, b, statusNames, typeNames, config.Default()) {
+		if less(a, b) {
 			t.Error("high priority nib should come before low priority nib")
 		}
-		if !compareNibsByStatusPriorityAndType(b, a, statusNames, typeNames, config.Default()) {
+		if !less(b, a) {
 			t.Error("high priority nib should come before low priority nib")
 		}
 	})
@@ -365,10 +365,10 @@ func TestCompareNibsByStatusPriorityAndType(t *testing.T) {
 		b := &nib.Nib{ID: "2", Status: "todo", Type: "bug", Title: "B"}
 
 		// bug < task, so b should come before a
-		if compareNibsByStatusPriorityAndType(a, b, statusNames, typeNames, config.Default()) {
+		if less(a, b) {
 			t.Error("bug nib should come before task nib")
 		}
-		if !compareNibsByStatusPriorityAndType(b, a, statusNames, typeNames, config.Default()) {
+		if !less(b, a) {
 			t.Error("bug nib should come before task nib")
 		}
 	})
@@ -378,10 +378,10 @@ func TestCompareNibsByStatusPriorityAndType(t *testing.T) {
 		b := &nib.Nib{ID: "2", Status: "todo", Type: "task", Title: "Apple"}
 
 		// Apple < Zebra, so b should come before a
-		if compareNibsByStatusPriorityAndType(a, b, statusNames, typeNames, config.Default()) {
+		if less(a, b) {
 			t.Error("Apple nib should come before Zebra nib")
 		}
-		if !compareNibsByStatusPriorityAndType(b, a, statusNames, typeNames, config.Default()) {
+		if !less(b, a) {
 			t.Error("Apple nib should come before Zebra nib")
 		}
 	})
@@ -391,7 +391,7 @@ func TestCompareNibsByStatusPriorityAndType(t *testing.T) {
 		b := &nib.Nib{ID: "2", Status: "todo", Type: "task", Title: "APPLE"}
 
 		// apple < zebra (case-insensitive), so b should come before a
-		if compareNibsByStatusPriorityAndType(a, b, statusNames, typeNames, config.Default()) {
+		if less(a, b) {
 			t.Error("APPLE nib should come before zebra nib (case-insensitive)")
 		}
 	})
@@ -402,7 +402,7 @@ func TestCompareNibsByStatusPriorityAndType(t *testing.T) {
 
 		// Both should be equivalent in priority ordering
 		// Since titles differ, A < B, so a should come before b
-		if !compareNibsByStatusPriorityAndType(a, b, statusNames, typeNames, config.Default()) {
+		if !less(a, b) {
 			t.Error("empty priority should be treated as normal")
 		}
 	})
@@ -412,10 +412,10 @@ func TestCompareNibsByStatusPriorityAndType(t *testing.T) {
 		b := &nib.Nib{ID: "2", Status: "scrapped", Type: "task", Title: "B"}
 
 		// scrapped is last known status, unknown should be after it
-		if compareNibsByStatusPriorityAndType(a, b, statusNames, typeNames, config.Default()) {
+		if less(a, b) {
 			t.Error("unknown status should sort after scrapped")
 		}
-		if !compareNibsByStatusPriorityAndType(b, a, statusNames, typeNames, config.Default()) {
+		if !less(b, a) {
 			t.Error("scrapped should sort before unknown")
 		}
 	})
@@ -425,10 +425,10 @@ func TestCompareNibsByStatusPriorityAndType(t *testing.T) {
 		b := &nib.Nib{ID: "2", Status: "todo", Type: "task", Title: "B"}
 
 		// task is last known type, unknown should be after it
-		if compareNibsByStatusPriorityAndType(a, b, statusNames, typeNames, config.Default()) {
+		if less(a, b) {
 			t.Error("unknown type should sort after task")
 		}
-		if !compareNibsByStatusPriorityAndType(b, a, statusNames, typeNames, config.Default()) {
+		if !less(b, a) {
 			t.Error("task should sort before unknown")
 		}
 	})
@@ -471,34 +471,6 @@ func TestFindSiblings(t *testing.T) {
 		sibs := m2.findSiblings(&nib.Nib{ID: "c1", Parent: "parent"})
 		if sibs != nil {
 			t.Errorf("expected nil with nil tree, got %v", sibs)
-		}
-	})
-
-	t.Run("findPreviousSibling returns previous", func(t *testing.T) {
-		prev := m.findPreviousSibling(&nib.Nib{ID: "c2", Parent: "parent"})
-		if prev == nil || prev.ID != "c1" {
-			t.Errorf("expected c1, got %v", prev)
-		}
-	})
-
-	t.Run("findPreviousSibling returns nil for first", func(t *testing.T) {
-		prev := m.findPreviousSibling(&nib.Nib{ID: "c1", Parent: "parent"})
-		if prev != nil {
-			t.Errorf("expected nil for first sibling, got %v", prev.ID)
-		}
-	})
-
-	t.Run("findNextSibling returns next", func(t *testing.T) {
-		next := m.findNextSibling(&nib.Nib{ID: "c2", Parent: "parent"})
-		if next == nil || next.ID != "c3" {
-			t.Errorf("expected c3, got %v", next)
-		}
-	})
-
-	t.Run("findNextSibling returns nil for last", func(t *testing.T) {
-		next := m.findNextSibling(&nib.Nib{ID: "c3", Parent: "parent"})
-		if next != nil {
-			t.Errorf("expected nil for last sibling, got %v", next.ID)
 		}
 	})
 }

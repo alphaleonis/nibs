@@ -430,13 +430,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case openCreateTypePickerMsg:
 		a.previousState = a.state
 		// For creation: no nibIDs, and every type is valid.
-		a.typePicker = newTypePickerModel(nil, "", msg.defaultType, nil, a.config, a.width, a.height)
+		a.typePicker = newTypePickerModel(nil, "", msg.defaultType, nil, a.width, a.height)
 		a.state = viewCreateTypePicker
 		return a, a.typePicker.Init()
 
 	case openTypePickerMsg:
 		a.previousState = a.state
-		a.typePicker = newTypePickerModel(msg.nibIDs, msg.nibTitle, msg.currentType, msg.validTypes, a.config, a.width, a.height)
+		a.typePicker = newTypePickerModel(msg.nibIDs, msg.nibTitle, msg.currentType, msg.validTypes, a.width, a.height)
 		a.state = viewTypePicker
 		return a, a.typePicker.Init()
 
@@ -478,7 +478,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case openPriorityPickerMsg:
 		a.previousState = a.state
-		a.priorityPicker = newPriorityPickerModel(msg.nibIDs, msg.nibTitle, msg.currentPriority, a.config, a.width, a.height)
+		a.priorityPicker = newPriorityPickerModel(msg.nibIDs, msg.nibTitle, msg.currentPriority, a.width, a.height)
 		a.state = viewPriorityPicker
 		return a, a.priorityPicker.Init()
 
@@ -510,7 +510,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case openEstimatePickerMsg:
 		a.previousState = a.state
-		a.estimatePicker = newEstimatePickerModel(msg.nibIDs, msg.nibTitle, msg.currentEstimate, a.config, a.width, a.height)
+		a.estimatePicker = newEstimatePickerModel(msg.nibIDs, msg.nibTitle, msg.currentEstimate, a.width, a.height)
 		a.state = viewEstimatePicker
 		return a, a.estimatePicker.Init()
 

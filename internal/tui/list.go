@@ -18,7 +18,6 @@ import (
 // nibItem is a list.Item for one row of the nib tree.
 type nibItem struct {
 	nib         *nib.Nib
-	cfg         *config.Config
 	treePrefix  string
 	matched     bool // false for an ancestor shown only as context
 	hasChildren bool
@@ -34,8 +33,6 @@ func (i nibItem) FilterValue() string { return i.nib.Title + " " + i.nib.ID }
 // itemDelegate renders a nibItem as one list row.
 type itemDelegate struct {
 	cfg          *config.Config
-	hasTags      bool
-	width        int
 	cols         ui.ResponsiveColumns
 	idColWidth   int              // includes the tree prefix
 	selectedNibs *map[string]bool // IDs marked for multi-select
@@ -288,7 +285,6 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 		for i, flatItem := range msg.items {
 			items[i] = nibItem{
 				nib:         flatItem.Nib,
-				cfg:         m.config,
 				treePrefix:  flatItem.TreePrefix,
 				matched:     flatItem.Matched,
 				hasChildren: flatItem.HasChildren,
@@ -680,8 +676,6 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 func (m *listModel) updateDelegate() {
 	delegate := itemDelegate{
 		cfg:          m.config,
-		hasTags:      m.hasTags,
-		width:        m.width,
 		cols:         m.cols,
 		idColWidth:   m.idColWidth,
 		selectedNibs: &m.selectedNibs,
@@ -715,7 +709,6 @@ func (m *listModel) reflattenTree() {
 	for i, flatItem := range flatItems {
 		items[i] = nibItem{
 			nib:         flatItem.Nib,
-			cfg:         m.config,
 			treePrefix:  flatItem.TreePrefix,
 			matched:     flatItem.Matched,
 			hasChildren: flatItem.HasChildren,
@@ -1072,28 +1065,6 @@ func (m listModel) ViewConstrained(width, height int) string {
 	m.updateDelegate()
 
 	return m.viewContent(innerHeight)
-}
-
-// findPreviousSibling returns the sibling immediately before n in the tree, or nil.
-func (m *listModel) findPreviousSibling(n *nib.Nib) *nib.Nib {
-	siblings := m.findSiblings(n)
-	for i, s := range siblings {
-		if s.ID == n.ID && i > 0 {
-			return siblings[i-1]
-		}
-	}
-	return nil
-}
-
-// findNextSibling returns the sibling immediately after n in the tree, or nil.
-func (m *listModel) findNextSibling(n *nib.Nib) *nib.Nib {
-	siblings := m.findSiblings(n)
-	for i, s := range siblings {
-		if s.ID == n.ID && i < len(siblings)-1 {
-			return siblings[i+1]
-		}
-	}
-	return nil
 }
 
 // findSiblings returns the children of n's parent in tree order, or the roots

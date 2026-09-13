@@ -10,12 +10,10 @@ import (
 )
 
 func TestTypePickerModel(t *testing.T) {
-	cfg := config.Default()
-
 	t.Run("pre-selects current type", func(t *testing.T) {
 		m := newTypePickerModel(
 			[]string{"nib-1"}, "Test Nib", "bug", nil,
-			cfg, 80, 24,
+			80, 24,
 		)
 
 		selected, ok := m.SelectedItem()
@@ -33,7 +31,7 @@ func TestTypePickerModel(t *testing.T) {
 	t.Run("shows all type options", func(t *testing.T) {
 		m := newTypePickerModel(
 			[]string{"nib-1"}, "Test Nib", "", nil,
-			cfg, 80, 24,
+			80, 24,
 		)
 
 		if len(m.items) != len(config.DefaultTypes) {
@@ -63,7 +61,7 @@ func TestTypePickerModel(t *testing.T) {
 		for _, ty := range config.DefaultTypes {
 			m := newTypePickerModel(
 				[]string{"nib-1"}, "Test Nib", ty.Name, nil,
-				cfg, w, h,
+				w, h,
 			)
 			view := m.View()
 			if view == "Loading..." {
@@ -83,7 +81,7 @@ func TestTypePickerModel(t *testing.T) {
 	t.Run("enter sends typeSelectedMsg", func(t *testing.T) {
 		m := newTypePickerModel(
 			[]string{"nib-1"}, "Test Nib", "bug", nil,
-			cfg, 80, 24,
+			80, 24,
 		)
 
 		// Press enter on the pre-selected item ("bug").
@@ -108,7 +106,7 @@ func TestTypePickerModel(t *testing.T) {
 	t.Run("esc sends closeTypePickerMsg", func(t *testing.T) {
 		m := newTypePickerModel(
 			[]string{"nib-1"}, "Test Nib", "", nil,
-			cfg, 80, 24,
+			80, 24,
 		)
 
 		_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})

@@ -55,9 +55,6 @@ type resolvedLink struct {
 
 type linkItem struct {
 	link  resolvedLink
-	cfg   *config.Config
-	width int
-	cols  ui.ResponsiveColumns
 	label string // from formatLinkLabel
 }
 
@@ -261,9 +258,6 @@ func (m detailModel) createLinkList() list.Model {
 	for i, link := range m.links {
 		items[i] = linkItem{
 			link:  link,
-			cfg:   m.config,
-			width: m.width,
-			cols:  m.cols,
 			label: m.formatLinkLabel(link.linkType, link.incoming),
 		}
 	}
@@ -726,59 +720,17 @@ func (m detailModel) resolveAllLinks() []resolvedLink {
 	}
 
 	// Group by label, then order each group as nib.SortByStatusPriorityAndType does.
-	statusNames := m.config.StatusNames()
-	typeNames := m.config.TypeNames()
+	less := nib.LessByStatusPriorityAndType(m.config.StatusNames(), m.config.TypeNames(), m.config)
 	sort.Slice(links, func(i, j int) bool {
 		labelI := m.formatLinkLabel(links[i].linkType, links[i].incoming)
 		labelJ := m.formatLinkLabel(links[j].linkType, links[j].incoming)
 		if labelI != labelJ {
 			return labelI < labelJ
 		}
-		return compareNibsByStatusPriorityAndType(links[i].nib, links[j].nib, statusNames, typeNames, m.config)
+		return less(links[i].nib, links[j].nib)
 	})
 
 	return links
-}
-
-// compareNibsByStatusPriorityAndType reports whether a sorts before b in the
-// order nib.SortByStatusPriorityAndType uses.
-func compareNibsByStatusPriorityAndType(a, b *nib.Nib, statusNames, typeNames []string, ranker nib.PriorityRanker) bool {
-	statusOrder := make(map[string]int)
-	for i, s := range statusNames {
-		statusOrder[s] = i
-	}
-	typeOrder := make(map[string]int)
-	for i, t := range typeNames {
-		typeOrder[t] = i
-	}
-
-	// Unrecognized values sort last.
-	getStatusOrder := func(status string) int {
-		if order, ok := statusOrder[status]; ok {
-			return order
-		}
-		return len(statusNames)
-	}
-	getTypeOrder := func(typ string) int {
-		if order, ok := typeOrder[typ]; ok {
-			return order
-		}
-		return len(typeNames)
-	}
-
-	oi, oj := getStatusOrder(a.Status), getStatusOrder(b.Status)
-	if oi != oj {
-		return oi < oj
-	}
-	pi, pj := ranker.PriorityRank(a.Priority), ranker.PriorityRank(b.Priority)
-	if pi != pj {
-		return pi < pj
-	}
-	ti, tj := getTypeOrder(a.EffectiveType()), getTypeOrder(b.EffectiveType())
-	if ti != tj {
-		return ti < tj
-	}
-	return strings.ToLower(a.Title) < strings.ToLower(b.Title)
 }
 
 func (m detailModel) renderBody(width int) string {

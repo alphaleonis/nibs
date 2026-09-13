@@ -156,8 +156,8 @@ func newParentPickerModel(nibIDs []string, nibTitle string, nibTypes []string, c
 
 	// rebuildList populates the items.
 	delegate := parentItemDelegate{cfg: cfg}
-	modalWidth := max(40, min(80, width*60/100))
-	modalHeight := max(10, min(20, height*60/100))
+	modalWidth := pickerModalWidth(width, 60, 80)
+	modalHeight := pickerModalHeight(height, 60, 20)
 	listWidth := modalWidth - 6
 	listHeight := modalHeight - 7
 
@@ -287,8 +287,8 @@ func (m parentPickerModel) Update(msg tea.Msg) (parentPickerModel, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		modalWidth := max(40, min(80, msg.Width*60/100))
-		modalHeight := max(10, min(20, msg.Height*60/100))
+		modalWidth := pickerModalWidth(msg.Width, 60, 80)
+		modalHeight := pickerModalHeight(msg.Height, 60, 20)
 		listWidth := modalWidth - 6
 		listHeight := modalHeight - 7
 		m.list.SetSize(listWidth, listHeight)
