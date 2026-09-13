@@ -529,3 +529,67 @@ func TestSetWildcard(t *testing.T) {
 		})
 	}
 }
+
+// A "#" line inside a fenced code block is code, not a heading: it neither ends
+// the enclosing section nor matches as a section of its own.
+func TestFencedCodeBlocksHoldNoHeadings(t *testing.T) {
+	tests := []struct {
+		name      string
+		body      string
+		heading   string
+		wantFound bool
+		want      string
+	}{
+		{
+			name:      "backtick fence does not end the section",
+			body:      "## A\n\n```sh\n# a shell comment\n```\n\nafter fence\n\n## B\n\nb\n",
+			heading:   "A",
+			wantFound: true,
+			want:      "\n```sh\n# a shell comment\n```\n\nafter fence\n",
+		},
+		{
+			name:      "tilde fence does not end the section",
+			body:      "## A\n\n~~~\n## not a heading\n~~~\nafter\n",
+			heading:   "A",
+			wantFound: true,
+			want:      "\n~~~\n## not a heading\n~~~\nafter\n",
+		},
+		{
+			name:      "a shorter or different-char run does not close the fence",
+			body:      "## A\n\n````\n```\n~~~~\n# still code\n````\nafter\n",
+			heading:   "A",
+			wantFound: true,
+			want:      "\n````\n```\n~~~~\n# still code\n````\nafter\n",
+		},
+		{
+			name:      "a heading inside a fence is not found",
+			body:      "## A\n\n```\n## Hidden\n```\n",
+			heading:   "Hidden",
+			wantFound: false,
+		},
+		{
+			name:      "the section ends at a real heading after the fence closes",
+			body:      "## A\n\n```\n# code\n```\n## B\n\nb\n",
+			heading:   "A",
+			wantFound: true,
+			want:      "\n```\n# code\n```\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, found := Find(tt.body, tt.heading, AnyLevel)
+			if found != tt.wantFound {
+				t.Fatalf("Find() found = %v, want %v (content %q)", found, tt.wantFound, got)
+			}
+			if found && got != tt.want {
+				t.Errorf("Find() =\n%q\nwant:\n%q", got, tt.want)
+			}
+		})
+	}
+
+	body := "## A\n\n```sh\n# a shell comment\n```\n\n## B\n\nb\n"
+	want := "## A\nnew\n\n## B\n\nb\n"
+	if got := Replace(body, "A", "new\n", AnyLevel); got != want {
+		t.Errorf("Replace() =\n%q\nwant:\n%q", got, want)
+	}
+}
