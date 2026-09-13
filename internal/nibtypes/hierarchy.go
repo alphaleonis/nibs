@@ -30,11 +30,8 @@ func JoinWithOr(items []string) string {
 	}
 }
 
-// HierarchyError describes an illegal parent-type relationship. It carries the
-// child and attempted-parent types plus the set of parent types that WOULD be
-// legal for the child, so callers (e.g. the CLI's HIERARCHY error) can surface
-// the allowed set structurally instead of re-deriving it or scraping the
-// message. Allowed is empty when the child type cannot have a parent at all.
+// HierarchyError is an illegal parent-type relationship. Allowed lists the parent
+// types the child may take, and is empty when it may take none.
 type HierarchyError struct {
 	ChildType  string
 	ParentType string
@@ -48,9 +45,8 @@ func (e *HierarchyError) Error() string {
 	return fmt.Sprintf("%s can only have a parent of type %s, not %s", e.ChildType, JoinWithOr(e.Allowed), e.ParentType)
 }
 
-// ValidateParentType checks whether childType can have parentType as a parent.
-// Returns nil if valid, or a *HierarchyError describing the constraint
-// violation (and the allowed parent types).
+// ValidateParentType returns nil when childType may take parentType as a parent,
+// and a *HierarchyError otherwise.
 func ValidateParentType(childType, parentType string) error {
 	allowed := ValidParentTypes(childType)
 	if allowed == nil {
@@ -64,13 +60,9 @@ func ValidateParentType(childType, parentType string) error {
 	return &HierarchyError{ChildType: childType, ParentType: parentType, Allowed: allowed}
 }
 
-// ValidParentTypes returns the valid parent types for a given nib type.
-// Returns nil if the nib type cannot have a parent.
-//
-// Milestones sit outside the parent graph entirely: they are waypoints, not
-// containers, so they neither take a parent nor appear as one — work reaches a
-// milestone through the `milestone:` assignment axis instead. Epics top the
-// work tree.
+// ValidParentTypes returns the parent types nibType may take, or nil for none.
+// Milestones neither take a parent nor serve as one; work reaches a milestone
+// through `milestone:`. Epics are roots.
 func ValidParentTypes(nibType string) []string {
 	switch nibType {
 	case "milestone":
@@ -86,33 +78,23 @@ func ValidParentTypes(nibType string) []string {
 	}
 }
 
-// CanHaveParent reports whether the nib type may take a parent at all. Both
-// milestone and epic are root-only — the milestone as a waypoint outside the
-// parent graph, the epic as the top of the work tree — so "no valid parents"
-// must not be read as "is a milestone".
+// CanHaveParent reports whether nibType may take a parent. An epic cannot either,
+// so false does not mean milestone.
 func CanHaveParent(nibType string) bool {
 	return ValidParentTypes(nibType) != nil
 }
 
-// The assignment axes, by the front-matter key each one is stored under. They
-// name AxisError.Axis, so a caller can tell which axis refused without reading
-// the message.
+// The assignment axes, named by their front-matter keys. AxisError.Axis holds one.
 const (
 	AxisMilestone = "milestone"
 	AxisArea      = "area"
 )
 
-// AxisError describes an assignment axis a nib's type may not carry.
-//
-// It is typed, rather than a bare error, so a write surface can classify the
-// refusal without matching on its text: `nibs new` falls back to FILE_ERROR for
-// anything the create path raises that carries no class of its own, and a
-// type/axis mismatch is a malformed argument pair, not a filesystem failure.
+// AxisError is an assignment axis a nib's type may not carry. Classify it with
+// errors.As, not by its message.
 type AxisError struct {
-	// NibType is the type that refuses the axis, and Axis the front-matter key
-	// it was nonetheless given (AxisMilestone or AxisArea).
-	NibType string
-	Axis    string
+	NibType string // the type refusing the axis
+	Axis    string // AxisMilestone or AxisArea
 }
 
 func (e *AxisError) Error() string {
@@ -122,13 +104,9 @@ func (e *AxisError) Error() string {
 	return fmt.Sprintf("a %s cannot have an area", e.NibType)
 }
 
-// RefusedAxes returns every assignment axis the nib's TYPE refuses among those
-// it actually carries, in front-matter order.
-//
-// ValidateAxes reports only the first, which is all a write path needs. A
-// DIAGNOSTIC needs them all: dropping one key leaves the write refused by the
-// next, so a nib carrying both is escaped by one command clearing both, and a
-// message offering them as alternatives names one that is guaranteed to fail.
+// RefusedAxes returns every axis nibType refuses among those the nib carries,
+// milestone before area. Use it where every refusal must be reported;
+// ValidateAxes stops at the first.
 func RefusedAxes(nibType, milestone, area string) []string {
 	if nibType != "milestone" {
 		return nil
@@ -143,9 +121,8 @@ func RefusedAxes(nibType, milestone, area string) []string {
 	return axes
 }
 
-// ValidateAxes checks the assignment axes against the nib's type. A milestone
-// is a waypoint, not work: it takes neither a milestone assignment nor an
-// area. Every other type (unknown ones included) takes both.
+// ValidateAxes returns an *AxisError for the first axis RefusedAxes reports. Only
+// a milestone refuses any: it takes neither a milestone nor an area.
 func ValidateAxes(nibType, milestone, area string) error {
 	axes := RefusedAxes(nibType, milestone, area)
 	if len(axes) == 0 {
@@ -180,7 +157,6 @@ func ValidParentTypesForChildren(childTypes []string) []string {
 	if len(childTypes) == 0 {
 		return allTypes
 	}
-	// A candidate type is valid only if it appears in ValidParentTypes for every child type
 	var result []string
 	for _, candidate := range allTypes {
 		validForAll := true
