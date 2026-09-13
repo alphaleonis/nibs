@@ -155,6 +155,36 @@ func TestBacklog(t *testing.T) {
 	wantIDs(t, "Backlog().Other", rem.Other, "t3", "t4")
 }
 
+// TestMembersAgreesWithMilestoneOfOnCrossAssignedData: an epic assigned to one
+// milestone with a child assigned to another is refused on write, but a
+// hand-edited store can hold it. The child — and the subtree that inherits from
+// it — belongs to its own milestone alone, so a milestone's Members is exactly
+// the set MilestoneOf places in it. A non-milestone container still answers
+// with its whole structural subtree.
+func TestMembersAgreesWithMilestoneOfOnCrossAssignedData(t *testing.T) {
+	all := []*nib.Nib{
+		n("m1", "milestone", ""),
+		n("m2", "milestone", ""),
+		q("e", "epic", "m1"),
+		{ID: "t", Title: "t", Type: "task", Parent: "e", Milestone: "m2"},
+		n("s", "task", "t"),
+		n("u", "task", "e"),
+	}
+	v := Compute(all)
+
+	wantIDs(t, `Members("m1")`, v.Members("m1"), "e", "u")
+	wantIDs(t, `Members("m2")`, v.Members("m2"), "t", "s")
+	wantIDs(t, `Members("e")`, v.Members("e"), "t", "u", "s")
+
+	for _, ms := range []string{"m1", "m2"} {
+		for _, b := range v.Members(ms) {
+			if got := v.MilestoneOf(b.ID); got != ms {
+				t.Errorf("Members(%q) holds %s, but MilestoneOf(%s) = %q", ms, b.ID, b.ID, got)
+			}
+		}
+	}
+}
+
 // TestBacklogEpicItemsExcludeScheduledChildren: an unscheduled epic may carry a
 // child assigned to a milestone — exclusivity only refuses a nib and an ancestor
 // both being assigned — and that child is scheduled work, so it is not one of

@@ -105,10 +105,14 @@ func (v *View) DirectMembers(containerID string) []*nib.Nib {
 
 // Members returns the container's full-depth membership, each nib once,
 // breadth-first: DirectMembers applied transitively, so it never descends into a
-// milestone.
+// milestone. For a milestone it is exactly the reachable nibs MilestoneOf places
+// in it: a descendant assigned to a different milestone, and the subtree that
+// inherits from it, is left out rather than counted in both.
 func (v *View) Members(containerID string) []*nib.Nib {
 	var result []*nib.Nib
 	visited := make(map[string]bool)
+	c := v.byID[containerID]
+	isMilestone := c != nil && c.EffectiveType() == "milestone"
 	queue := v.DirectMembers(containerID)
 	for len(queue) > 0 {
 		b := queue[0]
@@ -117,6 +121,9 @@ func (v *View) Members(containerID string) []*nib.Nib {
 			continue
 		}
 		visited[b.ID] = true
+		if isMilestone && v.MilestoneOf(b.ID) != containerID {
+			continue
+		}
 		result = append(result, b)
 		queue = append(queue, v.DirectMembers(b.ID)...)
 	}
