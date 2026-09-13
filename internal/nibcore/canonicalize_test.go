@@ -852,6 +852,51 @@ func TestCanonicalizationKeepsAnUpdatedLinkThroughALaterSweep(t *testing.T) {
 	}
 }
 
+// TestUpdateCanonicalizesShortFormLinks holds Update to the same rule as Create:
+// a caller handing it a short link id must not leave that spelling in the store,
+// where the reverse traversals — which walk exact map keys — stop seeing the edge.
+func TestUpdateCanonicalizesShortFormLinks(t *testing.T) {
+	core, nibsDir := mustLoadPrefixedCore(t)
+
+	writeLinkNibFile(t, nibsDir, "nibs-par", "todo", "")
+	writeLinkNibFile(t, nibsDir, "nibs-blk", "in-progress", "")
+	writeLinkNibFile(t, nibsDir, "nibs-dep", "todo", "")
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	dep, err := core.Get("nibs-dep")
+	if err != nil {
+		t.Fatalf(`Get("nibs-dep"): %v`, err)
+	}
+	edited := dep.Clone()
+	edited.Parent = "par"
+	edited.BlockedBy = []string{"blk"}
+	if err := core.Update(edited, nil); err != nil {
+		t.Fatalf("Update with short link ids: %v", err)
+	}
+
+	got, err := core.Get("nibs-dep")
+	if err != nil {
+		t.Fatalf(`Get("nibs-dep") after Update: %v`, err)
+	}
+	if got.Parent != "nibs-par" {
+		t.Errorf("stored parent = %q, want %q", got.Parent, "nibs-par")
+	}
+	if !slices.Equal(got.BlockedBy, []string{"nibs-blk"}) {
+		t.Errorf("stored blocked_by = %v, want [nibs-blk]", got.BlockedBy)
+	}
+	if got := linkTargets(t, core, "nibs-par", "parent"); !slices.Equal(got, []string{"nibs-dep"}) {
+		t.Errorf("FindIncomingLinks(nibs-par) parent sources = %v, want [nibs-dep]", got)
+	}
+	if !core.IsBlocking("nibs-blk") {
+		t.Error(`IsBlocking("nibs-blk") = false, want true — nibs-dep names it as a blocker`)
+	}
+	if edited.Parent != "par" {
+		t.Errorf("caller's nib parent = %q, want the spelling it passed in; Update rewrites the store, not the caller's object", edited.Parent)
+	}
+}
+
 // TestCreateResolvesLinksNamingTheNewNib covers the arrival-direction hole
 // Core.Create left open: it inserts a key without re-resolving, and the watcher
 // cannot compensate because the in-process insert happens FIRST — by the time

@@ -35,9 +35,8 @@ import (
 // Skipping it leaves the stored spelling naming one nib while Get answers with
 // another, invisibly.
 //
-// Core.Update changes no key set and runs no sweep — it installs the caller's
-// nib as given, so resolving a link id before calling it is what keeps the rule
-// true on that path.
+// Core.Update changes no key set and runs no sweep, but it resolves the link ids
+// of the nib it installs, so a caller may hand it a short id.
 //
 // A sweep re-points links that already resolved, so it resolves from the FILE's
 // spelling (nib.RawLinks) and never from the value the store now holds — see

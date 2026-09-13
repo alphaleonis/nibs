@@ -1477,6 +1477,15 @@ func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 
 	c.nibs[b.ID] = b
 
+	// The caller may name a link by short id. Resolve it in the store, copy-on-
+	// write and leaving the caller's pointer alone, as Create does. No sweep: an
+	// update changes no key set, so no other nib's link can re-point.
+	if set := canonicalizeLinksInMap(c.nibs, b, c.configPrefix()); set.changed {
+		resolved := b.Clone()
+		set.applyTo(resolved)
+		c.nibs[b.ID] = resolved
+	}
+
 	c.mentionIdx.Replace(b.ID, b.Body)
 
 	// Update search index if active (best-effort, don't fail update)
