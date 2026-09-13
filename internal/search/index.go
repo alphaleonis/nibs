@@ -36,31 +36,25 @@ func NewIndex() (*Index, error) {
 
 // buildIndexMapping creates the Bleve index mapping for nib documents.
 func buildIndexMapping() mapping.IndexMapping {
-	// Create a text field mapping with the standard analyzer
 	textFieldMapping := bleve.NewTextFieldMapping()
 	textFieldMapping.Analyzer = "standard"
 
-	// Create a keyword field mapping for ID (stored but not analyzed)
+	// id is stored as a single keyword token.
 	keywordFieldMapping := bleve.NewKeywordFieldMapping()
 
-	// Create the document mapping
 	nibMapping := bleve.NewDocumentMapping()
 	nibMapping.AddFieldMappingsAt("id", keywordFieldMapping)
 	nibMapping.AddFieldMappingsAt("slug", textFieldMapping)
 	nibMapping.AddFieldMappingsAt("title", textFieldMapping)
 	nibMapping.AddFieldMappingsAt("body", textFieldMapping)
 
-	// Create the index mapping with BM25 scoring for better relevance ranking
 	indexMapping := bleve.NewIndexMapping()
 	indexMapping.DefaultMapping = nibMapping
 	indexMapping.DefaultAnalyzer = "standard"
 	indexMapping.IndexDynamic = false
 	indexMapping.StoreDynamic = false
 
-	// Use BM25 scoring algorithm (available in Bleve v2.5.0+)
-	// BM25 provides better relevance ranking than TF-IDF, especially for:
-	// - Handling term frequency saturation (repeated terms don't over-boost)
-	// - Normalizing for document length (short docs aren't unfairly penalized)
+	// BM25 saturates repeated terms and normalizes for document length.
 	indexMapping.ScoringModel = "bm25"
 
 	return indexMapping
@@ -87,42 +81,17 @@ func (idx *Index) DeleteNib(id string) error {
 	return idx.index.Delete(id)
 }
 
-// Search executes a search query and returns matching nib IDs.
+// Search returns the ids of nibs matching queryStr, in relevance order. limit caps
+// the result; limit <= 0 returns every match, so pass 0 when intersecting with an
+// already bounded set.
 //
-// limit caps the number of results. A limit <= 0 means NO cap: every matching
-// document is returned, in relevance order. Callers that want the top N ask for
-// N; callers that must not silently drop a match (an intersection against an
-// already-bounded working set, where the cap would truncate the wrong
-// population) ask for 0.
-//
-// Bleve needs a concrete Size, so "no cap" is expressed as math.MaxInt32 rather
-// than measured against the index. Asking the index for its document count first
-// would be both useless and wrong: useless because Bleve's top-N collector caps
-// its own backing allocation at PreAllocSizeSkipCap (1000) and grows from there
-// with the hits actually collected, so a huge Size costs nothing; wrong because
-// the count and the search would be two unsynchronized index operations, and a
-// document written between them would leave Size stale and silently truncate the
-// "uncapped" answer — the exact failure a limit of 0 exists to rule out. One
-// index operation, sized past anything an in-memory index can hold, has neither
-// problem. (MaxInt32, not MaxInt: Size is an int, and a 32-bit build must not
-// overflow it.)
-//
-// The query string is first parsed with Bleve's query-string grammar, which
-// supports:
-//   - Simple terms: "authentication"
-//   - Boolean operators: "user AND password"
-//   - Wildcards: "auth*"
-//   - Phrases: "\"user login\""
-//   - Field-specific: "title:login"
-//
-// That grammar rejects transient/partial input the caller is still typing — a
-// bare field (`type:`), a lone `-`, an unbalanced quote, a leading `/` — with a
-// syntax error (the last even from a recovered parser panic). Rather than surface
-// that as an error, fall back to matching the raw text as plain free-text terms:
-// any input degrades to a best-effort search instead of failing. A genuine
-// backend failure (closed/broken index) fails both attempts and still propagates.
+// queryStr uses Bleve's query-string syntax (terms, AND, wildcards, "phrases",
+// field:term). Input that syntax rejects, such as `type:`, a lone `-` or an
+// unbalanced quote, is matched as plain text instead; an index failure still
+// returns an error.
 func (idx *Index) Search(queryStr string, limit int) ([]string, error) {
 	if limit <= 0 {
+		// Bleve needs a concrete Size; its collector caps preallocation at 1000.
 		limit = math.MaxInt32
 	}
 
@@ -137,7 +106,7 @@ func (idx *Index) Search(queryStr string, limit int) ([]string, error) {
 func (idx *Index) runQuery(q query.Query, limit int) ([]string, error) {
 	searchRequest := bleve.NewSearchRequest(q)
 	searchRequest.Size = limit
-	searchRequest.Fields = []string{"id"} // Only return ID field
+	searchRequest.Fields = []string{"id"}
 
 	result, err := idx.index.Search(searchRequest)
 	if err != nil {
