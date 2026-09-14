@@ -1034,10 +1034,24 @@ func TestIsBlocked(t *testing.T) {
 		BlockedBy: []string{"completed-blocker", "scrapped-blocker"},
 	}
 
+	completedDependent := &nib.Nib{
+		ID:        "completed-dependent",
+		Title:     "Completed Dependent",
+		Status:    "completed",
+		BlockedBy: []string{"active-blocker"},
+	}
+	deferredDependent := &nib.Nib{
+		ID:        "deferred-dependent",
+		Title:     "Deferred Dependent",
+		Status:    "deferred",
+		BlockedBy: []string{"active-blocker"},
+	}
+
 	nibs := []*nib.Nib{
 		activeBlocker, completedBlocker, scrappedBlocker,
 		blockedByActive, blockedByCompleted, blockedByScrapped,
 		notBlocked, blockedByBroken, mixedBlockers, allResolvedBlockers,
+		completedDependent, deferredDependent,
 	}
 	createAll(t, core, nibs)
 
@@ -1046,6 +1060,8 @@ func TestIsBlocked(t *testing.T) {
 		nibID string
 		want  bool
 	}{
+		{"completed dependent of active blocker", "completed-dependent", false},
+		{"deferred dependent of active blocker", "deferred-dependent", true},
 		{"blocked by active blocker", "blocked-by-active", true},
 		{"blocked by completed blocker", "blocked-by-completed", false},
 		{"blocked by scrapped blocker", "blocked-by-scrapped", false},
@@ -1063,6 +1079,35 @@ func TestIsBlocked(t *testing.T) {
 				t.Errorf("IsBlocked(%q) = %v, want %v", tt.nibID, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestBlockingEdgeDirectionsAgreeForEveryStatusPair holds one edge's two ends to
+// the same answer for every status either end can take.
+func TestBlockingEdgeDirectionsAgreeForEveryStatusPair(t *testing.T) {
+	core, _ := setupTestCore(t)
+	statuses := config.Default().StatusNames()
+
+	type pair struct{ dep, blocker string }
+	var pairs []pair
+	var nibs []*nib.Nib
+	for _, depStatus := range statuses {
+		for _, blockerStatus := range statuses {
+			p := pair{dep: "dep-" + depStatus + "-" + blockerStatus, blocker: "blk-" + depStatus + "-" + blockerStatus}
+			pairs = append(pairs, p)
+			nibs = append(nibs,
+				&nib.Nib{ID: p.blocker, Title: "Blocker", Status: blockerStatus},
+				&nib.Nib{ID: p.dep, Title: "Dependent", Status: depStatus, BlockedBy: []string{p.blocker}},
+			)
+		}
+	}
+	createAll(t, core, nibs)
+
+	for _, p := range pairs {
+		blocked, blocking := core.IsBlocked(p.dep), core.IsBlocking(p.blocker)
+		if blocked != blocking {
+			t.Errorf("%s: IsBlocked(dependent) = %v but IsBlocking(blocker) = %v", p.dep, blocked, blocking)
+		}
 	}
 }
 

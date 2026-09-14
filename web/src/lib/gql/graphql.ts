@@ -206,7 +206,7 @@ export type NibFilter = {
    * has a given parent or ancestor and has no parent. See parentId.
    */
   hasParent?: boolean | null | undefined;
-  /** Tri-state: true keeps nibs blocked by others (via incoming blocking links or blocked_by field), false keeps exactly the unblocked ones, null does not filter */
+  /** Tri-state: true keeps nibs with a blocker whose status has not released them, false keeps exactly the unblocked ones, null does not filter. A completed or scrapped nib is never blocked */
   isBlocked?: boolean | null | undefined;
   /**
    * Include only nibs mentioned in the given nib's body.

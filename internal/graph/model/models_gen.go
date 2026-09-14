@@ -338,7 +338,7 @@ type NibFilter struct {
 	// extensions.code, so a GraphQL client sees a generic error; the CLI reports
 	// VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
 	BlockingID *string `json:"blockingId,omitempty"`
-	// Tri-state: true keeps nibs blocked by others (via incoming blocking links or blocked_by field), false keeps exactly the unblocked ones, null does not filter
+	// Tri-state: true keeps nibs with a blocker whose status has not released them, false keeps exactly the unblocked ones, null does not filter. A completed or scrapped nib is never blocked
 	IsBlocked *bool `json:"isBlocked,omitempty"`
 	// Tri-state: true keeps nibs that have explicit blocked_by entries, false keeps
 	// exactly those with none, null does not filter.

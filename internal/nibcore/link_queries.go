@@ -121,15 +121,21 @@ func (c *Core) closedStatusPredicate() func(string) bool {
 }
 
 // isBlockedInMap returns true if the nib with the given ID is blocked by any
-// nib whose status has not released its dependents. This is a pure function that
-// operates on a map of nibs without locking, so releasesDependents and
-// configPrefix come from the caller.
+// nib whose status has not released its dependents. A nib whose own status
+// releases its dependents is never blocked, so this mirrors isBlockingInMap:
+// both ends of an edge apply the release predicate to both nibs and agree.
+// This is a pure function that operates on a map of nibs without locking, so
+// releasesDependents and configPrefix come from the caller.
 func isBlockedInMap(nibs map[string]*nib.Nib, nibID, configPrefix string, releasesDependents func(string) bool) bool {
+	if b, ok := nibs[nibID]; ok && releasesDependents(b.Status) {
+		return false
+	}
 	return len(findActiveBlockersInMap(nibs, nibID, configPrefix, releasesDependents)) > 0
 }
 
 // IsBlocked returns true if the nib with the given ID has any active blockers —
-// blockers whose status has not released them.
+// blockers whose status has not released them — and its own status has not
+// released its dependents: a completed or scrapped nib is never blocked.
 // Thread-safe wrapper around isBlockedInMap.
 func (c *Core) IsBlocked(nibID string) bool {
 	c.mu.RLock()
@@ -143,10 +149,6 @@ func (c *Core) IsBlocked(nibID string) bool {
 // through normalizeIDInMap as findActiveBlockersInMap resolves it, so a
 // short-form link reads the same from both ends. nibID itself is looked up
 // exactly.
-//
-// It is still not the mirror of isBlockedInMap, which never consults the
-// subject's own status: a released dependent makes the two directions of one
-// edge disagree.
 //
 // This is a pure function that operates on a map of nibs without locking, so
 // releasesDependents and configPrefix come from the caller.

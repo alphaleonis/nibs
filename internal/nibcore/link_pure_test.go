@@ -104,6 +104,14 @@ func TestIsBlockedInMap(t *testing.T) {
 			ID: "all-resolved", Status: "todo",
 			BlockedBy: []string{"completed-blocker", "scrapped-blocker"},
 		},
+		"completed-dependent": {
+			ID: "completed-dependent", Status: "completed",
+			BlockedBy: []string{"active-blocker"},
+		},
+		"deferred-dependent": {
+			ID: "deferred-dependent", Status: "deferred",
+			BlockedBy: []string{"active-blocker"},
+		},
 	}
 
 	tests := []struct {
@@ -123,6 +131,10 @@ func TestIsBlockedInMap(t *testing.T) {
 		{"mixed blockers (one active)", "mixed-blockers", true},
 		{"all resolved blockers", "all-resolved", false},
 		{"nonexistent nib", "nonexistent", false},
+		// A released nib is never blocked, whatever its blockers are doing.
+		{"completed dependent of active blocker", "completed-dependent", false},
+		// deferred does not release, so a deferred dependent stays blocked.
+		{"deferred dependent of active blocker", "deferred-dependent", true},
 	}
 
 	for _, tt := range tests {
