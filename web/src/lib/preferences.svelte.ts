@@ -7,22 +7,15 @@ import { ALL_COLUMN_KEYS, DEFAULT_VISIBLE_COLUMNS, DEFAULT_COLUMN_WIDTHS, DEFAUL
 import type { NibFilter, ViewLevel, ColumnKey, RowDensity, Theme, DetailPanelPosition, OpenDetailGesture, BlockedEmphasis, RegionBandMode, FontSize, TableSort } from "./types";
 
 export class Preferences {
-  // The structured filter and its invalid-token sidecar. Together they ARE the
-  // query: `query` (below) serializes them to the canonical string that is the
-  // persisted + shared unit; `setQuery` reconstructs them from such a string.
+  // Together `filter` and `invalidTokens` are the query: `query` serializes them
+  // and `setQuery` parses into them.
   filter: NibFilter = $state({});
   invalidTokens: string[] = $state([]);
   viewLevel: ViewLevel = $state(DEFAULT_VIEW_LEVEL);
 
-  // Per-view column state, unified behind one primitive. Each concern stays a
-  // separate reactive slice with its own serialized field; the only differences
-  // are the default, resolve combinator, and save timing (injected here).
-  //   - visibility REPLACES the default (stored value used whole); auto-saved.
-  //   - widths MERGE over the full default; flush-saved (excluded from auto-save
-  //     so a drag never persists mid-gesture — persisted on pointerup instead).
-  //   - order REPLACES the default (stored value used whole); auto-saved. The
-  //     stored value is already the full canonical set (parseColumnOrder appends
-  //     any missing key on load), so a permutation persists intact.
+  // Per-view column state. Visibility and order replace the default and auto-save.
+  // Widths merge over the default and are not tracked by auto-save, so a drag does
+  // not persist mid-gesture; flush() saves them.
   readonly visibility = persistedPerViewMap<ColumnKey[]>({
     defaultValue: [...DEFAULT_VISIBLE_COLUMNS],
     resolve: (stored, dflt) => stored ?? [...dflt],
@@ -38,11 +31,8 @@ export class Preferences {
     resolve: (stored, dflt) => stored ?? [...dflt],
     persistence: { storageKey: "columnOrder", saveMode: "auto", requestSave: () => this.save() },
   });
-  // The auto-save $effect subscribes only to the "auto" instances; iterating one
-  // list keeps the save-timing split driven by a single explicit flag. Typed to
-  // the members the effect touches so the differing T/R generics can share a list
-  // — and to a DEFINED persistence group, so a slice with nothing to save cannot
-  // be enrolled here and silently never persist.
+  // The auto-save effect tracks the "auto" entries. `persistence` is required in
+  // this type so a map with nothing to save cannot be enrolled.
   readonly #perViewMaps: readonly { readonly persistence: PerViewPersistence; track(): void }[] = [
     this.visibility,
     this.widths,
@@ -50,42 +40,29 @@ export class Preferences {
   ];
 
   #detailPanelWidth: number | undefined = $state(undefined);
-  // Discrete toggle → auto-saved (like theme/rowDensity).
   detailPanelPosition: DetailPanelPosition = $state(DEFAULT_DETAIL_PANEL_POSITION);
-  // Which row gesture opens the detail panel. Discrete toggle → auto-saved.
   openDetailOn: OpenDetailGesture = $state(DEFAULT_OPEN_DETAIL_ON);
-  // Pointer-pattern → excluded from auto-save, flushed like width.
   #detailPanelHeight: number | undefined = $state(undefined);
   rowDensity: RowDensity = $state("compact");
-  // Discrete toggle → auto-saved (like theme/rowDensity). Scales the UI type
-  // scale via --font-scale; decoupled from rowDensity (spacing).
   fontSize: FontSize = $state(DEFAULT_FONT_SIZE);
   blockedEmphasis: BlockedEmphasis = $state(DEFAULT_BLOCKED_EMPHASIS);
   regionBands: RegionBandMode = $state(DEFAULT_REGION_BAND_MODE);
   theme: Theme = $state(DEFAULT_THEME);
-  // Discrete toggle → auto-saved (like theme/rowDensity/detailPanelPosition).
   previewOpen: boolean = $state(DEFAULT_PREVIEW_OPEN);
-  // Table column sort. null = off (manual `order`). Discrete toggle →
-  // auto-saved. Applied in every view (flat list in Flat, sibling-sort elsewhere).
+  // null = off (manual order).
   tableSort: TableSort | null = $state(null);
 
-  // The canonical query STRING — the persisted (localStorage) + shared (`?q=`)
-  // representation of the filter, derived from the structured filter + invalid
-  // sidecar. `serializeQuery(parseQuery(s)) === s` for any canonical `s`, so this
-  // round-trips through storage/URL and back into `filter`/`invalidTokens`.
+  // The canonical query string, persisted and shared as `?q=`. setQuery(query)
+  // restores `filter` and `invalidTokens`.
   query: string = $derived(serializeQuery({ filter: this.filter, invalidTokens: this.invalidTokens }));
 
   visibleColumns: ColumnKey[] = $derived(this.visibility.resolve(this.viewLevel));
 
   currentColumnWidths: Record<ColumnKey, number> = $derived(this.widths.resolve(this.viewLevel));
 
-  // The full canonical column order for the current view (all keys), used as the
-  // render order (filtered to the visible set downstream). Reordering writes
-  // through `order.setLevel`.
+  // Every column key for the current view; render it filtered to visibleColumns.
   currentColumnOrder: ColumnKey[] = $derived(this.order.resolve(this.viewLevel));
 
-  // Serialized per-view maps, exposed for save() and read-only consumers (tests,
-  // the Toolbar visibility toggle writes through `visibility` directly).
   get columnVisibility(): Partial<Record<ViewLevel, ColumnKey[]>> {
     return this.visibility.serialize();
   }
@@ -106,9 +83,8 @@ export class Preferences {
     this.#detailPanelHeight ?? DEFAULT_DETAIL_PANEL_HEIGHT
   );
 
-  /** Raw persisted sizes — `undefined` until the user resizes. The pane layout
-   *  uses these to tell a user-set size from the default: unset opens at a
-   *  percent of the container instead of a fixed px. */
+  /** Persisted sizes, `undefined` until the user resizes. The pane layout opens
+   *  an unset pane at a percent of the container instead of a fixed px. */
   get detailPanelWidthRaw(): number | undefined {
     return this.#detailPanelWidth;
   }
@@ -136,22 +112,16 @@ export class Preferences {
     this.previewOpen = initial.previewOpen ?? DEFAULT_PREVIEW_OPEN;
     this.tableSort = initial.tableSort ?? null;
 
-    // Auto-save when filter, viewLevel, or an "auto" per-view map (columnVisibility)
-    // change. The "flush" per-view maps (columnWidths) and detailPanelWidth are
-    // excluded (never subscribed here) — use flush*() methods instead.
-    // $effect requires component context; gracefully skip if instantiated outside one (e.g. tests).
+    // Save on a change to any persisted field except column widths and the detail
+    // panel size, whose changes save through the flush methods. $effect throws
+    // outside a component context (e.g. tests); callers there use save() explicitly.
     try {
       let initialized = false;
       $effect(() => {
-        // Touch reactive fields to subscribe to them
         this.filter;
-        // Invalid tokens are part of the persisted query, and a token can change
-        // WITHOUT touching `filter` (e.g. typing `status:banana` while the filter
-        // is empty), so subscribe to them independently.
+        // Tracked separately: an invalid token can change without touching `filter`.
         this.invalidTokens;
         this.viewLevel;
-        // Subscribe only the "auto" per-view maps; "flush" maps stay untracked
-        // so their mutations (width drags) don't trigger auto-save.
         for (const map of this.#perViewMaps) {
           if (map.persistence.saveMode === "auto") map.track();
         }
@@ -164,16 +134,16 @@ export class Preferences {
         this.openDetailOn;
         this.previewOpen;
         this.tableSort;
-        // Skip the initial save that fires on construction (we just loaded these values)
+        // Skip the run on construction; these values were just loaded.
         if (!initialized) {
           initialized = true;
           return;
         }
-        // Save but don't track columnWidths (saves happen via flushColumnWidths)
+        // untrack so save()'s reads of the flush-saved fields do not subscribe.
         untrack(() => this.save());
       });
     } catch {
-      // Outside component context — auto-save is not wired (callers use save() explicitly)
+      // Outside a component context.
     }
   }
 
@@ -203,8 +173,7 @@ export class Preferences {
     this.save();
   }
 
-  /** Replace the filter + invalid sidecar from a canonical query string (as
-   *  loaded from localStorage or a shared `?q=` link). Inverse of `query`. */
+  /** Replace `filter` and `invalidTokens` from a query string. Inverse of `query`. */
   setQuery(q: string): void {
     const parsed = parseQuery(q);
     this.filter = parsed.filter;

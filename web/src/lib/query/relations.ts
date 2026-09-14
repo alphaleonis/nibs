@@ -1,38 +1,23 @@
 import type { QueryFilter } from "./fields";
 
-// Relationship + existence tokens (design 2.4, phase 5).
+// Relationship and existence tokens, recognized separately from the metadata
+// grammar. `FIELD_TOKEN`'s `[A-Za-z]+` name group cannot match the hyphenated
+// names (`blocked-by`, `mentioned-by`), so recognition splits on the first colon.
 //
-// These are a SEPARATE recognition step layered on top of the metadata grammar so
-// the shared `FIELD_TOKEN` regex (and `spans.ts`, which reuses it) stays untouched.
-// Two rel field-names are hyphenated (`blocked-by`, `mentioned-by`) which the
-// `[A-Za-z]+` field group in `FIELD_TOKEN` cannot match, so recognition here does
-// its own first-colon split instead of relying on that regex.
+// - Id tokens (`blocking:<id>`, `milestone:<id>`) set a scalar string field to
+//   any non-empty lowercased value; the id is not checked.
+// - Existence tokens (`has:parent`, `no:parent`, `is:blocked`) set a boolean
+//   field. Only spellings in `REL_TOKEN_ORDER` are recognized; the rest
+//   (`has:mentions`, `is:foo`) fall through to free text. Add a spelling only
+//   where the server has a matching predicate.
+// - A negated token is parked as invalid (see `recognizeRelationship`).
 //
-// - Id-valued tokens (`blocking:<id>`, `milestone:<id>`, …) set a SCALAR string
-//   field to any non-empty (lowercased) value — pattern-only, no existence
-//   validation.
-// - Existence tokens (`has:parent`, `no:parent`, `is:blocked`, …) set a BOOLEAN
-//   field to the value their own entry names. The valid set is fixed and
-//   enumerated (parent/blocking/blocked-by + is:blocked + is:backlog); anything
-//   else (`has:mentions`, `has:ancestor`, `is:foo`) is NOT recognized and falls
-//   through to free-text `search` in the caller. Existence spellings exist only
-//   where the server has a matching predicate, which is why the hierarchy tokens
-//   beyond `parent` have none.
-// - Negation is a metadata-only feature: a leading `-` disqualifies the token from
-//   rel/existence recognition. Such a token is PARKED as invalid rather than routed
-//   to free text — see `recognizeRelationship` for why free text is unsafe here.
-//
-// `REL_TOKEN_ORDER` below is the single source of truth for the whole vocabulary:
-// the two recognition lookups are derived from it, and compile-time guards at the
-// foot of this file make a missing entry a type error. Before that, the spellings
-// lived in three hand-maintained literals, and a token present in recognition but
-// absent from the ordered array was silently DROPPED on every canonicalization —
-// box blur, `localStorage`, and the `?q=` URL param all round-trip through
-// `serializeQuery`, which walks that array to decide what to emit.
+// `REL_TOKEN_ORDER` is the only list of spellings: the lookups derive from it,
+// `serializeQuery` emits only what it lists, and the guards at the foot of this
+// file fail compilation when a field is missing from it.
 
-/** Scalar id-valued fields, keyed by their token field-name. `milestone` is the
- *  assignment axis rather than a link between two nibs, but it takes a nib id the
- *  same way and wants the same typeahead, so it rides the same shape. */
+/** Scalar id-valued fields. `milestone` is an assignment rather than a link, but
+ *  takes a nib id and the same typeahead. */
 export type RelIdKey =
   | "parentId"
   | "ancestorId"
@@ -44,18 +29,12 @@ export type RelIdKey =
   | "mentionedById"
   | "milestone";
 
-/** The existence dimensions that carry BOTH a `has:` and a `no:` spelling. Split
- *  out of `ExistenceKey` (not duplicated from it) so a guard below can require
- *  both halves — the `is:` dimensions have no `no:` twin and must not be held to
- *  that. */
+/** Existence fields with both a `has:` and a `no:` spelling. */
 type PairedExistenceKey = "hasParent" | "hasBlocking" | "hasBlockedBy";
 
-/** Tri-state existence/state fields. A paired one carries two token spellings for
- *  the one field — `has:parent` writes true, `no:parent` writes false — because
- *  the backend filter collapsed the `no*` twins into these same fields, so the
- *  grammar keeps both words while the model holds one value. The unpaired ones
- *  (`isBlocked`, `noMilestone`) have a single spelling, so only one of their two
- *  values is typeable. */
+/** Tri-state existence fields. A paired field takes two spellings — `has:parent`
+ *  writes true, `no:parent` writes false. `isBlocked` and `noMilestone` have one
+ *  spelling each, so only `true` is typeable. */
 export type ExistenceKey = PairedExistenceKey | "isBlocked" | "noMilestone";
 
 /** One entry of the rel/existence vocabulary: a relationship-id token
@@ -64,53 +43,36 @@ export type RelTokenSpec =
   | {
       kind: "id";
       field: RelIdKey;
-      /** The token field-name, including the hyphenated ones (`blocked-by`).
-       *
-       *  Each name states the relationship the MATCHED nib holds toward the supplied
-       *  id, never the reverse — so `ancestor:X` keeps nibs whose ancestor is X (X's
-       *  descendants at any depth) and `descendant:X` keeps nibs whose descendant is
-       *  X (X's ancestor chain). This mirrors the server `NibFilter` fields exactly. */
+      /** The token field-name, hyphenated ones included (`blocked-by`). It names
+       *  the relationship the MATCHED nib holds toward the id, as the server's
+       *  `NibFilter` fields do: `ancestor:X` keeps X's descendants, `descendant:X`
+       *  keeps X's ancestor chain. */
       name: string;
-      /** One line of prose for the in-UI syntax help, phrased from the matched
-       *  nib's side to match `name`'s semantics. Required, so a token cannot enter
-       *  the vocabulary undocumented — the help panel is generated from this array
-       *  rather than hand-listed beside it. */
+      /** One line for the in-UI syntax help, from the matched nib's side. */
       description: string;
     }
   | {
       kind: "bool";
       field: ExistenceKey;
-      /** The full existence token, and it must be exactly `word:value` with a single
-       *  colon: `complete.ts` splits on the first colon to derive the completable
-       *  existence words and the values each accepts. A colon-less token would put a
-       *  truncated word in the completion menu and insert something the parser
-       *  rejects. `relations.test.ts` pins the shape of every entry. */
+      /** The full token, exactly `word:value` with one colon: `complete.ts` splits
+       *  on the first colon to derive completion words and values. */
       token: string;
       value: boolean;
-      /** One line of prose for the in-UI syntax help. Required for the same reason
-       *  as the id variant's. */
+      /** One line for the in-UI syntax help. */
       description: string;
     };
 
-// Canonical serialization order for the rel/existence block, and the source the
-// recognition lookups below are built from. Grouped by dimension — hierarchy
-// (parent + ancestor, descendant, sibling), blocking, blocked-by (+ is:blocked),
-// mentions, mentioned-by, then the assignment axis — with each dimension's id
-// token first, then its existence tokens. This order is fixed so
-// `serializeQuery(parseQuery(s)) === s` holds for any canonical string containing
-// these tokens; moving an entry silently changes what counts as canonical.
+// The rel/existence vocabulary in canonical serialization order: grouped by
+// dimension, each dimension's id token before its existence tokens. Moving an
+// entry changes which strings are canonical.
 //
-// `as const` is load-bearing: it keeps each entry's literal types, which is what
-// lets the exhaustiveness guards at the foot of this file see WHICH fields the
-// array covers. `satisfies` still checks every entry against `RelTokenSpec`, so a
-// misspelled field name remains a compile error.
+// `as const` keeps the literal field types the guards at the foot of this file
+// read; `satisfies` checks each entry against `RelTokenSpec`.
 export const REL_TOKEN_ORDER = [
   { kind: "id", field: "parentId", name: "parent", description: "Direct children of this nib" },
   { kind: "bool", field: "hasParent", token: "has:parent", value: true, description: "Nibs that have a parent" },
   { kind: "bool", field: "hasParent", token: "no:parent", value: false, description: "Root nibs, with no parent" },
-  // The rest of the hierarchy dimension, kept adjacent to parent so the tree
-  // questions read together. None of these has a has/no spelling — the server has
-  // no matching existence predicate, and the grammar only offers what it can answer.
+  // No has/no spellings: the server has no existence predicate for these.
   { kind: "id", field: "ancestorId", name: "ancestor", description: "Everything under this nib, at any depth" },
   { kind: "id", field: "descendantId", name: "descendant", description: "This nib's ancestor chain, up to the root" },
   { kind: "id", field: "siblingId", name: "sibling", description: "Nibs sharing this nib's parent" },
@@ -123,59 +85,36 @@ export const REL_TOKEN_ORDER = [
   { kind: "bool", field: "isBlocked", token: "is:blocked", value: true, description: "Nibs held up by an unmet blocker" },
   { kind: "id", field: "mentionsId", name: "mentions", description: "Nibs whose body mentions this nib" },
   { kind: "id", field: "mentionedById", name: "mentioned-by", description: "Nibs mentioned in this nib's body" },
-  // The assignment axis, last because it is not a link between two nibs at all.
-  // `milestone:<id>` reads DIRECT assignment — that milestone's queue; `is:backlog`
-  // is the complement of DERIVED membership, which inherits down the parent chain,
-  // so a child of an assigned epic is planned work and not backlog.
+  // The assignment axis. `milestone:<id>` matches DIRECT assignment; `is:backlog`
+  // matches nibs with no DERIVED membership, so a child of an assigned epic is not
+  // backlog.
   //
-  // Backlog gets one `is:` token rather than a `has:`/`no:milestone` pair because
-  // the field is spelled `noMilestone`: a pair on it would write true for `no:` and
-  // false for `has:`, and both `NEGATIVE_EXISTENCE_TOKENS` and the `_PairsKeep*`
-  // guards below read an entry's VALUE rather than its spelling — an inverted pair
-  // satisfies them while meaning the opposite of what they report. `is:blocked` has
-  // no twin either, and the CLI spells this field `nibs list --backlog`, likewise
-  // with no positive twin.
+  // Backlog is one `is:` token, not a `has:`/`no:milestone` pair: on a field named
+  // `noMilestone` a pair would write true for `no:`, while
+  // `NEGATIVE_EXISTENCE_TOKENS` and the `_PairsKeep*` guards read an entry's value
+  // as its polarity.
   { kind: "id", field: "milestone", name: "milestone", description: "Nibs assigned to this milestone" },
   { kind: "bool", field: "noMilestone", token: "is:backlog", value: true, description: "Nibs in no milestone's plan, their own or an inherited one" },
 ] as const satisfies readonly RelTokenSpec[];
 
-/** The literal-preserving entry type of `REL_TOKEN_ORDER`, narrowed to one kind.
- *  Reading `["field"]` off this yields exactly the fields the array covers, which
- *  is what the exhaustiveness guards compare the unions against. */
+/** A `REL_TOKEN_ORDER` entry with its literal types, narrowed to one kind. */
 type OrderedSpec<K extends RelTokenSpec["kind"]> = Extract<
   (typeof REL_TOKEN_ORDER)[number],
   { kind: K }
 >;
 
-// Token field-name → scalar-id NibFilter key. Includes the hyphenated names.
-// Keyed by the BARE field-name (`blocked-by`), because `matchToken` splits the
-// token on its first colon and looks the left half up here.
-//
-// Derived from `REL_TOKEN_ORDER` rather than written out, so recognition accepts
-// exactly what completion offers and serialization emits. Exported so the rel-token
-// typeahead detector (relComplete.ts) recognizes the same field-names without
-// duplicating the set.
-// A `Map`, not a plain object, and the distinction is load-bearing: an object
-// literal (and anything `Object.fromEntries` builds) inherits `Object.prototype`,
-// so a lookup of `constructor` or `__proto__` returns an inherited member and
-// reads as a hit. That made `constructor:foo` parse as a relationship token whose
-// field was the `Object` constructor, and swallowed a bare `constructor` out of
-// free-text search. `fields.ts` already keys its own lookup this way.
+// Token field-name (`blocked-by`) → scalar-id NibFilter key. Also read by
+// relComplete.ts.
+// A Map, not an object: an object lookup finds inherited members, so
+// `constructor:foo` would be recognized.
 export const REL_ID_FIELDS: ReadonlyMap<string, RelIdKey> = new Map(
   REL_TOKEN_ORDER.flatMap((spec): [string, RelIdKey][] =>
     spec.kind === "id" ? [[spec.name, spec.field]] : [],
   ),
 );
 
-// Full (lowercased) existence token → the field it writes and the value it
-// writes there. Keyed by the WHOLE token (`has:parent`), because `matchToken`
-// tries the untouched token here before falling back to the colon split.
-//
-// Enumerated by `REL_TOKEN_ORDER`, so invalid combos (`has:mentions`, `no:mentions`,
-// `is:foo`) simply are not present. The `has:`/`no:` pair for one dimension targets
-// the SAME field with opposite values — writing them as two fields is what the
-// backend filter model retired.
-// A `Map` for the same prototype reason as `REL_ID_FIELDS` above.
+// Whole lowercased existence token (`has:parent`) → the field and value it
+// writes. A Map for the same reason as `REL_ID_FIELDS`.
 export const EXISTENCE_TOKENS: ReadonlyMap<string, { field: ExistenceKey; value: boolean }> =
   new Map(
     REL_TOKEN_ORDER.flatMap((spec): [string, { field: ExistenceKey; value: boolean }][] =>
@@ -185,15 +124,10 @@ export const EXISTENCE_TOKENS: ReadonlyMap<string, { field: ExistenceKey; value:
 
 // --- The hierarchy subset ------------------------------------------------------
 
-/** The fields that constrain a nib's position in the tree, as opposed to the
- *  blocking/mention dimensions. `REL_TOKEN_ORDER` covers ALL relationship fields,
- *  so this subset is named here — the guard below keeps it from drifting away from
- *  the vocabulary it selects from. */
+/** The fields that constrain a nib's position in the tree. */
 export type HierarchyKey = "parentId" | "ancestorId" | "descendantId" | "siblingId" | "hasParent";
 
-/** Membership set for the subset, used to filter `REL_TOKEN_ORDER`. `as const`
- *  keeps the literal types so the guard below can check the array against the
- *  union in both directions. */
+/** `HierarchyKey` as a runtime list; guards below check the two match. */
 const HIERARCHY_FIELDS = [
   "parentId",
   "ancestorId",
@@ -205,13 +139,9 @@ const HIERARCHY_FIELDS = [
 const HIERARCHY_FIELD_SET: ReadonlySet<string> = new Set(HIERARCHY_FIELDS);
 
 /**
- * The canonical tokens for the hierarchy filters this filter has set, in
- * `REL_TOKEN_ORDER` order.
- *
- * Rendered from the vocabulary rather than formatted ad hoc, so what a
- * hierarchy-specific empty state shows the user is exactly what the box would
- * serialize and re-parse. `hasParent` emits whichever of its two spellings matches
- * the value, so an explicit `no:parent` is named rather than treated as unset.
+ * The canonical tokens for the hierarchy fields set on `filter`, in
+ * `REL_TOKEN_ORDER` order — the text the box would serialize. `hasParent: false`
+ * yields `no:parent`.
  */
 export function hierarchyTokens(filter: QueryFilter): string[] {
   const tokens: string[] = [];
@@ -230,40 +160,28 @@ export function hierarchyTokens(filter: QueryFilter): string[] {
 // --- Contradictory pairs -------------------------------------------------------
 
 /**
- * The id-valued field / existence-field combinations the server refuses outright:
- * an id names a relationship the nib must HAVE, while the paired `no:` token
- * requires it to have none, so no store state satisfies both.
+ * The id-field / `no:` pairs the server refuses as contradictory
+ * (`refuseContradiction`, internal/graph/filters.go). The server decides; this
+ * table only lets the UI name the refusal in the box's spelling, so a missing
+ * entry loses the explanation, not the result.
  *
- * `blockingId` + `no:blocking` is deliberately absent and is not an oversight.
- * `has:blocking` asks whether a nib is ACTIVELY blocking something — false both
- * when the nib's own status released its dependents and when every nib listing
- * it as a blocker has itself been released — while `blocking:<id>` matches
- * membership in the target's blocked_by whatever the candidate's status. The
- * pair therefore selects the blockers the target still lists that are no longer
- * blocking anything, an open one included when the target is the only nib that
- * listed it and the target's own status has released it. The server answers
- * that rather than refusing it.
- *
- * This mirrors `refuseContradiction` in internal/graph/filters.go. The server
- * decides; this table only lets the UI name what it refused in the box's own
- * words, so an entry missing here costs an explanation, never a wrong result.
+ * Do not add `blockingId` + `hasBlocking`: `has:blocking` asks whether a nib is
+ * ACTIVELY blocking, while `blocking:<id>` reads the target's stored blocked_by,
+ * so the server answers that pair.
  */
 const CONTRADICTORY_PAIRS = [
   { idField: "parentId", existenceField: "hasParent" },
   { idField: "blockedById", existenceField: "hasBlockedBy" },
 ] as const satisfies readonly { idField: RelIdKey; existenceField: PairedExistenceKey }[];
 
-/** Scalar-id NibFilter key → the token field-name that writes it — the reverse of
- *  `REL_ID_FIELDS`. Derived from `REL_TOKEN_ORDER` so a renamed token renames here
- *  too. */
+/** Scalar-id NibFilter key → token field-name; the reverse of `REL_ID_FIELDS`. */
 const REL_ID_NAMES: ReadonlyMap<string, string> = new Map(
   REL_TOKEN_ORDER.flatMap((spec): [string, string][] =>
     spec.kind === "id" ? [[spec.field, spec.name]] : [],
   ),
 );
 
-/** Existence field → its `no:` spelling, for every dimension that has one.
- *  Derived for the same reason as `REL_ID_NAMES`. */
+/** Existence field → its `no:` spelling, for fields that have one. */
 const NEGATIVE_EXISTENCE_TOKENS: ReadonlyMap<string, string> = new Map(
   REL_TOKEN_ORDER.flatMap((spec): [string, string][] =>
     spec.kind === "bool" && !spec.value ? [[spec.field, spec.token]] : [],
@@ -271,12 +189,9 @@ const NEGATIVE_EXISTENCE_TOKENS: ReadonlyMap<string, string> = new Map(
 );
 
 /**
- * The contradictory token pairs this filter holds, each as `[idToken, noToken]`
- * in canonical spelling — `[["parent:tnib-1", "no:parent"]]`.
- *
- * Empty when the filter holds none, which is what an empty-state branch should
- * treat as "cannot name the refusal": the server refuses on the filter it
- * received, and the one in hand may already have moved on.
+ * The contradictory pairs `filter` holds, as `[idToken, noToken]` —
+ * `[["parent:tnib-1", "no:parent"]]`. Empty means the refusal cannot be named
+ * from this filter, which may have changed since the server refused.
  */
 export function contradictionTokens(filter: QueryFilter): string[][] {
   const pairs: string[][] = [];
@@ -290,9 +205,7 @@ export function contradictionTokens(filter: QueryFilter): string[][] {
   return pairs;
 }
 
-/** A copy of `filter` with every hierarchy field removed and everything else — the
- *  metadata facets, free text, and the other relationship dimensions — kept. The
- *  escape hatch out of a hierarchy combination that matches nothing. */
+/** A copy of `filter` with every hierarchy field removed. */
 export function clearHierarchyFilters<T extends QueryFilter>(filter: T): T {
   const next = { ...filter };
   for (const field of HIERARCHY_FIELDS) {
@@ -301,30 +214,22 @@ export function clearHierarchyFilters<T extends QueryFilter>(filter: T): T {
   return next;
 }
 
-/** Recognition result: a scalar-id assignment, a boolean-existence assignment, or
- *  a rejected token the caller must park in its invalid-token sidecar. */
+/** A scalar-id assignment, a boolean existence assignment, or a negated token for
+ *  the caller to park as invalid. */
 export type RelMatch =
   | { kind: "id"; field: RelIdKey; value: string }
   | { kind: "bool"; field: ExistenceKey; value: boolean }
   | { kind: "invalid"; token: string };
 
 /**
- * Recognize a single token as a relationship-id or existence/state token, or
- * `undefined` when it is neither (the caller then routes it to free text).
+ * Recognize `token` as a relationship-id or existence token, or return
+ * `undefined` for the caller to route to free text. Names and values are
+ * lowercased.
  *
- * A leading `-` (negation) is not a rel/existence feature — there is no server
- * predicate for "not in this subtree". A negated token that would OTHERWISE be
- * recognized is returned as `invalid` so the caller parks it: it must not reach
- * free text, because free text is handed to the server's Bleve query string, where
- * `-ancestor:x` is valid MUST-NOT syntax over a field Bleve does not index (only
- * id/slug/title/body are). The clause then excludes nothing and the query silently
- * degrades to match-all — `-ancestor:<id>` returns the entire dataset, and in a
- * compound query like `type:bug -ancestor:<id>` the surviving `type` filter makes
- * the result look plausible. Parked, it is flagged in the box and round-trips
- * verbatim. A negated token that is NOT a rel/existence spelling (`-title:foo`,
- * `-has:mentions`) still falls to free text, where Bleve's syntax is the point.
- *
- * Field-names and id values are lowercased, matching the rest of the query language.
+ * A negated token that would otherwise be recognized returns `invalid`. Do not
+ * route it to free text: that becomes a Bleve query string, where `-ancestor:x`
+ * is a MUST-NOT clause over an unindexed field (only id/slug/title/body are) and
+ * excludes nothing. Other negated tokens (`-title:foo`) return `undefined`.
  */
 export function recognizeRelationship(token: string): RelMatch | undefined {
   if (token.startsWith("-")) {
@@ -335,17 +240,13 @@ export function recognizeRelationship(token: string): RelMatch | undefined {
   return matchToken(token);
 }
 
-/** The positive half of recognition, shared by the plain and negated paths: the
- *  negated path only needs to know WHETHER the rest of the token is a rel or
- *  existence spelling, so this never yields an `invalid` result. */
+/** Recognition of an unnegated token; never returns `invalid`. */
 function matchToken(token: string): Extract<RelMatch, { kind: "id" | "bool" }> | undefined {
   const lower = token.toLowerCase();
   const existence = EXISTENCE_TOKENS.get(lower);
   if (existence) return { kind: "bool", field: existence.field, value: existence.value };
 
-  // Split on the FIRST colon so hyphenated field-names (`blocked-by`) are handled
-  // without the metadata FIELD_TOKEN regex. Value is everything after it, taken
-  // whole (scalar — no comma split), and only accepted when non-empty.
+  // The value is the whole run after the first colon, with no comma split.
   const colon = token.indexOf(":");
   if (colon <= 0) return undefined;
   const name = token.slice(0, colon).toLowerCase();
@@ -358,19 +259,13 @@ function matchToken(token: string): Extract<RelMatch, { kind: "id" | "bool" }> |
 
 // --- Compile-time guards -------------------------------------------------------
 
-// Membership: every field the vocabulary names must be a key the box owns
-// (QueryFilter). If QueryFilter loses one of these keys, this fails to typecheck.
-// Note this constrains the two UNIONS, not `REL_TOKEN_ORDER` — the array's own
-// entries are checked against `RelTokenSpec` by its `satisfies` clause.
+// Every field in the two unions is a QueryFilter key.
 type _RelKeysAreQueryFilterKeys = (RelIdKey | ExistenceKey) extends keyof QueryFilter ? true : never;
 const _relKeysCheck: _RelKeysAreQueryFilterKeys = true;
 void _relKeysCheck;
 
-// Exhaustiveness: every field in the two unions must appear in `REL_TOKEN_ORDER`.
-// This is the guard that closes the silent-drop hole. Deleting an entry from the
-// array otherwise compiles cleanly — recognition still accepts nothing extra,
-// nothing indexes the missing key — and the token then vanishes on every
-// canonicalization, because `serializeQuery` emits only what the array lists.
+// Every field in the two unions has a `REL_TOKEN_ORDER` entry; a missing one
+// would compile and be dropped by `serializeQuery`.
 type _OrderCoversRelIds = RelIdKey extends OrderedSpec<"id">["field"] ? true : never;
 const _orderCoversRelIds: _OrderCoversRelIds = true;
 void _orderCoversRelIds;
@@ -379,9 +274,8 @@ type _OrderCoversExistence = ExistenceKey extends OrderedSpec<"bool">["field"] ?
 const _orderCoversExistence: _OrderCoversExistence = true;
 void _orderCoversExistence;
 
-// Both spellings of a paired dimension. The guard above matches on the FIELD, and
-// `has:parent`/`no:parent` share one — so dropping just the `no:` half slips past
-// it while still silently losing that spelling. These two check the halves apart.
+// Both spellings of each paired field; the guard above matches on field, which
+// the two spellings share.
 type ExistenceFieldsWriting<V extends boolean> = Extract<OrderedSpec<"bool">, { value: V }>["field"];
 type _PairsKeepHas = PairedExistenceKey extends ExistenceFieldsWriting<true> ? true : never;
 const _pairsKeepHas: _PairsKeepHas = true;
@@ -391,10 +285,8 @@ type _PairsKeepNo = PairedExistenceKey extends ExistenceFieldsWriting<false> ? t
 const _pairsKeepNo: _PairsKeepNo = true;
 void _pairsKeepNo;
 
-// The hierarchy subset must name fields the vocabulary actually carries. Renaming
-// or dropping one of these upstream otherwise leaves `HierarchyKey` naming a field
-// no `REL_TOKEN_ORDER` entry has, and `hierarchyTokens` silently stops emitting it
-// — the filter would still be active while the empty-state explanation omits it.
+// Every hierarchy field has a `REL_TOKEN_ORDER` entry, or `hierarchyTokens`
+// omits it.
 type _HierarchySubsetOfVocabulary = HierarchyKey extends
   | OrderedSpec<"id">["field"]
   | OrderedSpec<"bool">["field"]
@@ -403,9 +295,8 @@ type _HierarchySubsetOfVocabulary = HierarchyKey extends
 const _hierarchySubset: _HierarchySubsetOfVocabulary = true;
 void _hierarchySubset;
 
-// And the runtime array must cover the whole union: `satisfies` above rejects a
-// WRONG entry but not a MISSING one, and a missing entry drops that field from both
-// the explanation and the clear-hierarchy escape hatch.
+// `HIERARCHY_FIELDS` covers the union; its `satisfies` rejects a wrong entry but
+// not a missing one.
 type _HierarchyArrayCoversUnion = HierarchyKey extends (typeof HIERARCHY_FIELDS)[number]
   ? true
   : never;

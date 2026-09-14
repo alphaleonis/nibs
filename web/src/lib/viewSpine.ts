@@ -23,11 +23,9 @@ import { typeRank } from "./typeHierarchy";
 /**
  * Membership-only view of the leftover-section keys.
  *
- * Not a `ReadonlySet`: that type is erased, so `(spine.bucketIds as Set<string>)`
- * hands back the live set and `.add` on a module singleton would follow a vitest
- * worker into every other suite it serves. `Object.freeze` does not close that —
- * it leaves a Set's contents writable. A frozen object with only `has` has
- * nothing to call.
+ * Not a `ReadonlySet`: a cast recovers the live set, and `.add` on a module
+ * singleton leaks into every suite a vitest worker serves. `Object.freeze`
+ * leaves a Set's contents writable, so expose only `has`.
  */
 export interface BucketIds {
   has(id: string): boolean;
@@ -36,30 +34,20 @@ export interface BucketIds {
 /**
  * The view core, bound to one areas vocabulary.
  *
- * Membership is mechanical rather than a matter of taste: a function belongs
- * here iff `viewShapeFor` is on its call path. Everything else in tree.ts,
- * tableData.ts, dragBlock.ts, filter.ts and ordering/ stays a free export and is
- * reached directly.
+ * A function belongs here iff `viewShapeFor` is on its call path; everything
+ * else stays a free export. Each method is a one-line delegation that supplies a
+ * `ViewShape` — logic a method would have to add belongs outside the spine.
  *
- * Every method is a one-line delegation that supplies a `ViewShape` — which is
- * also the god-object test: a method that had to reimplement logic instead of
- * passing a shape through would mean that logic was drawn on the wrong side.
- *
- * The methods are closures in an object literal and never read `this`, so a
- * caller may destructure them.
+ * The methods never read `this`, so callers may destructure them.
  */
 export interface ViewSpine {
-  /** The vocabulary this spine is bound to. */
   readonly areas: AreaVocabulary;
   viewShapeFor(level: ViewLevel): ViewShape;
   readonly bucketIds: BucketIds;
   /**
-   * No production caller — `TreeTable`'s two subtree helpers were the last, and
-   * they read `TableData.containment` instead. Kept because it is the only
-   * spine member returning `TreeNode`, and `TreeNode.section` is the only place
-   * `SectionMeta` is reachable at all: the table's rows carry a `RowSection`
-   * (key, display, count, onEnter), which drops both `persistence` and the rest
-   * of `SectionMeaning`.
+   * No production caller. Kept because `TreeNode.section` is the only place
+   * `SectionMeta` is reachable: a row's `RowSection` drops `persistence` and
+   * `memberRegion`.
    */
   buildViewTree<T extends TreeNib>(
     nibs: T[],
@@ -78,8 +66,7 @@ export interface ViewSpine {
 }
 
 // ---------------------------------------------------------------------------
-// The shipped lenses, and the switch that hands one to a view level. Private to
-// this module — see `viewShapeFor`.
+// The shipped lenses, and the switch that hands one to a view level.
 // ---------------------------------------------------------------------------
 
 /**
@@ -90,33 +77,24 @@ export interface ViewSpine {
  */
 function typeLens(grouping: string[], leftoverKey: LeftoverKey, leftoverLabel: string): GroupingLens {
   const groupingTypes = new Set(grouping);
-  // The container tier this lens groups by, derived from the single source of
-  // truth (`typeRank`) rather than a hardcoded copy. All grouping types in a
-  // lens share one rank (feature and bug are both rank 1), so the first
-  // suffices.
+  // All grouping types in a lens share one rank (feature and bug are both 1).
   const tier = typeRank(grouping[0]);
 
   return {
     leftover: { key: leftoverKey, label: leftoverLabel },
-    // A type lens's sections ARE nibs: each is minted by the nib that heads it,
-    // and which nibs arrive is the response's decision. There is nothing to
-    // state up front.
+    // Each section is minted by the nib that heads it.
     declares: { kind: "none" },
     nestHeadersStructurally: true,
-    // Headers keep their subtrees, so a type lens's only members are the loose
-    // items in its leftover section — whose order is the walk's, or the active
-    // column sort's. There is no third order to declare.
+    // Headers keep their subtrees, so the only members are the leftover's loose
+    // items, in the walk's or the column sort's order.
     orderWithinSection: () => null,
-    // Grouping by type rearranges which rows are DRAWN together; it moves no row
-    // into another ordering group, so every row keeps its own parent one — and a
-    // drop into a section means what the row under the cursor means.
+    // Grouping by type moves no row into another ordering group, so a drop into
+    // a section means what the row under the cursor means.
     meaning: () => GOVERNS_NOTHING,
 
     place(nib, byId) {
       // The section is decided by the OUTERMOST ancestor-or-self at or below the
-      // tier: descent into a grouped view passes through above-tier containers
-      // and nothing else, so the first such node on the root-to-nib path owns
-      // everything under it. Climbing to find it reads the same rule backwards.
+      // tier: grouped descent passes through above-tier containers only.
       const chain: TreeNib[] = [nib];
       const seen = new Set<string>([nib.id]);
       let current: TreeNib | undefined = nib.parentId !== null ? byId.get(nib.parentId) : undefined;
@@ -126,14 +104,10 @@ function typeLens(grouping: string[], leftoverKey: LeftoverKey, leftoverLabel: s
         current = current.parentId !== null ? byId.get(current.parentId) : undefined;
       }
 
-      // How far up the chain the RENDERED path reaches. Ordinarily the chain runs
-      // out and its last entry is the root. A chain that closed on itself has no
-      // root of its own, so the answer is `buildTree`'s: it promotes exactly one
-      // member of the cycle — the lowest id, per `promotedCycleRoots` — to a root
-      // and severs its parent edge, which leaves everything the climb walked PAST
-      // that member off the rendered path entirely. Re-deriving that decision
-      // here is what lets the lens agree with the forest it classifies, for a nib
-      // merely LEADING INTO a cycle as much as for a member of one.
+      // How far up the chain the RENDERED path reaches. For a chain that closed
+      // on itself, match `buildTree`: the cycle member with the lowest id (see
+      // `promotedCycleRoots`) becomes a root, so nodes climbed past it are off the
+      // rendered path — for a nib leading into a cycle as well as a member.
       let rootIndex = chain.length - 1;
       const closedOn = current;
       if (closedOn !== undefined) {
@@ -166,35 +140,19 @@ const EPIC_TYPE_LENS = typeLens(["epic"], "/__no_epic__", "No epic");
 const FEATURE_TYPE_LENS = typeLens(["feature", "bug"], "/__no_feature_or_bug__", "No feature or bug");
 
 /**
- * The Milestones view's leftover section.
- *
- * "Backlog" rather than "Unplanned" or "No milestone": this is the set the
- * server's `noMilestone: true` filter selects and `nibs list --backlog` prints,
- * and internal/membership says outright that "Backlog" is the name every
- * surface uses for it. That package says so because the set once carried four
- * names at once, which `TestRoadmapNamesTheBacklogTheSameWayEverywhere`
- * (cmd/roadmap_test.go) now guards against on the Go side.
- *
- * The key satisfies both halves of `isSyntheticRowId` — asserted over the
- * derived `bucketIds` in tree.test.ts, not left to this sentence.
+ * The Milestones view's leftover section: the set the server's `noMilestone`
+ * filter selects and `nibs list --backlog` prints, so it carries that flag's
+ * name. Must satisfy `isSyntheticRowId`.
  */
 const BACKLOG_KEY: LeftoverKey = "/__backlog__";
 
 /**
- * A milestone queue's order: the `milestoneOrder` key ascending, rows with no
- * key appended, title then id breaking a tie.
+ * A milestone queue's order, matching `nib.CompareByKey` (internal/nib/sort.go):
+ * keyed rows by `milestoneOrder`, unkeyed rows after them, then title, then id.
  *
- * The tail rule is not decoration. An assignee can legitimately carry no key —
- * `TreeNib.milestoneOrder` is empty for a nib never placed in a queue — and
- * plain key order would then float exactly those rows to the TOP of the queue,
- * where the server's own listing appends them. The shape mirrors
- * `nib.CompareByKey` (internal/nib/sort.go), which is what every server-side
- * queue listing sorts through.
- *
- * Compares with `<` rather than `localeCompare`, because these are fractional
- * ordering keys the server compares as bytes; a locale collation reorders
- * mixed-case keys against it. Titles keep `localeCompare`, matching the Go
- * tiebreak's case-insensitive comparison closely enough for a display order.
+ * Keys compare with `<` because the server compares them as bytes; a locale
+ * collation would reorder mixed-case keys. Titles use `localeCompare`, close
+ * enough to Go's case-insensitive tiebreak for display.
  */
 function byMilestoneOrder(a: TreeNib, b: TreeNib): number {
   const aKeyed = a.milestoneOrder !== "";
@@ -208,108 +166,67 @@ function byMilestoneOrder(a: TreeNib, b: TreeNib): number {
 }
 
 /**
- * The lens the Milestones view renders: sections are MILESTONES, and what puts
- * a nib in one is its ASSIGNMENT, not its position in the parent tree. Every
- * milestone in the response heads a section of its own; everything else lands
- * in the section `milestoneOf` names, or in the Backlog when that is "".
+ * The Milestones view's lens: every milestone in the response heads a section,
+ * and each other nib lands in the section `milestoneOf` names, or the Backlog
+ * when that is "".
  *
- * `milestoneOf` is CALLED, not restated. It is the mirror of Go's
- * `(*membership.View).MilestoneOf`, held to it by a generated parity contract
- * that pins the mirror and not its callers — so a second copy of the rule here
- * would drift with nothing to catch it.
+ * Call `milestoneOf`; do not restate it. The generated parity contract pins that
+ * mirror of Go's `(*membership.View).MilestoneOf`, not its callers.
  *
- * Two properties follow from keying on `milestoneOf`'s answer rather than on
- * the raw `milestone:` field, and both are what `meaning`'s invariant asks
- * for:
+ * Keying on `milestoneOf` rather than the raw `milestone:` field gives `meaning`
+ * two properties, both checked in tree.test.ts:
+ *   - A section key is always the id of a milestone in `byId`, which heads its
+ *     own section; a dangling or non-milestone assignment resolves to "" and
+ *     mints no headless section.
+ *   - A milestone section's direct children are its directly assigned rows: a
+ *     derived member's parent lands in the same section, so `buildTree` nests
+ *     it. A parent cycle inside a section is the exception (see `RowData.region`).
  *
- *   - A section key is always the id of a milestone-typed nib present in
- *     `byId`, since that is the only thing `milestoneOf` ever returns non-empty.
- *     That nib heads its own section here, so this lens mints no HEADLESS
- *     section — a dangling assignment or one naming a non-milestone resolves to
- *     "" and its nib walks on rather than minting a section labeled with the raw
- *     id.
- *   - The rows a milestone section declares its region over are its node's
- *     DIRECT children, and those are the DIRECTLY assigned rows: a derived
- *     member's parent lands in the same section (the walk that gave the child
- *     its answer runs through the parent), so `buildTree` nests it. Both halves
- *     are executable checks in tree.test.ts. The one shape that escapes them is
- *     a parent cycle wholly inside a section, where `buildTree` severs one
- *     member's edge and promotes it — the divergence `RowData.region` already
- *     names ("a cycle member `promotedCycleRoots` severed") — pinned there too.
- *
- * STATUS is not consulted. A closed milestone in the response heads a section
- * like any other, and its members stay in it. Dropping it instead would take
- * the "losing a milestone" path `milestoneOf` documents: the walk continues
- * past the emptied step rather than stopping, so its members land in the
- * Backlog or, on hand-authored data carrying a second assignment up the chain,
- * in a DIFFERENT milestone's section. `(*membership.View).Backlog` settles the
- * same question the same way on the Go side — "work under a status-hidden
- * milestone is scheduled work, not backlog" — so which milestones exist is the
- * response's decision, made by the filter, not this lens's.
+ * Status is not consulted: a closed milestone still heads its section. Dropping
+ * it would continue `milestoneOf`'s walk past it, moving its members to the
+ * Backlog or another milestone. Go's `(*membership.View).Backlog` likewise
+ * counts work under a milestone of any status as scheduled.
  */
 const MILESTONE_MEMBERSHIP_LENS: GroupingLens = {
   leftover: { key: BACKLOG_KEY, label: "Backlog" },
-  // Which milestones exist is the response's decision, made by the filter (see
-  // the STATUS paragraph above), so every section here is minted from the nibs
-  // that arrived rather than stated up front.
+  // Sections are minted from the nibs that arrived; the filter decides which
+  // milestones exist.
   declares: { kind: "none" },
-  // Membership does not run along parent links, so a section's nesting is
-  // rebuilt from whichever nibs landed in it rather than inherited from a
-  // header's subtree.
+  // Membership does not follow parent links, so each section's nesting is
+  // rebuilt from the nibs that landed in it.
   nestHeadersStructurally: false,
-  // The declaration a membership lens exists for: a milestone section's rows
-  // are in that milestone's queue, so a drag inside one reorders on the
-  // MILESTONE scope and a drop into the section joins that queue. The Backlog
-  // means NOTHING — "" is memberless in that scope, and its rows are not all at
-  // the display root either, so each falls back to its own resolved parent
-  // group.
-  //
-  // One `Region` value serves both members, which is the milestone axis's own
-  // shape rather than a coincidence worth generalizing: the queue a section's
-  // rows are ordered in IS the queue a drop into it joins.
+  // A milestone section's rows are in its queue: a drag inside reorders on the
+  // MILESTONE scope, and a drop into it joins the queue. The Backlog governs
+  // nothing, so its rows fall back to their own parent group.
   meaning: (section) => {
     if (section === BACKLOG_KEY) return GOVERNS_NOTHING;
     const queue: Region = { axis: "milestone", milestoneId: section };
     return { memberRegion: queue, onEnter: { kind: "region", region: queue } };
   },
-  // The Backlog has no queue, so it takes the walk's order (or the active
-  // column sort's) rather than a key none of its rows share.
+  // The Backlog has no queue, so it takes the walk's or the column sort's order.
   orderWithinSection: (section) => (section === BACKLOG_KEY ? null : byMilestoneOrder),
 
   place(nib, byId) {
     if (nib.type === MILESTONE_TYPE) return { kind: "header", section: nib.id };
-    // A closure, never `byId.get` itself: the method needs its receiver, and
-    // the bare reference type-checks clean (see `MembershipLookup`).
+    // A closure, not bare `byId.get`, which loses its receiver yet type-checks
+    // (see `MembershipLookup`).
     const section = milestoneOf(nib, (id) => byId.get(id));
     return { kind: "member", section: section === "" ? BACKLOG_KEY : section };
   },
 };
 
 /**
- * The Areas view's leftover section.
- *
- * "No area" rather than a borrowed name: unlike the milestone axis, whose
- * unassigned set is called the Backlog everywhere including on the server, the
- * area axis has no such set to name — `cmd/list.go` says outright that there is
- * no `--no-area` for `--area` to redirect an empty value to.
- *
- * The key satisfies both halves of `isSyntheticRowId` — asserted over the
- * derived `bucketIds` in tree.test.ts, not left to this sentence.
+ * The Areas view's leftover section. Must satisfy `isSyntheticRowId`.
  */
 const NO_AREA_KEY: LeftoverKey = "/__no_area__";
 
 /**
- * The declared forest of an areas vocabulary, read off the DEPTH RUNS of the
- * flat list `sections()` answers: declaration order, a parent immediately before
- * its subtree, depth on every node. That is the same contract `subtreeOf`
- * reads, so the two derive the tree from one statement of it.
- *
- * Never re-split from `path`. The vocabulary already states the nesting, and a
- * second derivation here would be a second rule to hold against the server's —
- * which is the drift `AreaVocabulary` exists as a port of questions to avoid.
+ * The declared forest of an areas vocabulary, read off the depth runs of
+ * `sections()` — the declaration-order contract `subtreeOf` also reads. Do not
+ * re-split `path`.
  *
  * A node whose depth names no open ancestor becomes a root rather than being
- * dropped, so a list this walk cannot nest still renders every area in it.
+ * dropped.
  */
 function areaForest(nodes: readonly AreaNode[]): readonly DeclaredSection[] {
   interface Building extends SectionDisplay {
@@ -317,14 +234,13 @@ function areaForest(nodes: readonly AreaNode[]): readonly DeclaredSection[] {
     children: Building[];
   }
   const roots: Building[] = [];
-  // The open ancestor at each depth, truncated after every node so a run that
-  // steps back out cannot attach a later node inside a closed subtree.
+  // The open ancestor at each depth, truncated after every node so a later node
+  // cannot attach inside a closed subtree.
   const open: Building[] = [];
   for (const node of nodes) {
     const section: Building = {
-      // The PATH is the key, because that is the value a nib's `area:` carries
-      // and the value `onEnter` writes; the NAME is the label, because a nested
-      // section is drawn inside the parent that supplies the rest of the path.
+      // Keyed by PATH, the value `area:` carries and `onEnter` writes; labeled by
+      // NAME, since a nested section is drawn inside its parent.
       key: node.path,
       label: node.name,
       description: node.description,
@@ -341,39 +257,25 @@ function areaForest(nodes: readonly AreaNode[]): readonly DeclaredSection[] {
 }
 
 /**
- * The lens the Areas view renders: sections are the DECLARED areas, and what
- * puts a nib in one is its `area:` assignment rather than its position in the
- * parent tree.
+ * The Areas view's lens: sections are the DECLARED areas, and a nib's resolved
+ * `area:` places it.
  *
- * RESOLVED, never trusted. A stored `area:` arrives verbatim and can name an
- * area the vocabulary no longer declares; a nib carrying one falls into the
- * leftover alongside a nib carrying none, so this lens mints no section outside
- * the declared forest. That is what makes `meaning`'s assignment safe to offer:
- * a section key is always a path the server would accept.
- *
- * The sections are DECLARED rather than discovered, which is the whole reason
- * this lens states a forest: an area with nothing in it is a fact about the
- * project, and `SECTION_RULES.declared.rendersWhenEmpty` is what keeps its row.
+ * A stored `area:` the vocabulary does not declare lands in the leftover, so
+ * every section key is a path the server accepts — which keeps `meaning`'s
+ * assignment valid. Declared sections render even when empty (`SECTION_RULES`).
  */
 function areaLens(areas: AreaVocabulary): GroupingLens {
   return {
     leftover: { key: NO_AREA_KEY, label: "No area" },
     declares: { kind: "forest", roots: areaForest(areas.sections()) },
-    // Membership does not run along parent links, so a section's nesting is
-    // rebuilt from whichever nibs landed in it rather than inherited from a
-    // header's subtree. No nib heads an area section: an area is vocabulary,
-    // not a nib.
+    // Membership does not follow parent links, so each section's nesting is
+    // rebuilt from the nibs that landed in it. No nib heads an area section.
     nestHeadersStructurally: false,
-    // An area has no order of its own — there is no area ordering scope on the
-    // server — so a section takes the walk's order, or the active column sort's.
+    // The server has no area ordering scope.
     orderWithinSection: () => null,
-    // `memberRegion: null` is REQUIRED, not incidental. `Region`'s arms are
-    // exactly the ordering groups the server can resolve and there is no area
-    // one, so naming a group here would claim membership of a group that does
-    // not exist. Declaring none lets each row fall back to its own resolved
-    // parent group, and `planDrop`'s `crosses-section` band is what then keeps a
-    // line drawn between two sections from writing a reorder in the group they
-    // happen to share.
+    // `memberRegion` must stay null: `Region` has no area axis. Each row falls
+    // back to its own parent group, and `planDrop`'s `crosses-section` refusal
+    // keeps a drop between two sections from reordering the group they share.
     meaning: (section) =>
       section === NO_AREA_KEY
         ? GOVERNS_NOTHING
@@ -392,22 +294,12 @@ function areaLens(areas: AreaVocabulary): GroupingLens {
 /**
  * The shape each view level renders in.
  *
- * EXHAUSTIVE switch, no default arm, declared return type — deliberately, since
- * this is the ONLY thing forcing every view level to say how it groups. A new
- * member of ViewLevel fails to compile here until it declares one; a `default`
- * arm here would let it default into some shape instead, which is the whole
- * hole `ViewShape` exists to close.
+ * Exhaustive switch with no default arm: a new `ViewLevel` fails to compile
+ * until it declares a shape.
  *
- * MODULE-PRIVATE, and that is the point: the Areas arm's sections come from a
- * vocabulary, so a free export taking one would let any caller build a shape
- * against a vocabulary the app is not bound to — declaring zero sections, every
- * nib in the leftover — and compute table data, a drag block or an adjacency
- * check that disagrees with what is rendered, with no type error to say so. A
- * shape is reachable only through a spine, which is bound to one vocabulary.
- *
- * `areaSections` is that lens, built once by `makeViewSpine`: its forest is
- * derived from the vocabulary, which a spine holds for its lifetime, so
- * rebuilding it here would rebuild it on every table build.
+ * Keep it module-private. A caller passing some other vocabulary's lens would
+ * compute table data, drag blocks and adjacency that disagree with what is
+ * rendered, with no type error. `areaSections` is built once per spine.
  */
 function viewShapeFor(viewLevel: ViewLevel, areaSections: GroupingLens): ViewShape {
   switch (viewLevel) {
@@ -427,17 +319,12 @@ function viewShapeFor(viewLevel: ViewLevel, areaSections: GroupingLens): ViewSha
 }
 
 /**
- * The leftover-section keys, derived by asking every view level what it renders
- * as.
+ * The leftover-section keys, derived from every view level's shape so the
+ * tests' `isSyntheticRowId` check covers each lens `viewShapeFor` ships.
  *
- * DERIVED, not listed. The property guard on these keys is only worth anything
- * if every shipped lens is enrolled in it, and a hand-kept list enrolls a new
- * lens only if someone remembers to — while `viewShapeFor`'s exhaustive switch
- * enrolls it or fails to compile. An unenrolled leftover key that misses the
- * `isSyntheticRowId` property makes its own section row classify as a REAL nib
- * on every render: selectable, a legal Delete/batch target, a drop target, and a
- * member of the root ordering group (`makeSectionNode` gives every fabricated
- * container `parentId: null`, which is the fallback `rowRegion` then applies).
+ * A leftover key failing that check makes its section row classify as a real
+ * nib: selectable, a Delete/batch and drop target, and — with the `parentId:
+ * null` of `makeSectionNode` — a member of the root ordering group.
  */
 function bucketIdsFor(shapeOf: (level: ViewLevel) => ViewShape): BucketIds {
   const keys = new Set<string>(
@@ -449,20 +336,14 @@ function bucketIdsFor(shapeOf: (level: ViewLevel) => ViewShape): BucketIds {
   return Object.freeze({ has: (id: string) => keys.has(id) });
 }
 
-/** Bind the view core to a vocabulary. Two spines can coexist — a test's and the
- *  app's — which a module-level mutable vocabulary could not express. */
+/** Bind the view core to a vocabulary. Several spines may coexist, e.g. a test's
+ *  and the app's. */
 export function makeViewSpine(areas: AreaVocabulary): ViewSpine {
-  // Built once per spine, because the forest it declares is derived from a
-  // vocabulary the spine holds for its lifetime.
   const areaSections = areaLens(areas);
-  // The binding itself. Every member below reaches a shape through this one
-  // closure, which is what lets `ViewSpine.viewShapeFor` stay one-argument.
   const shapeOf = (level: ViewLevel): ViewShape => viewShapeFor(level, areaSections);
 
-  // Frozen for the reason `createAreaVocabulary` is: `EMPTY_SPINE` and
-  // `LOADING_SPINE` are module singletons every test file in a vitest worker
-  // shares, so a reassigned method or vocabulary there would follow the worker
-  // into unrelated suites.
+  // Frozen: the exported spines are module singletons shared by every suite in
+  // a vitest worker.
   return Object.freeze({
     areas,
     viewShapeFor: shapeOf,
@@ -478,11 +359,9 @@ export function makeViewSpine(areas: AreaVocabulary): ViewSpine {
 }
 
 /**
- * The spine before the config query resolves.
- *
- * A stable singleton, so the `$derived`s reading it do not re-run while the app
- * waits — and distinct from `EMPTY_SPINE`, because during this window
- * `validity()` must answer "unknown" rather than "undeclared".
+ * The spine before the config query resolves. A stable singleton, so `$derived`s
+ * reading it do not re-run while waiting; `validity()` answers "unknown", not
+ * "undeclared".
  */
 export const LOADING_SPINE: ViewSpine = makeViewSpine(LOADING_AREAS);
 
@@ -491,10 +370,7 @@ export const LOADING_SPINE: ViewSpine = makeViewSpine(LOADING_AREAS);
 export const EMPTY_SPINE: ViewSpine = makeViewSpine(EMPTY_AREAS);
 
 /**
- * The spine when the config query failed.
- *
- * Distinct from `LOADING_SPINE` because that one promises an answer shortly, and
- * from `EMPTY_SPINE` because that one asserts the project declares no areas —
- * neither is true here. `validity()` answers "unknown" as it does while loading.
+ * The spine when the config query failed: no answer is coming, and the project
+ * is not known to declare no areas. `validity()` answers "unknown".
  */
 export const UNAVAILABLE_SPINE: ViewSpine = makeViewSpine(UNAVAILABLE_AREAS);

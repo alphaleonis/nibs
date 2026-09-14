@@ -1,11 +1,9 @@
 /**
  * Type hierarchy constraints for nib parent-child relationships.
  *
- * The tables are GENERATED from the Go rules (internal/nibtypes ValidChildTypes
- * and the rank derivation in internal/webvocab) into ./generated/vocabulary.ts,
- * so the web UI, TUI, and backend follow the one shared rule set — no curated
- * divergence, and a Go-side hierarchy change reaches here through
- * `task codegen` instead of a hand edit.
+ * The tables are generated from the Go rules (internal/nibtypes, ranked by
+ * internal/webvocab) into ./generated/vocabulary.ts. Change them in Go and run
+ * `task codegen`.
  */
 
 export { TYPE_RANK, VALID_CHILD_TYPES } from "./generated/vocabulary";

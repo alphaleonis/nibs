@@ -1,16 +1,9 @@
 import type { NibFilter } from "../types";
 import { TYPES, STATUSES, PRIORITIES, ESTIMATES, STATUS_GROUPS } from "../constants";
 
-// The box-owned slice of a NibFilter: the five metadata facets, each with its
-// positive include-list and negative exclude-list, the free-text `search`, the
-// relationship-id scalars + existence/state booleans, and the `area` path. A full
-// NibFilter is assignable to this (it is a superset), so the Toolbar can hand its
-// canonical filter straight to `serializeQuery`.
-//
-// A key here is a key the box can WRITE, so adding one obliges the Toolbar's
-// `BOX_FIELD_KEYS` to carry it: `emitFromText` copies that list and nothing else
-// onto the filter, so a key it omits parses out of the text and is then dropped
-// on the way to the filter.
+// The slice of NibFilter the query box reads and writes. A full NibFilter is
+// assignable to it. Add a new key to Toolbar's `BOX_FIELD_KEYS` too; that is the
+// list `emitFromText` copies onto the filter.
 export type QueryFilter = Pick<
   NibFilter,
   | "type"
@@ -24,7 +17,6 @@ export type QueryFilter = Pick<
   | "tags"
   | "excludeTags"
   | "search"
-  // Relationship-id scalars (phase 5).
   | "parentId"
   | "ancestorId"
   | "descendantId"
@@ -33,15 +25,8 @@ export type QueryFilter = Pick<
   | "blockedById"
   | "mentionsId"
   | "mentionedById"
-  // The assignment axis: `milestone:<id>` (that milestone's queue) and
-  // `is:backlog` (the work no milestone plan covers).
   | "milestone"
-  // The ownership axis: `area:<path>`, the third token kind (query/area.ts).
-  // Scalar like the rel ids, but checked against a vocabulary that arrives at
-  // runtime rather than accepted on non-emptiness.
   | "area"
-  // Existence/state booleans (phase 5). Tri-state: a `has:`/`no:` token pair
-  // writes true/false on one field; an `is:` token writes only its one value.
   | "hasParent"
   | "hasBlocking"
   | "hasBlockedBy"
@@ -62,22 +47,17 @@ export interface FieldSpec {
   /** Allowed values in canonical (declaration) order; `null` for tags, which
    *  are pattern-checked instead of validated against a fixed set. */
   values: readonly string[] | null;
-  /** Group names accepted as shorthand for a set of `values` (`status:open`).
-   *  A group is legal wherever a concrete value is, expands to its members on
-   *  parse, and is re-collapsed on serialize wherever all of its members are
-   *  present — beside other values, not only as the whole list. Absent for
-   *  fields with no groups. */
+  /** Group names standing for sets of `values` (`status:open`): legal wherever a
+   *  value is, expanded on parse, collapsed on serialize. */
   groups?: ReadonlyMap<string, readonly string[]>;
 }
 
-// Tag-value pattern: mirrors TAG_REGEX in markdown.ts. Defined locally so the
-// query language stays pure and dependency-free (importing markdown.ts would
-// pull marked + DOMPurify into this module's bundle). Values are lowercased
-// before the check, so this validates structure only.
+// Same pattern as TAG_REGEX in markdown.ts, copied so this module does not pull
+// in marked and DOMPurify.
 const TAG_VALUE_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 
-// Canonical field order (also the serialization order): mirrors the dropdown row
-// in the toolbar — type, priority, status, estimate, tags.
+// Canonical field order, also the serialization order; matches the toolbar's
+// facet dropdowns.
 export const FIELD_SPECS: readonly FieldSpec[] = [
   { name: "type", filterKey: "type", excludeKey: "excludeType", values: TYPES },
   { name: "priority", filterKey: "priority", excludeKey: "excludePriority", values: PRIORITIES },
@@ -88,50 +68,33 @@ export const FIELD_SPECS: readonly FieldSpec[] = [
 
 const SPEC_BY_NAME = new Map(FIELD_SPECS.map((spec) => [spec.name, spec]));
 
-/** Look up a field spec by (case-insensitive) field name, or undefined if the
- *  name is not one of the five recognized metadata fields. */
+/** The metadata field spec for a case-insensitive name. */
 export function fieldSpec(name: string): FieldSpec | undefined {
   return SPEC_BY_NAME.get(name.toLowerCase());
 }
 
-/** True when `value` (already lowercased) is a legal value for this field:
- *  membership for the four enums, tag-pattern for tags, plus the field's group
- *  names. Both `parseQuery` (routing) and `tokenizeSpans` (coloring) ask this
- *  one question, so a group can never parse as legal while rendering as an
- *  error. */
+/** Whether lowercased `value` is legal for the field: an enum member, a tag
+ *  matching the pattern, or a group name. `parseQuery` and `tokenizeSpans` both
+ *  ask it. */
 export function isValidValue(spec: FieldSpec, value: string): boolean {
   if (spec.values === null) return TAG_VALUE_PATTERN.test(value);
   return spec.values.includes(value) || spec.groups?.has(value) === true;
 }
 
-/** The concrete values a legal token value stands for: a group name yields its
- *  members, anything else stands for itself. Expanding at parse time keeps the
- *  group vocabulary out of NibFilter — only concrete values reach the backend. */
+/** The concrete values a legal value stands for: a group's members, or itself.
+ *  Group names never reach NibFilter. */
 export function expandValue(spec: FieldSpec, value: string): readonly string[] {
   return spec.groups?.get(value) ?? [value];
 }
 
 /**
- * Render `values` as the canonical token list for this field: every group whose
- * members are ALL present collapses to the group name, and whatever is left over
- * stays spelled out beside it.
+ * Render `values` as the field's canonical token list, the inverse of
+ * `expandValue`: each group whose members are all present becomes the group name,
+ * beside the leftover values (`status:open,deferred`).
  *
- * This is the serialize-side inverse of `expandValue`, and it collapses a group
- * wherever its members appear rather than only when they are the entire list —
- * so `status:open,deferred` survives a round-trip through the box instead of
- * coming back as its four spelled-out members.
- *
- * Tokens are ordered by the LOWEST declaration index each one covers, which
- * generalizes `orderValues`' enum ordering to a list that mixes group names with
- * bare values: `open` covers index 0, so it precedes `completed` at index 4. Two
- * tokens cannot tie, because a collapsed group's members are removed from what
- * remains.
- *
- * Collapse is greedy in group-declaration order. The live status groups are
- * disjoint (`OPEN_STATUSES` is derived as the complement of `CLOSED_STATUSES`),
- * so there is no choice to make today; and greedy stays round-trip safe even if
- * that stops holding, because a group name expands to exactly the members it
- * consumed, leaving `parse(serialize(S)) === S` whatever order groups are taken in.
+ * Tokens sort by the lowest declaration index they cover. Groups collapse greedily
+ * in declaration order, which round-trips even for overlapping groups because a
+ * group name expands to exactly the members it consumed.
  */
 export function collapseToTokens(spec: FieldSpec, values: readonly string[]): string[] {
   const remaining = new Set(values);
@@ -139,9 +102,7 @@ export function collapseToTokens(spec: FieldSpec, values: readonly string[]): st
 
   if (spec.groups) {
     for (const [name, members] of spec.groups) {
-      // `every` over the raw members tolerates a repeated declaration without a
-      // dedup step; an empty group is skipped so it cannot match vacuously and
-      // emit a name standing for nothing.
+      // Skip an empty group, which would match vacuously.
       if (members.length === 0 || !members.every((m) => remaining.has(m))) continue;
       collapsed.push({ token: name, rank: rankOf(spec, members) });
       for (const m of members) remaining.delete(m);
@@ -149,15 +110,13 @@ export function collapseToTokens(spec: FieldSpec, values: readonly string[]): st
   }
 
   const rest = orderValues(spec, [...remaining]).map((v) => ({ token: v, rank: rankOf(spec, [v]) }));
-  // Array.prototype.sort is stable, so equal ranks keep insertion order — which
-  // is what preserves `orderValues`' alphabetical ordering for tags, where every
-  // rank is the unknown-value sentinel.
+  // The sort is stable: tags all share the sentinel rank and keep `orderValues`'
+  // alphabetical order.
   return [...collapsed, ...rest].sort((a, b) => a.rank - b.rank).map((t) => t.token);
 }
 
-/** The lowest index any of `members` occupies in the field's declared values —
- *  the sort key for a token. Fields with free-form values (tags) and values not
- *  in the enum share the sentinel, so they sort last and keep their relative order. */
+/** The lowest declared index among `members`; tags and unknown values get the
+ *  sentinel and sort last. */
 function rankOf(spec: FieldSpec, members: readonly string[]): number {
   if (spec.values === null) return Number.MAX_SAFE_INTEGER;
   const order = spec.values;
@@ -167,18 +126,16 @@ function rankOf(spec: FieldSpec, members: readonly string[]): number {
   }, Number.MAX_SAFE_INTEGER);
 }
 
-/** The values to offer as completions for this field: group names first — they
- *  are the shorthand worth surfacing — then the concrete values in canonical
- *  order. Empty for tags, whose pool is the caller's available-tag list. */
+/** Completion values: group names, then values in canonical order. Empty for
+ *  tags. */
 export function completionValues(spec: FieldSpec): readonly string[] {
   if (spec.values === null) return [];
   if (!spec.groups) return spec.values;
   return [...spec.groups.keys(), ...spec.values];
 }
 
-/** Order a field's values canonically: enum-declaration order for the four
- *  enums, alphabetical for tags. Deduplicates. Unknown values (should not occur
- *  for a validated filter) sort last, preserving their relative order. */
+/** Deduplicated values in canonical order: declaration order for enums,
+ *  alphabetical for tags. Unknown values sort last. */
 export function orderValues(spec: FieldSpec, values: readonly string[]): string[] {
   const unique = [...new Set(values)];
   if (spec.values === null) {

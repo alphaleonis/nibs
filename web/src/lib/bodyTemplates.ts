@@ -1,7 +1,4 @@
-/**
- * Body templates for nib types, mirroring the Go templates from
- * internal/bodytemplate/bodytemplate.go.
- */
+/** Body templates for nib types. Keep identical to internal/bodytemplate/bodytemplate.go. */
 
 const TASK_TEMPLATE = `## Description
 
@@ -75,10 +72,7 @@ const templates: Record<string, string> = {
   research: RESEARCH_TEMPLATE,
 };
 
-/**
- * Returns the markdown body template for a nib type.
- * Returns empty string for types without a defined template (e.g. "feature").
- */
+/** Returns the markdown body template for a nib type, or "" (e.g. "feature"). */
 export function getBodyTemplate(type: string): string {
   return templates[type] ?? "";
 }

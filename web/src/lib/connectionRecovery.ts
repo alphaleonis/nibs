@@ -1,17 +1,14 @@
 /**
- * Decides WHEN to re-establish the live GraphQL subscription and re-read what
- * went stale while it was down. Pure — no Svelte, no DOM, no timers of its own —
- * so the policy is testable without a browser; `useConnectionRecovery.svelte.ts`
- * binds the real listeners and ports.
+ * Decides when to re-establish the live GraphQL subscription and re-read what
+ * went stale while it was down. No Svelte, DOM or timers of its own;
+ * `useConnectionRecovery.svelte.ts` binds the real listeners and ports.
  *
- * Why this exists (nibs-1seo): the browser closes the WebSocket when a page
- * enters the back/forward cache, and a bfcache-restored page does NOT re-run its
- * scripts — it resumes with every bit of JS state intact, including a client
- * that may still believe its socket is live. Nothing then re-establishes it and
- * nothing refetches, so the UI serves pre-freeze cached data indefinitely.
+ * A page restored from the back/forward cache does not re-run its scripts: it
+ * resumes with a client that may believe its closed socket is live, and nothing
+ * else reconnects or refetches.
  */
 
-/** Opaque timer token, stored but never inspected (matches SourcePorts). */
+/** Opaque timer token, stored but never inspected. */
 export type DeferredHandle = unknown;
 
 /** What brought the page back to the user. */
@@ -24,14 +21,13 @@ export type ResumeReason =
   | "online";
 
 /**
- * `connecting` covers start-up AND any drop before the first successful
- * connect — a cold load that has not finished yet is not a lost connection, and
- * reporting one would flash the disconnected chip on every page load.
+ * `connecting` also covers a drop before the first successful connect, so a
+ * cold load does not flash the disconnected chip.
  */
 export type ConnectionStatus = "connecting" | "connected" | "disconnected";
 
 export interface ConnectionRecoveryPorts {
-  /** Force the socket to drop and re-establish (`wsClient.terminate()`). */
+  /** Force the socket to drop and re-establish. */
   reconnect(): void;
   scheduleDeferred(fn: () => void, ms: number): DeferredHandle;
   cancelDeferred(handle: DeferredHandle): void;
@@ -39,28 +35,19 @@ export interface ConnectionRecoveryPorts {
 
 export interface ConnectionRecovery {
   readonly status: ConnectionStatus;
-  /** The socket reported it is up. */
   onConnected(): void;
-  /** The socket reported it went away. */
   onClosed(): void;
-  /** The page came back to the user. */
   onResume(reason: ResumeReason): void;
   /**
-   * Register a listener fired when the socket comes back after a gap, i.e. when
-   * cached query results became suspect. Returns an unsubscribe.
-   *
-   * A registry rather than a single port because more than one region has to
-   * re-read: the detail panel and the nib list hold separate queries, and both
-   * miss events while the socket is down.
+   * Register a listener fired when the socket comes back after a gap, when cached
+   * query results may be stale. Returns an unsubscribe.
    */
   onRecovered(listener: () => void): () => void;
 }
 
 /**
  * How long one resume signal suppresses the next. Waking a laptop fires
- * `pageshow`, `visibilitychange` and `online` within milliseconds of each other,
- * and each tearing the socket down would thrash a connection that is already
- * being re-established.
+ * `pageshow`, `visibilitychange` and `online` within milliseconds of each other.
  */
 export const RESUME_COALESCE_MS = 1000;
 
@@ -81,9 +68,8 @@ export function createConnectionRecovery(ports: ConnectionRecoveryPorts): Connec
     },
 
     onConnected() {
-      // Only a RE-connect implies a gap worth re-reading; the first connect
-      // races the queries already in flight, and refetching there doubles every
-      // cold load.
+      // Only a reconnect implies a gap; refetching on the first connect would
+      // double every cold load.
       const recovered = everConnected && status !== "connected";
       status = "connected";
       everConnected = true;
@@ -95,11 +81,9 @@ export function createConnectionRecovery(ports: ConnectionRecoveryPorts): Connec
     },
 
     onResume(reason: ResumeReason) {
-      // `visible` is a trustworthy signal that fires constantly, so it only acts
-      // on a socket already known to be down. The other two arrive precisely
-      // when the recorded status cannot be trusted — a frozen page's belief
-      // predates the freeze, and regaining the network says the previous state
-      // was wrong — so they reconnect regardless of what `status` claims.
+      // `visible` fires constantly, so it acts only on a socket known to be down.
+      // The other reasons reconnect regardless: the recorded status predates the
+      // freeze or the network loss.
       if (reason === "visible" && status === "connected") return;
 
       if (coalescing !== null) return;

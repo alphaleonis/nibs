@@ -8,32 +8,23 @@
   import type { ColumnResize } from "../composables/useColumnResize.svelte";
   import { CopyPlus, CopyMinus, ArrowUp, ArrowDown } from "@lucide/svelte";
 
-  // The whole table header. TreeTable owns the data/state (resolved column list,
-  // widths, sort, the resize/drag composables) and passes them down; this
-  // component hosts the header <tr> and the three-way click-vs-drag arbitration
-  // (edge-handle → resize; header-body pointerdown + threshold → below-threshold
-  // pointerup = sort-click, past-threshold = reorder). Header gestures stay wired
-  // on the header elements — the scroll-container delegation that handles rows
-  // never sees them (no tr[data-nib-id] ancestor), and the sort control stops
-  // propagation so a header click can't reach the delegated row-click handler.
+  // The table header row. TreeTable owns the columns, widths, sort and gesture
+  // composables; this component arbitrates header gestures: the edge handle
+  // resizes, a below-threshold click sorts, a past-threshold drag reorders. Sort
+  // clicks stop propagation so the table's delegated row-click handler never sees
+  // them.
   interface Props {
-    // Visible columns in the per-view order (drives the <th> sequence, matching
-    // TreeTableRow's cell loop so cells stay aligned under their headers).
+    // Visible columns, in the order TreeTableRow renders cells.
     columns: ColumnKey[];
-    // Resolved width (px) per column, keyed by ColumnKey.
     columnWidths: Record<ColumnKey, number>;
-    // Active table sort — the single source for both the header arrow and
-    // aria-sort — or null when no sort is applied/visible.
+    // Null when no sort is applied.
     activeSort: TableSort | null;
-    // Visibility predicate; the resize double-click auto-fit needs it to index
-    // the resized column past any hidden ones.
+    // Lets the resize double-click auto-fit index past hidden columns.
     showColumn: (key: ColumnKey) => boolean;
-    // Gesture composables, owned by TreeTable and consumed here as props.
     columnResize: ColumnResize;
     columnDrag: ColumnDrag;
-    // Cycle the sort for a field (asc → desc → off).
+    // Cycles asc → desc → off.
     onSort: (field: SortField) => void;
-    // Actions-column controls.
     onExpandAll: () => void;
     onCollapseAll: () => void;
   }
@@ -50,42 +41,24 @@
     onCollapseAll,
   }: Props = $props();
 
-  // Per-column header renderers. Header content for each <th> comes from the
-  // adapter (read from context, which works in a child); the <th> shell (width,
-  // resize handle, sort UI) stays here.
+  // Header content for a non-sortable column.
   const adapters = useColumnAdapters();
 
-  // aria-sort for a sortable <th>: the active direction when this field is the
-  // table sort, else "none". Every sortable header reports it in every view;
-  // non-sortable headers omit the attribute (handled at the call site).
   function ariaSortFor(field: SortField): "ascending" | "descending" | "none" {
     if (activeSort?.field !== field) return "none";
     return activeSort.direction === "asc" ? "ascending" : "descending";
   }
 
-  // The whole sortable <th> is the sort control, so a below-threshold click
-  // anywhere in the header — label, padding, or arrow — cycles that column's
-  // sort. Only the resize edge-handle is exempt.
   function handleHeaderSortClick(field: SortField, e: MouseEvent) {
-    // The resize edge-handle is a child of the <th>; a click on it resizes, never
-    // sorts.
     if ((e.target as HTMLElement).closest(".resize-handle")) return;
-    // Keep the header click from reaching the table's delegated row-click handler.
     e.stopPropagation();
-    // A past-threshold reorder-drag swallows its trailing click so it can't sort.
+    // A reorder drag swallows its trailing click.
     if (columnDrag.consumeClickSuppression()) return;
     onSort(field);
   }
 
-  // Keyboard activation of the focusable sortable columnheader: Enter/Space cycle
-  // the sort. preventDefault stops Space from paging the scroll container, and
-  // stopPropagation keeps the key event from bubbling to the grid's keyboard-nav
-  // handler on the scroll container — which would otherwise act on a background
-  // focused row for a key-repeat or a modifier chord. The header therefore
-  // consumes its own Enter/Space unconditionally, but only a clean, non-repeat,
-  // unmodified press actually sorts. A keydown never trails a pointer drag, so
-  // this path does not consult columnDrag.consumeClickSuppression (unlike the
-  // mouse handleHeaderSortClick).
+  // Enter/Space are consumed unconditionally so they never reach the grid's
+  // keyboard-nav handler; only an unmodified, non-repeat press sorts.
   function handleHeaderSortKeydown(field: SortField, e: KeyboardEvent) {
     if (e.key !== "Enter" && e.key !== " ") return;
     e.preventDefault();
@@ -95,9 +68,7 @@
   }
 </script>
 
-<!-- Sortable-column header content: the label + a direction arrow for the active
-     field, in EVERY view. The <th> itself is the sort control (see its onclick /
-     onkeydown); this snippet only renders, carrying no interaction of its own. -->
+<!-- Label + active-sort arrow. The <th> carries the interaction. -->
 {#snippet sortableHeader(field: SortField, label: string)}
   <span
     data-testid="table-sort-{field}"
@@ -127,13 +98,9 @@
           <CopyMinus size={12} />
         </button>
       </div>
-      <!-- Cursor-following clone of the dragged header — parity with row drag's
-           native drag-image. Rendered inside the (non-data) actions <th> so it's
-           valid table markup; `position: fixed` (no transformed ancestor) floats
-           it at the viewport-relative pointer, and `pointer-events: none` keeps it
-           out of the drag's elementFromPoint hit-testing (so drop-target detection
-           still resolves to the header underneath). The original header stays
-           dimmed in place via `.col-dragging` — the ghost is IN ADDITION. -->
+      <!-- Cursor-following clone of the dragged header. Inside the actions <th>
+           for valid table markup; `pointer-events: none` keeps it out of the
+           drag's elementFromPoint drop-target detection. -->
       {#if columnDrag.ghost}
         {@const ghost = columnDrag.ghost}
         <div
@@ -142,9 +109,8 @@
           class="col-drag-ghost text-left text-label text-muted-foreground px-3 py-2 bg-background border border-border rounded-md shadow-lg"
           style="position: fixed; pointer-events: none; left: {ghost.x + GHOST_OFFSET_X}px; top: {ghost.y + GHOST_OFFSET_Y}px; width: {ghost.width}px; z-index: var(--z-drag-ghost);"
         >
-          <!-- Label + active-sort arrow inlined (NOT the sortableHeader snippet) so
-               the ghost carries no `table-sort-*` testids — those would collide with
-               the real (dimmed) header's identical testids while a drag is in flight. -->
+          <!-- Not the sortableHeader snippet: its `table-sort-*` testids would
+               duplicate the real header's. -->
           <span class="sort-label inline-flex items-center gap-1 text-label text-muted-foreground">
             {ghost.label}
             {#if ghost.sortKey && activeSort?.field === ghost.sortKey}
@@ -161,17 +127,9 @@
     {#each columns as key (key)}
       {@const def = COLUMNS[key]}
       {@const sortField = def.sortable ? def.sortKey : null}
-      <!--
-        Keep the sortable <th> a native columnheader (implicit role) — do NOT add
-        role="button". aria-sort is only honored on columnheader/rowheader roles,
-        so a button role would silence sort-state announcement; keyboard
-        operability comes from tabindex=0 + the explicit onkeydown instead. The
-        <th> itself carries the click/keydown sort handlers, hence the
-        svelte-ignore for a static element with interaction handlers. The
-        columnheader's accessible name stays its visible label (no aria-label
-        override) so cell/column association announces the plain column name;
-        aria-sort conveys the sortable state.
-      -->
+      <!-- Keep the native columnheader role: role="button" would silence
+           aria-sort. Keyboard access comes from tabindex + onkeydown. No
+           aria-label, so the visible label names the column. -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <th
         data-col-key={key}
@@ -183,8 +141,6 @@
         tabindex={sortField ? 0 : undefined}
         aria-sort={sortField ? ariaSortFor(sortField) : undefined}
         onpointerdown={(e) => {
-          // The resize edge-handle owns its own pointerdown; never start a
-          // reorder-drag from it.
           if ((e.target as HTMLElement).closest(".resize-handle")) return;
           columnDrag.onHeaderPointerDown(key, e);
         }}
@@ -204,22 +160,14 @@
 </thead>
 
 <style>
-  /* Column reorder affordances. The whole header is grabbable (a movement
-     threshold in useColumnDrag distinguishes a reorder-drag from the nibs-6grg
-     sort-click); the resize edge-handle keeps its own col-resize cursor via its
-     higher-specificity rule + stacking. */
   .col-header {
     cursor: grab;
-    /* The header is a click/drag sort control, not selectable text — a header
-       pointer-drag must not start a text selection of the label. The native
-       <button> this replaced provided user-select:none implicitly. */
+    /* A header drag must not select the label text. */
     user-select: none;
     -webkit-user-select: none;
   }
 
-  /* The whole sortable header is the click target; shift its label toward the
-     foreground on hover so the full-width sort affordance is discoverable.
-     Transition lives on the base rule so the color eases both in and out. */
+  /* Highlight the label on hover so the full-width sort target is discoverable. */
   .sort-label {
     transition: color 0.1s ease;
   }
@@ -227,8 +175,7 @@
     color: var(--foreground);
   }
 
-  /* The header being dragged recedes; its drop target shows an insertion edge on
-     the side the cursor is over — mirroring the row drop-before/after indicators. */
+  /* The dragged header recedes; the drop target shows an insertion edge. */
   .col-dragging {
     opacity: 0.4;
   }
@@ -241,10 +188,7 @@
     box-shadow: inset -2px 0 0 0 var(--ring);
   }
 
-  /* The cursor-following header clone: reduced opacity so the underlying table
-     reads through it, single-line so it stays the shape of a header cell even for
-     a long label. Position/pointer-events/left/top/width/z-index are inline (they
-     drive per-frame positioning and the acceptance asserts them). */
+  /* Positioning is inline, updated per pointer move. */
   .col-drag-ghost {
     opacity: 0.6;
     white-space: nowrap;

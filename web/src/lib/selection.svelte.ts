@@ -1,35 +1,26 @@
 import { isSyntheticRowId } from "./tree";
 
-/** Whether the detail panel follows the selection when a bulk gesture collapses
- *  it to exactly one row. Required at every bulk call site: a caller that omits
- *  it is a compile error rather than a silent fall back to the historical
- *  behavior, which is wrong under the "open on double-click" preference.
+/** Whether the detail panel follows a bulk gesture's selection.
  *
- *   - "follow": the panel opens on the collapsed id and closes when the set is
- *     empty or multi — the historical behavior, and what `openDetailOn: "single"`
- *     wants.
- *   - "detach": `selectedNibId` is left untouched. Under `openDetailOn: "double"`
- *     it means "what the panel is showing" and has exactly one writer path (the
- *     explicit open gestures), so a bulk gesture must neither open the panel,
- *     close it, nor retarget it at the swept rows. */
+ *   - "follow": the panel shows the single selected id, and closes when the set
+ *     is empty or multi. For `openDetailOn: "single"`.
+ *   - "detach": `selectedNibId` is untouched. For `openDetailOn: "double"`, where
+ *     only explicit open gestures open, close or retarget the panel. */
 export type PanelPolicy = "follow" | "detach";
 
 export class SelectionState {
   selectedNibId: string | null = $state(null);
   focusedNibId: string | null = $state(null);
+  /** Never holds a synthetic row id: every method that adds ids rejects them. */
   selectedIds: Set<string> = $state(new Set());
   anchorId: string | null = $state(null);
   pendingEnsureVisibleId: string | null = $state(null);
   panelOpen: boolean = $derived(this.selectedNibId !== null);
   hasMultiSelect: boolean = $derived(this.selectedIds.size > 1);
 
-  /** Select a single nib and open it in the detail panel. A synthetic
-   *  grouping-bucket id has no detail and is unresolvable for any bulk action,
-   *  so it is never admitted — one of the four `selectedIds` writers that add
-   *  ids, alongside `selectOnly`, `toggleSelect` and `rangeSelect`. Reachable
-   *  with a bucket id via `view.open` on an arrow-focused bucket (keyboard `e`),
-   *  a right-click, or a stale `?nib=<bucket>` URL; the mouse row-click path is
-   *  already intercepted by TreeTable's `openOrToggleBucket`. */
+  /** Select a single nib and open it in the detail panel. Ignores synthetic row
+   *  ids, which arrive via `e` on a focused bucket, a right-click, or a stale
+   *  `?nib=` URL. */
   select(nibId: string): void {
     if (isSyntheticRowId(nibId)) return;
     this.selectedNibId = nibId;
@@ -38,19 +29,9 @@ export class SelectionState {
     this.anchorId = nibId;
   }
 
-  /** Select a single nib WITHOUT opening it in the detail panel — the
-   *  select-without-open contract behind the "open on double-click" preference,
-   *  and the right-click-an-unselected-row path under it.
-   *
-   *  `selectedNibId` is deliberately left untouched: `panelOpen` is derived from
-   *  it, so not writing it is exactly what keeps the panel from opening — and
-   *  keeps an already-open nib on screen instead of retargeting the panel to the
-   *  clicked row. Selection and the panel are allowed to point at different rows
-   *  as a result; TreeTableRow renders those two states distinctly.
-   *
-   *  A synthetic grouping-bucket id is never admitted, same as `select` /
-   *  `toggleSelect` / `rangeSelect` — one of the four `selectedIds` add-writers
-   *  that enforce that invariant. */
+  /** Select a single nib WITHOUT opening it, for the "open on double-click"
+   *  preference. Leaves `selectedNibId` untouched, so an open panel keeps its nib
+   *  while the selection points elsewhere. Ignores synthetic row ids. */
   selectOnly(nibId: string): void {
     if (isSyntheticRowId(nibId)) return;
     this.focusedNibId = nibId;
@@ -72,15 +53,8 @@ export class SelectionState {
     this.focusedNibId = null;
   }
 
-  /** Ctrl/Cmd+click, or Space on a focused row: toggle nib in/out of
-   *  selectedIds, update anchor. A synthetic grouping-bucket id is unresolvable
-   *  for any bulk action, so it is never admitted — one of the four `selectedIds`
-   *  add-writers (with `select`, `selectOnly` and `rangeSelect`) that enforce the
-   *  invariant.
-   *  This guard also covers the keyboard path, where a bucket row can be focused
-   *  (arrow) and Space-toggled, which the range slice does not reach.
-   *  `panel` — whether the detail panel follows a collapse to exactly one row;
-   *  see PanelPolicy. */
+  /** Ctrl/Cmd+click, or Space on a focused row: toggle the nib in `selectedIds`
+   *  and move the anchor. Ignores synthetic row ids. */
   toggleSelect(nibId: string, panel: PanelPolicy): void {
     if (isSyntheticRowId(nibId)) return;
     const next = new Set(this.selectedIds);
@@ -93,39 +67,20 @@ export class SelectionState {
     this.anchorId = nibId;
     this.focusedNibId = nibId;
     if (panel === "detach") return;
-    // If we end up with exactly one selected, also set it as the detail-panel selection
     if (next.size === 1) {
       this.selectedNibId = [...next][0];
     } else {
-      // Multi-select: don't show detail panel for any single nib
       this.selectedNibId = null;
     }
   }
 
   /**
-   * Shift+click / shift+arrow: select range from anchor to nibId using the
-   * visible row order.
+   * Shift+click / shift+arrow: select from the anchor to `nibId` in visible row
+   * order.
    *
-   * Synthetic "No X" grouping-bucket rows are interleaved with nib rows in
-   * `visibleIds`, so a range that spans a bucket would otherwise sweep that
-   * bucket's unresolvable synthetic id into `selectedIds` (and on to any bulk
-   * action). We filter synthetic ids OUT of the sliced range rather than
-   * truncating at the bucket: a range's visual meaning is "the nibs I swept
-   * across", and a bucket row is not one of them — so the nibs on both sides stay
-   * selected. Heading a section is not what disqualifies a row here, naming no
-   * nib is; a real nib heading one sweeps into the range like any other. If an
-   * endpoint (anchor or target) is itself a bucket it simply
-   * contributes no id while the surrounding nib range still resolves; a range
-   * containing only bucket rows collapses to an empty selection. Both range
-   * callers — the mouse path (TreeTable) and the keyboard path (useKeyboardNav
-   * shift+arrow) — funnel through here. This is one of the four `selectedIds`
-   * add-writers that enforce "no synthetic id in `selectedIds`"; see also
-   * `select`, `selectOnly` and `toggleSelect`. (This does NOT cover consumers that read
-   * `focusedNibId` or a right-click target directly — e.g. the Delete dispatch;
-   * that is a separate concern outside SelectionState.)
-   *
-   * `panel` — whether the detail panel follows a collapse to exactly one row;
-   * see PanelPolicy.
+   * Synthetic rows inside the range are dropped rather than truncating it, so the
+   * nibs on both sides stay selected; a synthetic endpoint contributes no id. A
+   * real nib heading a section is included like any other row.
    */
   rangeSelect(nibId: string, visibleIds: string[], panel: PanelPolicy): void {
     const anchor = this.anchorId ?? nibId;
@@ -148,22 +103,17 @@ export class SelectionState {
     }
   }
 
-  /** Returns true if nibId is in selectedIds */
   isSelected(nibId: string): boolean {
     return this.selectedIds.has(nibId);
   }
 
   /**
-   * Prunes the multi-select set (and anchor/focus) down to only the ids present
-   * in `matchingIds`, dropping any that are no longer selectable — filtered out
-   * of the dataset, or left without a row by a view switch (a grouping lens hides
-   * containers ranked above its tier). The detail-panel selection (`selectedNibId`) is
-   * intentionally left untouched — pruning targets the bulk-action set only so a
-   * multi-drag / bulk mutation never applies to rows the user can no longer see.
+   * Prunes `selectedIds`, the anchor and focus to ids in `matchingIds`, so a bulk
+   * action never applies to rows a filter or view switch took away. Leaves
+   * `selectedNibId` alone.
    *
-   * Safe to call from a reactive `$effect`: only reassigns `selectedIds` when
-   * something is actually dropped, so an unchanged selection produces no writes
-   * and cannot feed a reactive update loop.
+   * Writes `selectedIds` only when something is dropped, so it is safe in an
+   * `$effect`.
    */
   retainOnly(matchingIds: ReadonlySet<string>): void {
     let changed = false;
@@ -192,19 +142,11 @@ export class SelectionState {
     this.anchorId = null;
   }
 
-  /** Clears everything: selectedIds, selectedNibId, focusedNibId, anchor,
-   *  pendingEnsureVisibleId.
+  /** Clears everything, including `selectedNibId` and `pendingEnsureVisibleId`.
    *
-   *  NOT for post-mutation cleanup, despite reading like the obvious call for
-   *  it: `selectedNibId` and the action target can be different rows (the "open
-   *  on double-click" preference, and plain arrow-key nav in either mode), so
-   *  nulling `selectedNibId` here tears down a panel showing a nib the mutation
-   *  never touched — and discards its unsaved edits, since nothing on that path
-   *  runs the dirty guard. Use `clearAfterMutation` in `actionTarget.ts`, which
-   *  retires only what the mutation consumed.
-   *
-   *  The two are not interchangeable in the other direction either: this clears
-   *  `pendingEnsureVisibleId` and `clearAfterMutation` does not. */
+   *  Not for post-mutation cleanup: it would close a panel showing a nib the
+   *  mutation never touched, discarding unsaved edits. Use `clearAfterMutation`
+   *  (actionTarget.ts). */
   clearAll(): void {
     this.selectedIds = new Set();
     this.selectedNibId = null;

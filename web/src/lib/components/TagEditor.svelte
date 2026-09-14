@@ -33,18 +33,15 @@
     disabled = false,
   }: Props = $props();
 
-  // ADO-style tag input: chips are always visible; the free-text input is
-  // revealed on demand (an "Add tag" button when empty, a "+" button after
-  // chips otherwise) and offers a filtered suggestions dropdown.
-  let editing = $state(false); // is the input revealed?
+  // Chips are always visible; the input is revealed on demand.
+  let editing = $state(false);
   let newTag: string = $state("");
   let tagError: string | null = $state(null);
   let activeIndex = $state(-1); // highlighted suggestion (-1 = none)
   let inputEl: HTMLInputElement | undefined = $state();
   let blurTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Suggestions minus already-applied tags, filtered by the typed query
-  // (case-insensitive substring). Empty when no available tag matches.
+  // Unapplied suggestions containing the typed query, case-insensitively.
   const filtered = $derived.by(() => {
     const applied = new Set(tags);
     const q = newTag.trim().toLowerCase();
@@ -85,7 +82,7 @@
     tagError = null;
     try {
       await onadd(tag);
-      // Keep the input open so several tags can be added in a row (ADO-style).
+      // Keep the input open so several tags can be added in a row.
       newTag = "";
       activeIndex = -1;
       await tick();
@@ -123,9 +120,7 @@
   }
 
   function handleBlur() {
-    // Defer so a suggestion click (which fires after blur) is not cut off.
-    // Suggestion buttons also preventDefault on mousedown to keep focus, so this
-    // primarily handles clicking away from the editor entirely.
+    // Deferred so a click that caused the blur still lands before close.
     if (blurTimer) clearTimeout(blurTimer);
     blurTimer = setTimeout(() => {
       blurTimer = null;
@@ -172,9 +167,8 @@
             <ul class="tag-suggestions" data-testid="tag-suggestions">
               {#each filtered as suggestion, i}
                 <li>
-                  <!-- Raw button: an autocomplete option row. mousedown is
-                       prevented so clicking it doesn't blur (and close) the
-                       input before the click commits. -->
+                  <!-- Raw button: mousedown is prevented so the input does not
+                       blur (and close) before the click commits. -->
                   <button
                     type="button"
                     class="tag-suggestion"
@@ -263,7 +257,6 @@
     color: var(--foreground);
   }
 
-  /* Width-constrained input (ADO-style), not full-width. */
   .tag-input-wrap {
     position: relative;
     width: 200px;

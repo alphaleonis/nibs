@@ -14,15 +14,10 @@
   let { value, onchange, testId = "area-select", disabled = false }: Props = $props();
 
   const spine = useViewSpine();
-  // Every declared node FLAT, parents included — a non-leaf is a legal
-  // assignment, so the list offers one rather than only the leaves.
+  // Parents included: a non-leaf is a legal assignment.
   let nodes = $derived(spine().areas.sections());
-  // The trigger carries the STORED value verbatim: the full path for a declared
-  // nested area (so the collapsed state is unambiguous and agrees with the Area
-  // column), and the raw text for one the vocabulary does not declare — retired
-  // from `areas:` since, or read before the config query resolved. Rows label by
-  // segment instead, because a row is drawn under the parent that supplies the
-  // rest of the path.
+  // The trigger shows the stored value verbatim (the full path, or raw text for
+  // an undeclared area); rows show their segment under their parent.
   let label = $derived(value === "" ? "None" : value);
 </script>
 
@@ -42,8 +37,7 @@
       <Select.Item value={node.path}>
         <span style:padding-left={`${node.depth * 0.75}rem`}>
           {#if swatch}
-            <!-- `cssColor` is the whole of what makes config text safe in a
-                 style here — the sink is a declaration list either way. -->
+            <!-- `cssColor` is what makes config text safe in this style. -->
             <span
               data-testid="area-color"
               class="shrink-0 size-2.5 rounded-full border border-border"

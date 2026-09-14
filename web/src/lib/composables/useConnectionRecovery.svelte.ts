@@ -7,12 +7,10 @@ import {
 /**
  * Binds the browser events that mean "the page is back" to the pure recovery
  * policy in `connectionRecovery.ts`, and republishes its status as reactive
- * state so the UI can show a disconnected indicator.
+ * state.
  *
- * `pageshow` is the one that matters for the reported bug (nibs-1seo): it is the
- * only signal a back/forward-cache restore emits, and `event.persisted`
- * distinguishes that restore — where the socket was closed on freeze while the
- * client's own state was preserved — from an ordinary load.
+ * `pageshow` with `persisted` is the only signal of a back/forward-cache
+ * restore, where the socket closed on freeze but client state survived.
  */
 export function useConnectionRecovery(ports: { reconnect: () => void }): ConnectionRecovery {
   let status = $state<ConnectionStatus>("connecting");

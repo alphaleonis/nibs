@@ -1,5 +1,4 @@
-// Type-only, so it is erased from the emitted JS: tree.ts imports this module's
-// types, and the mutual reference never becomes a runtime import cycle.
+// Type-only: tree.ts imports this module, so a value import would be a runtime cycle.
 import type { SectionMeta } from "./tree";
 
 export interface NibSummary {
@@ -28,15 +27,11 @@ export interface NibFilter {
   excludeTags?: string[];
   hasParent?: boolean;
   parentId?: string;
-  // Hierarchy predicates. Each names the relationship the MATCHED nib holds toward
-  // the supplied id, so `ancestorId` selects that nib's descendants and
-  // `descendantId` selects its ancestor chain. The target itself is excluded by the
-  // filter. When the query also carries free text, the server re-adds every match's
-  // ancestors afterwards, so an ancestorId target reappears and a siblingId query
-  // also brings in the shared parent — that completion is what the tree rendering
-  // relies on, not a bug.
-  // siblingId selects nibs sharing the target's parent; a parentless target selects
-  // the other root nibs, matching `nibs rel --rel siblings`.
+  // Hierarchy predicates name the relationship the MATCHED nib holds toward the
+  // id: `ancestorId` selects the target's descendants, `descendantId` its
+  // ancestor chain, `siblingId` nibs sharing its parent (a parentless target
+  // selects the other roots). The target itself is excluded, but with free text
+  // the server re-adds every match's ancestors, which the tree rendering needs.
   ancestorId?: string;
   descendantId?: string;
   siblingId?: string;
@@ -47,43 +42,25 @@ export interface NibFilter {
   blockedById?: string;
   mentionsId?: string;
   mentionedById?: string;
-  // Assignment axis. `milestone` selects the queue: nibs whose stored
-  // assignment resolves to that milestone (direct assignment only).
-  // `noMilestone` is tri-state over DERIVED membership: true keeps the backlog
-  // (a child of an assigned epic is planned, not backlog), false the
-  // complement. The query box spells them `milestone:<id>` and `is:backlog`;
-  // `is:backlog` is the only spelling `noMilestone` has, so its false half is
-  // not typeable there.
+  // `milestone` is DIRECT assignment (that milestone's queue). `noMilestone` is
+  // DERIVED membership: true keeps the backlog, false its complement. The query
+  // box spells them `milestone:<id>` and `is:backlog`; the false half has no
+  // spelling there.
   milestone?: string;
   noMilestone?: boolean;
-  // Ownership axis. `area` selects the area's work DOWNWARD-CLOSED over the
-  // declared tree: the nibs assigned to that path plus those in every area
-  // declared beneath it. Closure is over the tree, not the string — `webhooks`
-  // is not within `web` — and an undeclared value is refused rather than
-  // matching nothing. The query box writes it from an `area:<path>` token
-  // (query/area.ts), which parks a path the vocabulary calls undeclared instead
-  // of storing it; what a list query may carry is `withSendableArea`'s decision,
-  // in filter.ts, which re-asks at query time and so also withholds a value
-  // parsed before the vocabulary arrived.
+  // The area path and every area declared beneath it (`webhooks` is not within
+  // `web`). The server refuses an undeclared value, so what a list query may
+  // send is `withSendableArea`'s decision (filter.ts).
   area?: string;
 }
 
-// Compile-time guard binding the hand-written NibFilter above to the codegen'd
-// one, so the two key sets cannot drift.
+// Compile-time guard: the hand-written NibFilter and the generated one must have
+// EQUAL key sets. The filter reaches urql as a variable, so no excess-property
+// check runs on it and a misspelled key would be silently ignored by the server;
+// a one-way `extends` would miss exactly that.
 //
-// The filter reaches the wire as a variable (`variables: { filter }` in
-// useTableData.svelte.ts), not an object literal, so TypeScript's
-// excess-property check never runs on it: an extra or misspelled client-side key
-// would type-check, ship, and be silently ignored by the server.
-//
-// BOTH directions are required. A one-way `extends` is satisfied by extra
-// properties, so it would miss exactly that misspelling case; the reverse
-// direction catches a key the schema gained that the client never picked up.
-//
-// The hand-written type is kept rather than replaced by the generated one
-// because the generated fields are spelled `T | null | undefined` where these
-// are optional `T?`, which every consumer (prefs.filter, QueryFilter,
-// parse/serialize) relies on. `import type` keeps this erased at compile time.
+// The hand-written type stays because consumers rely on its optional `T?` fields,
+// where the generated ones are `T | null | undefined`.
 import type { NibFilter as GeneratedNibFilter } from "./gql/graphql";
 
 type _ClientKeysExistOnGenerated = keyof NibFilter extends keyof GeneratedNibFilter ? true : never;
@@ -94,32 +71,24 @@ type _GeneratedKeysExistOnClient = keyof GeneratedNibFilter extends keyof NibFil
 const _generatedKeysCheck: _GeneratedKeysExistOnClient = true;
 void _generatedKeysCheck;
 
-// The assignment axes live HERE rather than on TreeTableNib because
-// `buildViewTree` is generic over `T extends TreeNib`, and a grouping lens
-// cannot read a field the bound does not promise.
+// The assignment axes live here, not on TreeTableNib: `buildViewTree` is generic
+// over `T extends TreeNib`, and a grouping lens reads them.
 export interface TreeNib extends NibSummary {
   parentId: string | null;
-  /** Milestone assignment as stored — the scheduling axis, empty when
-   *  unassigned. Reported verbatim, so an assignment naming a missing or
-   *  non-milestone nib arrives here as written. */
+  /** Milestone assignment, verbatim as stored; empty when unassigned. */
   milestone: string;
   /** Fractional position within the assigned milestone's queue; empty when the
    *  nib has never been placed in one. */
   milestoneOrder: string;
-  /** Area assignment as stored — the ownership axis, empty when unassigned.
-   *  Reported verbatim, so a value the declared vocabulary no longer contains
-   *  arrives here as written. */
+  /** Area assignment, verbatim as stored; empty when unassigned. */
   area: string;
 }
 
 export interface TreeTableNib extends TreeNib {
   blockingIds: string[];
   blockedByIds: string[];
-  /** The row's current content etag, carried so the table's batch mutations can
-   *  send ifMatch. It lives on the TABLE's nib rather than on NibSummary because
-   *  leaner queries over the same shape (the typeahead completion) do not select
-   *  it, and a base type promising a field they never fetch would be a lie the
-   *  compiler enforces on the wrong side. */
+  /** The content etag, for the table's batch mutations to send as ifMatch. Not on
+   *  NibSummary because leaner queries (the typeahead) do not select it. */
   etag: string;
 }
 
@@ -127,17 +96,8 @@ export interface TreeNode<T extends TreeNib = TreeNib> {
   nib: T;
   children: TreeNode<T>[];
   depth: number;
-  /**
-   * The section facts, present exactly on the nodes that ARE sections: which
-   * section this is, whether the lens declared it or a placement discovered it,
-   * and what it means — the group its rows order in and what entering it does.
-   *
-   * Optional because only a grouped view's section containers are sections —
-   * `buildTree` and the flat shape emit nodes that are not — so the many nodes
-   * with nothing to say are not made to say it. ONE optional carrying every
-   * fact, so a node either is a section and answers all of them or is not one at
-   * all.
-   */
+  /** Present exactly on a grouped view's section container nodes, carrying every
+   *  section fact at once. */
   section?: SectionMeta;
 }
 
@@ -158,22 +118,14 @@ export interface RowSubtreeActions {
 export const VIEW_LEVELS = ["none", "flat", "milestones", "epics", "features", "areas"] as const;
 export type ViewLevel = (typeof VIEW_LEVELS)[number];
 
-/** The view a session starts in when nothing is stored. A picked view is
- *  persisted (`Preferences.viewLevel`, auto-saved), so this is what an ABSENT
- *  preference resolves to and nothing more — it never overrides a stored one. */
+/** The view used when no preference is stored. */
 export const DEFAULT_VIEW_LEVEL: ViewLevel = "milestones";
 
-/** The hierarchical view, for callers that mean THAT view rather than wherever a
- *  session happens to start. Named apart from DEFAULT_VIEW_LEVEL so the two can
- *  move independently: a caller meaning "the tree" reads this one, and the
- *  default can then be any level without silently re-aiming it. */
+/** The hierarchical view. Use this, not DEFAULT_VIEW_LEVEL, when you mean the tree. */
 export const TREE_VIEW_LEVEL: ViewLevel = "none";
 
-/** The user-facing name of each view. Lives here rather than in Toolbar.svelte so
- *  non-component modules can name a view the way the user sees it — a toast that
- *  offers to leave a view has to spell it the same way the menu that selects it
- *  does. VIEW_LEVEL_ICON_INFO deliberately stays in the toolbar: it pulls lucide
- *  components, which do not belong in a module this one's importers share. */
+/** The user-facing name of each view, for any module that names one. The icons
+ *  stay in Toolbar.svelte, because they import lucide components. */
 export const VIEW_LEVEL_LABELS: Record<ViewLevel, string> = {
   none: "Tree",
   flat: "Flat",
@@ -183,13 +135,8 @@ export const VIEW_LEVEL_LABELS: Record<ViewLevel, string> = {
   areas: "Areas",
 };
 
-// Client-side table sort. Absent/null means "off" (manual `order` sequence).
-// Applied in every view: a flat sorted list in Flat, sibling-sort (siblings,
-// roots, grouping-bucket items, and promoted group headers reordered, nesting
-// preserved) in the Tree + grouping-lens views. The field union is
-// single-sourced as `SortKey` in columns.ts (the sortable ColumnKey subset);
-// `SortField` re-exports it so the many "./types" importers keep working without
-// duplicating the set.
+// Client-side table sort; absent means manual `order`. Flat sorts the list; the
+// other views sort siblings and keep the nesting.
 export type SortField = SortKey;
 export type SortDirection = "asc" | "desc";
 export interface TableSort {
@@ -197,9 +144,7 @@ export interface TableSort {
   direction: SortDirection;
 }
 
-// The column model lives in columns.ts (pure, zero Svelte dependency). These are
-// re-exported here so the many existing importers of "./types" keep working; the
-// canonical definitions are single-sourced in columns.ts.
+// The column model is defined in columns.ts and re-exported here.
 import { COLUMNS, ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS, DEFAULT_VISIBLE_COLUMNS } from "./columns";
 import type { ColumnKey, SortKey } from "./columns";
 export { ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS, DEFAULT_VISIBLE_COLUMNS };
@@ -209,15 +154,11 @@ export interface ColumnConfig {
   key: ColumnKey;
   label: string;
   alwaysVisible: boolean;
-  // Omitted ⇒ visible by default. Set false for opt-in columns that start hidden
-  // (e.g. blocking / blockedBy) but remain toggleable in the Columns dropdown.
+  // Omitted means visible by default; false for opt-in columns.
   defaultVisible?: boolean;
 }
 
-// Derived from COLUMNS, order-preserving. Feeds the Columns dropdown config and
-// the persistence layer. Preserves the legacy convention that a default-visible
-// column omits `defaultVisible` (present-and-false only for opt-in columns), so
-// existing consumers/tests that key off its presence stay valid.
+// Derived from COLUMNS in order. A default-visible column omits `defaultVisible`.
 export const DEFAULT_COLUMNS: ColumnConfig[] = ALL_COLUMN_KEYS.map((key) => {
   const c = COLUMNS[key];
   const config: ColumnConfig = { key: c.key, label: c.label, alwaysVisible: c.alwaysVisible };
@@ -228,86 +169,52 @@ export const DEFAULT_COLUMNS: ColumnConfig[] = ALL_COLUMN_KEYS.map((key) => {
 export const DEFAULT_DETAIL_PANEL_WIDTH = 400;
 export const MIN_DETAIL_PANEL_WIDTH = 200;
 export const MAX_DETAIL_PANEL_PERCENT = 75;
-// Size the detail pane opens at when the user hasn't resized it — a percent of
-// the container, so the default stays screen-relative instead of a fixed px that
-// looks narrow on large displays. Applies to both dock orientations.
+// The unresized pane size as a percent of the container, for both dock orientations.
 export const DEFAULT_DETAIL_PANEL_PERCENT = 40;
 
-// The detail panel can dock at the RIGHT (table on the left, preview on the
-// right) or the BOTTOM (table on top, preview below). Bottom keeps full table
-// width when many columns are shown. MAX_DETAIL_PANEL_PERCENT is reused for both
-// orientations; only the min/default sizes differ per axis.
+// The detail panel docks RIGHT of or BELOW the table. MAX_DETAIL_PANEL_PERCENT
+// applies to both; the min and default sizes are per axis.
 export const DETAIL_PANEL_POSITIONS = ["right", "bottom"] as const;
 export type DetailPanelPosition = (typeof DETAIL_PANEL_POSITIONS)[number];
 export const DEFAULT_DETAIL_PANEL_POSITION: DetailPanelPosition = "right";
 export const DEFAULT_DETAIL_PANEL_HEIGHT = 300;
 export const MIN_DETAIL_PANEL_HEIGHT = 150;
 
-// Which mouse gesture on a table row opens the nib in the detail panel. With
-// "double", a plain single click selects and focuses the row WITHOUT opening the
-// panel (so a stray click never replaces what the user is reading) and the open
-// moves to the double-click path. "single" is the default because it keeps the
-// open gesture and the row styling every existing profile already has.
-// Post-mutation cleanup is narrower in BOTH modes, independently of this
-// preference: a delete/archive now closes the detail panel only when it took out
-// the nib the panel was showing (see clearAfterMutation in actionTarget.ts),
-// where it used to close it unconditionally. That is reachable in "single" too,
-// because plain arrow-key nav moves focus — and with it the action target —
-// without moving the panel.
+// Which row gesture opens the nib in the detail panel. With "double", a single
+// click selects and focuses the row without opening it.
 export const OPEN_DETAIL_GESTURES = ["single", "double"] as const;
 export type OpenDetailGesture = (typeof OPEN_DETAIL_GESTURES)[number];
 export const DEFAULT_OPEN_DETAIL_ON: OpenDetailGesture = "single";
 
 export type RowDensity = "compact" | "comfortable";
 
-// Global font-size preference. Scales the whole UI type scale from one root CSS
-// variable (`--font-scale`). app.css multiplies the semantic type-size tokens
-// and Tailwind's raw `--text-*` ladder by it; several components then read it
-// directly for sizes no token covers — TreeTable's `--row-pad-y`,
-// ActiveNibView's title, ui/button's `sm` size, and the `max-w` cap on
-// ui/dropdown-menu's container primitives. Root font-size, the rem unit and the
-// spacing scale stay untouched. Row height and that dropdown cap are the two
-// dimensions beyond type that do move, so each box keeps tracking the text
-// inside it. Decoupled from RowDensity, which still picks the BASE row padding.
+// Global font-size preference, applied through the root `--font-scale` variable.
+// app.css scales the type tokens and Tailwind's `--text-*` ladder by it; TreeTable's
+// `--row-pad-y`, ActiveNibView's title, ui/button's `sm` size and ui/dropdown-menu's
+// `max-w` cap read it directly. Root font-size, rem and spacing are unscaled.
 export type FontSize = "small" | "medium" | "large";
-// Default is Medium = 1.0 so existing users see no change.
 export const DEFAULT_FONT_SIZE: FontSize = "medium";
-// The multiplier each size feeds into `--font-scale`.
 export const FONT_SCALES: Record<FontSize, number> = { small: 0.9, medium: 1, large: 1.15 };
 
-// Whether the editor's side-by-side Preview pane is shown while editing a nib
-// body. Persisted so the on/off choice survives remounts (docked↔expanded) and
-// sessions. Defaults to on.
+// Whether the editor's side-by-side Preview pane is shown. Persisted.
 export const DEFAULT_PREVIEW_OPEN = true;
 
-// How the "blocked" state is emphasized in the tree row + ActiveNibView header:
-//   subtle   → the bare lock icon
-//   pill     → tinted "Blocked" pill (default)
-//   pill-dim → pill + the whole table row dimmed
-// When the ordering-region bands are drawn.
-//
-// Two modes, not three: "always" is what shipped first and is the one the
-// measurement argues against. Over the 89-nib sample fixture, 62 of 62 bands sat
-// at a depth DECREASE — an outdent the indentation already shows — and in the
-// tree view an equal-depth band cannot occur at all, because `buildTree` nests
-// every nib under its parent and `flatten` is depth-first, so two consecutive
-// rows at equal depth are necessarily siblings in one region. What the rule
-// uniquely carries is its COLOUR, telling a queue seam from a parent seam, and
-// that is information about a DROP. So it is drawn while dragging, or not at
-// all (nibs-ke8o).
+// When ordering-region bands are drawn. Their color tells a queue seam from a
+// parent seam, which only matters during a drop.
 export const REGION_BAND_MODES = ["on-drag", "never"] as const;
 export type RegionBandMode = (typeof REGION_BAND_MODES)[number];
 export const DEFAULT_REGION_BAND_MODE: RegionBandMode = "on-drag";
 
+// How the "blocked" state is emphasized in the tree row and ActiveNibView header:
+//   subtle   → the bare lock icon
+//   pill     → tinted "Blocked" pill
+//   pill-dim → pill + the whole table row dimmed
 export const BLOCKED_EMPHASES = ["subtle", "pill", "pill-dim"] as const;
 export type BlockedEmphasis = (typeof BLOCKED_EMPHASES)[number];
 export const DEFAULT_BLOCKED_EMPHASIS: BlockedEmphasis = "pill";
 
-// Maps a BlockedEmphasis to the RelationBadge presentational `variant`. Exhaustive
-// switch (no default) so adding a new emphasis is a compile-time error here until
-// its variant is decided — the single source of truth for both the tree row and
-// the ActiveNibView header. Row dimming (`pill-dim`) is handled separately at the
-// row level; it is not a badge concern.
+// Maps a BlockedEmphasis to RelationBadge's `variant`. No default arm, so a new
+// emphasis fails to compile here. Row dimming is handled at the row.
 export function blockedVariantFor(e: BlockedEmphasis): "icon" | "pill" {
   switch (e) {
     case "subtle":
@@ -318,21 +225,12 @@ export function blockedVariantFor(e: BlockedEmphasis): "icon" | "pill" {
   }
 }
 
-// Curated palettes selectable from the Settings sheet. The chosen palette is
-// selected via the `data-theme` attribute on <html>. "midnight" is the original
-// near-black palette (the bare :root values in app.css) and intentionally has no
-// override block. "graphite" is the default for fresh profiles.
+// Palettes selectable from Settings, applied through `data-theme` on <html>.
+// "midnight" has no override block: it is app.css's bare :root values.
 //
-// Each entry carries a `dark` flag that OWNS the light/dark axis.
-// The theme seam toggles the `.dark` class on <html> from this flag: applyTheme()
-// (theme.ts) and the pre-paint FOUC guard (index.html) both set `.dark` to match
-// the active theme's `dark` value. This matters because app.css wires Tailwind's
-// `dark:` variant to that class (`@custom-variant dark (&:is(.dark *))`) —
-// INDEPENDENT of `data-theme`. Shipped shadcn components use `dark:` utilities
-// (e.g. dark:bg-input/30); driving `.dark` from the flag lets a LIGHT palette
-// switch those utilities off so the app renders light, not just re-tint chrome.
-// "daylight" is the first light entry (dark: false); the three original palettes
-// stay dark (dark: true).
+// `dark` owns the light/dark axis: applyTheme() (theme.ts) and index.html's
+// pre-paint FOUC guard toggle the `.dark` class from it, and app.css binds
+// Tailwind's `dark:` variant to that class independently of `data-theme`.
 export const THEMES = [
   { value: "graphite", label: "Graphite", dark: true },
   { value: "midnight", label: "Midnight", dark: true },
@@ -342,16 +240,12 @@ export const THEMES = [
 
 export type Theme = (typeof THEMES)[number]["value"];
 
-// Also duplicated by index.html's pre-paint FOUC guard (`var t = "graphite"`),
-// kept in sync by src/lib/fouc-guard.test.ts.
+// Duplicated in index.html's FOUC guard; fouc-guard.test.ts holds them equal.
 export const DEFAULT_THEME: Theme = "graphite";
 
 export interface FilterPreferences {
-  // The filter is persisted as a canonical query STRING (the same human-readable
-  // form shared via the `?q=` URL param), NOT as a structured NibFilter. The
-  // structured filter + its invalid-token sidecar are DERIVED from this via
-  // parseQuery; serializeQuery renders them back. Only the query moves to string
-  // form — every other preference below stays personal and structured.
+  // The canonical query STRING (the `?q=` form), not a NibFilter; parseQuery
+  // derives the structured filter from it.
   query: string;
   viewLevel: ViewLevel;
   columnVisibility?: Partial<Record<ViewLevel, ColumnKey[]>>;

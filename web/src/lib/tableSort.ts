@@ -1,23 +1,15 @@
-// Client-side column sorting for the table. Pure helpers, no Svelte state: a
-// view opts into a per-column sort by clicking a header, and these compute the
-// resulting order and the tri-state header cycle. The Flat view sorts the whole
-// list; the Tree + grouping-lens views sort SIBLINGS (the caller sorts the array
-// before the view tree is built, and the tree builders preserve sibling order).
+// Client-side column sorting for the table. Flat sorts the whole list; the
+// nested views sort siblings, because the caller sorts before the view tree is
+// built and the tree builders keep sibling order.
 //
-// The comparator is a REGISTRY keyed by column kind (one key extractor per
-// sortable field), replacing the original date-only body. Each extractor returns
-// a comparable key — a number, a string, or `null` for an empty/missing/invalid
-// value. `null` keys sink LAST in BOTH directions (the uniform empties rule,
-// mirroring the original invalid-date sink); equal keys compare 0, so JS
-// Array.sort's stability keeps the incoming manual `order` sequence as the
-// tiebreak.
+// Each sort field has a key extractor returning a number, a string, or null for
+// an empty or invalid value. Null keys sort last in both directions; equal keys
+// compare 0, so the stable sort keeps the incoming manual order as tiebreak.
 
 import type { TableSort, SortField } from "./types";
 import { STATUSES, TYPES, ESTIMATES } from "./constants";
 
-// The exact per-row fields the comparators read — a structural subset of
-// TreeTableNib (priority is not sortable, so it is omitted). Keeping it local
-// keeps this module a pure, jsdom-free unit and lets tests build minimal rows.
+// The TreeTableNib fields the comparators read, so tests can build minimal rows.
 export interface SortableRow {
   id: string;
   title: string;
@@ -57,14 +49,11 @@ function orderKey(order: readonly string[], value: string): number | null {
   return i === -1 ? null : i;
 }
 
-// A resolved key is a number (dates, enum ranks, relation counts), a string
-// (title / id / tags / parent title), or null (empty → sorts last).
+// null means empty.
 type SortValue = number | string | null;
 
-// One extractor per sortable column. `byId` resolves a nib's parent title (the
-// parent column sorts by the parent nib's title). Reuses the existing rank
-// sources — TYPES / STATUSES / ESTIMATES canonical order — never string-sorts
-// enums. Relation columns sort by COUNT (0 is a real value, not empty).
+// Enums sort by canonical rank, never as strings; relations by count, where 0
+// is a value, not empty. `byId` resolves the parent and milestone titles.
 const KEY_EXTRACTORS: Record<SortField, (nib: SortableRow, byId: ReadonlyMap<string, SortableRow>) => SortValue> = {
   title: (n) => textKey(n.title),
   // ids are lexicographic (case-sensitive), unlike the case-folded text sorts.
@@ -81,10 +70,8 @@ const KEY_EXTRACTORS: Record<SortField, (nib: SortableRow, byId: ReadonlyMap<str
     const p = n.parentId ? byId.get(n.parentId) : undefined;
     return p ? textKey(p.title) : null;
   },
-  // Sorts by the assigned milestone's TITLE, matching the column's cell and the
-  // `parent` precedent — an id-keyed sort would order by mint sequence, which
-  // reads as arbitrary. An assignment naming a nib the table does not hold
-  // resolves to null and sinks last, like any other empty.
+  // By the milestone's title, like `parent`. An assignment naming a nib not in
+  // `byId` sorts as empty.
   milestone: (n, byId) => {
     const m = n.milestone ? byId.get(n.milestone) : undefined;
     return m ? textKey(m.title) : null;
@@ -92,11 +79,7 @@ const KEY_EXTRACTORS: Record<SortField, (nib: SortableRow, byId: ReadonlyMap<str
   area: (n) => textKey(n.area),
 };
 
-/**
- * Compare two resolved keys under direction `dir` (1 asc, -1 desc). Empty (null)
- * keys sink LAST in both directions; equal keys return 0 so the sort stays
- * stable (incoming manual `order` is the tiebreak).
- */
+/** Compare two keys under `dir` (1 asc, -1 desc). Null sorts last either way. */
 function compareKeys(a: SortValue, b: SortValue, dir: number): number {
   const aEmpty = a === null;
   const bEmpty = b === null;
@@ -104,25 +87,14 @@ function compareKeys(a: SortValue, b: SortValue, dir: number): number {
     if (aEmpty && bEmpty) return 0;
     return aEmpty ? 1 : -1; // NOT multiplied by dir — empties are always last
   }
-  if (a === b) return 0; // stable tiebreak preserves input order
+  if (a === b) return 0;
   if (typeof a === "number" && typeof b === "number") return (a - b) * dir;
   return (a < b ? -1 : 1) * dir;
 }
 
 /**
- * Build a stable comparator for two rows under the given `TableSort`. The
- * comparator is selected from KEY_EXTRACTORS by `sort.field`: equal keys compare
- * 0 (so a stable `Array.sort` keeps the incoming order as the tiebreak) and empty
- * / missing / invalid keys sort LAST regardless of direction.
- *
- * `byId` resolves the parent column's key (the parent nib's title); other fields
- * ignore it. It is a `ReadonlyMap` because extractors only read — this keeps the
- * lookup covariant, so a `Map<string, T>` of any `T extends SortableRow` (e.g. a
- * TreeTableNib map) is accepted soundly.
- *
- * Exposed so the view-tree builder can reorder arrays of tree NODES by their nib
- * using the same field logic as the flat-array `applySort`, keeping a single
- * source of the comparator.
+ * The row comparator for `sort`, shared by `applySort` and the grouped view
+ * tree's node ordering. `byId` is read only by fields that resolve another row.
  */
 export function makeNibComparator<T extends SortableRow>(
   sort: TableSort,
@@ -133,38 +105,19 @@ export function makeNibComparator<T extends SortableRow>(
   return (a, b) => compareKeys(extract(a, byId), extract(b, byId), dir);
 }
 
-/**
- * Return a NEW array of `nibs` sorted by the given `TableSort`, or the ORIGINAL
- * array unchanged when `sort` is null (off → keep the incoming manual order).
- *
- * The sort is STABLE (JS Array.sort is stable), so rows with equal keys keep
- * their incoming order. Empty / missing / invalid keys sort LAST regardless of
- * direction.
- *
- * In the nested views the caller sorts `allNibs` up front and lets the tree
- * builders (which preserve sibling input order) nest the result — so this one
- * transform yields a flat sorted list in Flat and sibling-sort everywhere else.
- */
+/** A new array sorted by `sort`, or `nibs` itself when `sort` is null. */
 export function applySort<T extends SortableRow>(nibs: T[], sort: TableSort | null): T[] {
   if (!sort) return nibs;
-  // Only the sorts that RESOLVE an id to another row need the index; building it
-  // for every sort would be wasted work. Both resolving fields must be listed —
-  // a resolving sort handed EMPTY_BY_ID extracts null for every row, which is
-  // not an error but a silent collapse into "all empty", leaving the incoming
-  // order untouched and looking like a sort that ran.
   const byId: ReadonlyMap<string, T> =
     RESOLVING_SORT_FIELDS.has(sort.field) ? new Map<string, T>(nibs.map((n) => [n.id, n])) : EMPTY_BY_ID;
   return [...nibs].sort(makeNibComparator(sort, byId));
 }
 
-// The sort fields whose extractor reads `byId` to resolve another row. Kept
-// beside the extractors it mirrors: a new resolving field added to
-// KEY_EXTRACTORS and not to this set sorts as if every value were empty.
+// The fields whose extractor reads `byId`. A resolving field missing here sorts
+// every row as empty.
 const RESOLVING_SORT_FIELDS: ReadonlySet<SortField> = new Set<SortField>(["parent", "milestone"]);
 
-// A shared empty index for the sorts that resolve nothing. `never` value type makes it
-// assignable to `ReadonlyMap<string, T>` for any `T extends SortableRow`, so the
-// empty branch allocates nothing.
+// `never` values make this assignable to `ReadonlyMap<string, T>` for any row type.
 const EMPTY_BY_ID: ReadonlyMap<string, never> = new Map<string, never>();
 
 /**

@@ -1,12 +1,7 @@
 <script lang="ts">
   /**
-   * Header chip shown only while the live subscription is down.
-   *
-   * The failure it exists for is invisible by nature (nibs-1seo): a dropped
-   * socket looks exactly like a nib nobody has touched, so the view silently
-   * stops matching disk. It is deliberately absent while `connected` — the
-   * common case, where a permanent badge would be noise — and while `connecting`,
-   * which is start-up rather than a lost connection.
+   * Header chip shown only after a lost connection: a dropped socket otherwise
+   * looks like a nib nobody has touched. `connecting` is start-up, not shown.
    */
   import { WifiOff } from "@lucide/svelte";
   import type { ConnectionStatus } from "../connectionRecovery";

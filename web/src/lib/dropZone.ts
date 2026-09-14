@@ -15,9 +15,7 @@ export function computeDropZone(cursorY: number, rowRect: DOMRect): DropZone {
   return "reparent";
 }
 
-/**
- * Check if a nib type can be a child of the target parent type.
- */
+/** Whether a nib type can be a child of the target parent type. */
 export function isValidParent(draggedType: string, targetType: string): boolean {
   const validChildren = getValidChildTypes(targetType);
   return validChildren.includes(draggedType);
@@ -34,57 +32,47 @@ export function isValidDropTarget(
   draggedIds: string[],
   descendantIds: Set<string>,
 ): boolean {
-  // Synthetic "No X" bucket rows are display-only containers, not real nibs.
-  // Any zone dropping onto one would issue reorderNib/reparent against a
-  // synthetic id, which the backend rejects ("sibling nib not found"). Reject
-  // all zones so the bucket is never a valid drop target.
+  // A synthetic "No X" bucket row is no nib, and the backend rejects any reorder
+  // or reparent against its id.
   if (isSyntheticRowId(targetNib.id)) return false;
 
-  // Can't drop on self
   if (draggedIds.includes(targetNib.id)) return false;
 
-  // Can't drop on own descendants (cycle prevention)
+  // Cycle prevention.
   if (descendantIds.has(targetNib.id)) return false;
 
   if (zone === "reparent") {
-    // Target must be able to have children
     if (isLeafType(targetNib.type)) return false;
-    // ALL dragged types must be valid children of target type
     return draggedTypes.every((t) => isValidParent(t, targetNib.type));
   }
 
-  // For reorder (before/after): validity depends on sibling context,
-  // which is checked at the call site
+  // Before/after validity depends on sibling context, checked by the caller.
   return true;
 }
 
 /**
  * Check if dragged types can be placed as siblings in a different parent.
- * parentType is the type of the target's parent, or null for root level.
- * At root level, any type is allowed. Otherwise, all dragged types must be
- * valid children of the parent type.
+ * `parentType` is the type of the target's parent, or null for the root level,
+ * which accepts any type.
  */
 export function isValidCrossParentDrop(
   draggedTypes: string[],
   parentType: string | null,
 ): boolean {
-  if (parentType === null) return true; // root level accepts any type
+  if (parentType === null) return true;
   return draggedTypes.every(t => isValidParent(t, parentType));
 }
 
 /**
- * Collect all descendant IDs of the given nib IDs from the flat row list.
+ * Collect all descendant IDs of the given nib IDs from the flat row list,
+ * excluding the given IDs themselves.
  *
- * Order-independent by construction: it indexes the rows by parent first, then
- * walks that adjacency map outward from the seeds. Row order is not a contract
- * — a DFS flatten happens to place every parent before its children, but a
- * queue-ordered section carries no such guarantee, and a single forward pass
- * silently under-collects when a child precedes its parent. This set is what
- * `isValidDropTarget` rejects drops against, so an incomplete one would let a
- * row be dropped onto its own descendant and form a cycle.
+ * Indexes rows by parent before walking, so row order does not matter: a
+ * queue-ordered section can list a child before its parent. An incomplete set
+ * would let `isValidDropTarget` accept a drop onto a row's own descendant.
  *
- * The result set doubles as the visited guard, so a malformed parent cycle
- * among the rows terminates rather than looping.
+ * The result set doubles as the visited guard, so a parent cycle among the rows
+ * terminates.
  */
 export function collectDescendantIds(nibIds: string[], rows: RowData[]): Set<string> {
   const childrenByParent = new Map<string, string[]>();
@@ -101,7 +89,6 @@ export function collectDescendantIds(nibIds: string[], rows: RowData[]): Set<str
   const queue = [...seeds];
   while (queue.length > 0) {
     for (const childId of childrenByParent.get(queue.pop()!) ?? []) {
-      // Skip the dragged items themselves, and anything already collected.
       if (seeds.has(childId) || result.has(childId)) continue;
       result.add(childId);
       queue.push(childId);

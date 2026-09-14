@@ -4,9 +4,9 @@
   import { useMilestones } from "../contexts";
 
   interface Props {
-    /** The nib's DIRECT assignment: "" for one in no queue of its own. */
+    /** The nib's direct milestone assignment; "" for none. */
     value: string;
-    /** The subject's status — the assignment door reads it. */
+    /** The nib's status, which decides which milestones are refused. */
     subjectStatus: string;
     onchange: (milestone: string) => void;
     testId?: string;
@@ -17,9 +17,8 @@
 
   const milestones = useMilestones();
   let choices = $derived(milestoneChoices(milestones(), { status: subjectStatus, milestone: value }));
-  // An assignment can name a milestone the list does not hold — one deleted
-  // since, or the tick before the query resolves. Falling back to the raw id
-  // keeps the trigger honest rather than blank.
+  // An assignment can name a milestone the list does not hold (deleted, or not yet
+  // loaded); show the raw id rather than blank.
   let current = $derived(choices.find((c) => c.id === value));
   let label = $derived(value === "" ? "None" : (current?.title ?? value));
 </script>

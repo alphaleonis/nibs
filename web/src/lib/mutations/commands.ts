@@ -42,14 +42,9 @@ export function setParent(id: string, parentId: string | null): SetParentCommand
 }
 
 /**
- * Positions a nib on one ordering axis. `scope` selects the axis — omitted, the
- * server's PARENT default applies, which is what every sibling-order caller
- * wants.
- *
- * `parentId` belongs to the PARENT scope alone: a queue move changes a nib's
- * position within a milestone, never which container holds it, so the server
- * refuses `parentId` together with `scope: MILESTONE`. `reparentAndReorder`
- * always sends `parentId`, so a queue move must not route through it.
+ * Position a nib on one ordering axis; an omitted `scope` is PARENT on the
+ * server. The server refuses `parentId` with `scope: MILESTONE`, and
+ * `reparentAndReorder` always sends `parentId`, so a queue move must not use it.
  */
 export function reorderNib(
   id: string,
@@ -60,8 +55,7 @@ export function reorderNib(
   if (opts.beforeId !== undefined) cmd.beforeId = opts.beforeId;
   if (opts.first !== undefined) cmd.first = opts.first;
   if (opts.scope !== undefined) cmd.scope = opts.scope;
-  // Use "" for root-level (null → ""), since GraphQL null is indistinguishable
-  // from "not provided" in the Go resolver (*string nil for both cases).
+  // Root level is "": the Go resolver cannot tell null from omitted.
   if (opts.parentId !== undefined) cmd.parentId = opts.parentId ?? "";
   return cmd;
 }
@@ -79,12 +73,9 @@ export function sequence(steps: SequenceStep[]): SequenceCommand {
 // --- Domain-level compositions ---
 
 /**
- * Chains a run of nibs after a target on the PARENT axis. Takes no `scope`, so
- * a queue move must not route through it. When subject and anchor share a
- * parent the server accepts the move and rewrites the sibling `order` key while
- * `milestoneOrder` stays untouched — a reorder on the wrong axis with nothing
- * to signal it. When they sit under different parents it is refused instead
- * (`not a sibling (different parent)`).
+ * Chain nibs after a target on the PARENT axis. Not for a queue move: with a
+ * shared parent it silently reorders the sibling `order` key instead, and with
+ * different parents the server refuses it (`not a sibling (different parent)`).
  */
 export function reorderChain(
   ids: string[],
@@ -133,9 +124,7 @@ export function archiveBatch(ids: string[]): BatchCommand {
   return batch(ids.map((id) => archiveNib(id)));
 }
 
-/** Resolves a nib's current etag, or undefined when the caller has not loaded
- *  one for it. Undefined means "send no ifMatch": an absent guard is an
- *  unguarded write, while a made-up one is a write that can only fail. */
+/** A nib's loaded etag, or undefined to send no ifMatch. Never invent one. */
 export type EtagResolver = (id: string) => string | undefined;
 
 export function setStatusBatch(
@@ -155,20 +144,14 @@ export function setPriorityBatch(
 }
 
 /**
- * Assign a run of nibs to one milestone, or clear the assignment with "".
- *
- * A batch, not a sequence: the rows join by carrying a value, so no row's write
- * waits on another's. Unlike the drag path's `assignAndPlace` this carries no
- * position — nothing here pointed at one, so each row takes the queue's default
- * placement.
+ * Assign nibs to one milestone, or clear with "". Carries no position, so each
+ * row takes the queue's default placement.
  */
 export function setMilestoneBatch(
   ids: string[],
   milestone: string,
   etagOf?: EtagResolver,
 ): BatchCommand {
-  // "" and null both clear on the server; null is what every other clearable
-  // field on this input sends.
   return batch(ids.map((id) => updateNib(id, { milestone: milestone || null }, etagOf?.(id))));
 }
 

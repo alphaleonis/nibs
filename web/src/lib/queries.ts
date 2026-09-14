@@ -17,12 +17,10 @@ export const CONFIG_QUERY = graphql(`
 `);
 
 /**
- * The store's declared areas vocabulary, pushed when it changes.
+ * The store's config, pushed when it changes.
  *
- * It selects the SAME fields as CONFIG_QUERY, and must keep doing so: the app
- * renders from whichever of the two answered last, so a field selected in only
- * one would appear or vanish depending on whether the vocabulary had been
- * edited during the session.
+ * Keep its selection identical to CONFIG_QUERY's: the app renders from
+ * whichever of the two answered last.
  */
 export const CONFIG_CHANGED_SUBSCRIPTION = graphql(`
   subscription ConfigChanged {
@@ -41,17 +39,10 @@ export const CONFIG_CHANGED_SUBSCRIPTION = graphql(`
 `);
 
 /**
- * The milestones a nib can be assigned to.
+ * The milestones a nib can be assigned to, in planned order.
  *
- * A query of its own rather than a read of the table's rows: those are
- * server-filtered by the active filter, so `type:bug` empties the list and
- * `status:todo` truncates it — and the picker would then offer a subset of the
- * store that changes as the user filters. Sorted by ORDER so the list reads in
- * the sequence the roadmap plans the waves in, not alphabetically.
- *
- * `status` is selected because the assignment door reads it
- * (`milestoneAcceptsAssignment`): a released milestone refuses open work, and
- * the picker says so rather than letting the save fail.
+ * Do not derive this from the table's rows: the active filter narrows those.
+ * `status` feeds `milestoneAcceptsAssignment`.
  */
 export const MILESTONES_QUERY = graphql(`
   query Milestones {
@@ -128,15 +119,12 @@ export const NIB_DETAIL_QUERY = graphql(`
   }
 `);
 
-// Lean, DEDICATED one-shot query for the null-remote conflict fallback.
-// It selects ONLY the fields `toNibSnapshot` reads — a strict
-// subset of NIB_DETAIL_QUERY — under a DISTINCT operation name. That distinctness
-// is load-bearing: urql keys its result-source on (query text + variables), so a
-// separate document means this network-only fetch does NOT share a source with
-// App's live `detailStore` (which runs NIB_DETAIL_QUERY for the same id). If they
-// shared, a `{ nib: null }` response (nib deleted in the race window) would be
-// pushed into `detailStore` and trip App's missing-nib effect, silently dropping
-// the user's dirty buffer. Keep this selection in lockstep with `toNibSnapshot`.
+// One-shot fetch for the conflict fallback. Selects the fields `toNibSnapshot`
+// reads; keep the two in sync.
+//
+// Do not merge it into NIB_DETAIL_QUERY: urql keys results on query text plus
+// variables, so a shared document would push a `{ nib: null }` answer into
+// App's `detailStore` and drop the user's unsaved edits.
 export const NIB_CONFLICT_SNAPSHOT_QUERY = graphql(`
   query NibConflictSnapshot($id: ID!) {
     nib(id: $id) {
@@ -258,10 +246,9 @@ export const TREE_TABLE_QUERY = graphql(`
   }
 `);
 
-// Lean typeahead query for the relationship-id token completion (phase 6). Reuses
-// the existing `nibs` search resolver (Bleve matches an ID fragment AND title) but
-// selects only the four fields a candidate row shows, under its own operation name
-// so its urql result-source stays independent of the tree-table list query.
+// Typeahead for relationship-id tokens. `search` matches id fragments as well as
+// text. A separate operation from TREE_TABLE_QUERY so urql keeps their results
+// apart.
 export const SEARCH_NIBS_QUERY = graphql(`
   query SearchNibs($search: String!) {
     nibs(filter: { search: $search }) {

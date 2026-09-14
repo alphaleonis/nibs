@@ -1,19 +1,14 @@
 import type { TreeNib, TreeNode } from "./types";
 
 /**
- * Who draws whom in one view tree — the relation reveal, ArrowLeft, subtree
- * expand/collapse and the drag's destination check all ask about, named once
- * instead of walked by hand at each of them.
+ * Who draws whom in one view tree — asked by reveal, ArrowLeft, subtree
+ * expand/collapse and the drag's destination check.
  *
- * Read off `buildShapedViewTree`'s output rather than off the flattened rows, so
- * the collapse set never reaches it: a nib inside a collapsed section still has
- * a chain here. That is what lets it answer for reveal, whose subject has no row
- * by definition — `flatten` pushes a collapsed node's own row and none of its
- * children's.
+ * Built from `buildShapedViewTree`'s output, not the flattened rows, so a nib
+ * inside a collapsed section, which has no row, still has a chain.
  *
- * Distinct from `RowData.displayParentId`, which is this relation with the
- * display containers ELIDED so the value is always a backend-acceptable
- * `parentId`. A row inside a section answers `null` there and its section here.
+ * Unlike `RowData.displayParentId`, which elides display containers, a row
+ * inside a section answers its section here.
  */
 export interface ContainmentIndex {
   /**
@@ -38,11 +33,9 @@ export function buildContainmentIndex<T extends TreeNib>(tree: TreeNode<T>[]): C
   const container = new Map<string, string | null>();
   const children = new Map<string, string[]>();
 
-  // First occurrence wins, and skipping the rest is also what bounds every walk
-  // below: an id is recorded once, against a container recorded strictly before
-  // it, so `container` is a forest however malformed the node graph is.
-  // `children` gets no such property — it is written before the descent — so the
-  // downward walk carries a visited set of its own.
+  // First occurrence wins, so `container` is a forest however malformed the node
+  // graph is and upward walks terminate. `children` has no such property, so the
+  // downward walk keeps its own visited set.
   (function collect(nodes: readonly TreeNode<T>[], holder: string | null): void {
     for (const node of nodes) {
       const id = node.nib.id;

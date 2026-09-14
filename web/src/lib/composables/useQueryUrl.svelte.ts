@@ -1,14 +1,6 @@
-// URL sync for the filter query (`?q=<canonical query string>`).
-//
-// This owns ONLY the `?q=` param and is deliberately independent of
-// useHistoryNav (which owns `?nib=`). Both writers merge into the CURRENT
-// search params (via URLSearchParams) and touch only their own key, so they
-// coexist: writing `?q=` preserves an existing `?nib=`, and vice-versa.
-//
-// Writes use debounced `replaceState` — never `pushState` — so a stream of
-// keystrokes updates the shareable URL without polluting the Back stack. The
-// existing history entry's `state` (the `{nibId}` owned by useHistoryNav) is
-// carried through unchanged; only the URL string is rewritten.
+// URL sync for the filter query (`?q=`). Touches only its own key, merged into
+// the current params, so it coexists with useHistoryNav's `?nib=`. Writes are
+// debounced `replaceState` calls that carry the existing history state through.
 
 /** Minimal history surface: only replaceState is needed here. */
 export interface ReplaceCapableHistory {
@@ -16,24 +8,20 @@ export interface ReplaceCapableHistory {
 }
 
 export interface QueryUrl {
-  /** Schedule a debounced write of the canonical query string to `?q=`. An
-   *  empty string removes the param entirely. The latest call within the
-   *  debounce window wins. */
+  /** Schedule a debounced write to `?q=`; the latest call wins. An empty string
+   *  removes the param. */
   push(query: string): void;
   /** Write any pending debounced value immediately (cancels the timer). */
   flush(): void;
   /** Drop any pending debounced write without applying it. */
   cancel(): void;
-  /** The `?q=` value in the current URL, or `null` when the param is absent
-   *  (absent ≠ present-but-empty — the caller uses this to decide URL-vs-stored
-   *  precedence). */
+  /** The current `?q=` value, or `null` when absent (not the same as empty). */
   currentQuery(): string | null;
 }
 
 const QUERY_PARAM = "q";
 
-/** Read the `?q=` param out of a raw `location.search` string. Returns `null`
- *  when absent so a missing param is distinguishable from an empty one. */
+/** `?q=` from a `location.search` string; `null` when absent. */
 export function queryFromSearch(search: string): string | null {
   const params = new URLSearchParams(search);
   return params.has(QUERY_PARAM) ? (params.get(QUERY_PARAM) ?? "") : null;
@@ -42,8 +30,7 @@ export function queryFromSearch(search: string): string | null {
 export function createQueryUrl(opts: {
   history?: ReplaceCapableHistory;
   getLocation?: () => { search: string; pathname: string };
-  /** Current history state to carry through the replaceState (defaults to the
-   *  live `window.history.state`, which useHistoryNav keeps as `{nibId}`). */
+  /** History state to carry through; defaults to `window.history.state`. */
   getState?: () => unknown;
   /** Debounce window in ms; smaller values are handy for tests. */
   delay?: number;

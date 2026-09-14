@@ -55,12 +55,8 @@
   import { applyTheme } from "./lib/theme";
   import { applyFontScale } from "./lib/fontScale";
 
-  // The socket's up/down events feed the recovery policy, which in turn drives
-  // the reconnect — mutually referential, since the client needs the hooks at
-  // construction while the recovery needs the client's `reconnect` to act. Held
-  // in a const object rather than a reassigned `let` (same reason as `holder`
-  // below): the template reads `recovery.status`, and a reassigned binding is
-  // not reactive. Every read through the holder is lazy, after construction.
+  // The client needs the recovery hooks at construction, and the recovery needs
+  // the client's `reconnect`. Reads through `socket` happen after construction.
   const socket: { recovery: ConnectionRecovery | null } = { recovery: null };
   const live = createClient({
     onConnected: () => socket.recovery?.onConnected(),
@@ -75,29 +71,13 @@
 
   const configResult = queryStore({ client, query: CONFIG_QUERY });
 
-  // The vocabulary is the one part of a store's config that changes under a
-  // running server: `nibs area rename` rewrites the store's areas.yml, the
-  // server reloads it and pushes the whole config here. Without this the page
-  // would keep rendering sections the store no longer declares, and withhold
-  // every `area:` filter naming a path its own nibs had already moved to, until
-  // someone reloaded (nibs-5cuk).
-  //
-  // The push carries the config rather than signalling a refetch, so a rename
-  // costs no round trip and cannot land the session on a FAILED re-ask. It
-  // selects the same fields as CONFIG_QUERY for that reason — see
-  // CONFIG_CHANGED_SUBSCRIPTION.
-  //
-  // It fires only on a CHANGE, so `data` is undefined for every session where
-  // nobody edits the vocabulary, which is why the query stays the base answer
-  // rather than being replaced by it.
+  // The server pushes the whole config when it reloads the store's areas.yml
+  // (e.g. after `nibs area rename`), selecting the same fields as CONFIG_QUERY.
+  // It fires only on a change, so `data` is usually undefined and the query stays
+  // the base answer.
   const configChanged = subscriptionStore({ client, query: CONFIG_CHANGED_SUBSCRIPTION });
 
-  // Precedence, the last-good latch and the re-ask backoff are one policy and
-  // live together in `useLiveConfig`. What it buys here: a config query that
-  // failed heals on its own (nibs-zwnm — it used to be re-asked only on socket
-  // recovery, and queries never travel on the socket), and a re-ask that fails
-  // can no longer take away a vocabulary the session already had, which is what
-  // lets the reconnect re-ask below be unconditional.
+  // Push-over-query precedence, the last-good latch and the re-ask backoff.
   const config = useLiveConfig({
     queried: () => $configResult.data?.config,
     pushed: () => $configChanged.data?.configChanged,
@@ -110,19 +90,14 @@
 
   let projectName = $derived(liveConfig?.projectName ?? "");
 
-  // The areas vocabulary is the one per-project vocabulary codegen cannot
-  // supply, so it arrives here at runtime and binds the view core. First paint
-  // is NOT gated on it: the five shipped view levels need none of it, and the
-  // pre-load spine is a stable singleton whose `validity()` answers "unknown"
-  // rather than "undeclared".
+  // The areas vocabulary arrives at runtime and binds the view core. First paint
+  // is not gated on it: view levels other than Areas need none of it, and the
+  // pre-load spine's `validity()` answers "unknown" rather than "undeclared".
   //
-  // Three no-vocabulary answers, not one. `Config.areas` is `[Area!]!`, so a
-  // project declaring none sends `[]` and `[] ?? null` is `[]` — the `?? null`
-  // sentinel therefore means "no answer yet", never "declares none". When the
-  // query FAILED there is likewise no answer, but none is coming either: the
-  // exchange chain has no retry, so waiting on LOADING_SPINE would last the
-  // session. That case takes its own spine so a consumer can stop rather than
-  // wait.
+  // `Config.areas` is `[Area!]!`, so a project declaring none sends `[]`; the
+  // `?? null` sentinel means "no answer yet", never "declares none". A failed
+  // query with no config held takes UNAVAILABLE_SPINE, so a consumer can offer a
+  // retry instead of a loading state.
   let declaredAreas = $derived(liveConfig?.areas ?? null);
   let viewSpine = $derived.by(() => {
     if (declaredAreas !== null) return makeViewSpine(createAreaVocabulary(declaredAreas));
@@ -130,18 +105,13 @@
   });
   provideViewSpine(() => viewSpine);
 
-  // The assignable waypoints, for the detail panel's milestone field and the row
-  // context menu's submenu. A query of its own rather than a read of the table's
-  // rows: those carry the user's filter, so `type:bug` would empty the picker.
-  // Not gated on either: an empty list renders a picker offering only None,
-  // which is also the right answer for a project with no milestones.
+  // Milestones for the detail panel's field and the context menu. A query of its
+  // own, not the table's rows: those carry the user's filter, so `type:bug` would
+  // empty the picker.
   //
-  // Nothing refreshes it on a local write because the document cache already
-  // does: a mutation invalidates every cached query holding a `__typename` its
-  // response carries, so a `Nib`-returning create or update re-executes this
-  // one. A SUBSCRIPTION event does not — that path invalidates only the
-  // operation's own `additionalTypenames`, which is why the table refetches by
-  // hand and this list can lag another client until the reconnect below.
+  // urql's document cache re-executes it after a `Nib`-returning mutation. A
+  // subscription event invalidates only its `additionalTypenames`, so another
+  // client's change can lag until the reconnect re-ask below.
   const milestonesResult = queryStore({ client, query: MILESTONES_QUERY });
   let milestones = $derived($milestonesResult.data?.nibs ?? []);
   provideMilestones(() => milestones);
@@ -154,74 +124,52 @@
 
   const prefs = new Preferences();
 
-  // Filter query ↔ URL (`?q=`). Independent of useHistoryNav's `?nib=`; both
-  // preserve each other's param. Load precedence: a `?q=` in the initial URL
-  // WINS over the localStorage-restored filter (so a shared link reproduces its
-  // filtered view, including parked invalid tokens). Applied synchronously here
-  // — before first paint — so the table renders the shared filter immediately.
+  // Filter query ↔ `?q=`. A `?q=` in the initial URL wins over the
+  // localStorage-restored filter, applied before first paint.
   const queryUrl = createQueryUrl();
   const initialUrlQuery = queryUrl.currentQuery();
   if (initialUrlQuery !== null) prefs.setQuery(initialUrlQuery);
 
-  // Mirror the canonical query back into `?q=` on every change (debounced
-  // replaceState, no Back-stack spam). Runs on mount too, so the address bar
-  // reflects the active filter — whether it came from the URL or localStorage —
-  // and normalizes a hand-typed shared link to canonical form. Empty query
-  // removes the param. The cleanup cancels any pending write so a still-scheduled
-  // replaceState can't fire after unmount.
+  // Mirror the canonical query into `?q=` (debounced replaceState). Also runs on
+  // mount, normalizing a hand-typed link. An empty query removes the param.
   $effect(() => {
     queryUrl.push(prefs.query);
     return () => queryUrl.cancel();
   });
 
-  // Live-apply the selected palette: repaints the app whenever prefs.theme
-  // changes (no reload). The FOUC guard in index.html sets the initial
-  // data-theme before first paint; this keeps it in sync thereafter.
+  // index.html sets the initial data-theme before first paint; this keeps it in sync.
   $effect(() => {
     applyTheme(prefs.theme);
   });
 
-  // Live-apply the global font-size preference: writes the S/M/L multiplier onto
-  // --font-scale whenever prefs.fontSize changes, scaling the type scale plus
-  // the few boxes that must track it (row height, the dropdown width cap) while
-  // root font-size and the spacing scale stay put — see fontScale.ts for the
-  // full list. No pre-paint FOUC guard needed (a tiny reflow is fine).
   $effect(() => {
     applyFontScale(prefs.fontSize);
   });
 
   const selection = new SelectionState();
   const drag = new DragState();
-  // Collapse state lives here — OUTSIDE the {#key position} block that remounts the
-  // PaneGroup (and TreeTable) on a dock toggle — so it survives the remount, like
-  // selection/drag. The constructor argument seeds `activeLevel` from the restored
-  // preference so it names the lens actually on screen from the first render
-  // rather than the default. TreeTable's transition applier reads it as the key
-  // the outgoing scroll offset is parked under — a level that still names the
-  // OUTGOING view, which `prefs.viewLevel` cannot be since it already names the
-  // incoming one. A wrong seed would file the first parked offset under the wrong
-  // view. The switch itself does not consult it — `switchViewLevel` takes `from`
-  // from its caller.
+  // Created outside the {#key position} block so collapse state survives the
+  // PaneGroup remount. Seeded with the restored view level: TreeTable's transition
+  // applier parks the outgoing scroll offset under `activeLevel`, so a wrong seed
+  // files the first offset under the wrong view.
   const treeView = new TreeViewState(prefs.viewLevel);
   const confirmDialog = createConfirmDialog();
 
   // --- active-nib-view presenter (unified detail/editor) ------------------
-  // Forward reference: `nav.isBlocked` and the injected factories close over the
-  // presenter, which is constructed below. Held in a const object (not a
-  // reassigned `let`) so the reactive reads of `holder.view.state` stay
-  // warning-clean; every read is lazy (after construction).
+  // `nav.isBlocked` and the factories below close over the presenter, which is
+  // constructed later. A const holder, not a reassigned `let`, keeps the reactive
+  // reads of `holder.view.state` warning-clean.
   const holder: { view: ActiveView | null } = { view: null };
 
-  // isBlocked reads view.blocksHistoryNav (dirty buffer / open type picker).
-  // While blocked, Back/Forward must not navigate the panel behind it.
+  // While blocked (dirty buffer, open type picker), Back/Forward must not
+  // navigate the panel behind it.
   const nav = createHistoryNav({
     selection,
     isBlocked: () => holder.view?.blocksHistoryNav ?? false,
   });
 
-  // The nib id the view currently targets for editing (viewing/gone) drives the
-  // SINGLE detail query — used both to render relations AND to seed the edit
-  // form. Paused when nothing is being viewed.
+  // The one detail query: renders relations and seeds the edit form. Paused
+  // unless the view is `viewing` or `gone`.
   const detailTargetId = $derived.by(() => {
     const s = holder.view?.state;
     return s && (s.kind === "viewing" || s.kind === "gone") ? s.nibId : null;
@@ -234,43 +182,25 @@
       pause: !detailTargetId,
     }),
   );
-  // While the socket was down the panel missed every change to the nib it is
-  // showing, so its cached result is stale by an unknown amount the moment the
-  // socket returns — re-read it from the network then (nibs-1seo). Registered
-  // once; the listener reads the CURRENT store each time it fires.
+  // The shown nib missed every change while the socket was down; re-read it.
   $effect(() => recovery.onRecovered(() => {
     if (!detailTargetId) return;
-    // Both halves are needed. The refetch gets fresh bytes from the server, and
-    // invalidating the seed lets them actually reach the buffer — the seed is
-    // one-shot per buffer, so without this the fresh result is discarded as
-    // already-seeded and the panel keeps rendering its pre-gap content. A dirty
-    // buffer still wins; unsaved edits are never dropped.
+    // The seed is one-shot per buffer: invalidate it, or the refetched result is
+    // discarded as already-seeded. A dirty buffer still wins.
     holder.view?.invalidateDetailSeed();
     detailStore.reexecute({ requestPolicy: "network-only" });
   }));
 
-  // A socket back after a gap is proof the server is reachable, and everything
-  // read while it was down is stale by an unknown amount. Both queries are
-  // re-asked unconditionally.
-  //
-  // The config one is unconditional only because `useLiveConfig` latches: the
-  // re-ask used to be gated on holding NO vocabulary, since a failure took away
-  // the one in hand. That gate also meant a vocabulary edited while the socket
-  // was down was never picked up — the server's push cannot deliver what the
-  // client was not connected for.
-  //
-  // Through `retry()` rather than the store directly, so the automatic backoff
-  // budget is restored as well: a session that exhausted it while the server was
-  // unreachable gets a fresh one the moment the server proves otherwise.
+  // Everything read while the socket was down is stale. The config re-ask is safe
+  // unconditionally because `useLiveConfig` holds the last good config, and goes
+  // through `retry()` so the automatic backoff budget is restored too.
   $effect(() => recovery.onRecovered(() => {
     config.retry();
     milestonesResult.reexecute({ requestPolicy: "network-only" });
   }));
 
-  // No cast: `$detailStore.data` is typed by NIB_DETAIL_QUERY's generated result,
-  // and `DetailNib` is derived from that same type, so `?? null` yields exactly
-  // `DetailNib | null`. Dropping a selected field from the query therefore breaks
-  // this read site (via snapshotFromDetail) at compile time instead of blanking.
+  // Do not cast: `DetailNib` derives from NIB_DETAIL_QUERY's generated type, so a
+  // field dropped from the query breaks snapshotFromDetail at compile time.
   const detailNib = $derived($detailStore.data?.nib ?? null);
   const detailFetching = $derived($detailStore.fetching);
   const detailError = $derived($detailStore.error);
@@ -293,19 +223,15 @@
   }
 
   // --- presenter dependency factories -------------------------------------
-  // `detail` returns a thin reactive window onto the single App-level query
-  // (keyed on the view's target, which equals `nibId` by the time this runs).
+  // A reactive window onto the detail query, which is keyed on the view's target.
   const detail = (_nibId: string): DetailView => ({
     get nib() { return detailNib; },
     get fetching() { return detailFetching; },
   });
 
-  // `editForm` seeds from the shared detail query. When the async query hasn't
-  // resolved yet it starts from a placeholder; the presenter adopts the real
-  // snapshot via `applyExternal` once `detail.nib` lands (no second fetch). A
-  // create→edit hand-off passes the freshly-created snapshot as `seed`, so the
-  // edit form renders the new nib immediately (no blank flash before the detail
-  // query runs for the brand-new id).
+  // Seeds from the detail query if it holds this nib, else a placeholder the
+  // presenter replaces when `detail.nib` lands. A create→edit hand-off passes the
+  // created snapshot as `seed`, so the form does not flash blank.
   const editForm = (nibId: string, seed?: NibSnapshot): EditForm => {
     const initial: NibSnapshot =
       seed ??
@@ -317,20 +243,13 @@
 
   const createForm = (defaults: CreateDefaults): CreateForm => createNibForm({ mutations }, defaults);
 
-  // One-shot, network-authoritative fetch of a nib's current committed snapshot,
-  // used by the presenter's null-remote conflict fallback.
-  // `network-only` bypasses the cache so we read the server's CURRENT revision —
-  // the whole point is to reconcile against what actually rejected the save. Uses
-  // the DEDICATED NIB_CONFLICT_SNAPSHOT_QUERY (not NIB_DETAIL_QUERY) so its urql
-  // result-source is independent of App's live detailStore — a `{ nib: null }`
-  // (deleted-in-race) response must not feed detailStore and drop the buffer.
+  // A network-only read of a nib's committed snapshot, for the presenter's
+  // null-remote conflict fallback. Uses its own query so a `{ nib: null }`
+  // response does not feed detailStore and drop the buffer.
   //
-  // Contract: resolves the snapshot, resolves `null` when the nib no longer
-  // exists, and REJECTS (throws) on a transport/GraphQL error. urql's
-  // `.toPromise()` does NOT reject on failure — it resolves an OperationResult
-  // with `.error` set — so we surface it explicitly (mirrors dispatcher.ts's
-  // `if (res.error)` and liveNib's warn). The presenter's fallback relies on this
-  // to tell a transient load failure ("please retry") apart from a real deletion.
+  // Resolves the snapshot, or `null` when the nib no longer exists; throws on a
+  // transport/GraphQL error, which `.toPromise()` resolves rather than rejects.
+  // The fallback relies on the throw to tell a failed load from a deletion.
   const fetchSnapshot = async (nibId: string): Promise<NibSnapshot | null> => {
     const result = await client
       .query(NIB_CONFLICT_SNAPSHOT_QUERY, { id: nibId }, { requestPolicy: "network-only" })
@@ -347,33 +266,19 @@
     createLiveNib({
       client,
       nibId: () => nibId,
-      // Read the presenter's live edit-form etag so a post-save echo is filtered.
+      // The live edit-form etag, so a post-save echo is filtered out.
       selfEtag: () => {
         const f = holder.view?.form;
         return f && f.mode === "edit" ? f.etag : undefined;
       },
     });
 
-  // Promise wrapper over the shared confirm dialog for the dirty-nav guard.
-  // Resolves the tri-state ConfirmChoice: "save" (the Save action),
-  // "discard" (the confirm/primary action), or "cancel" on any dismissal
-  // (Cancel / Escape / overlay) OR when a later confirm supersedes this one before
-  // it is answered.
+  // The dirty-nav confirm. Resolves "save", "discard", or "cancel" on dismissal or
+  // when a later confirm supersedes it. Each call owns its resolver through an
+  // idempotent `settle`, so overlapping confirms cannot resolve each other.
   //
-  // Each invocation owns its OWN resolver via a latched `settle` closure — there
-  // is no shared single slot to overwrite, so overlapping confirms can never leak
-  // one another's promise (nibs-an5d). The three action handlers settle explicitly;
-  // dismissal/supersession routes through `onDismiss`, which the dialog runs for
-  // exactly this invocation. `settle` is idempotent, so a follow-on dismissal
-  // after an explicit Save/Discard is inert.
-  //
-  // `canSave: false` — the buffer's nib was DELETED, so a Save would dispatch
-  // against nothing and fail; the copy below may state that as fact. It does not
-  // mean merely "gone": an archived buffer arrives with `canSave: true` and keeps
-  // its Save, because its nib still exists in the archive and the write lands.
-  // Omitting saveLabel/saveAction renders the dialog Discard-only (showConfirm
-  // nulls both, and ConfirmDialog gates its Save button on `confirm.saveAction`),
-  // the same shape Delete/Archive confirms use.
+  // `canSave: false` means the nib was deleted (an archived buffer still saves).
+  // Omitting saveLabel/saveAction renders the dialog Discard-only.
   function confirmDiscard({ canSave }: { canSave: boolean }): Promise<ConfirmChoice> {
     return new Promise((resolve) => {
       let settled = false;
@@ -402,9 +307,7 @@
           confirmDialog.close();
           settle("discard");
         },
-        // Dismissed (Cancel / Escape / overlay) or superseded before it was
-        // answered: keep the edits and stay put. Owned by this invocation, so a
-        // later Delete/Archive confirm's dismissal can never resolve it.
+        // Dismissed or superseded: keep the edits and stay put.
         onDismiss: () => settle("cancel"),
       });
     });
@@ -429,15 +332,12 @@
   provideConfirmDialog(confirmDialog);
   provideActiveView(view);
 
-  // Whether the docked detail pane should be open: the view is open AND
-  // presented docked (expanded routes to the full-screen modal instead).
+  // The expanded presentation uses the modal below instead.
   const dockOpen = $derived(view.isOpen && view.presentation === "docked");
 
-  // Wire browser history: sync selection from the initial URL, then let the view
-  // follow. Back/Forward drive selection via popstate; the view syncs to it.
-  // Untracked so this runs ONCE on mount: `syncFromUrl` and `syncTo` both read
-  // reactive state (selection, viewState) — without untrack, `syncTo`'s internal
-  // viewState read+write would self-trigger the effect into an infinite loop.
+  // Sync selection from the initial URL and let the view follow; popstate drives
+  // it afterward. Untracked so it runs once: `syncTo` reads and writes view
+  // state and would re-trigger the effect in a loop.
   $effect(() => {
     untrack(() => {
       nav.syncFromUrl();
@@ -448,43 +348,24 @@
   });
 
   function onPopState(e: PopStateEvent) {
-    // handlePopState updates selection (honoring the blocked-overlay guard); the
-    // view then syncs to the resulting selection. syncTo skips the dirty guard,
-    // which is what this path needs: history has already moved, so a confirm
-    // would arrive too late to prevent the navigation it asks about.
+    // syncTo skips the dirty guard: history has already moved, so a confirm would
+    // come too late.
     nav.handlePopState(e);
     view.syncTo(selection.selectedNibId);
-    // Re-sync the filter query from the just-restored URL, mirroring how
-    // handlePopState re-syncs `?nib=`. The URL is the source of truth for the
-    // query on history navigation, exactly as on initial load (URL-wins). An
-    // ABSENT `?q=` clears the query (empty string) rather than preserving the
-    // current filter — the writer removes the param whenever the query is empty,
-    // so a restored entry without `?q=` genuinely means "empty filter". This
-    // re-derives prefs.query, so the writer $effect debounces a replaceState of
-    // the same value onto the current entry: idempotent, no popstate, no loop.
+    // The URL is the source of truth for the query on history navigation. An
+    // absent `?q=` means an empty filter, since the writer removes the param for one.
     prefs.setQuery(queryUrl.currentQuery() ?? "");
   }
 
-  // A viewed nib that resolves to nothing (deleted / archived / stale link).
-  // `view.noteMissing` owns the outcome: a pristine buffer closes (healed below),
-  // a dirty one holds the unsaved edits on screen in the "gone" state.
-  //
-  // This effect acts only while the view is `viewing`. The live-subscription
-  // deletion path (useActiveView's bridge) applies DELETED with no dirty gate, so
-  // a missing nib can reach "gone" without this effect reporting at all — the
-  // close/heal/toast below is not the only outcome for a missing nib. "gone" is
-  // not terminal either: a later syncTo on the same id returns the view to
-  // `viewing`, where this effect is live again.
+  // A viewed nib that resolves to nothing. `view.noteMissing` decides: a pristine
+  // buffer closes, a dirty one is held in "gone". The live bridge can also reach
+  // "gone" without this effect reporting.
   let reportedMissingFor: string | null = null;
   $effect(() => {
     const s = view.state;
-    // Only `viewing` can produce a report; `closed`, `creating`, and `gone` return
-    // early. That early return — not the latch — is what keeps a report from
-    // repeating on the state a report just produced. (`gone` does not imply a
-    // report was made: the live bridge's ungated DELETED reaches it too.) Clearing
-    // the latch here is safe: getting back to `viewing` on the same still-missing
-    // id takes an OPEN — via `open` or the guard-bypassing `syncTo` — after which
-    // noteMissing decides afresh against the buffer's dirtiness at that moment.
+    // Only `viewing` reports; the early return keeps a report from repeating.
+    // Getting back to `viewing` takes an open, after which noteMissing decides
+    // afresh, so clearing the latch here is safe.
     if (s.kind !== "viewing") {
       reportedMissingFor = null;
       return;
@@ -496,22 +377,18 @@
   });
 
   function handleMissingNib(id: string) {
-    // Deferred to a microtask so we don't mutate state during the detail query's
-    // own effect flush.
+    // Deferred so no state is mutated during the detail query's effect flush.
     queueMicrotask(() => {
       const outcome = view.noteMissing(id);
       if (outcome === "stale") {
-        // The view is not on `id` — it moved to another nib, to "creating", or
-        // closed. This report says nothing about whatever (or nothing) is on
-        // screen now, so nothing here may act on it. Release the latch (only if
-        // it is still ours) so a later report for `id` is not suppressed.
+        // The view moved off `id`: act on nothing, and release the latch if it is
+        // still ours so a later report is not suppressed.
         if (reportedMissingFor === id) reportedMissingFor = null;
         return;
       }
       if (outcome === "kept") {
-        // `id`'s buffer is on screen in the "gone" state, so the selection and
-        // ?nib= URL still describe what is shown and must survive. The view's own
-        // deleted notice reports the deletion — no toast on top.
+        // The buffer is on screen in "gone": keep the selection and ?nib=. The
+        // view's own notice reports the deletion.
         return;
       }
       // "closed" — nothing for `id` is on screen any more: heal the URL and say why.
@@ -521,7 +398,7 @@
     });
   }
 
-  // Collect unique tags from the query results via TreeTable callback
+  // Unique tags in the query results, reported by TreeTable.
   let availableTags: string[] = $state([]);
 
   function handleTagsChange(tags: string[]) {
@@ -532,28 +409,18 @@
 
   /** Execute the drop the drag decided on, or say why it cannot happen. */
   async function handleDrop(plan: DropPlan) {
-    // Copied before anything can await: `ondrop` runs just ahead of `endDrag()`,
-    // which clears draggedIds as soon as this function suspends — and a
-    // refusal's action outlives the gesture entirely. Never empty — `ondrop`
-    // fires only while `drag.isDragging`, which IS a non-empty drag.
+    // Copied before any await: `endDrag()` runs once this suspends and clears
+    // draggedIds, and a refusal's action outlives the gesture. Never empty:
+    // `ondrop` fires only during a drag.
     const ids = [...drag.draggedIds];
 
     if (!plan.ok) {
-      // One refusal is how a drag is CANCELED rather than rejected: releasing
-      // back on the row you grabbed. A wiggle that clears the drag threshold and
-      // returns to the source row is the ordinary "changed my mind" gesture,
-      // which said nothing before refusals reached this handler and should stay
-      // silent now. Every other reason answers a question about a destination,
-      // so it is shown. The judgment is made once, here — `plan.refusal.reason`
-      // has no other reader.
+      // Releasing on the grabbed row is a cancel and stays silent; every other
+      // refusal is shown.
       if (plan.refusal.reason !== "drop-on-self") {
-        // A refusal that names a separate write gets a button that performs it,
-        // so the answer is one click rather than a re-read of the sentence.
         const remedy = refusalAction(plan.refusal);
-        // `action` is always PASSED, never spread in conditionally: sonner merges
-        // a repeat raise into the live toast, so an omitted key leaves the
-        // previous refusal's button — and its onClick — on a message that no
-        // longer describes it. An explicit `undefined` is what clears it.
+        // Always pass `action`, even as undefined: sonner merges a repeat raise
+        // into the live toast, so an omitted key keeps the previous button.
         toast.error(plan.refusal.message, {
           id: DROP_REFUSAL_TOAST_ID,
           action:
@@ -567,8 +434,7 @@
 
     await mutations.execute(plan.command);
 
-    // After mutation, ensure the primary dragged nib is visible in the tree
-    // (TreeTable will expand collapsed ancestors and scroll it into view)
+    // TreeTable expands collapsed ancestors and scrolls it into view.
     selection.ensureVisible(ids[0]);
   }
 
@@ -584,23 +450,15 @@
   let contextMenuPosition = $state({ x: 0, y: 0 });
   let contextMenuNibId: string | null = $state(null);
   let contextMenuNib: TreeTableNib | null = $state(null);
-  // Supplied by the table with each context-menu event: only it holds the loaded
-  // nibs, and the menu's batch mutations need each target's etag to send ifMatch.
+  // From the table, which holds the loaded nibs; batch mutations need etags for ifMatch.
   let contextMenuEtagOf: ((id: string) => string | undefined) | undefined = $state(undefined);
-  // Subtree expand/collapse actions for the right-clicked row.
-  // TreeTable owns the collapse state, so it hands down closures that mutate it.
+  // Subtree expand/collapse closures for the right-clicked row, from TreeTable.
   let contextMenuSubtree: RowSubtreeActions | null = $state(null);
 
   function handleRowContextMenu(nibId: string, event: MouseEvent, nib: TreeTableNib, subtree: RowSubtreeActions, etagOf: (id: string) => string | undefined) {
     contextMenuEtagOf = etagOf;
-    // The right-clicked nib needs to become the menu's target when it is not
-    // already in the selection. How that happens follows the open-detail
-    // preference:
-    //   "single" — open it, routed through the view so the dirty-guard +
-    //              URL/history stay in sync.
-    //   "double" — select it WITHOUT opening, so a right-click never pops the
-    //              detail panel over whatever the user is reading. The menu still
-    //              gets a target because it reads the selection.
+    // The menu reads its target from the selection. "single" opens an unselected
+    // row through the view; "double" selects it without opening the panel.
     if (!selection.isSelected(nibId)) {
       if (prefs.openDetailOn === "double") {
         selection.selectOnly(nibId);
@@ -615,10 +473,7 @@
     contextMenuOpen = true;
   }
 
-  // "Filter related" composition: AND the chosen scalar relationship-id onto the
-  // CURRENT filter (spread preserves other facets; same-kind key overwrites). No
-  // navigation — this only re-filters the table. The box, being unfocused, snaps
-  // to the canonical serialization of the updated filter.
+  // AND the relationship id onto the current filter; a same-kind key is replaced.
   function handleFilterRelated(field: RelIdKey, id: string) {
     prefs.filter = { ...prefs.filter, [field]: id };
   }
@@ -633,42 +488,27 @@
     getContextMenuNibId: () => contextMenuNibId,
   });
 
-  // --- Detail-pane sizing (composable owns the math; App owns measurement + wiring) ---
+  // --- Detail-pane sizing (the layout composable owns the math; App measures and wires PaneForge) ---
   let paneGroupEl: HTMLElement | null = $state(null);
   let detailPaneComponent: ReturnType<typeof ResizablePane> | undefined = $state(undefined);
   let containerWidth = $state(0);
   let containerHeight = $state(0);
 
-  // Detail-panel dock position: "right" (horizontal split, size = width) or
-  // "bottom" (vertical split, size = height). The size axis, pref field, and
-  // PaneForge direction all switch off this.
+  // "right" splits horizontally (size = width), "bottom" vertically (size = height).
   const position = $derived(prefs.detailPanelPosition);
-
-  // PaneForge split direction for the active dock. App needs it to pick which
-  // measured dimension to feed the layout as `containerSize`, and to set the
-  // PaneGroup `direction` — both consume the module's orientation mapping.
   const direction = $derived(orientationOf(position).direction);
-
-  // The measured extent of the split axis: height for a vertical (bottom) split,
-  // width otherwise. All px<->% conversions in the layout run against this.
   const containerSize = $derived(direction === "vertical" ? containerHeight : containerWidth);
 
-  // Sizing math (orientation mapping, px<->%, min/max/default percent, and the
-  // resize / drag-flush / reset handlers) lives in the layout composable. App
-  // feeds it reactive inputs as getters and still owns the ResizeObserver
-  // measurement below and the PaneForge wiring in the template.
   const layout = createDetailPaneLayout({
     prefs,
     position: () => position,
     containerSize: () => containerSize,
   });
 
-  // Track container width AND height reactively via ResizeObserver. The size
-  // axis PaneForge measures against depends on the dock orientation, so keep both.
+  // Both dimensions, since the measured axis depends on the dock orientation.
   $effect(() => {
     if (!paneGroupEl) return;
-    // Synchronously read the initial dimensions so they are valid before
-    // PaneForge fires its first onResize callback during mount.
+    // Read synchronously so sizes are valid before PaneForge's first onResize.
     containerWidth = paneGroupEl.offsetWidth;
     containerHeight = paneGroupEl.offsetHeight;
     const observer = new ResizeObserver(([entry]) => {
@@ -680,12 +520,9 @@
   });
 
   function handleResizeHandleDblClick() {
-    // Reset persists + flushes the default size and returns the percent to
-    // resize the PaneForge pane to.
     detailPaneComponent?.resize(layout.reset());
   }
 
-  // Reactively collapse/expand the detail pane based on the docked-view state.
   $effect(() => {
     if (!detailPaneComponent) return;
     if (dockOpen) {
@@ -700,12 +537,9 @@
     }
   });
 
-  // One-shot initial sizing: on load the pane can mount ALREADY open (a resumed
-  // selection) while the container is still unmeasured (size 0), so PaneForge
-  // bakes in a size from fallback percents and collapses it to ~min. The
-  // collapse/expand effect above skips this case (the pane isn't collapsed), so
-  // resize the pane to the correct percent once the container has been measured.
-  // Guarded to fire only once — it must never fight the user's later resizes.
+  // A pane that mounts already open before the container is measured gets a
+  // fallback size near its minimum, which the effect above does not correct.
+  // Runs once only, so it never fights the user's resizes.
   let paneInitialSized = false;
   $effect(() => {
     if (paneInitialSized) return;
@@ -729,16 +563,11 @@
     oncreatenew={(type) => view.startCreate({ type })}
   />
 
-  <!-- Provide the per-column header/cell adapters to the table region. The map
-       is a static, app-wide default (columns.ts + ColumnAdapters.svelte); this
-       wrapper is the seam a future per-view override would replace. -->
+  <!-- Provides the per-column header/cell adapters to the table region. -->
   <ColumnAdapters>
   <main class="flex-1 min-h-0 flex flex-col px-6 py-6">
-    <!-- Re-key on position so the whole PaneGroup remounts when the dock toggles.
-         PaneForge fixes the split `direction` at pane-group creation, so the
-         reactive `direction` prop alone can't re-orient an existing group — the
-         remount is required. Collapse/selection/drag state survive because they
-         live in contexts provided OUTSIDE this block. -->
+    <!-- Remounts the PaneGroup when the dock toggles. State that must survive
+         lives in contexts provided outside this block. -->
     {#key position}
     <Resizable.PaneGroup
       direction={direction}
@@ -772,9 +601,8 @@
         onResize={layout.onResize}
         onCollapse={() => {
           if (!dockOpen) return;
-          // Capture at schedule time; only close if still docked-open when the
-          // frame fires (avoids a resize-drag race). If the dirty-guard refuses
-          // the close, re-expand so the pane stays consistent with view state.
+          // Close only if still docked-open when the frame fires; re-expand if
+          // the dirty guard refuses.
           requestAnimationFrame(async () => {
             if (!dockOpen) return;
             await view.requestClose();
@@ -797,9 +625,8 @@
   </ColumnAdapters>
 </div>
 
-<!-- Expanded presentation: the same view, hosted in a full-screen modal overlay.
-     Kept separate from the docked pane; the buffer/query survive the swap because
-     they live in the presenter, not this component. -->
+<!-- Expanded presentation. The buffer and query live in the presenter, so they
+     survive the swap from docked. -->
 {#if view.isOpen && view.presentation === "expanded"}
   <div class="anv-modal-backdrop" data-testid="active-nib-modal" role="presentation">
     <div class="anv-modal-shell">
@@ -808,9 +635,7 @@
   </div>
 {/if}
 
-<!-- Add-child type picker: an anchored popover overlaying the whole app (never
-     replaces the detail view). Opened from the table [+], row context menu, or
-     the detail view's own add-child controls. -->
+<!-- Add-child type picker, anchored over the whole app. -->
 {#if view.typePicker}
   <TypePickerPopover
     parentType={view.typePicker.parentType}
@@ -834,11 +659,7 @@
   etagOf={contextMenuEtagOf}
 />
 
-<!-- Hand the whole composable to the dialog. The dialog reads its display state
-     from it AND owns every route (confirm, Save, dismiss), so there is no inline
-     per-route wiring here that a future edit could rewrite from `dismiss()` to a
-     bare `close()` (which would drop the dismissal owner and reintroduce the
-     nibs-an5d promise leak). (nibs-i567) -->
+<!-- The dialog owns every route (confirm, Save, dismiss); do not wire them here. -->
 <ConfirmDialog confirm={confirmDialog} />
 
 <style>

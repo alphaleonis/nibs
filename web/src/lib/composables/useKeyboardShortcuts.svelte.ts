@@ -1,11 +1,3 @@
-/**
- * Composable for global keyboard shortcuts.
- *
- * Registers tinykeys shortcuts via $effect with automatic cleanup.
- * Reads from: editor orchestration context, selection context,
- * confirm dialog context, and mutation store.
- */
-
 import { bindGlobalShortcuts } from "../keyboard";
 import type { SelectionState } from "../selection.svelte";
 import type { HistoryNav } from "./useHistoryNav.svelte";
@@ -25,15 +17,8 @@ function isInputFocused(): boolean {
 }
 
 /**
- * Set up global keyboard shortcuts. Must be called during component
- * initialization so that the $effect is registered.
- *
- * @param opts.selection - Selection state (from context)
- * @param opts.nav - History navigation controller (from context)
- * @param opts.view - Active-nib-view presenter (from context)
- * @param opts.confirmDialog - Confirm dialog state (from context)
- * @param opts.mutations - Mutation store (from context)
- * @param opts.getContextMenuNibId - Reactive getter for context menu nib ID (for action targeting)
+ * Bind the global keyboard shortcuts. Call during component initialization; it
+ * registers an `$effect`.
  */
 export function useKeyboardShortcuts(opts: {
   selection: SelectionState;
@@ -51,15 +36,10 @@ export function useKeyboardShortcuts(opts: {
     return view.isOpen && view.presentation === "expanded";
   }
 
-  /** True while a confirm dialog is up. The row shortcuts open confirms of their
-   *  own (create/edit route through the dirty-guard; Delete/Backspace open a
-   *  delete confirm), and firing a SECOND confirm reuses the single dialog and
-   *  abandons the first's pending promise — the leak nibs-an5d fixed. tinykeys
-   *  binds a bare `window` listener with no target filtering, so a key pressed
-   *  while focus sits on a dialog button still reaches here; this gate stops it.
-   *  Escape is deliberately NOT gated on this — bits-ui's escape layer consumes
-   *  it (marks it defaultPrevented) so the Escape handler already bails, letting
-   *  the dialog close itself. */
+  /** True while a confirm dialog is up. Row shortcuts open confirms of their
+   *  own, and a second confirm supersedes the first; the window listener still
+   *  sees keys pressed on dialog buttons. Escape is not gated: bits-ui's escape
+   *  layer preventDefaults it, so the Escape handler bails. */
   function confirmOpen(): boolean {
     return confirmDialog.open;
   }
@@ -91,10 +71,10 @@ export function useKeyboardShortcuts(opts: {
       {
         Escape: (e: KeyboardEvent) => {
           if (e.defaultPrevented) return;
-          // Enhanced Escape hierarchy: open view -> deselect -> clear focus.
+          // Close view -> deselect -> clear focus.
           if (view.isOpen) {
             e.preventDefault();
-            // Routes through the dirty-guard, then nav (URL/history stay in sync).
+            // Through the dirty-guard.
             view.requestClose();
             return;
           }

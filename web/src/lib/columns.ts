@@ -1,21 +1,12 @@
-// Pure column model — the "port" half of the table's ports-&-adapters column
-// registry. ZERO Svelte dependency: this module is unit-testable under plain
-// vitest (no jsdom). The Svelte snippet "adapters" that render each column's
-// header/cell live in ColumnAdapters.svelte and are pinned to the ColumnKey
-// union defined here, so the model and the renderers can never drift.
-//
-// Single source of truth: COLUMNS. The three legacy constants
-// (DEFAULT_COLUMN_WIDTHS, DEFAULT_VISIBLE_COLUMNS, and — over in types.ts —
-// DEFAULT_COLUMNS) are DERIVED from it, order-preserving, so a column's
-// identity is declared exactly once.
+// Pure column model with no Svelte dependency. The header and cell renderers
+// live in ColumnAdapters.svelte, pinned to the same ColumnKey union. COLUMNS is
+// the single source; the defaults below and types.ts DEFAULT_COLUMNS derive from it.
 
 import type { TreeTableNib, BlockedEmphasis } from "./types";
 import type { RowSection } from "./tableData";
 
-// Canonical column order. Consumers loop over this (filtered to the visible
-// set) so the rendered th/td sequence follows a single ordering. Column
-// reordering (nibs-46c1) will layer a per-view order on top; for now order is
-// always this list.
+// Canonical column order: the default per-view order, and the order missing keys
+// are appended in when a persisted order is loaded.
 export const ALL_COLUMN_KEYS = [
   "id",
   "parent",
@@ -34,69 +25,47 @@ export const ALL_COLUMN_KEYS = [
 
 export type ColumnKey = (typeof ALL_COLUMN_KEYS)[number];
 
-// The client-side table click-to-sort field. A column's sort field equals its
-// own key, so the sortable ColumnKey subset IS the field union — this is the
-// SINGLE source of that union (types.ts `SortField` is a re-export). Every
-// column is sortable today (see COLUMNS below), so this equals ColumnKey; the
-// RUNTIME-authoritative gate is `SORTABLE_COLUMN_KEYS` (derived from
-// COLUMNS[].sortable), which parseTableSort validates against, so a column later
-// marked `sortable:false` is rejected at load even while the type still lists it.
+// A column's sort field is its own key. At runtime SORTABLE_COLUMN_KEYS, not this
+// type, decides which fields a persisted sort may name.
 export type SortKey = ColumnKey;
 
 export interface ColumnDef {
   key: ColumnKey;
   label: string;
   defaultWidth: number;
-  // Cannot be toggled off in the Columns dropdown (title only, today).
+  // Cannot be toggled off in the Columns dropdown.
   alwaysVisible: boolean;
-  // Shown when a view has no persisted column configuration. Opt-in columns
-  // (milestone / area / blocking / blockedBy / created) start hidden but remain
-  // toggleable.
+  // Shown when a view has no persisted column configuration.
   defaultVisible: boolean;
-  // Column capabilities for the sort UI. Every column is sortable in every view;
-  // the click-to-sort header + aria-sort live in TreeTable's <th> shell and read
-  // these flags. A sortable column's `sortKey` equals its own `key`.
+  // TableHeader offers click-to-sort when `sortable`. `sortKey` equals `key`.
   sortable: boolean;
   sortKey: SortKey | null;
 }
 
-// The exact per-row inputs a cell adapter needs — mirrors TreeTableRow's
-// per-row data. Cells are pure functions of this bag and read nothing from
-// Svelte context (they cannot touch selection/drag).
+// Per-row inputs to a cell adapter. Cells are pure functions of this bag and read
+// nothing from Svelte context.
 export interface RowContext {
   nib: TreeTableNib;
   depth: number;
   parentNib: TreeTableNib | null;
   /**
    * The nib this row's `milestone` assignment resolves to, or null when it is
-   * unassigned OR names a nib the table does not hold. Resolved for the same
-   * reason `parentNib` is: a cell is a pure function of this bag, so a column
-   * that shows an assignment's TITLE cannot look one up for itself.
-   *
-   * The two nulls are deliberately not distinguished here — `nib.milestone`
-   * carries the raw value, so the cell tells them apart by reading it.
+   * unassigned or names a nib the table does not hold. Read `nib.milestone` to
+   * tell the two apart.
    */
   milestoneNib: TreeTableNib | null;
   hasChildren: boolean;
   collapsed: boolean;
   blockedEmphasis: BlockedEmphasis;
   /**
-   * The section this row DRAWS, or null for the rows that draw none — which is
-   * most of them, and every row of an ungrouped view.
-   *
-   * The only channel a FABRICATED section row has for what it IS: it names no
-   * nib, and `nib` is a placeholder carrying the section's label with empty
-   * strings around it. A section a real nib heads answers here too, and its
-   * cells still come from that nib.
+   * The section this row draws, or null for most rows. A fabricated section row
+   * names no nib, so this is its only record of what it is.
    */
   drawsSection: RowSection | null;
 }
 
-// The single source of truth for every column's identity + capabilities. The
-// `satisfies Record<ColumnKey, ColumnDef>` pins the key-set to the ColumnKey
-// union: a missing or extra key is a compile error naming this file. The
-// ColumnAdapters snippet map is pinned to the SAME union, so a column with a
-// def but no renderer (or vice versa) also fails to compile.
+// `satisfies` pins the key set to ColumnKey, as ColumnAdapters' renderer map is,
+// so a column missing from either is a compile error.
 export const COLUMNS = {
   id: { key: "id", label: "ID", defaultWidth: 100, alwaysVisible: false, defaultVisible: true, sortable: true, sortKey: "id" },
   parent: { key: "parent", label: "Parent", defaultWidth: 160, alwaysVisible: false, defaultVisible: true, sortable: true, sortKey: "parent" },
@@ -113,21 +82,12 @@ export const COLUMNS = {
   modified: { key: "modified", label: "Modified", defaultWidth: 110, alwaysVisible: false, defaultVisible: true, sortable: true, sortKey: "modified" },
 } satisfies Record<ColumnKey, ColumnDef>;
 
-// Derived, order-preserving. Was a hand-maintained record in types.ts.
 export const DEFAULT_COLUMN_WIDTHS = Object.fromEntries(
   ALL_COLUMN_KEYS.map((k) => [k, COLUMNS[k].defaultWidth]),
 ) as Record<ColumnKey, number>;
 
-// Derived, order-preserving. Columns shown when a view level has no persisted
-// column configuration (opt-in columns excluded).
 export const DEFAULT_VISIBLE_COLUMNS: ColumnKey[] = ALL_COLUMN_KEYS.filter((k) => COLUMNS[k].defaultVisible);
 
-// Runtime-authoritative sortable set, derived from COLUMNS[].sortable and
-// order-preserving. The single source consumed downstream: parseTableSort
-// (storage.ts) validates persisted sort fields against it, and TreeTable renders
-// a click-to-sort header for each. A column's sort field equals its own key.
 export const SORTABLE_COLUMN_KEYS: ColumnKey[] = ALL_COLUMN_KEYS.filter((k) => COLUMNS[k].sortable);
 
-// The always-visible columns (title today). Order-preserving. Consumed by the
-// persistence sanitizer to guarantee these survive a load/save round-trip.
 export const ALWAYS_VISIBLE_KEYS: ColumnKey[] = ALL_COLUMN_KEYS.filter((k) => COLUMNS[k].alwaysVisible);

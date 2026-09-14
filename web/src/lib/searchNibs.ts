@@ -2,19 +2,16 @@ import type { Client } from "@urql/core";
 import { SEARCH_NIBS_QUERY } from "./queries";
 import type { NibSuggestion } from "./query/relComplete";
 
-/** Fetch candidate nibs for a relationship-id token fragment. Injected into the
- *  Toolbar so tests can supply a fake instead of a real urql client. */
+/** Fetch candidate nibs for a relationship-id token fragment. Toolbar accepts
+ *  one as a prop so tests can inject a fake. */
 export type SearchNibsFn = (fragment: string) => Promise<NibSuggestion[]>;
 
 /** Max candidate rows offered in the relationship-id typeahead. */
 export const NIB_SEARCH_LIMIT = 8;
 
 /**
- * Build a `SearchNibsFn` from a urql client. Runs the lean `SEARCH_NIBS_QUERY`
- * against the existing search resolver (network-only so suggestions reflect the
- * current store, not a stale cache), maps the hits to `NibSuggestion`, and caps
- * the list. A transport/GraphQL error resolves to an empty list — the typeahead
- * degrades to "no suggestions" rather than throwing under the cursor.
+ * Build a `SearchNibsFn` from a urql client. Network-only, capped at
+ * NIB_SEARCH_LIMIT; a GraphQL error resolves to an empty list.
  */
 export function createNibSearch(client: Client): SearchNibsFn {
   return async (fragment) => {

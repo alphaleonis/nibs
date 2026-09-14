@@ -1,61 +1,36 @@
-// GitHub-style query language for the web filter box. Pure parse/serialize
-// between filter-box text and the structured NibFilter, plus a synchronous
-// (context-aware) completion helper for the input.
+// GitHub-style query language for the web filter box: parsing and canonical
+// serialization between box text and NibFilter, completion, and highlighting.
 //
-// Pure means a function of its arguments: the value pools that are not
-// compile-time constants — the declared area paths and the tag list — are passed
-// in by the caller rather than reached for. The modules here import `../areas`
-// for TYPES only.
+// Every function is pure. Runtime vocabularies (area paths, tags) are passed in;
+// `../areas` is imported for types only.
 //
-// Grammar (phase 2): the five metadata facets — type, priority, status, estimate,
-// tags — each as `field:v1,v2` (OR within the field) with an optional `-` prefix
-// for exclusion (`-type:bug` → excludeType). The four enums are value-validated;
-// tags are pattern-checked. `status:` additionally accepts the group names `open`
-// and `closed`, which expand to their member statuses on parse and collapse back
-// on serialize. Known-field tokens with an invalid value are carried in an
-// `invalidTokens` sidecar. Everything else (unknown fields, bare words) is
-// free-text `search`. Serialization is canonical for stable round-trips.
-//
-// Two token kinds joined it since: the relationship/existence block
-// (`relations.ts`) and the ownership token `area:<path>` (`area.ts`), which is
-// scalar like a relationship id but is checked and completed against a vocabulary
-// that arrives at runtime.
+// Token kinds: metadata facets `field:v1,v2` with `-` for exclusion (fields.ts),
+// relationship and existence tokens (relations.ts), and `area:<path>` (area.ts).
+// Everything else is free-text `search`.
 export { parseQuery } from "./parse";
 export type { ParsedQuery } from "./parse";
 export { serializeQuery } from "./serialize";
 export type { QueryFilter } from "./fields";
 export { getCompletion } from "./complete";
 export type { Completion, CompletionKind } from "./complete";
-// Syntax-highlight spans: a pure, read-only view over the same tokens for the
-// filter box's backdrop highlight layer.
+// Syntax-highlight spans for the box's backdrop.
 export { tokenizeSpans } from "./spans";
 export type { Span, SpanKind } from "./spans";
-// Token/gap segmentation: the pure boundary helper the box's click-affordance layer
-// consumes to give each filter token one hit-region (phase 7).
-// The in-UI syntax reference, generated from FIELD_SPECS + REL_TOKEN_ORDER so it
-// cannot document a token the parser rejects or miss one it accepts.
+// The in-UI syntax reference, generated from the vocabulary.
 export { queryHelpSections } from "./help";
 export type { HelpSection, HelpRow } from "./help";
+// Token/gap groupings for the box's backdrop and click layer.
 export { tokenSegments, tokenGroups } from "./tokens";
 export type { TokenSegment, TokenGroup } from "./tokens";
-// Relationship/existence token support (phase 5). `RelIdKey` is the set of scalar
-// relationship-id NibFilter keys — the field the row context menu's "Filter
-// related" items compose onto the current filter.
+// `RelIdKey` is the field the row menu's "Filter related" items set.
 export type { RelIdKey, ExistenceKey } from "./relations";
-// The hierarchy subset of that vocabulary: the tokens naming a nib's tree position,
-// and the escape hatch that drops them. Used by the table's empty state to explain a
-// result emptied by several tree constraints at once.
+// For the table's empty state: the hierarchy tokens in a filter and the filter
+// without them, and the contradictory pairs the server refuses.
 export { hierarchyTokens, clearHierarchyFilters } from "./relations";
-// The pairs the server refuses as unanswerable, spelled the way the box spells
-// them. Used by the table's empty state to explain a refusal the user typed.
 export { contradictionTokens } from "./relations";
-// Async ID/title typeahead for relationship-id token values (phase 6). The pure
-// caret-in-value detector + the candidate-row shape; the debounced fetch lives in
-// the Toolbar, the search fn in `../searchNibs`.
+// Caret detection for the relationship-id typeahead; the Toolbar runs the search.
 export { relTokenValueContext } from "./relComplete";
 export type { RelValueContext, NibSuggestion } from "./relComplete";
-// The ownership token's name and its one refusal question. Exported for the box,
-// which must ask it again whenever the vocabulary changes: `parseQuery` answers it
-// once, with whatever vocabulary the caller had — and `Preferences.setQuery` has
-// none.
+// The box asks `isRefusedArea` again when the vocabulary changes; `parseQuery`
+// asked once, with whatever vocabulary its caller had.
 export { AREA_FIELD, isRefusedArea } from "./area";

@@ -1,7 +1,6 @@
-// --- CSS custom property-based style maps (used by TreeTableRow) ---
-// statusDotColors is the single source of truth for per-status color; both the
-// status glyph (StatusIcon, via statusIcons in icons.ts) and any inline status
-// text tint from it. A new status needs an entry here AND in statusIcons.
+// statusDotColors is the per-status color for both the status glyph
+// (StatusIcon) and inline status text. A new status needs an entry here AND in
+// statusIcons (icons.ts).
 
 export const priorityIndicators: Record<string, { symbol: string; color: string } | null> = {
   "critical": { symbol: "\u203C", color: "var(--priority-critical)" },

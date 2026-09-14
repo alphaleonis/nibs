@@ -17,17 +17,11 @@
   } = $props();
 </script>
 
-<!-- App-level segmented control skinned over the bits-ui RadioGroup primitive.
-     bits-ui sets role="radio" + aria-checked + data-state ("checked"/"unchecked")
-     and gives us WAI-ARIA roving tabindex + arrow-key nav for free. The skin lives
-     here (not in the canonical ui/radio-group scaffold) so a vanilla radio list can
-     reuse the primitive without forking.
+<!-- Segmented control skinned over the bits-ui RadioGroup primitive, which
+     supplies radio roles, roving tabindex and arrow-key nav. The skin lives here,
+     not in ui/radio-group, so a plain radio list can reuse the primitive.
 
-     Toggle-group styling: the group is a bordered container on the panel background
-     (the darkest surface) and the selected item is raised to bg-accent — brighter
-     than the track in dark themes, a clear highlight in light — so the active choice
-     reads as prominent. Unselected items keep full-strength text (not dimmed) so they
-     don't look disabled. Primary/blue stays reserved for the main "New" CTA. -->
+     Unselected items keep full-strength text so they don't read as disabled. -->
 <RadioGroupPrimitive.Root
   {value}
   onValueChange={(v) => v && onchange(v)}

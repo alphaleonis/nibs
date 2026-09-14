@@ -1,18 +1,10 @@
 /**
- * The areas vocabulary, as the client asks about it.
+ * The areas vocabulary, as the client asks about it. Unlike the vocabularies
+ * generated into `generated/vocabulary.ts`, areas are per-store, so this arrives
+ * at runtime over `Config.areas`.
  *
- * Areas are the one genuinely per-project vocabulary — statuses, types,
- * priorities, estimates and the hierarchy rules are generated at build time into
- * `generated/vocabulary.ts`, and a per-store `areas:` block cannot be. So this
- * one arrives at runtime, over `Config.areas`.
- *
- * A PORT OF QUESTIONS, not a getter over a list. Each method mirrors a decision
- * the Go side already makes (`config.GetArea`, `config.IsValidArea`,
- * `config.IsAreaWithin`, `config.AreasDeclared`), so a consumer asks rather than
- * re-derives — which is what keeps the two sides from drifting.
- *
- * Pure: no Svelte, no urql. The production adapter builds one from the config
- * query; a test builds one from a literal.
+ * The methods mirror `config.Areas`'s `Get`, `IsValid`, `IsWithin` and
+ * `Declared`; ask them rather than re-deriving. Pure: no Svelte, no urql.
  */
 
 /** One declared area. Mirrors the `Area` type on the wire. */
@@ -29,60 +21,37 @@ export interface AreaNode {
 }
 
 /**
- * Whether a value is one the server's `area:` filter will accept.
- *
- * THREE-valued on purpose. The server refuses an undeclared `area:` filter
- * outright — the whole `nibs` query fails, not just that predicate — and a
- * filter round-trips through localStorage and `?q=`, so it can be held before
- * the vocabulary has arrived. Reading "not yet loaded" as "undeclared" would
- * either drop a valid token or send one that fails the query.
+ * Whether the server's `area:` filter will accept a value. "unknown" means the
+ * vocabulary has not arrived: the server fails the whole query on an undeclared
+ * area, so such a token is neither dropped nor sent yet.
  */
 export type AreaValidity = "declared" | "undeclared" | "unknown";
 
 export interface AreaVocabulary {
   /**
-   * "none" means the project declares no areas — a normal and permanent state
-   * (`config.AreasDeclared` is the same question), distinct from "loading".
-   * Never conflated with `sections().length`, because those are different
-   * answers to different questions.
-   *
-   * "unavailable" means the config query FAILED, and is neither of the other
-   * two: "loading" would promise an answer shortly that is never coming, and
-   * "none" would assert a fact about the project we could not ask about. Both
-   * empty states are "no sections to show", but only one of them is a healthy
-   * project, and they earn different remedies.
+   * "none": the project declares no areas (`Areas.Declared`), a permanent state
+   * distinct from "loading". "unavailable": the config query failed, so neither
+   * an answer nor "none" is coming.
    */
   readonly status: "loading" | "none" | "ready" | "unavailable";
   /** Every declared area in DECLARATION order. */
   sections(): readonly AreaNode[];
-  /** What a nib's stored `area:` resolves to, or null when it names no declared
-   *  area (`config.GetArea`). Stored values arrive verbatim. */
+  /** The declared area a stored `area:` names, or null (`Areas.Get`). */
   resolve(stored: string): AreaNode | null;
-  /** `config.IsValidArea`, plus the pre-load third answer. */
+  /** `Areas.IsValid`, plus "unknown" before the vocabulary loads. */
   validity(path: string): AreaValidity;
-  /** The downward closure, `path` included — `config.IsAreaWithin` read forwards.
-   *  Empty when `path` names no declared area. */
+  /** `path` and every area declared beneath it (`Areas.IsWithin`). Empty when
+   *  `path` names no declared area. */
   subtreeOf(path: string): readonly AreaNode[];
   /** What completes `area:<partial>` — declaration order, case-insensitive substring. */
   completions(partial: string): readonly string[];
 }
 
 /**
- * A declared color narrowed to what may be handed to CSS, or null for one that
- * may not.
- *
- * `AreaConfig.Color` is free text out of a store's areas.yml and reaches an
- * inline style, so it is narrowed here rather than trusted at the sink: a bare
- * CSS color name or a hex code — the two shapes that field documents — and
- * nothing else. Narrowing loses a color a project wrote some other legal way
- * (`rgb(...)`, `oklch(...)`), which is the price of not passing a `;` into a
- * style declaration.
- *
- * The narrowing is the boundary, and it has to be: an inline style is a
- * declaration LIST, so a value carrying its own `;` can end its declaration and
- * open another rather than being rejected as one malformed value. Executed
- * against the sink rather than reasoned about — the single-property form drops
- * the same string, so the sink cannot be judged by the call it resembles.
+ * A declared color if it is a bare CSS color name or hex code, else null. The
+ * value reaches an inline style, where a `;` would open another declaration, so
+ * narrow it here even though the server validates the same shapes
+ * (`config.ValidateAreaColor`).
  */
 export function cssColor(color: string): string | null {
   return /^[a-zA-Z]+$|^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(color) ? color : null;
@@ -92,14 +61,9 @@ const EMPTY_NODES: readonly AreaNode[] = Object.freeze([]);
 const EMPTY_PATHS: readonly string[] = Object.freeze([]);
 
 /**
- * Build a vocabulary from the flat list the server sends.
- *
- * The list is in DECLARATION order with a parent immediately before the subtree
- * it heads, and that ordering is the contract `subtreeOf` reads: a node's
- * subtree is the maximal run of following entries with a greater `depth`. The
- * client therefore never restates `IsAreaWithin`'s segment descent, and
- * `webhooks ⊄ web` falls out of the ordering rather than out of a string test
- * one side could tighten alone.
+ * Build a vocabulary from the server's flat list, which is in declaration order
+ * with each parent immediately before its subtree. `subtreeOf` relies on that: a
+ * subtree is the run of following entries with a greater `depth`.
  */
 export function createAreaVocabulary(flat: readonly AreaNode[]): AreaVocabulary {
   const nodes: readonly AreaNode[] = Object.freeze([...flat]);
@@ -115,9 +79,7 @@ export function createAreaVocabulary(flat: readonly AreaNode[]): AreaVocabulary 
     return Object.freeze(nodes.slice(start, end));
   }
 
-  // Frozen because a vocabulary is routinely a module singleton shared by every
-  // test file in a vitest worker, where one reassigned method would follow the
-  // worker into unrelated suites.
+  // Frozen: a vocabulary may be a shared module singleton.
   return Object.freeze({
     status: nodes.length === 0 ? "none" : "ready",
     sections: () => nodes,
@@ -136,13 +98,8 @@ export function createAreaVocabulary(flat: readonly AreaNode[]): AreaVocabulary 
   } satisfies AreaVocabulary);
 }
 
-/**
- * The vocabulary before the config query resolves.
- *
- * Not `createAreaVocabulary([])`: that answers "undeclared" for every path,
- * which is the one wrong answer during this window. Everything else is empty
- * either way.
- */
+/** The vocabulary before the config query resolves. Not `createAreaVocabulary([])`,
+ *  which would answer "undeclared" for every path. */
 export const LOADING_AREAS: AreaVocabulary = Object.freeze({
   status: "loading",
   sections: () => EMPTY_NODES,
@@ -155,15 +112,8 @@ export const LOADING_AREAS: AreaVocabulary = Object.freeze({
 /** The vocabulary of a project that declares no areas. */
 export const EMPTY_AREAS: AreaVocabulary = createAreaVocabulary([]);
 
-/**
- * The vocabulary when the config query failed.
- *
- * `validity()` still answers "unknown", for the same reason `LOADING_AREAS` does
- * — a stored `area:` token must not be judged undeclared on the strength of an
- * answer that never arrived. `status` is the only member that differs from
- * `LOADING_AREAS`, and it is what lets a consumer that would wait on "loading"
- * stop instead and say why.
- */
+/** The vocabulary when the config query failed. Answers like `LOADING_AREAS`
+ *  except for `status`. */
 export const UNAVAILABLE_AREAS: AreaVocabulary = Object.freeze({
   status: "unavailable",
   sections: () => EMPTY_NODES,
@@ -174,19 +124,10 @@ export const UNAVAILABLE_AREAS: AreaVocabulary = Object.freeze({
 } satisfies AreaVocabulary);
 
 /**
- * The value standing for "no area" inside a `Select`.
- *
- * A sentinel rather than the empty string the field actually carries: a Select
- * reads "" as "nothing is selected", so a None item valued "" cannot be chosen
- * — its change event is indistinguishable from the component clearing itself.
- * `fromSelectValue` is the one place that translates back.
- *
- * The leading "/" is what makes it unrepresentable as a declared path: an area
- * name may be neither empty nor contain "/" (`validateAreaNodes`,
- * internal/config/areas.go), so a joined path never starts with one. A plain
- * `__none__` would NOT do — that is a legal area name, and declaring one would
- * give the None item and that area the same picker value, so choosing the area
- * would silently clear the assignment. Same shape as viewSpine's `NO_AREA_KEY`.
+ * The `Select` value for "no area", because a Select reads "" as nothing
+ * selected; `fromSelectValue` translates back. The leading "/" keeps it distinct
+ * from every declared path, since an area name may not be empty or contain "/"
+ * (`validateAreaNodes`). Same value as viewSpine's `NO_AREA_KEY`.
  */
 export const NO_AREA = "/__no_area__";
 

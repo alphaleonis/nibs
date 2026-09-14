@@ -1,22 +1,13 @@
 <script lang="ts">
   /**
-   * The Nibs brand banner: the gradient mark plus the NIBS wordmark.
+   * The Nibs banner: the gradient mark plus the NIBS wordmark.
    *
-   * The wordmark is `currentColor` rather than a baked-in color because neither
-   * exported variant survives all four themes. Measured against the real theme
-   * backgrounds, the gray-gradient wordmark falls to 1.7-2.3:1 on graphite,
-   * midnight and dracula (its gradient only spans #919191 to #4D4D4D, so it has
-   * no light end to anchor on a dark background), while the white wordmark is
-   * 1.04:1 on daylight — invisible. Inheriting the text color clears 14:1 on
-   * every theme and needs no per-theme asset swap.
+   * The wordmark is `currentColor`: neither exported wordmark keeps contrast on
+   * every theme — the gray gradient (#919191 to #4D4D4D) is too dark for the dark
+   * themes, and the white one vanishes on daylight.
    *
-   * The mark keeps its gradients: those run #4D4D4D through #D0D0D0 and back, so
-   * some part of the mark always has contrast whatever sits behind it.
-   *
-   * Geometry and viewBox come from assets/logo/banner-white-text.svg, whose
-   * artboard is tight to the rendered ink. Do not re-derive the viewBox from
-   * getBBox(): the ring path reports geometry ~165 units left of anything it
-   * actually draws, and padding to that bbox pushes the artwork off-centre.
+   * Geometry and viewBox come from assets/logo/banner-white-text.svg. Do not
+   * re-derive the viewBox from getBBox() (see assets/logo/README.md).
    */
   interface Props {
     /** Classes for the <svg>; set a height and let the width follow. */
@@ -31,9 +22,8 @@
 
   let { class: className = "", label = "Nibs" }: Props = $props();
 
-  // Gradient ids have to be unique per instance: two banners on one page would
-  // otherwise define each id twice, and every reference resolves to whichever
-  // element came first in the document.
+  // Gradient ids must be unique per instance: a duplicated id resolves to the
+  // first element in the document.
   const uid = $props.id();
 </script>
 
@@ -74,8 +64,7 @@
       />
     </g>
 
-    <!-- The wordmark. fill and fill-rule sit on the group so the four glyphs
-         inherit both; the root's evenodd would otherwise hollow out the B. -->
+    <!-- The wordmark; its glyphs inherit fill and fill-rule from this group. -->
     <g transform="matrix(2.38426,0,0,2.38426,588.934,-3355.83)" fill="currentColor" fill-rule="nonzero">
       <path
         transform="matrix(443.005,0,0,470.833,553.928,2062.13)"

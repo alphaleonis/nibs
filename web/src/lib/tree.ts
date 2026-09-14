@@ -6,20 +6,16 @@ export function buildTree<T extends TreeNib>(nibs: T[]): TreeNode<T>[] {
   const nodeMap = new Map<string, TreeNode<T>>();
   const roots: TreeNode<T>[] = [];
 
-  // First pass: create all nodes
   for (const nib of nibs) {
     nodeMap.set(nib.id, { nib, children: [], depth: 0 });
   }
 
-  // One member of every parent cycle is promoted to a root; without that, no
-  // member of a cycle qualifies as a root and the whole cycle is dropped.
+  // Without a promoted member, no member of a cycle qualifies as a root and the
+  // whole cycle is dropped.
   const promoted = promotedCycleRoots(nodeMap);
 
-  // Second pass: link children to parents. Severing a promoted nib's edge and
-  // making it a root are the same decision here, so a promoted node is always
-  // detached and the erasure this guards against cannot come back half-applied.
-  // (The Go side splits the two, where severing is what makes its recursion
-  // terminate — see promotedCycleRoots in internal/ui/tree.go.)
+  // Severing a promoted nib's edge and rooting it are one branch, so they cannot
+  // come apart.
   for (const nib of nibs) {
     const node = nodeMap.get(nib.id)!;
     if (nib.parentId !== null && nodeMap.has(nib.parentId) && !promoted.has(nib.id)) {
@@ -30,31 +26,20 @@ export function buildTree<T extends TreeNib>(nibs: T[]): TreeNode<T>[] {
     }
   }
 
-  // Third pass: compute depths via recursive traversal
   setDepths(roots, 0);
 
   return roots;
 }
 
 /**
- * Picks one member of every parent cycle lying wholly inside `nodeMap`. Every
- * member of such a cycle has its parent present, so none satisfies the ordinary
- * root rule and the cycle would render nowhere at all; promoting one member and
- * severing its parent edge turns the cycle into an ordinary chain, so a
- * malformed hierarchy shows up as an oddity instead of a disappearance.
+ * Picks the lowest-id member of every parent cycle lying wholly inside
+ * `nodeMap`, for `buildTree` to promote to a root.
  *
- * The member with the lowest id wins, matching `promotedCycleRoots` in
- * internal/ui/tree.go — so both views promote the same member and nest a cycle
- * identically. Sibling order still follows each view's own arrangement.
+ * Keep the rule in agreement with `promotedCycleRoots` in internal/ui/tree.go.
+ * This compares UTF-16 code units and Go compares bytes, so ids holding
+ * supplementary-plane characters can promote different members.
  *
- * Comparison is over UTF-16 code units here and bytes there. Those orders differ
- * only for supplementary-plane characters, which generated ids never contain —
- * but an imported file can carry one, in which case the two views root the cycle
- * at different members and nothing else breaks.
- *
- * A nib has at most one parent, so cycles are disjoint and each is discovered
- * exactly once. Every node is walked once — unseen -> onPath -> settled —
- * making the pass linear in the size of the map.
+ * Each node is walked once: unseen -> onPath -> settled.
  */
 function promotedCycleRoots<T extends TreeNib>(nodeMap: Map<string, TreeNode<T>>): Set<string> {
   const state = new Map<string, "onPath" | "settled">();
@@ -62,15 +47,12 @@ function promotedCycleRoots<T extends TreeNib>(nodeMap: Map<string, TreeNode<T>>
 
   for (const startId of nodeMap.keys()) {
     if (state.has(startId)) continue;
-    // Follow this node's parent chain until it leaves the map, ends, or
-    // re-enters itself.
     const path: string[] = [];
     let current: string | null = startId;
     while (current !== null) {
       const seen = state.get(current);
       if (seen === "onPath") {
-        // The chain closed on itself: the cycle is the path from this node
-        // onward. Anything before it merely leads into the cycle.
+        // The cycle is the path from this node onward.
         const start = path.indexOf(current);
         let lowest = path[start];
         for (let i = start + 1; i < path.length; i++) {
@@ -79,12 +61,10 @@ function promotedCycleRoots<T extends TreeNib>(nodeMap: Map<string, TreeNode<T>>
         promoted.add(lowest);
         break;
       }
-      // "settled" means already fully explored, along with any cycle beyond it.
       if (seen === "settled") break;
       state.set(current, "onPath");
       path.push(current);
-      // Annotated rather than inferred: `current` is assigned from `parentId`
-      // below, so inference would be circular.
+      // Annotated: `current` is assigned from it, so inference would be circular.
       const parentId: string | null = nodeMap.get(current)!.nib.parentId;
       current = parentId !== null && nodeMap.has(parentId) ? parentId : null;
     }
@@ -102,33 +82,23 @@ function setDepths<T extends TreeNib>(nodes: TreeNode<T>[], depth: number): void
 }
 
 /**
- * The key naming one section of a grouped view. The space is the LENS's to mint:
- * the type lenses use the heading nib's own id, and a membership lens uses
- * whatever its assignment names — a nib id on the milestone axis, a declared
- * path on the area one. Nothing validates a key — see the union-of-sections rule
- * on `buildShapedViewTree` for why that is deliberate.
+ * The key naming one section of a grouped view, minted by the lens: type lenses
+ * use the heading nib's id, a membership lens the assignment's value (a nib id
+ * for milestones, a declared path for areas). Keys are not validated; see
+ * `GroupingLens.declares`.
  */
 export type SectionKey = string;
 
 /**
- * The key of a lens's leftover section.
- *
- * Satisfies BOTH halves of `isSyntheticRowId` by construction: the literal
- * leads with `/__` and ends with `__`, and "_" is outside [0-9a-z]. STRICTER
- * than the predicate, because a negated character class has no type-level form
- * — `/no-area~` satisfies `isSyntheticRowId` and this type refuses it. So the
- * runtime assertion over `bucketIds` in tree.test.ts stays the authority on the
- * property; this only narrows what a lens can write.
+ * The key of a lens's leftover section. It satisfies `isSyntheticRowId` by
+ * construction ("_" is outside [0-9a-z]) and is stricter than the predicate,
+ * which also accepts e.g. `/no-area~`.
  */
 export type LeftoverKey = `/__${string}__`;
 
 /**
- * One section a lens states EXISTS, whether or not anything lands in it.
- *
- * The three questions declaring a section raises are answered by the structure
- * rather than by optional members that could be left unset: array index is the
- * order, `children` is the nesting, and being in the forest at all is
- * renders-when-empty.
+ * A section a lens declares, rendered whether or not anything lands in it.
+ * Array index is its order and `children` its nesting.
  */
 export interface DeclaredSection extends SectionDisplay {
   readonly key: SectionKey;
@@ -137,21 +107,13 @@ export interface DeclaredSection extends SectionDisplay {
 }
 
 /**
- * What a section row shows, beside the count `buildShapedTableData` computes
- * for it — the channel a section had none of while its label and its count were
- * both concatenated into a nib title.
- *
- * In the shape `AreaNode` already carries them (areas.ts): all required, empty
- * meaning unset. Required is what makes a lens mapping a vocabulary node into a
- * declaration fail to compile until it carries all three, rather than dropping
- * one where nothing would notice.
+ * What a section row shows besides its count (`RowSection.count`). Every field
+ * is required, empty meaning unset, as on `AreaNode`.
  */
 export interface SectionDisplay {
   readonly label: string;
-  /** Empty when unset. */
   readonly description: string;
-  /** A hex code or a bare color name — `AreaConfig.Color` admits either.
-   *  Empty when unset. */
+  /** A hex code or a bare color name. */
   readonly color: string;
 }
 
@@ -164,28 +126,18 @@ export type SectionDeclaration =
  *  declared it. */
 export type SectionPersistence = "discovered" | "declared";
 
-/**
- * The section facts a node carries, as ONE optional on `TreeNode` — so a node
- * either IS a section and answers all of them, or is not one and says nothing.
- */
+/** The section facts of a node that is a section; one optional on `TreeNode`. */
 export interface SectionMeta {
-  /** The key the lens minted or declared, so a consumer holding a row can say
-   *  WHICH section it is looking at and not merely that it is one. */
   readonly key: SectionKey;
   readonly persistence: SectionPersistence;
   readonly meaning: SectionMeaning;
-  /** What the row shows for it. Not the count: that is over the rows a client
-   *  filter leaves, which this tree is built before — see `RowSection.count`. */
+  /** Not the count, which depends on client filtering: see `RowSection.count`. */
   readonly display: SectionDisplay;
 }
 
 /**
- * What each persistence buys its section.
- *
- * A `Record` rather than an `=== "declared"` test repeated at each reader — the
- * `QUEUE_STYLED` discipline in `ordering/regionBand.ts`. A third persistence is
- * then a compile error HERE until it answers both questions, instead of
- * silently taking whichever arm a string test fell through to.
+ * What each persistence implies. Read this rather than testing the string, so a
+ * new persistence fails to compile until it answers both.
  */
 export const SECTION_RULES: Record<
   SectionPersistence,
@@ -196,11 +148,8 @@ export const SECTION_RULES: Record<
 };
 
 /**
- * Where one nib goes in a grouped view.
- *
- * `hidden` is TYPE-LENS-ONLY today: it is how a container ranked ABOVE the
- * lens's tier loses its own row while everything beneath it keeps one. A
- * membership lens has no notion of a tier and never returns it.
+ * Where one nib goes in a grouped view. Only type lenses return `hidden`, for a
+ * container ranked above the lens's tier.
  */
 export type Placement =
   /** Placed inside a section by something other than heading it. */
@@ -210,200 +159,96 @@ export type Placement =
   /** No row of its own; whatever it contains splices up a level. */
   | { kind: "hidden" };
 
-/**
- * How a grouped view arranges nibs into sections.
- *
- * A lens answers per NIB, not per tree, so the two arrangements the table needs
- * — grouping by TYPE along the parent chain, and grouping by ASSIGNMENT, which
- * does not run along it at all — differ only in this object.
- */
+/** How a grouped view arranges nibs into sections, decided per nib. */
 export interface GroupingLens<T extends TreeNib = TreeNib> {
-  /**
-   * Decide where one nib goes. Must be TOTAL and SELF-CONSISTENT: every nib gets
-   * an answer, and the same answer every time it is asked about the same nib
-   * under the same `byId`.
-   */
+  /** Where one nib goes. Must answer every nib, and the same way each time for
+   *  the same nib and `byId`. */
   place(nib: T, byId: ReadonlyMap<string, T>): Placement;
-  /**
-   * The section sweeping up everything that belongs to no other. REQUIRED — a
-   * lossless view needs somewhere to put a nib that fits nowhere. Its key must
-   * live in the synthetic id space (see `isSyntheticRowId`), because no nib
-   * heads it and the key is used as its row id verbatim.
-   */
+  /** The section for nibs that fit no other. Its key is used verbatim as the row
+   *  id, so it must satisfy `isSyntheticRowId`. */
   readonly leftover: { readonly key: LeftoverKey; readonly label: string };
   /**
-   * The sections that exist whether or not anything lands in them, nested and
-   * ordered by the forest itself.
-   *
-   * `{kind:"none"}` is a decision someone made; a missing optional would be a
-   * decision nobody made — which is why this is required rather than a
-   * `declaredSections?()` a lens could leave off.
-   *
-   * Declaring does NOT close the section space. A placement naming an undeclared
-   * key still mints a section of its own, so a nib carrying a retired assignment
-   * renders as a visibly odd section rather than merging into the leftover.
+   * Sections that exist whether or not anything lands in them. Declaring does
+   * not close the section space: a placement naming an undeclared key still
+   * mints its own section, so a retired assignment renders visibly instead of
+   * merging into the leftover.
    */
   readonly declares: SectionDeclaration;
-  /**
-   * The lens's own order for a section's top-level members, or null for none.
-   * An active column sort outranks it: sorting a column means the user asked
-   * for that order specifically.
-   *
-   * Required rather than optional, for the reason `meaning` below is: a new
-   * lens has to answer, and "no order of my own" is an answer.
-   */
+  /** The lens's order for a section's top-level members, or null. An active
+   *  column sort takes precedence. */
   orderWithinSection(section: SectionKey): ((a: T, b: T) => number) | null;
   /**
-   * What one section MEANS: the ordering group its rows are members of, and
-   * what a drop INTO it does.
+   * What one section means: the ordering group its rows belong to, and what a
+   * drop into it does. Asked per key, since undeclared and leftover sections need
+   * a meaning too. Type lenses answer `GOVERNS_NOTHING`.
    *
-   * Per KEY, where `declares` is per lens — because a section need not be
-   * declared to have a meaning. The milestone lens mints every section from the
-   * nibs that arrived, and every lens has a leftover, so folding meaning into
-   * the declaration forest would leave those with none.
+   * Every row placed in section S must satisfy the server's group resolution for
+   * `meaning(S).memberRegion`, so mint milestone section keys from the resolved
+   * assignment, never the raw `milestone:` field.
    *
-   * Required rather than optional, so a new lens has to answer: a lens grouping
-   * by an ASSIGNMENT puts rows in a queue keyed by that assignment, and a queue
-   * whose rows still claim their parent group would reorder against the wrong
-   * list. Every type lens answers `GOVERNS_NOTHING`, because grouping by type
-   * moves no row out of its parent's sibling set and entering a section means
-   * whatever the row under the cursor means.
-   *
-   * INVARIANT the lens owns: every row it puts in section S must satisfy the
-   * server's group resolution for `meaning(S).memberRegion`. The milestone arm
-   * must therefore carry the RESOLVED assignment, not the raw `milestone:`
-   * field, which arrives verbatim and can name a deleted nib or a non-milestone.
-   * The lens is the only place that can hold this up, and it can: `place` runs
-   * first and already receives `byId`, so a section key can be minted only for
-   * an assignment that resolves.
-   *
-   * A `memberRegion` overrides the fallback for EVERY member, so a parent-axis
-   * one on a catch-all section is wrong: `{axis:"parent", parentId:null}` claims
-   * the root group even for members whose resolved parent is not null. Declare
-   * null there and let each row fall back.
+   * A `memberRegion` applies to every member, so give a catch-all section null
+   * and let each row fall back to its own parent group.
    */
   meaning(section: SectionKey): SectionMeaning;
   /**
-   * Whether a section's rows follow PARENTAGE or PLACEMENT.
-   *
-   * True (the type lenses): the emitted forest is the structural one, and a nib
-   * that claims a section takes its whole subtree with it — so a cycle, a
-   * dangling parent and a mis-nested container are arranged exactly as
-   * `buildTree` already resolved them, rather than re-derived here.
-   *
-   * False (a membership lens): membership does not run along parent links, so
-   * every nib is positioned by its own placement and the nesting inside a
-   * section is rebuilt from whichever nibs landed in it.
+   * True: rows follow parentage, and a nib claiming a section brings its whole
+   * `buildTree` subtree. False: every nib is positioned by its own placement,
+   * and each section's nesting is rebuilt from the nibs that landed in it.
    */
   readonly nestHeadersStructurally: boolean;
 }
 
-/**
- * What a view level renders as. Closing this as a union is what turns the
- * scattered `viewLevel === "flat"` string tests into exhaustive switches: a
- * fourth shape is then a compile error at every one of them instead of silently
- * taking whichever branch the string test happened to fall through to.
- */
+/** What a view level renders as. Switch over `kind` exhaustively. */
 export type ViewShape =
   | { kind: "tree" }
   | { kind: "flat" }
   | { kind: "grouped"; lens: GroupingLens };
 
 /**
- * The row id for a section no nib heads.
- *
- * The leftover key is the lens's own literal and already lives in the synthetic
- * id space, so it is used as it is. Every OTHER key is escaped into that space,
- * because a lens may derive one from a nib's stored assignment — so a key can
- * perfectly well equal the id of a nib rendered elsewhere in the same view, and
- * a container carrying it verbatim would put that id in `rows` twice. Escaping
- * is injective, so two sections can never land on one row id either.
+ * The row id for a section no nib heads. The leftover key is already synthetic;
+ * any other key may equal a real nib id in the same view, so it is escaped,
+ * injectively, into the synthetic id space.
  */
 function sectionRowId(key: SectionKey, lens: GroupingLens): string {
   return key === lens.leftover.key ? key : `/section:${key}_`;
 }
 
 /**
- * True for ids the view layer fabricated — the section container rows, which
- * carry a `data-nib-id` so delegation reaches them but name no nib.
+ * True for ids the view layer fabricated for section rows, which name no nib.
+ * An identity test only: a real nib heading a section answers false. Use
+ * `holdsChildrenByDisplay` to ask what a node's children mean.
  *
- * This is an IDENTITY question, and only that: it answers whether a row has a
- * nib behind it, never whether the row is a header. A real nib heading a
- * section of its own answers false and is selectable, openable and a legal
- * action target like any other row; use `holdsChildrenByDisplay` to ask what a
- * node's children mean.
+ * A fabricated id leads with "/" and ends outside [0-9a-z]. Each half keeps it
+ * out of one source of real ids, so keep both:
+ * - Loaded ids come from `nib.ParseFilename` over one filename component, which
+ *   cannot hold a separator (`Nib.ID` is `yaml:"-"`). They may end in anything.
+ * - Created ids end in a `nib.NewID` nanoid over [0-9a-z], whatever the prefix.
  *
- * A fabricated id leads with a SLASH and ends OUTSIDE [0-9a-z]. Both are
- * load-bearing, because a nib id can reach the UI by two routes and each half of
- * the test closes one of them.
- *
- * The leading slash closes the filename-derived route: an id read off disk is
- * `nib.ParseFilename(filepath.Base(path))`, a substring of one filename
- * component, and no filesystem admits a path separator inside one. Front matter
- * cannot supply an id either — `Nib.ID` carries `yaml:"-"`. The last character
- * does NOT close this route: a hand-authored or imported file names its own id,
- * and `FOO.md`, `foo#.md` and `tnib-x9z2_.md` all load with those ids intact.
- *
- * The last character closes the created-nib route: `nib.NewID(prefix, length)`
- * appends a nanoid drawn from exactly those 36 characters, its length floored
- * above zero at every call site, so a created id can never END outside [0-9a-z]
- * however arbitrary the caller's prefix.
- *
- * The slash would close that route too, as things stand: `Core.Create` puts every
- * id through `nib.ValidateIDForFilename`, which refuses a path separator, and
- * both `--prefix` and a store's `nibs.prefix` reach it — `--prefix "a/b-"` and
- * `--prefix "/__no_milestone__"` are each refused with VALIDATION_ERROR. The
- * conjunction is kept because the two halves rest on different mechanisms: that
- * refusal is a create-time gate in another layer, while the nanoid tail is a
- * property of every id `NewID` composes at all. Relax the gate and the last
- * character is the only thing left between a caller's prefix and a bucket id.
- *
- * So the predicate IS the disjointness argument, not a list of ids that happen
- * to satisfy it. Testing the property rather than membership in a fixed table is
- * what lets a container id be DERIVED from an arbitrary section key (see
- * `sectionRowId`), which a lens grouping by a stored assignment needs. It also
- * puts the burden on the LENS: a leftover key meeting only one half — `/no-area`
- * leads with a slash but ends in `a` — makes its own section row answer FALSE
- * here and classify as a real nib. Every shipped `leftover.key` is asserted
- * against both halves in tree.test.ts, against the derived `bucketIds`, so such
- * a key fails there rather than reaching a render.
+ * Test the property, not a list: `sectionRowId` derives ids from arbitrary keys.
  */
 export function isSyntheticRowId(id: string): boolean {
   return id.startsWith("/") && !/[0-9a-z]$/.test(id);
 }
 
 /**
- * True when a node's view-tree children are held by ARRANGEMENT rather than
- * parentage — a synthetic bucket sweeping up loose items, or a real nib heading
- * a section of members that are not its children. The rows beneath such a node
- * are not its children, so they must not name it as their backend `parentId`
- * and it must still behave as a container for collapse and filter visibility.
+ * True when a node's children are held by arrangement rather than parentage: a
+ * synthetic bucket, or a real nib heading a section of members that are not its
+ * children. Those rows must not name it as their `parentId`, and it still acts
+ * as a container for collapse and filter visibility.
  *
- * Read off the tree rather than declared per row kind: `buildTree` nests a child
- * only under the parent its `parentId` names, so a node holds by arrangement
- * exactly when some child disagrees. A new kind of section therefore needs no
- * second list of row kinds kept in sync with this one.
- *
- * This is a whole-node verdict, which is sound only while a container's members
- * can never ALSO be its structural children — today `VALID_CHILD_TYPES.milestone`
- * is `[]`, so nothing parents under the one type that heads a section (the
- * precondition is asserted in typeHierarchy.test.ts). A future kind admitting
- * both at once would need a per-edge form; taking `.some()` for it would re-root
- * its genuine children onto the container's own display parent.
+ * The verdict is per node, so it holds only while a section's placed members
+ * and structural children never share a node — a milestone admits no children
+ * (`VALID_CHILD_TYPES.milestone` is `[]`). A kind admitting both needs a
+ * per-edge form, or its genuine children get re-rooted.
  */
 export function holdsChildrenByDisplay<T extends TreeNib>(node: TreeNode<T>): boolean {
   return node.children.some((child) => child.nib.parentId !== node.nib.id);
 }
 
 /**
- * Build a fabricated section-container node — a row for a section no nib heads.
- *
- * The literal is annotated `TreeTableNib`, the widest shape any caller
- * instantiates `T` with, so the COMPILER checks it: a field added there fails
- * here rather than reaching a row as `undefined`. The cast is still needed
- * because `T` stays open — a caller could instantiate it with a subtype
- * demanding fields this literal cannot know about — but it no longer hides
- * anything the codebase itself declares.
+ * Build the node for a section no nib heads. The literal is typed
+ * `TreeTableNib` so a field added there fails to compile here; the cast remains
+ * because `T` is open.
  */
 function makeSectionNode<T extends TreeNib>(id: string, title: string, children: TreeNode<T>[]): TreeNode<T> {
   const sectionNib: TreeTableNib = {
@@ -431,28 +276,21 @@ function makeSectionNode<T extends TreeNib>(id: string, title: string, children:
 interface Section<T extends TreeNib> {
   key: SectionKey;
   persistence: SectionPersistence;
-  /** The display facts the declaration gave it, or null for a section no
-   *  declaration named. */
+  /** Null for an undeclared section. */
   declared: SectionDisplay | null;
-  /** The nib whose row IS this section, when one claimed it. */
+  /** The nib whose row is this section, when one claimed it. */
   header: TreeNode<T> | null;
-  /** Rows placed into the section by something other than heading it. */
   members: TreeNode<T>[];
-  /** The sections the declaration nests INSIDE this one, in declaration order.
-   *  Emitted by this section rather than at the top level. */
+  /** Sections declared inside this one, in order; emitted by this section. */
   declaredChildren: Section<T>[];
 }
 
 /**
- * Reframe the nib list into the given view shape. Every work item is preserved
- * (lossless) in all three shapes.
+ * Reframe the nib list into the given view shape without dropping any nib.
  *
- * `sortComparator` (optional) is the active column sort's node comparator. Under
- * a grouped shape it orders the sections that a nib heads, and the members
- * within each section, GLOBALLY by the sort field — instead of by the position
- * of the hidden higher-tier ancestor the walk descended through. Each header
- * keeps its subtree unchanged. `flat` and `tree` take their order from the
- * (pre-sorted) input array and ignore it.
+ * `sortComparator` is used only by grouped shapes: it orders headed sections and
+ * each section's members globally by the sort field. `flat` and `tree` keep the
+ * input order.
  */
 export function buildShapedViewTree<T extends TreeNib>(
   nibs: T[],
@@ -461,25 +299,11 @@ export function buildShapedViewTree<T extends TreeNib>(
 ): TreeNode<T>[] {
   switch (shape.kind) {
     case "flat":
-      // Every nib an ungrouped depth-0 root — no nesting, no sections.
-      // Preserves incoming order (the manual `order` sequence).
       return nibs.map((nib) => ({ nib, children: [], depth: 0 }));
     case "tree":
-      // Full tree MINUS the milestones; depths already set by buildTree.
-      //
-      // A milestone sits outside the parent graph by design — a waypoint, not a
-      // container — so in a shape spined on parentage its row can never nest,
-      // hold anything, or be dropped into, and membership is not parentage, so
-      // its queue is not visible here either. The row said "this milestone
-      // exists" and nothing more. The Milestone column is where a reader of this
-      // shape sees the axis instead.
-      //
-      // Filtering AHEAD of buildTree rather than pruning after: buildTree roots
-      // any node whose parent is absent from its map, so a nib hand-parented to
-      // a milestone — illegal per the hierarchy but representable in a file, and
-      // what `nibs check` reports — is promoted to a root rather than
-      // disappearing with the row. Pruning afterwards would have to re-home the
-      // subtree by hand.
+      // Milestones sit outside the parent graph, so this shape omits their rows;
+      // the Milestone column shows that axis. Filter before `buildTree` so a nib
+      // hand-parented to a milestone is rooted rather than dropped.
       return buildTree(nibs.filter((nib) => nib.type !== MILESTONE_TYPE));
     case "grouped":
       return buildGroupedTree(nibs, shape.lens, sortComparator);
@@ -494,26 +318,12 @@ function buildGroupedTree<T extends TreeNib>(
   const byId = new Map<string, T>();
   for (const nib of nibs) byId.set(nib.id, nib);
 
-  // Every placement is decided here, before any assembly.
-  //
-  // It is worth being blunt about what this map is NOT, because both tempting
-  // readings of it are wrong. It is not load-bearing for correctness: the
-  // assembly below reads each placement exactly once, at one of two mutually
-  // exclusive sites, so an inconsistent lens could not render a nib twice even
-  // without it. Nor is it a speed optimization — it is eager, one call per nib,
-  // where a lazy read would ask only for the nodes the walk reaches, which under
-  // the type lenses is far fewer.
-  //
-  // What it buys is that `place` is called in exactly one loop, so the assembly
-  // is a read over settled decisions rather than a walk that interleaves lens
-  // calls with tree building. That is a legibility choice, paid for in calls.
+  // One `place` call per nib, up front; assembly below only reads the answers.
   const placements = new Map<string, Placement>();
   for (const nib of nibs) placements.set(nib.id, lens.place(nib, byId));
 
-  // Sections are the UNION of every key any placement produced, in the order the
-  // branch below reaches them. A key that nothing heads still CREATES a section,
-  // so a dangling assignment renders as a visibly odd section rather than
-  // deleting its rows.
+  // Every key any placement produces becomes a section, headed or not, in the
+  // order first reached.
   const sections = new Map<SectionKey, Section<T>>();
   const sectionFor = (key: SectionKey): Section<T> => {
     let section = sections.get(key);
@@ -531,31 +341,22 @@ function buildGroupedTree<T extends TreeNib>(
     return section;
   };
 
-  // Seeded through the same `sectionFor`, so a placement naming a declared key
-  // resolves to this section rather than a second one under the same key.
-  // Depth-first in declaration order, which is the order the forest states and
-  // the order the output keeps.
+  // Seeded through `sectionFor`, so a placement naming a declared key reuses the
+  // declared section.
   const declaredRoots: Section<T>[] = [];
   if (lens.declares.kind === "forest") {
     const seed = (nodes: readonly DeclaredSection[], into: Section<T>[]): void => {
       for (const node of nodes) {
-        // `SectionKey` is `string` and a brand is defeated by a cast, so nothing
-        // in the type system stops a forest node from carrying the leftover's
-        // key. The leftover is appended by this builder separately, so such a
-        // section would be assembled twice and put one row id in the table
-        // twice — refused loudly rather than rendered.
+        // The leftover is emitted separately, so declaring its key would emit
+        // that section twice.
         if (node.key === lens.leftover.key) {
           throw new Error(
             `declared section ${JSON.stringify(node.key)} collides with the lens's leftover key`,
           );
         }
-        // Same hazard one level in: `sectionFor` is memoized, so two forest
-        // nodes under one key resolve to the SAME section — emitted twice as
-        // siblings (one row id, and every nib in it, twice over), or pushed
-        // into its own `declaredChildren` when the key names an ancestor, which
-        // recurses without bound in `assembleSection`. The second declaration's
-        // label silently wins either way. `sections` holds nothing but seeded
-        // keys here, so `has` means exactly "already declared".
+        // A repeated key resolves to the same section: emitted twice, or, under
+        // its own ancestor, recursing without bound in `assembleSection`.
+        // `sections` holds only seeded keys at this point.
         if (sections.has(node.key)) {
           throw new Error(
             `declared section ${JSON.stringify(node.key)} appears twice in the forest`,
@@ -572,10 +373,8 @@ function buildGroupedTree<T extends TreeNib>(
   }
 
   if (lens.nestHeadersStructurally) {
-    // Rows follow PARENTAGE. Descend the structural forest; where a nib claims a
-    // section it takes its whole subtree along and the descent stops, so each
-    // node is reached exactly once. The forest is freshly allocated and private
-    // to this call, so re-rooting its nodes is safe.
+    // A nib claiming a section takes its subtree along and the descent stops
+    // there. The forest is private to this call, so re-rooting nodes is safe.
     const walk = (nodes: TreeNode<T>[]): void => {
       for (const node of nodes) {
         const placement = placements.get(node.nib.id)!;
@@ -584,8 +383,7 @@ function buildGroupedTree<T extends TreeNib>(
           continue;
         }
         const section = sectionFor(placement.section);
-        // A second nib claiming a section already headed becomes a member of it,
-        // so a lens handing two nibs one key loses neither.
+        // A second nib claiming a headed section becomes a member of it.
         if (placement.kind === "header" && section.header === null) {
           section.header = node;
         } else {
@@ -595,18 +393,12 @@ function buildGroupedTree<T extends TreeNib>(
     };
     walk(buildTree(nibs));
   } else {
-    // Rows follow PLACEMENT. Membership does not run along parent links, so
-    // every nib is positioned by its own answer; `buildTree` then rebuilds the
-    // nesting from whichever nibs landed in the same section (one whose parent
-    // is elsewhere simply becomes a top-level member).
+    // `buildTree` rebuilds nesting within each section; a nib whose parent
+    // landed elsewhere becomes a top-level member.
     //
-    // TWO passes, headers first, and the split is what makes section order the
-    // HEADERS' order. A section is minted by whichever nib reaches it first and
-    // `headed` below reads `sections` in insertion order, so a single pass would
-    // let a member mint its section ahead of an earlier section's header — and
-    // members routinely precede headers here, because the array is sorted by
-    // `order` FLAT across the whole result irrespective of parent
-    // (`nib.SortByOrder`).
+    // Headers get their own first pass so sections are minted in header order.
+    // The input is sorted flat across all nibs, so members often precede their
+    // header.
     const memberNibs = new Map<SectionKey, T[]>();
     for (const nib of nibs) {
       const placement = placements.get(nib.id)!;
@@ -617,9 +409,8 @@ function buildGroupedTree<T extends TreeNib>(
     for (const nib of nibs) {
       const placement = placements.get(nib.id)!;
       if (placement.kind === "hidden") continue;
-      // The header row itself is the one nib this pass skips. A SECOND nib
-      // claiming a section already headed falls through and becomes a member of
-      // it, so a lens handing two nibs one key loses neither.
+      // Skip the header itself; a second nib claiming the section falls through
+      // as a member.
       if (sectionFor(placement.section).header?.nib.id === nib.id) continue;
       const list = memberNibs.get(placement.section);
       if (list === undefined) memberNibs.set(placement.section, [nib]);
@@ -628,18 +419,15 @@ function buildGroupedTree<T extends TreeNib>(
     for (const [key, list] of memberNibs) sectionFor(key).members = buildTree(list);
   }
 
-  // Declared sections lead, in the order the forest stated — a column sort
-  // orders a section's MEMBERS, never the declaration. Then the sections a real
-  // nib heads, ordered by that sort when there is one, else by the order their
-  // HEADERS were reached above. A section nothing heads has no nib to sort by,
-  // so it follows them; the leftover is last either way, since "everything else"
-  // reads wrong anywhere but the end.
+  // Order: declared roots as the forest states them (a column sort never
+  // reorders these), then headed sections (by the column sort if any, else as
+  // reached), then headless sections, then the leftover.
   const headed: Section<T>[] = [];
   const headless: Section<T>[] = [];
   let leftover: Section<T> | null = null;
   for (const section of sections.values()) {
-    // A declared section is placed by the forest: a root is in `declaredRoots`
-    // already, and a nested one is emitted by its parent's `assembleSection`.
+    // Declared sections are emitted through `declaredRoots` or their parent's
+    // `assembleSection`.
     if (section.key === lens.leftover.key) leftover = section;
     else if (SECTION_RULES[section.persistence].placedByDeclaration) continue;
     else if (section.header !== null) headed.push(section);
@@ -653,7 +441,6 @@ function buildGroupedTree<T extends TreeNib>(
   const ordered = [...declaredRoots, ...headed, ...headless, ...(leftover !== null ? [leftover] : [])];
   const roots = ordered.map((section) => assembleSection(section, lens, sortComparator));
 
-  // Reset depths relative to the new roots.
   setDepths(roots, 0);
 
   return roots;
@@ -669,15 +456,8 @@ function assembleSection<T extends TreeNib>(
     sortComparator ?? lens.orderWithinSection(section.key) ?? null;
   const members = order ? [...section.members].sort((x, y) => order(x.nib, y.nib)) : section.members;
 
-  // A nib heading a section IS that section's row, so the node's children are
-  // the header's own structural subtree. Declared sub-sections carry
-  // `parentId: null`, so putting them there makes `holdsChildrenByDisplay` — a
-  // whole-node `.some()` — true, and `flatten` then hands the header's GENUINE
-  // children the display parent instead of the header, losing their parentage:
-  // the exact failure that function's doc comment predicts for a kind admitting
-  // both at once. Refused rather than rendered wrong, because no lens produces
-  // the shape and because ALLOWING it means making containment a per-edge
-  // relation — nibs-cwe6's job, not this builder's.
+  // Declared sub-sections carry `parentId: null`, so under a header they would
+  // make `holdsChildrenByDisplay` true and re-root the header's genuine children.
   if (section.header !== null && section.declaredChildren.length > 0) {
     throw new Error(
       `declared section ${JSON.stringify(section.key)} is headed by nib ` +
@@ -686,20 +466,13 @@ function assembleSection<T extends TreeNib>(
     );
   }
 
-  // The meaning lands on the section's node, which is where `flatten` reads it
-  // from: it reaches that node's direct children and stops there. Under
-  // `nestHeadersStructurally` those children include the header's own structural
-  // subtree roots, so a lens that nests structurally AND declares a
-  // `memberRegion` would put them in it alongside the placed members. Nothing in
-  // the type system rules that pairing out; tree.test.ts asserts no shipped lens
-  // makes it.
+  // `flatten` applies the meaning's `memberRegion` to this node's direct
+  // children, which under `nestHeadersStructurally` include the header's
+  // structural children. A structurally nesting lens must therefore not declare
+  // one; tree.test.ts asserts no shipped lens does.
 
-  // What the row shows, in one expression both branches below read, so the
-  // header arm and the fabricated arm cannot name the section differently.
-  //
-  // A headed section's row IS the nib and the table draws its title, so that
-  // title is the label whatever else named the section; description and color
-  // still come from the declaration, which is the only thing that has them.
+  // A headed section's label is the header's title, since the table draws that
+  // row as the nib.
   const display: SectionDisplay = {
     label:
       section.header?.nib.title ??
@@ -717,24 +490,16 @@ function assembleSection<T extends TreeNib>(
   };
 
   if (section.header !== null) {
-    // Under `nestHeadersStructurally` the header arrived with its own subtree
-    // attached; anything placed into the section joins it. Declared children
-    // cannot appear here — the refusal above is what makes that true.
+    // Placed members join whatever subtree the header already carries.
     return {
       ...section.header,
       children: [...section.header.children, ...members],
       section: meta,
     };
   }
-  // Sub-sections lead their section's rows, the same way declared roots lead the
-  // top level.
+  // Sub-sections lead their section's rows.
   const nested = section.declaredChildren.map((child) => assembleSection(child, lens, sortComparator));
-  // The title is the label alone, so a caller naming this row in a sentence
-  // gets the section's name and nothing to subtract. A count concatenated here
-  // could only be over `members` — the section's top-level member NODES —
-  // which is neither the nibs in the section (a member's own subtree is not in
-  // that array) nor the rows drawn under the heading (a declared sub-section is
-  // not either). The count travels as `RowSection.count` instead.
+  // The title is the label alone; the count travels as `RowSection.count`.
   const node = makeSectionNode(sectionRowId(section.key, lens), display.label, [
     ...nested,
     ...members,

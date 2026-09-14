@@ -1,15 +1,7 @@
 <script lang="ts" generics="T">
-  // A presentational autocomplete dropdown, generalized from the suggestion list
-  // in TagEditor: an absolutely-positioned popover anchored below its positioned
-  // ancestor, with an active-row highlight and mousedown-preserved focus so a
-  // click commits before the anchoring input blurs. Keyboard navigation
-  // (arrow/enter/esc) and the suggestion source live with the caller; this
-  // component only renders items and reports selection.
-  //
-  // Generic over the item type: the default path renders a plain string row
-  // (unchanged). Callers with structured items pass an `item` snippet to render a
-  // rich row (e.g. type icon + title + id + status for the relationship typeahead)
-  // and an `itemKey` for a stable `{#each}` key.
+  // Presentational autocomplete dropdown, positioned below its nearest positioned
+  // ancestor. The caller owns keyboard navigation and the suggestion source; this
+  // renders items and reports selection.
   import type { Snippet } from "svelte";
 
   interface Props {
@@ -45,9 +37,8 @@
   >
     {#each items as it, i (itemKey ? itemKey(it) : it)}
       <li role="presentation">
-        <!-- Raw button: an autocomplete option row. mousedown is prevented so
-             clicking it doesn't blur (and close) the input before the click
-             commits — the same trick TagEditor uses. -->
+        <!-- Raw button: an option row. mousedown is prevented so the input does
+             not blur (and close) before the click commits. -->
         <button
           type="button"
           role="option"

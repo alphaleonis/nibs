@@ -11,8 +11,7 @@ export type CreateNibInput = {
   tags?: string[];
   body?: string;
   parent?: string;
-  /** The ownership axis: the declared area path the new nib belongs to. Omitted
-   *  or "" leaves it unset, which is always legal. */
+  /** A declared area path; omitted or "" leaves it unset. */
   area?: string;
   blocking?: string[];
   blockedBy?: string[];
@@ -35,13 +34,10 @@ export type UpdateNibInput = {
   body?: string;
   bodyMod?: { replace?: { old: string; new: string }[]; append?: string };
   parent?: string | null;
-  /** The scheduling axis: the milestone whose queue the nib joins. Null or ""
-   *  clears the assignment; omitted leaves it unchanged. Distinct from `parent`
-   *  — a milestone accepts no children, so joining its queue is this write. */
+  /** The milestone whose queue the nib joins (not `parent`). Null or "" clears;
+   *  omitted leaves it unchanged. */
   milestone?: string | null;
-  /** The ownership axis: the declared area path the nib belongs to. Null or ""
-   *  clears the assignment; omitted leaves it unchanged. Unlike `milestone` it
-   *  names no nib, so nothing is resolved and no queue moves. */
+  /** A declared area path. Null or "" clears; omitted leaves it unchanged. */
   area?: string | null;
   addBlocking?: string[];
   removeBlocking?: string[];
@@ -52,22 +48,13 @@ export type UpdateNibInput = {
   removeDocuments?: string[];
 };
 
-// Compile-time guard binding the hand-written UpdateNibInput above to the
-// codegen'd one, so the two key sets cannot drift — the same pair, and for the
-// same reason, as NibFilter's in ../types.ts.
+// Compile-time guards: these hand-written inputs and the generated ones must have
+// EQUAL key sets, as for NibFilter in ../types.ts. Inputs reach urql as variables
+// (and `assignmentFor` in ordering/dropPlan.ts uses a computed key), so no
+// excess-property check catches a key the server lacks.
 //
-// The input reaches the wire as a variable rather than an object literal, so
-// TypeScript's excess-property check never runs on it; and `assignmentFor` in
-// ordering/dropPlan.ts builds one with a COMPUTED key, which is not checked at
-// all. Without this pair a client-side key the server has no argument for
-// type-checks, ships, and is silently ignored.
-//
-// BOTH directions are required: a one-way `extends` is satisfied by extra
-// properties, so it would miss exactly that case.
-//
-// `ifMatch` is the one deliberate difference, and it is excluded on the
-// generated side rather than added here: it is command-level in this layer —
-// UpdateNibCommand carries it beside `input`, and the dispatcher merges the two.
+// `ifMatch` is excluded from the generated update keys: here it lives on
+// UpdateNibCommand, and the dispatcher merges it into the input.
 type GeneratedUpdateKeys = Exclude<keyof GeneratedUpdateNibInput, "ifMatch">;
 
 type _UpdateKeysExistOnGenerated = keyof UpdateNibInput extends GeneratedUpdateKeys ? true : never;
@@ -78,15 +65,7 @@ type _GeneratedUpdateKeysExistOnClient = GeneratedUpdateKeys extends keyof Updat
 const _generatedUpdateKeysCheck: _GeneratedUpdateKeysExistOnClient = true;
 void _generatedUpdateKeysCheck;
 
-// The same pair for CreateNibInput, for the reasons given above. Nothing else
-// in this client relates the two create types: `getVariables` in dispatcher.ts
-// returns `{ input: cmd.input }` from a function typed `Record<string, unknown>`,
-// so the hand-written shape is erased before urql sees it and no structural
-// comparison happens on that path. `area` went missing exactly that way.
-//
-// No Exclude<> on either side: the create input carries no command-level key
-// like `ifMatch`, so the two key sets are equal as written. Adding one to
-// silence a failure here would defeat the guard.
+// The create input has no command-level key, so do not add an Exclude<> here.
 type _CreateKeysExistOnGenerated = keyof CreateNibInput extends keyof GeneratedCreateNibInput ? true : never;
 const _createKeysCheck: _CreateKeysExistOnGenerated = true;
 void _createKeysCheck;
@@ -116,19 +95,15 @@ export interface CommandResult {
   ok: boolean;
   data?: any;
   error?: string;
-  /** Machine-readable GraphQL error code lifted from the failed leaf's
-   *  `extensions.code` (e.g. "ETAG_MISMATCH"), when the server tagged one.
-   *  Classifiers should prefer this over substring-matching `error`. */
+  /** The failure's GraphQL `extensions.code` (e.g. "ETAG_MISMATCH"), if tagged.
+   *  Classify on this rather than matching `error`. */
   errorCode?: string;
 }
 
-/** Options threaded through `MutationStore.execute` → `MutationDispatcher`. */
+/** Options for `MutationStore.execute`, passed on to `MutationDispatcher`. */
 export interface ExecuteOptions {
-  /** Suppress the default `toast.error(...)` on a failed leaf mutation so the
-   *  CALLER owns messaging for this call (e.g. `save()` routes a 409 into the
-   *  inline conflict resolver instead of a racing raw toast). Defaults to
-   *  false — every other caller keeps the "toast on error" behavior, including
-   *  the individual legs of a batch/sequence. */
+  /** Skip the error toast on every failed leaf, batch and sequence legs included,
+   *  so the caller owns the messaging. */
   suppressToast?: boolean;
 }
 

@@ -1,11 +1,6 @@
-// Rasterizes public/favicon.svg into public/favicon.ico (16/32/48).
-//
-// The ICO exists only for browsers that do not take an SVG favicon; everything
-// current prefers the SVG link. It is committed rather than built, because
-// generating it needs a browser and the normal build must not depend on one —
-// so this is a manual step, run via `task favicon` after the SVG changes.
-//
-// Run with `node scripts/gen-favicon.ts` from web/ (Node strips the types).
+// Rasterizes public/favicon.svg into public/favicon.ico (16/32/48), for
+// browsers without SVG favicon support. Run `task favicon` after editing the
+// SVG and commit the result; the build must not depend on a browser.
 
 import { chromium } from "@playwright/test";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -16,15 +11,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const SVG = join(HERE, "..", "public", "favicon.svg");
 const ICO = join(HERE, "..", "public", "favicon.ico");
 
-// 48 is the largest size Windows/Explorer picks from an ICO in practice; past
-// that a browser that can read this file would have taken the SVG anyway.
 const SIZES = [16, 32, 48];
 
-/**
- * Packs PNG buffers into an ICO container. PNG-compressed entries (rather than
- * BMP) are read by every browser and by Windows Vista onward, which is the
- * whole audience for this file.
- */
+/** Packs PNG buffers into an ICO container (PNG entries, not BMP). */
 function buildIco(images: { size: number; png: Buffer }[]): Buffer {
   const HEADER = 6;
   const ENTRY = 16;
@@ -58,9 +47,7 @@ const page = await browser.newPage();
 
 const images: { size: number; png: Buffer }[] = [];
 for (const size of SIZES) {
-  // Render at deviceScaleFactor 1 so one CSS px is one icon px — the point is
-  // to capture how the mark rasterizes at exactly this size, not a downscale
-  // of something larger.
+  // deviceScaleFactor 1: rasterize at this exact size, not a downscale.
   const ctx = await browser.newContext({ viewport: { width: size, height: size }, deviceScaleFactor: 1 });
   const p = await ctx.newPage();
   await p.setContent(

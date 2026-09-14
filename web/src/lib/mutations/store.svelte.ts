@@ -47,28 +47,24 @@ export class MutationStore {
   async execute(cmd: LeafCommand, opts?: ExecuteOptions): Promise<CommandResult>;
   async execute(cmd: BatchCommand, opts?: ExecuteOptions): Promise<BatchResult>;
   async execute(cmd: SequenceCommand, opts?: ExecuteOptions): Promise<SequenceResult>;
-  // Union overload, mirroring the dispatcher's: a caller holding a command it
-  // did not build itself — a `DropPlan`'s — has no concrete kind to pick.
+  // For a command the caller did not build, such as a DropPlan's.
   async execute(cmd: AnyCommand, opts?: ExecuteOptions): Promise<AnyResult>;
   async execute(cmd: AnyCommand, opts?: ExecuteOptions): Promise<AnyResult> {
     const ids = extractIds(cmd);
 
-    // Add IDs to in-flight set
     for (const id of ids) {
       this.#inflight.add(id);
     }
-    // Reassign to trigger reactivity
+    // Reassign: $state tracks the Set by reference.
     this.#inflight = new Set(this.#inflight);
     this.#pendingCount++;
 
     try {
       return await this.#dispatcher.execute(cmd, opts);
     } finally {
-      // Remove IDs from in-flight set
       for (const id of ids) {
         this.#inflight.delete(id);
       }
-      // Reassign to trigger reactivity (Svelte 5 $state tracks by reference)
       this.#inflight = new Set(this.#inflight);
       this.#pendingCount--;
     }

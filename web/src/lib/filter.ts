@@ -2,14 +2,9 @@ import type { NibSummary, NibFilter } from "./types";
 import type { AreaVocabulary } from "./areas";
 
 /**
- * Fields applied client-side even though the GraphQL server also supports them
- * (see internal/graph/filters.go). Both the positive include-lists and their
- * `exclude*` negations are filtered here so a non-matching ancestor of visible
- * children is kept and dimmed in place (tableData.ts Stage 4) rather than dropped
- * by the server. status/excludeStatus in particular are applied here so a
- * completed parent of active children dims instead of vanishing — a server-side
- * exclusion would drop the ancestor and detach its now-orphaned children.
- * A filtered-out leaf with no visible descendants is still removed from the rows.
+ * Fields applied client-side although the server supports them, so a
+ * non-matching ancestor of visible rows is dimmed (tableData.ts, Stage 4)
+ * instead of dropped by the server with its children orphaned.
  */
 const CLIENT_FIELDS = [
   "type",
@@ -32,15 +27,8 @@ export interface PreparedFilter {
 }
 
 /**
- * Returns true if nib matches all active client filter criteria (type, priority,
- * status, estimate, tags) and none of the active `exclude*` negations.
- * Empty/undefined filter arrays are ignored (match everything).
- * Multiple filter fields use AND logic — the nib must match all active includes.
- * Tags use OR logic within the group — nib must have at least one matching tag.
- * status is an include-list — a nib whose status is NOT listed is a non-match.
- * An `exclude*` list always removes: a nib whose field value is in the list — or,
- * for excludeTags, that carries ANY listed tag — is a non-match, ANDed with the
- * positive include-lists.
+ * Whether `nib` matches every active include-list and no active `exclude*` list.
+ * Empty lists are ignored. A tag list matches a nib carrying any listed tag.
  */
 export function matchesFilter(nib: NibSummary, filter: NibFilter): boolean {
   if (filter.type?.length && !filter.type.includes(nib.type)) {
@@ -78,14 +66,7 @@ export function matchesFilter(nib: NibSummary, filter: NibFilter): boolean {
   return true;
 }
 
-/**
- * Returns true if filter has any active client-side filter criteria.
- * Search is not considered a client filter. The metadata includes and their
- * `exclude*` negations ARE client filters so a filtered-out ancestor of visible
- * children is dimmed in place (Stage 4 in tableData.ts) rather than dropped
- * server-side; a filtered-out leaf with no visible descendants is still removed
- * from the rows.
- */
+/** Whether any client-side field is set. */
 export function hasClientFilters(filter: NibFilter): boolean {
   return !!(
     filter.type?.length ||
@@ -102,57 +83,20 @@ export function hasClientFilters(filter: NibFilter): boolean {
 }
 
 /**
- * The filter as the server may be asked it: `area` withheld unless the
- * vocabulary answers "declared" for it.
+ * `filter` with `area` withheld unless the vocabulary answers "declared" for it.
  *
- * A bad `area` fails the WHOLE query instead of narrowing it: the server refuses
- * a path it does not declare rather than answering with the empty set, which
- * would read as "no work is in this area" for a path that names no area at all
- * (`refuseUndeclaredArea`, internal/graph/filters.go). `area` is not alone in
- * that — most id-valued fields fail the same way, and `milestone:` is typeable
- * in the query box today with no equivalent guard (nibs-f1sj). What singles it
- * out is where the refusal LANDS and what this side can do about it.
- * `FilterAreaError` implements no Unwrap — the only one in
- * internal/graph/filter_errors.go is `FilterTargetNotFoundError`'s, to
- * `nib.ErrNotFound` — so cmd/serve.go cannot tag it NOT_FOUND, and it misses the
- * calm inline branch TreeTable routes that code to, blanking the table with a
- * red error instead. And an area is the one such value the client can pre-check
- * at all, because it holds the vocabulary.
+ * The server refuses an undeclared area with `FilterAreaError`
+ * (`refuseUndeclaredArea`, internal/graph/filters.go), which is not tagged
+ * NOT_FOUND, so the table would show an error instead of its inline empty state.
+ * Filters are restored from localStorage and `?q=` before any vocabulary exists,
+ * so a retired area gets past the parse-time check in query/area.ts.
  *
- * Pre-checking is right rather than merely possible because this client RESTORES
- * filters: the filter is rebuilt from localStorage and `?q=` on load, so a value
- * that was declared when it was saved arrives after the area was retired, at a
- * moment the user did not act. A CLI invocation, where the value was just typed,
- * has no such moment. The rule sits on the filter rather than on a token, so it
- * holds for every way a value can arrive — including the `area:` token
- * (query/area.ts), which refuses an undeclared path at PARSE time but only when a
- * vocabulary was there to ask, and a restore happens before one is.
- *
- * So "declared" is sent, and the other two answers are held back at prices that
- * differ by which vocabulary gave them:
- *   - "unknown" from LOADING_AREAS costs a superset until the config query
- *     answers; re-deriving over the spine then asks again and gets "declared".
- *   - "unknown" from UNAVAILABLE_AREAS is the config query having FAILED. The
- *     superset it costs lasts until a re-ask succeeds: `useLiveConfig` re-asks
- *     on a growing backoff and again on socket recovery, so an outage that ends
- *     clears it without the reader doing anything. A failure that outlives the
- *     backoff does not clear itself, and while it stands the table answers with
- *     every nib in the store while the filter box still reads `area:…` — the
- *     Areas view says so and offers a retry, but no other view does, because
- *     nothing else reads `AreaVocabulary.status`.
- *   - "undeclared" is the drop half of the query box's warn-and-drop. The
- *     warning is the box's to render: it holds the token text, and this sees
- *     only the value.
- *
- * The EMPTY STRING is sent rather than withheld, so the server's refusal of it
- * stays loud. That refusal is deliberate and separate from an undeclared path:
- * read as "unset" the branch would be dropped and the query would widen to the
- * whole store. An empty-valued id field reaches the same verdict
- * (`FilterTargetEmptyError`), and the query box cannot produce either — a
- * relationship token with no value is not recognized (query/relations.ts) and a
- * metadata one becomes free text (query/parse.ts) — so client code is the only
- * thing that can set one. Withholding it here would perform exactly the widening
- * the server refuses to perform.
+ * - "unknown" (LOADING_AREAS, UNAVAILABLE_AREAS) is withheld, widening the result
+ *   until the config query succeeds. While it keeps failing, only the Areas view
+ *   says so.
+ * - "undeclared" is withheld; the query box renders the warning.
+ * - The empty string is sent so the server refuses it; withholding it would widen
+ *   the query to the whole store. The query box cannot produce one.
  */
 function withSendableArea(filter: NibFilter, areas: AreaVocabulary): NibFilter {
   if (typeof filter.area !== "string") return filter;
@@ -163,12 +107,9 @@ function withSendableArea(filter: NibFilter, areas: AreaVocabulary): NibFilter {
 }
 
 /**
- * Splits a filter into server-side and client-side parts.
- * Returns a fast-path (matchesClient always true) when no client filters are active.
- *
- * `areas` has no default because there is no safe one: a caller without a
- * vocabulary would send whatever `area` it holds, which is the value this
- * parameter is here to withhold.
+ * Splits a filter into server-side and client-side parts, with a fast path when
+ * no client filters are active. `areas` has no default: without it `area` cannot
+ * be withheld.
  */
 export function prepareFilter(filter: NibFilter, areas: AreaVocabulary): PreparedFilter {
   const sendable = withSendableArea(filter, areas);
@@ -203,19 +144,10 @@ export function prepareFilter(filter: NibFilter, areas: AreaVocabulary): Prepare
 }
 
 /**
- * Returns true when drag-and-drop reordering is safe.
- *
- * Only search blocks drag: it flattens results out of tree order, so a "drop
- * before/after this anchor" gesture has no sibling meaning. Hide-filters
- * (type/priority/status/estimate/tags and their `exclude*` negations) never
- * reorder rows — matching nibs keep their tree order, ancestors are dimmed in
- * place, and only non-matching leaves are removed — and reorder-on-drop is
- * anchor-based (reorderNib against the dragged item's real siblings on the
- * backend), so it stays well-defined even when other rows are hidden.
- *
- * Accepted caveat: dropping relative to a visible anchor while sibling leaves are
- * hidden lands the item in a well-defined but possibly-surprising spot (it may end
- * up adjacent to rows the filter currently hides).
+ * Whether drag-and-drop reordering is allowed. Only search blocks it: search
+ * flattens tree order, so a before/after anchor has no sibling meaning. Client
+ * filters keep tree order, and reorderNib anchors on real siblings, so a drop
+ * beside a visible row can land next to a hidden one.
  */
 export function isDragAllowed(filter: NibFilter): boolean {
   return !filter.search;

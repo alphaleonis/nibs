@@ -3,14 +3,9 @@
   import type { ConfirmDialogState } from "$lib/composables/useConfirmDialog.svelte";
 
   interface Props {
-    /** The confirm-dialog composable. The dialog reads its display state from
-     *  here AND drives it: confirm runs `action`, the opt-in Save runs
-     *  `saveAction`, and every dismissal route (Cancel / Escape / overlay) runs
-     *  `dismiss()` — which fires the current confirm's dismissal owner. Handing
-     *  the whole composable in (rather than per-route callbacks the host wires by
-     *  hand) means the dismissal owner-fire lives IN the component and can't be
-     *  silently rewritten to a bare `close()` at a host binding, which would drop
-     *  the owner and reintroduce the nibs-an5d promise leak. (nibs-an5d/nibs-imgm) */
+    /** The confirm-dialog composable, rendered and driven here: confirm runs
+     *  `action`, Save runs `saveAction`, and every dismissal (Cancel / Escape /
+     *  overlay) runs `dismiss()`, which fires the dismissal owner. */
     confirm: ConfirmDialogState;
     testId?: string;
   }
@@ -18,9 +13,7 @@
   let { confirm, testId = "confirm-dialog" }: Props = $props();
 
   function handleOpenChange(newOpen: boolean) {
-    // Cancel button and Escape both route a close request through here. Anything
-    // that closes the dialog without the user choosing confirm/Save is a dismissal,
-    // so it must run the dismissal owner via dismiss() — never a bare close().
+    // A close request (Cancel, Escape) is a dismissal: call dismiss(), not close().
     if (!newOpen) {
       confirm.dismiss();
     }
@@ -54,10 +47,7 @@
           {confirm.label}
         </AlertDialog.Action>
         {#if confirm.saveAction}
-          <!-- Opt-in Save action: the recommended, safe choice for the
-               dirty-nav guard, rendered rightmost as the primary button. Only
-               present when the live confirm supplied a saveAction (never for
-               Delete/Archive). -->
+          <!-- Opt-in Save (the dirty-nav guard), rightmost as the primary. -->
           <AlertDialog.Action
             data-testid={`${testId}-save`}
             variant="default"

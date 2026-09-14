@@ -24,13 +24,9 @@ import type {
 } from "./types";
 
 /**
- * Maps command kind to the GraphQL mutation document. The concrete kind→doc→vars
- * correlation is resolved dynamically here and in `getVariables`, so the specific
- * per-operation Variables type of each generated TypedDocumentNode cannot be
- * statically tied to the `Record<string, unknown>` vars built below. Returning
- * the plain `DocumentNode` at this single dynamic seam lets urql fall back to
- * `AnyVariables` (the pre-typed-document behavior), keeping this generic executor
- * intact; every non-dynamic call site keeps full inference from the typed docs.
+ * The mutation document for a command kind. Returns a plain `DocumentNode`
+ * because the kind-to-variables pairing is dynamic, so urql types these calls'
+ * variables as `AnyVariables`.
  */
 function getMutationDoc(kind: LeafCommand["kind"]): DocumentNode {
   switch (kind) {
@@ -86,13 +82,9 @@ export class MutationDispatcher {
   async execute(cmd: LeafCommand, opts?: ExecuteOptions): Promise<CommandResult>;
   async execute(cmd: BatchCommand, opts?: ExecuteOptions): Promise<BatchResult>;
   async execute(cmd: SequenceCommand, opts?: ExecuteOptions): Promise<SequenceResult>;
-  // Union overload so callers holding an un-narrowed AnyCommand (e.g. the
-  // MutationStore pass-through) can dispatch without picking a concrete kind.
+  // For callers holding an un-narrowed AnyCommand, such as MutationStore.
   async execute(cmd: AnyCommand, opts?: ExecuteOptions): Promise<AnyResult>;
   async execute(cmd: AnyCommand, opts?: ExecuteOptions): Promise<AnyResult> {
-    // suppressToast is threaded into every leaf (including a batch/sequence's
-    // legs) but only ever set by the opted-in caller — default false keeps the
-    // "toast on error" behavior for everyone else.
     const suppressToast = opts?.suppressToast ?? false;
     switch (cmd.kind) {
       case "batch":
@@ -114,8 +106,6 @@ export class MutationDispatcher {
     const res = await this.#client.mutation(doc, vars, opts).toPromise();
 
     if (res.error) {
-      // The caller can opt to OWN the messaging for this call (e.g. save()
-      // routing a 409 into the inline resolver); otherwise toast the error here.
       if (!suppressToast) toast.error(res.error.message);
       return { ok: false, error: res.error.message, errorCode: graphqlErrorCode(res.error) };
     }

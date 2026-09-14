@@ -1,17 +1,6 @@
 /**
- * Pure layout math for the docked detail pane.
- *
- * No DOM, no runes — just the orientation mapping and the px<->% conversions
- * that the reactive shell (`detailPaneLayout.svelte.ts`) and the App component
- * wire into PaneForge. Kept free of DOM and runes so the sizing math is
- * unit-testable without mounting a component.
- *
- * The detail pane docks either at the RIGHT (horizontal split, size axis =
- * width) or the BOTTOM (vertical split, size axis = height). Every
- * position-dependent value routes through the `ORIENTATIONS` descriptor so
- * adding a third dock is one table entry and a missing key is a compile-time
- * exhaustiveness error — instead of silently falling through to the
- * "right"/horizontal branch across the many per-axis sites.
+ * Pure layout math for the docked detail pane: the per-dock sizing table and
+ * px<->% conversions. `detailPaneLayout.svelte.ts` binds it to reactive inputs.
  */
 
 import {
@@ -24,18 +13,14 @@ import {
 } from "../types";
 import type { DetailPanelPosition } from "../types";
 
-/** Sensible default when the container hasn't been measured yet (~30%). */
+/** Used before the container has been measured. */
 export const FALLBACK_DETAIL_SIZE_PERCENT = 30;
 
-/**
- * Structural subset of `Preferences` the layout needs: the size along each
- * axis, plus its setter and flush. The `Preferences` class satisfies this, and
- * a plain stub satisfies it in tests (no component / runes required).
- */
+/** The subset of `Preferences` the layout reads and writes. */
 export interface PaneSizePrefs {
   readonly detailPanelWidth: number;
   readonly detailPanelHeight: number;
-  /** Raw persisted size, or `undefined` when the user hasn't resized (→ default). */
+  /** `undefined` until the user has resized. */
   readonly detailPanelWidthRaw: number | undefined;
   readonly detailPanelHeightRaw: number | undefined;
   setDetailPanelWidth(px: number): void;
@@ -56,11 +41,8 @@ export interface OrientationDescriptor {
 }
 
 /**
- * Single source of truth for pane sizing per dock position. Keyed by
- * `DetailPanelPosition` so a new position is one entry (and a missing key is a
- * compile error). NOTE: this table covers only the sizing math — a new position
- * must ALSO be handled at the other position-dependent surfaces, which are NOT
- * keyed off this record: SettingsSheet's `positionOptions` list.
+ * Sizing per dock position. A new position also needs an entry in
+ * SettingsSheet's `positionOptions`.
  */
 export const ORIENTATIONS: Record<DetailPanelPosition, OrientationDescriptor> = {
   right: {
@@ -83,53 +65,36 @@ export const ORIENTATIONS: Record<DetailPanelPosition, OrientationDescriptor> = 
   },
 };
 
-/** Orientation descriptor for a dock position. */
 export function orientationOf(position: DetailPanelPosition): OrientationDescriptor {
   return ORIENTATIONS[position];
 }
 
-/**
- * Convert a pixel size along the split axis to a percentage of the container.
- * Falls back to `FALLBACK_DETAIL_SIZE_PERCENT` before the container is measured
- * (size <= 0).
- */
+/** Returns `FALLBACK_DETAIL_SIZE_PERCENT` until the container is measured. */
 export function pixelToPercent(px: number, containerSize: number): number {
   if (containerSize <= 0) return FALLBACK_DETAIL_SIZE_PERCENT;
   return (px / containerSize) * 100;
 }
 
-/**
- * Convert a percentage back to a pixel size along the split axis. Before the
- * container is measured (size <= 0), returns the axis's default px (not a
- * hardcoded width).
- */
+/** Returns `defaultPx` until the container is measured. */
 export function percentToPixel(pct: number, containerSize: number, defaultPx: number): number {
   if (containerSize <= 0) return defaultPx;
   return (pct / 100) * containerSize;
 }
 
-/** Clamp a percentage to the inclusive [min, max] range. */
 export function clampPercent(pct: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, pct));
 }
 
-/** Minimum pane size as a percent of the container (the active axis's min px). */
 export function minPercent(orient: OrientationDescriptor, containerSize: number): number {
   return pixelToPercent(orient.minPx, containerSize);
 }
 
-/** Maximum pane size as a percent — shared across both orientations. */
+/** Shared by both orientations. */
 export function maxPercent(): number {
   return MAX_DETAIL_PANEL_PERCENT;
 }
 
-/**
- * Current/default pane size as a percent of the container, clamped to the
- * [minPercent, maxPercent] band. Preferences already floor the stored px at the
- * axis's min, and PaneForge clamps `defaultSize`/`resize()` to the same band, so
- * clamping here is behavior-preserving and keeps the value the module hands to
- * `resize()` consistent with the pane's own bounds.
- */
+/** A px size as a percent of the container, clamped to [minPercent, maxPercent]. */
 export function defaultPercent(
   orient: OrientationDescriptor,
   currentSizePx: number,
@@ -143,11 +108,8 @@ export function defaultPercent(
 }
 
 /**
- * Initial pane size as a percent of the container. When the user hasn't resized
- * (`rawSizePx === undefined`) the pane opens at DEFAULT_DETAIL_PANEL_PERCENT —
- * screen-relative, so it doesn't look narrow on large displays. Once
- * a size is stored the pane anchors to it (px → percent). Both are clamped to the
- * [minPercent, maxPercent] band.
+ * Initial pane size: DEFAULT_DETAIL_PANEL_PERCENT until the user has resized,
+ * then the stored px. Clamped to [minPercent, maxPercent].
  */
 export function initialPercent(
   orient: OrientationDescriptor,

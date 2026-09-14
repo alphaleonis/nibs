@@ -28,8 +28,7 @@ export const typeIcons: Record<string, TypeIconInfo> = {
   research: { icon: FlaskConical, color: "var(--type-research)" },
 };
 
-// Per-status glyphs. Colors are NOT stored here — StatusIcon tints each glyph
-// via statusDotColors (badges.ts), the single source of truth for status color.
+// Per-status glyphs. StatusIcon tints them from statusDotColors (badges.ts).
 export const statusIcons: Record<string, LucideIcon> = {
   "draft": CircleDashed,
   "todo": Circle,

@@ -1,24 +1,14 @@
 <script lang="ts">
   /**
-   * ActiveNibView — the single, buffered nib view.
+   * ActiveNibView — the buffered nib view, rendering `useActiveView`'s state.
+   * Docked and expanded share one layout, keyed off measured width.
    *
-   * Renders the `useActiveView` presenter's current state. One component,
-   * docked (narrow, single column) and expanded (wide, two columns + rail);
-   * the layout keys off measured container width, not the dock position.
+   * `gone` shows a notice and disables inputs; `creating` hides relationships,
+   * documents, archive and delete. The add-child type picker is not a state here:
+   * App hosts it (`view.typePicker`).
    *
-   * State-driven render (per `view.state.kind`):
-   *   - `viewing` / `gone` / `creating` -> the full three-row-header nib view.
-   *     `gone` adds a notice naming its reason (deleted / archived) and disables
-   *     inputs; `creating` hides relationships/documents/archive/delete and its
-   *     primary button is "Create".
-   *
-   * The add-child type picker is NOT a state here — it overlays as an anchored
-   * popover hosted by App (`view.typePicker`), so it never replaces this view.
-   *
-   * All edits are buffered on `view.form` (CreateForm | EditForm) — nothing
-   * persists until Save. This component owns only presentational/local state
-   * (body edit-vs-preview toggle, responsive breakpoints); the buffer, the
-   * dirty-guard, and navigation live in the presenter.
+   * Edits are buffered on `view.form` until Save. The buffer, dirty guard and
+   * navigation live in the presenter.
    */
   import { toast } from "svelte-sonner";
   import {
@@ -64,14 +54,10 @@
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
 
   interface Props {
-    /** The full tag universe, offered as TagEditor suggestions (already-applied
-     *  tags are excluded downstream). Empty while none are known yet. */
+    /** Every known tag; TagEditor excludes the applied ones. */
     suggestions?: string[];
-    /** How the blocked state is emphasized in the header (see BlockedEmphasis). */
     blockedEmphasis?: BlockedEmphasis;
-    /** User preferences. The side-by-side Preview toggle reads/writes
-     *  `prefs.previewOpen` so the choice persists across remounts and sessions.
-     *  Optional (undefined in some tests) → falls back to the default. */
+    /** Backs the Preview toggle (`prefs.previewOpen`). Defaults apply without it. */
     prefs?: Preferences;
   }
 
@@ -88,42 +74,30 @@
 
   const isCreating = $derived(viewState.kind === "creating");
   const isGone = $derived(viewState.kind === "gone");
-  /** Why the buffer is `gone`, or null when it isn't. Drives the notice copy. */
   const goneReason = $derived(viewState.kind === "gone" ? viewState.reason : null);
 
-  // Blocked/blocking emphasis in the header (mirrors the tree row): the counts
-  // come from the detail query's active-only `blockedBy`/`blocking`
-  // (completed/scrapped filtered server-side). `subtle` shows the bare icon;
-  // `pill`/`pill-dim` show the pill (nothing to dim in the header, so `pill-dim`
-  // renders the same as `pill`).
+  // The detail query's blockedBy/blocking exclude completed and scrapped nibs.
   const blockedByCount = $derived(detailNib?.blockedBy?.length ?? 0);
   const blockingCount = $derived(detailNib?.blocking?.length ?? 0);
   const blockedVariant = $derived(blockedVariantFor(blockedEmphasis));
-  // An edit buffer renders a blank placeholder form until its detail query
-  // resolves (or, for a create→edit hand-off, until it's seeded). Disable inputs
-  // during that window so there's no editable-blank flash. `form.etag` is the
-  // "seeded" signal (set by the create hand-off seed OR by the async detail
-  // seed's applyExternal); `!view.detail?.nib?.etag` covers the tick before the
-  // seed effect runs.
+  // An edit buffer is a blank placeholder until seeded (by the create hand-off or
+  // the detail query), so inputs stay disabled until then. `form.etag` marks a
+  // seeded form.
   const loadingUnseeded = $derived.by(() => {
     if (form?.mode !== "edit" || form.etag) return false;
     const d = view.detail;
     return !!d?.fetching && !d?.nib?.etag;
   });
-  const disabled = $derived(isGone || loadingUnseeded); // gone / still-loading -> read-only
+  const disabled = $derived(isGone || loadingUnseeded);
 
-  // The nib id the buffer targets (edit forms only; null while creating).
   const nibId = $derived(form && form.mode === "edit" ? form.id : null);
-  // Current buffered type drives the edge band + valid-child-type logic.
   const currentType = $derived(form?.type ?? "task");
-  // Parent type for child creation uses the *saved* type when available.
+  // Valid child types follow the saved type, not the buffered one.
   const childParentType = $derived(detailNib?.type ?? currentType);
   const childTypes = $derived(getValidChildTypes(childParentType));
 
   // --- mention resolver (preview) ----------------------------------------
-  // Resolve against the detail query's `mentions` (full ids). A token matches
-  // full-form (`#nibs-gx0f`) via equality, short-form (`#gx0f`) via the id's
-  // suffix after the prefix dash — no config lookup needed.
+  // A token matches a mentioned id exactly, or by the suffix after its prefix dash.
   const mentionIds = $derived(
     new Set<string>((detailNib?.mentions ?? []).map((m) => m.id)),
   );
@@ -155,23 +129,14 @@
 
   // --- local presentational state ----------------------------------------
   let bodyMode: "preview" | "edit" = $state("preview");
-  // The side-by-side Preview pane toggle is backed by the user preference so it
-  // survives remounts (docked↔expanded) and sessions. Read through the pref
-  // (falling back to the default when no prefs instance is supplied); the toggle
-  // writes back to `prefs.previewOpen`, which auto-persists like other prefs.
+  // A preference, so it survives docked↔expanded remounts.
   const previewOn = $derived(prefs?.previewOpen ?? DEFAULT_PREVIEW_OPEN);
-  // `gone` nibs are read-only: never surface the editor even if edit mode was
-  // toggled on before the nib went away out from under us.
   const bodyModeEffective = $derived<"preview" | "edit">(disabled ? "preview" : bodyMode);
 
-  // A brand-new nib opens in edit mode so the user can type the body straight
-  // away; an existing nib opens in preview. This runs on mount and re-applies
-  // the default at each new buffer session, so it also fires on in-place
-  // transitions (viewing→creating, closed→creating) — ActiveNibView is NOT
-  // re-keyed per create. Each create/open swaps the form instance (see
-  // useActiveView.reconcileBuffer), so tracking form identity scopes the reset
-  // to session boundaries: a user's later toggle within the same session is
-  // preserved (we only act on a change).
+  // Each buffer session opens a new nib in edit mode and an existing one in
+  // preview. This view is not re-keyed per create, but every create/open swaps the
+  // form instance (useActiveView.reconcileBuffer), so tracking form identity
+  // resets at session boundaries and keeps a toggle made within one.
   let bodyModeSession: CreateForm | EditForm | null = null;
   $effect(() => {
     const f = form;
@@ -180,18 +145,9 @@
     bodyMode = isCreating ? "edit" : "preview";
   });
 
-  // Auto-focus the (empty) title input when a create buffer first appears,
-  // so the user can type the title straight away — for both entry
-  // points (toolbar New menu and a row's add-child [+]), which both land the
-  // view in `creating` with a fresh create form. Scoped to the create form
-  // instance (like bodyModeSession above): each create swaps the form (see
-  // useActiveView.reconcileBuffer), so this fires once per entry — typing/edits
-  // within the same buffer keep the same instance and never re-steal focus. The
-  // `isCreating` guard means the create→edit hand-off (form swaps to an edit
-  // buffer) does not pull focus. Deferred via queueMicrotask so the input is
-  // mounted/bound before we focus (mirrors TagEditor's tick + SettingsSheet's
-  // microtask deferral); titleEl is read only inside the callback, so it is not
-  // a tracked dependency and binding it never re-runs this effect.
+  // Focus the title once per create buffer, keyed on form identity as above; the
+  // create→edit hand-off does not pull focus. Deferred so the input is bound, and
+  // titleEl is read inside the callback so it is not a tracked dependency.
   let titleFocusSession: CreateForm | EditForm | null = null;
   $effect(() => {
     const f = form;
@@ -204,10 +160,8 @@
     queueMicrotask(() => titleEl?.focus());
   });
 
-  // Minor "Nib updated" toast when the presenter silently rebaselines a CLEAN
-  // buffer onto an incoming change (in-app status change, on-disk edit, ...).
-  // Tracks the presenter's monotonic counter; the first observed value is
-  // adopted without toasting, so mount / nib-swap never fires a spurious toast.
+  // Toast when the presenter silently rebaselines a clean buffer onto an incoming
+  // change. The first observed count is adopted without a toast.
   let externalAppliedSeen = -1;
   $effect(() => {
     const n = view.externalApplied;
@@ -226,20 +180,16 @@
   //   (b) bodyColWidth >= 560 -> editor + preview sit side-by-side (else stack)
   let rootEl: HTMLDivElement | undefined = $state();
   let bodyColEl: HTMLDivElement | undefined = $state();
-  // The title <input>, focused on entering a create buffer (see the effect below).
   let titleEl: HTMLInputElement | undefined = $state();
-  // The overflow (⋯) trigger — the type picker anchors to it when "New child
-  // nib" is chosen from that menu (the menu item itself is gone by then).
+  // "New child nib" anchors the type picker here; its menu item is gone by then.
   let menuTriggerEl: HTMLElement | null = $state(null);
   let rootWidth = $state(0);
   let bodyColWidth = $state(0);
   const wide = $derived(rootWidth >= 720);
   const sideBySide = $derived(bodyColWidth >= 560);
-  // Relationships/documents only exist for a real nib (not while creating).
   const showRail = $derived(wide && !isCreating && hasRelated);
 
-  // One observer, re-created whenever either measured element (re)mounts —
-  // reading rootEl/bodyColEl makes the effect re-run on layout swaps.
+  // Reading rootEl/bodyColEl re-creates the observer when either remounts.
   $effect(() => {
     const root = rootEl;
     const col = bodyColEl;
@@ -260,25 +210,17 @@
   function handleProseClick(event: MouseEvent) {
     const target = event.target as HTMLElement | null;
 
-    // Task-list checkbox: flip the matching source line in the WORKING COPY so it
-    // marks the buffer dirty and persists on Save like any other edit — NO
-    // auto-save. The ordinal on the checkbox maps to the Nth task line in
-    // form.body (see toggleTaskLine). preventDefault so the native toggle doesn't
-    // fight the re-render, which re-derives the checked state from the flipped body.
+    // Task checkbox: flip its source line in the working copy, saved with the
+    // buffer. preventDefault so the native toggle does not fight the re-render.
     const checkbox = target?.closest("input[data-task-ordinal]") as HTMLInputElement | null;
     if (checkbox) {
       event.preventDefault();
       const f = form;
-      if (!f || disabled) return; // read-only (gone / still-loading) -> ignore
-      // Provenance is enforced in markdown.ts (only our nonce-stamped checkboxes
-      // keep `data-task-ordinal`), but parse strictly here too: require an
-      // all-digits value so an empty/whitespace attr can't coerce to 0.
+      if (!f || disabled) return;
+      // An empty attribute must not coerce to ordinal 0.
       const raw = checkbox.dataset.taskOrdinal ?? "";
       if (!/^\d+$/.test(raw)) return;
-      // setBody's default is in-place (non-remounting) for exactly this kind of
-      // out-of-band edit: an open editor pane syncs the flipped body
-      // via a minimal-diff CodeMirror transaction, keeping its undo history /
-      // cursor / scroll intact (rather than the {#key} remount).
+      // setBody syncs an open editor in place, without a remount.
       f.setBody(toggleTaskLine(f.body, Number(raw)));
       return;
     }
@@ -292,45 +234,24 @@
 
   async function handleSave() {
     const f = form;
-    // `isGone`: this panel renders every `gone` buffer read-only (`disabled`),
-    // so no save may originate from it. Same intent as
-    // handleLoadTheirs/handleOverwrite. The rendered controls that reach here are
-    // already gone-disabled, so this is belt-and-braces for any future path that
-    // lets a gone buffer's editor stay interactive. It is deliberately broader
-    // than the presenter's rule — view.save() refuses only a DELETED nib, and an
-    // archived buffer is still saved through the dirty-nav guard's prompt, not
-    // through this panel.
-    // `view.savePending`: a null-remote conflict fallback is in flight for this
-    // form. `f.saving` is already false by then (EditForm.save resets it before
-    // the presenter's fallback fetch), so without this a re-trigger would
-    // re-dispatch mid-fallback.
+    // `isGone`: no save starts from a gone panel, archived included (an archived
+    // buffer saves through the dirty-nav prompt instead).
+    // `view.savePending`: a conflict fallback is in flight after `f.saving` reset.
     if (isGone || !f || !f.dirty || f.saving || view.savePending) return;
-    // Capture the saved instance + id BEFORE the await. The buffer can swap to
-    // another nib mid-flight (popstate / syncTo guard-bypass), so the live
-    // `form`/`nibId` getters read AFTER the await may point at a different nib.
-    // Re-check `form === f` before touching the saved instance and
-    // never read the live getters for these branches.
+    // The buffer can swap mid-await: capture the id now and check `form === f`
+    // after.
     const savedId = f.mode === "edit" ? f.id : null;
     const outcome = await view.save();
     if (!outcome) return;
     if (outcome.kind === "missing") {
-      // The nib was DELETED server-side. view.save() already routed the buffer to
-      // gone/deleted via noteMissing, so the deleted notice now owns the feedback —
-      // deliberately NO toast (the raw "target nib not found" message is what this
-      // whole path exists to suppress).
+      // view.save() routed the buffer to gone/deleted; its notice replaces a toast.
     } else if (outcome.kind === "error") {
       toast.error(outcome.message ?? "Save failed");
     } else if (outcome.kind === "conflict") {
-      // Stale-base save: route into the SAME persistent, non-modal resolver as
-      // the proactive path (Load theirs / Overwrite) — never a modal. Attach the
-      // conflicting snapshot to the SAVED instance only if it is still the live
-      // buffer; a swap means nib A's snapshot must never land on nib B's form.
       if (outcome.remote && form === f && f.mode === "edit") f.noteExternalChange(outcome.remote);
     } else if (outcome.kind === "created") {
       toast.success(`Created ${outcome.id}`);
     } else if (outcome.kind === "saved") {
-      // Only toast for a save whose buffer is still on screen, and name it with
-      // the captured id (not the possibly-swapped live `nibId`).
       if (form === f) toast.success(`Updated ${savedId ?? ""}`.trim());
     }
   }
@@ -339,43 +260,28 @@
     form?.discard();
   }
 
-  // "Load theirs": drop my unsaved edits and adopt the incoming snapshot. Guard
-  // `saving` (F5): a Load-theirs mid-Overwrite would diverge the buffer from disk
-  // (the in-flight save's continuation rebaselines against pre-interleave fields).
+  // Drop unsaved edits and adopt the incoming snapshot. Not while saving: the
+  // in-flight save would rebaseline against the old fields.
   function handleLoadTheirs() {
     const f = form;
-    // `isGone`: a deleted nib is read-only; never resolve a conflict against it
-    // (the resolver is also hidden in that state — MEDIUM #3, belt-and-braces).
     if (isGone || !f || f.mode !== "edit" || f.saving || !f.externalChange) return;
     f.applyExternal(f.externalChange);
   }
 
-  // "Overwrite": keep my edits and force-save over the remote (last-write-wins).
-  // Guards `dirty` (F1) so a reverted/clean buffer can't force a stale write, and
-  // `saving` to block a double-Overwrite.
+  // Keep unsaved edits and force-save over the remote. Requires `dirty`, so a
+  // clean buffer cannot force a stale write.
   async function handleOverwrite() {
     const f = form;
-    // `isGone`: never force-save over a deleted nib (would error / risk
-    // resurrecting stale content); the resolver is hidden here too — MEDIUM #3.
     if (isGone || !f || f.mode !== "edit" || f.saving || !f.dirty) return;
-    // Capture the id BEFORE the await so the success toast names the saved nib,
-    // not whatever the live `nibId` derived reads after the buffer may have swapped.
-    const savedId = f.id;
+    const savedId = f.id; // captured before the await, as in handleSave
     const outcome = await f.save({ overwrite: true });
     if (!outcome) return;
     if (outcome.kind === "missing") {
-      // The nib was deleted out from under the conflict resolver. This handler
-      // calls f.save() directly (not view.save()), so route the deletion through
-      // the presenter here: gone/deleted's notice replaces the raw toast, matching
-      // handleSave's NOT_FOUND behavior. Guard `form === f` (mirror the `saved`
-      // branch below and useActiveView.save()'s routing): if the buffer swapped
-      // mid-save — a Close→Discard then a reopen of the SAME id — noteMissing's
-      // internal nibId guard would NOT catch the stale report (ids match) and would
-      // silently close the freshly-reopened pristine buffer.
+      // f.save() bypasses view.save(), so route the deletion here. Check
+      // `form === f`: after Close→Discard and a reopen of the same id,
+      // noteMissing's id check passes and it would close the fresh buffer.
       if (form === f) view.noteMissing(f.id);
     } else if (outcome.kind === "error") toast.error(outcome.message ?? "Save failed");
-    // Only toast for a save whose buffer is still on screen (mirror handleSave):
-    // a mid-overwrite swap means this success belongs to a nib no longer shown.
     else if (outcome.kind === "saved" && form === f) toast.success(`Updated ${savedId}`);
   }
 
@@ -387,12 +293,7 @@
     if (nibId) copyToClipboard(nibId);
   }
 
-  // A `gone` buffer is read-only, so `bodyModeEffective` pins the body to the
-  // rendered-markdown preview — the raw source of any unsaved edits is on screen
-  // only in rendered form (headings as <h1>, links without their []() syntax).
-  // The prose pane renders that same live buffer and is selectable, so the edits
-  // themselves are not trapped; what this hands back is their only VERBATIM
-  // copy — the markdown source.
+  // A gone buffer shows only the rendered preview; this copies the markdown source.
   function handleCopyBody() {
     const f = form;
     if (f) copyToClipboard(f.body, "body");
@@ -517,8 +418,7 @@
     role="complementary"
     aria-label="Nib detail"
   >
-    <!-- Top region: header + metadata band. The type-color band spans only this
-         region (it stops at the metaband's bottom edge, not the body/rail). -->
+    <!-- Top region: header + metadata band, which the type-color band spans. -->
     <div class="anv-top">
       <div class="anv-band" style="background: var(--type-{currentType})" aria-hidden="true"></div>
 
@@ -649,19 +549,10 @@
           </Button>
         </div>
 
-        <!-- Row 2: title (single line, ellipsis, full-text tooltip)
-             `readonly` rather than `disabled` while `gone`: both refuse edits,
-             but a `gone` buffer's title can hold unsaved edits, and selection
-             plus copy is what hands them back — a `readonly` input stays
-             focusable with its text selectable.
-             The gate is split rather than reusing the `disabled` derivation: an
-             unseeded title is an empty placeholder with nothing to recover, and
-             `readonly` would let it take a caret before the seed lands, so it
-             keeps plain `disabled` and stays unfocusable.
-             The metadata band below is NOT selectable while `gone`, for a local
-             (not upstream) reason: the vendored select trigger sets `select-none`
-             unconditionally (see select-trigger.svelte). Making it conditional
-             was judged not worth building (scrapped nibs-3jqj). -->
+        <!-- Row 2: title. `readonly` while gone keeps unsaved edits selectable for
+             copying; an unseeded title has nothing to recover and stays
+             `disabled`. The metadata band is not selectable while gone: the
+             vendored select trigger sets `select-none` unconditionally. -->
         <input
           bind:this={titleEl}
           type="text"
@@ -713,16 +604,9 @@
       </div>
 
       <!-- ============ Gone notice (deleted / archived) ============
-           The notice is the user's only explanation for the read-only panel, so
-           it must name the real cause: an archived nib still exists. Its color
-           carries the same distinction the copy does — warning for archived (a
-           reversible move whose buffer still saves), destructive for deleted.
-           "Copy body" is the escape hatch for edits with no write path, so it
-           is scoped to DELETED — the one state `canSaveState` calls unsavable —
-           and only when there is a body to copy. Deliberately NOT offered for
-           archived: that buffer keeps a working Save in the close guard's
-           prompt, and inviting the user to copy the edits out would steer them
-           to Discard, which drops the title edits that have no copy action. -->
+           "Copy body" is offered only for deleted, the one state `canSaveState`
+           refuses: an archived buffer can still be saved from the close guard's
+           prompt. -->
       {#if isGone}
         <div
           class="anv-gone-notice"
@@ -732,18 +616,12 @@
           <span>{goneReason === "archived" ? "This nib was archived" : "This nib was deleted"}</span>
           {#if form.body && goneReason === "deleted"}
             <div class="anv-gone-actions">
-              <!-- The colors track the notice band rather than the app chrome:
-                   `outline` paints `bg-background` and sets no resting text
-                   color, so the band's inherited `--destructive-foreground`
-                   lands near-white on near-white in Daylight (measured 1.01:1).
-                   The `dark:`/`hover:` variants each need their own override:
-                   tailwind-merge keeps a modifier'd class under a later bare one,
-                   so `bg-transparent` cannot drop `dark:bg-input/30` (pinned by
-                   utils.test.ts).
-                   `bg-black/10` on hover is a deliberate exception to the
-                   semantic-token rule: the band paints the same `--destructive`
-                   pair in every theme, so there is no theme-varying token to
-                   track, and a flat darkening raises contrast in both. -->
+              <!-- Colors follow the notice band: `outline` paints bg-background
+                   under the band's inherited text color. Each `dark:` / `hover:`
+                   class needs its own override, since tailwind-merge keeps a
+                   modifier'd class beside a later bare one (utils.test.ts).
+                   `bg-black/10` is not a semantic token because the band uses the
+                   same `--destructive` pair in every theme. -->
               <Button
                 variant="outline"
                 size="sm"
@@ -760,17 +638,11 @@
         </div>
       {/if}
 
-      <!-- ===== External-change resolver (persistent, non-modal surface) =====
-           Only shows when the change arrived while the buffer had unsaved edits
-           (a clean buffer is rebaselined silently by the presenter). The
-           `form.dirty` gate is load-bearing (F1): a not-dirty buffer must never
-           expose Overwrite, or it could force stale/reverted content over the
-           remote's newer change. It stays until resolved via Load theirs or
-           Overwrite. role="dialog" + aria-modal="false" follows the SettingsSheet
-           non-modal idiom (F6) — NOT role="alert" (that assertive live region is
-           for brief non-interactive status text, not focusable controls).
-           Hidden in the `gone` state (MEDIUM #3): a deleted nib is read-only, so
-           the deleted notice alone shows — never it and this resolver together. -->
+      <!-- ===== External-change resolver (non-modal) =====
+           Dirty buffers only: a clean one is rebaselined silently, and Overwrite
+           on it could force stale content over the remote. role="dialog"
+           aria-modal="false" as in SettingsSheet; not role="alert", which is for
+           non-interactive status text. -->
       {#if !isGone && form.mode === "edit" && form.externalChange && form.dirty}
         <div
           class="anv-conflict"
@@ -821,11 +693,8 @@
           <span class="anv-field-label">Estimate</span>
           <EstimateSelect value={form.estimate} onchange={(v) => (form.estimate = v)} testId="anv-estimate" {disabled} />
         </div>
-        <!-- Both axes are hidden for a milestone itself: `takesAssignmentAxes`
-             is the client's read of the rule that a waypoint carries no
-             assignment. The milestone field is additionally edit-only, because
-             CreateNibInput declares no milestone. Neither absence is a layout
-             choice — both are writes the server refuses. -->
+        <!-- A milestone takes neither axis (`takesAssignmentAxes`). Milestone is
+             also edit-only: CreateNibInput has no milestone field. -->
         {#if form.mode === "edit" && takesAssignmentAxes(form.type)}
           <div class="anv-field">
             <span class="anv-field-label">Milestone</span>
@@ -838,8 +707,7 @@
             />
           </div>
         {/if}
-        <!-- Not edit-only, unlike Milestone above: CreateNibInput DOES declare
-             `area`, so the assignment can be made as the nib is created. -->
+        <!-- CreateNibInput has `area`, so Area is available while creating. -->
         {#if takesAssignmentAxes(form.type)}
           <div class="anv-field">
             <span class="anv-field-label">Area</span>
@@ -856,8 +724,6 @@
     </div>
 
     <!-- ============ Content: body column (+ optional rail) ============ -->
-    <!-- Fills the remaining panel height and scrolls; the rail's right column
-         therefore stretches to the bottom of the panel. -->
     <div class="anv-content" class:anv-two-col={showRail}>
         <div class="anv-body" bind:this={bodyColEl}>
           <div class="anv-section-head">
@@ -907,12 +773,9 @@
           {:else}
             <div class="anv-editwrap" class:anv-editwrap-side={previewOn && sideBySide}>
               <div class="anv-editor" data-testid="anv-editor-container">
-                <!-- ECHO-LOOP CONTRACT (see MarkdownEditor Props):
-                     onchange's value is stored VERBATIM into form.body and fed
-                     straight back as initialValue — no transform, and NOT through
-                     a bumping setBody. The {#key bodyVersion} remount is reserved
-                     for genuine baseline resets (discard / applyExternal /
-                     create->edit); out-of-band edits (checkbox flip) sync in place. -->
+                <!-- onchange's value goes back as initialValue verbatim (see
+                     MarkdownEditor's echo-loop contract). {#key bodyVersion}
+                     remounts only on a baseline reset. -->
                 {#key form.bodyVersion}
                   <MarkdownEditor
                     initialValue={form.body}
@@ -1033,9 +896,7 @@
     border-radius: var(--radius-md);
     padding: 0.12rem 0.35rem;
     color: var(--foreground);
-    /* Scale with the global font-size preference: the title is
-       larger than the body role, so there is no shared token — multiply the
-       base size by --font-scale directly, mirroring the type-scale tokens. */
+    /* No type-scale token is this size, so apply --font-scale directly. */
     font-size: calc(1.25rem * var(--font-scale));
     font-weight: 620;
     letter-spacing: -0.01em;
@@ -1045,10 +906,8 @@
     text-overflow: ellipsis;
   }
 
-  /* The hover border reads as "click to edit", so it belongs only on a title
-     that actually takes edits — :read-write excludes both readonly and
-     disabled. The focus ring below is deliberately NOT gated: a readonly input
-     is still focusable, and focus must stay visible when it lands there. */
+  /* Hover border only on an editable title (:read-write excludes readonly and
+     disabled). The focus ring stays ungated: a readonly title is focusable. */
   .anv-title:read-write:hover {
     border-color: var(--border);
   }
@@ -1100,8 +959,7 @@
     flex: none;
   }
 
-  /* An archived nib still exists and still saves, so it gets the attention
-     token the conflict banner uses — not the error token a deletion gets. */
+  /* An archived nib still exists and saves: warning, not destructive. */
   .anv-gone-notice--archived {
     background-color: var(--warning);
     color: var(--warning-foreground, white);
@@ -1133,8 +991,7 @@
     flex-wrap: wrap;
     gap: 0.65rem 1rem;
     align-items: flex-end;
-    /* Match the rail background exactly; the top/bottom hairlines are the
-       separator between the top region and the body/rail below. */
+    /* Same background as the rail. */
     background: color-mix(in oklab, var(--background), var(--card) 35%);
     border-top: 1px solid var(--border);
     border-bottom: 1px solid var(--border);
@@ -1154,11 +1011,8 @@
   }
 
   /* ---------- content columns ---------- */
-  /* Fills the remaining panel height. The single grid row is bounded to the
-     panel height (minmax(0, 1fr)) so the body and rail cells are viewport-sized
-     rather than content-sized — that lets the body editor fill and scroll
-     internally. Scroll is owned by .anv-body / .anv-rail, which each
-     scroll independently when their content overflows. */
+  /* The row is bounded (minmax(0, 1fr)) so .anv-body and .anv-rail each scroll
+     on their own. */
   .anv-content {
     display: grid;
     grid-template-columns: 1fr;
@@ -1281,11 +1135,7 @@
     font-style: italic;
   }
 
-  /* Fills the remaining body-column height so the editor pane is a fixed size
-     from the start and scrolls internally, rather than growing with content.
-     grid-auto-rows: minmax(0, 1fr) makes every pane share the height equally and
-     stay bounded — so the stacked editor+preview layout also scrolls internally
-     instead of growing. min-height keeps a sensible floor on very short panels. */
+  /* Panes share the remaining height and scroll internally instead of growing. */
   .anv-editwrap {
     display: grid;
     grid-template-columns: 1fr;
@@ -1299,8 +1149,7 @@
     grid-template-columns: 1fr 1fr;
   }
 
-  /* min-height: 0 lets the editor shrink into its grid track so CodeMirror's
-     internal scroller engages instead of the pane growing to fit content. */
+  /* min-height: 0 lets CodeMirror's own scroller engage. */
   .anv-editor {
     min-height: 0;
     min-width: 0;

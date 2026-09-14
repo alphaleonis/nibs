@@ -32,9 +32,8 @@
     /** Compose a relationship-id filter onto the current filter, targeting this
      *  row (`nib.id`). Single-target only. */
     onfilterrelated?: (field: RelIdKey, id: string) => void;
-    /** Resolves each selected nib's etag so batch mutations carry ifMatch. The
-     *  table owns the loaded nibs, so the resolver has to come from there — this
-     *  component only ever sees the right-clicked row. */
+    /** Resolves each selected nib's etag so batch mutations carry ifMatch.
+     *  Supplied by the table, which holds the loaded nibs. */
     etagOf?: EtagResolver;
   }
 
@@ -50,19 +49,9 @@
     etagOf,
   }: Props = $props();
 
-  // "Filter related" items — each composes a scalar relationship-id filter onto the
-  // current filter (AND with existing filters; same-kind overwrites). Directions are
-  // VERIFIED against the server schema: blockingId selects the row's blockers,
-  // blockedById selects what the row blocks.
-  //
-  // Every LABEL names the RESULT set, while the FIELD names the relationship those
-  // results hold toward this row. For parent/ancestor/descendant/blocked-by/
-  // mentioned-by the label therefore reads as the field's inverse; for
-  // blocking/mentions/sibling it reads the SAME, because those field-names already
-  // state the relation from the result's side (and sibling is symmetric). Derive
-  // each label from the field, never from how the pair reads.
-  // `ancestorId` keeps nibs whose ancestor is this row, i.e. its descendants;
-  // `descendantId` keeps nibs whose descendant is this row, i.e. its ancestors.
+  // Each label names the result set. Derive it from what the field selects, not
+  // from its name: `blockingId` keeps this row's blockers, `blockedById` what it
+  // blocks, `ancestorId` its descendants, `descendantId` its ancestors.
   const FILTER_RELATIONS: { label: string; field: RelIdKey }[] = [
     { label: "Items blocking this", field: "blockingId" },
     { label: "Items this blocks", field: "blockedById" },
@@ -92,15 +81,13 @@
 
   function handleOpen() {
     if (nib) {
-      // Open the unified view (guarded); it routes through nav so the URL/history
-      // stay in sync.
       view.open(nib.id);
     }
   }
 
   function handleEdit() {
     if (nib) {
-      // Edit is just opening the unified buffered view (create/edit are one view).
+      // The view is both viewer and editor.
       view.open(nib.id);
     }
   }
@@ -127,11 +114,7 @@
     await mutations.execute(setPriorityBatch(ids, priority, etagOf));
   }
 
-  /**
-   * One row of a metadata submenu. Statuses and priorities ARE their own labels;
-   * a milestone's value is an id and its label a title, which is the whole
-   * reason the snippet takes entries rather than strings.
-   */
+  /** One row of a metadata submenu. A milestone's value is an id, its label a title. */
   interface MenuEntry {
     value: string;
     label: string;
@@ -141,10 +124,8 @@
   const plain = (v: string): MenuEntry => ({ value: v, label: v });
 
   const milestones = useMilestones();
-  // The door is applied only with ONE subject: in a bulk selection this
-  // component sees the right-clicked row's status and no other, so a refusal
-  // computed from it would speak for rows it cannot see. The server refuses
-  // those per row, exactly as it does for the other bulk axes here.
+  // Refusals are shown only for a single target: in a bulk selection only the
+  // right-clicked row's status is known, and the server refuses per row.
   let milestoneEntries = $derived([
     { value: NO_MILESTONE, label: "None" },
     ...milestoneChoices(milestones(), {
@@ -215,9 +196,7 @@
 </script>
 
 {#if open && nib}
-  <!-- Declared here (a child of the {#if} block, not of DropdownMenu.Content)
-       so it is a local snippet in lexical scope for the {@render} calls below,
-       rather than being interpreted as an unknown prop of Content. -->
+  <!-- Declared outside DropdownMenu.Content, where it would become a prop. -->
   {#snippet metadataSubmenu(label: string, entries: readonly MenuEntry[], currentValue: string,
       onchange: (v: string) => void, testId: string)}
     <DropdownMenu.Sub>
@@ -318,8 +297,6 @@
       {/if}
 
       {#if !isBulk}
-        <!-- Filter related: compose a relationship-id filter targeting this row.
-             Single-target only (like Add child); ANDs onto the current filter. -->
         <DropdownMenu.Sub>
           <DropdownMenu.SubTrigger data-testid="ctx-filter-related-trigger">
             Filter related
@@ -342,10 +319,8 @@
 
       {@render metadataSubmenu("Priority", PRIORITIES.map(plain), nib.priority, handlePriorityChange, "priority")}
 
-      <!-- Absent for a milestone-typed row: a waypoint takes no assignment
-           (`takesAssignmentAxes`). In a bulk selection only the right-clicked
-           row's type is known here, so a milestone hidden inside the selection
-           is refused by the server rather than by this gate. -->
+      <!-- A milestone takes no milestone. In a bulk selection only the
+           right-clicked row's type is checked; the server refuses the rest. -->
       {#if takesAssignmentAxes(nib.type)}
         {@render metadataSubmenu("Milestone", milestoneEntries, toSelectValue(nib.milestone), handleMilestoneChange, "milestone")}
       {/if}

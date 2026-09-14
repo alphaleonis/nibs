@@ -1,18 +1,11 @@
 import { toast } from "svelte-sonner";
 
 /**
- * Copy `text` to the system clipboard and surface a toast for the outcome.
+ * Copy `text` to the clipboard and toast the outcome. Never rejects.
  *
- * Success shows a confirmation toast; failure (e.g. clipboard permission
- * denied, or an insecure context where `navigator.clipboard` is unavailable)
- * shows an error toast. The promise always resolves — callers do not need to
- * handle rejection.
- *
- * `label` names what was copied instead of quoting it, for text that is too
- * long to sit in a toast (a nib body). Omit it for short values like an id,
- * where quoting the text is the more useful confirmation. The branch turns on
- * the label's PRESENCE, not its truthiness: quoting the text is the unbounded
- * branch, so an empty label must not fall back to it.
+ * Pass `label` for long text (a nib body): the toast names it instead of
+ * quoting the text. Test the label for `undefined`, not truthiness, so an empty
+ * label never quotes unbounded text.
  */
 export async function copyToClipboard(text: string, label?: string): Promise<void> {
   try {

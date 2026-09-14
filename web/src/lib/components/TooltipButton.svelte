@@ -17,8 +17,7 @@
     children,
     ...restProps
   }: Omit<HTMLButtonAttributes, "class" | "aria-label" | "type"> & {
-    /** Tooltip text AND the button's aria-label — kept in sync by construction.
-     *  aria-label is owned by this prop, so it is not accepted via restProps. */
+    /** Tooltip text and the button's aria-label. */
     label: string;
     side?: "top" | "right" | "bottom" | "left";
     variant?: ButtonVariant;
@@ -35,15 +34,9 @@
 <Tooltip.Root>
   <Tooltip.Trigger>
     {#snippet child({ props })}
-      <!-- OVERRIDE semantics. Spread order is load-bearing: caller `{...restProps}`
-           FIRST, then the tooltip's `{...props}` (its hover/focus attachment) so
-           those handlers can never be clobbered by a forwarded prop, then our
-           explicit attributes, and `onclick` LAST so an explicit click action
-           OVERRIDES the tooltip's own (inert, close-on-click) handler — the
-           button's action always wins. (Contrast WithTooltip's CHAIN mode, where
-           a bits-ui trigger merges the tooltip's handlers with its own.) The tooltip
-           still opens on hover/focus because those handlers live in props and are
-           not overridden. -->
+      <!-- Spread order matters: caller props, then the tooltip's so a forwarded
+           prop cannot clobber its handlers, then `onclick` last so the button's
+           action replaces the tooltip's close-on-click handler. -->
       <button
         {...restProps}
         {...props}

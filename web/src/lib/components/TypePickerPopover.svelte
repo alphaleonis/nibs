@@ -15,15 +15,12 @@
 
   let { parentType, onselect, oncancel, anchor }: Props = $props();
 
-  // Only the child types the backend hierarchy permits under this parent.
   let validTypes = $derived(getValidChildTypes(parentType));
   let menuOpen = $state(true);
-  // Selecting closes the menu, which fires onOpenChange(false); that must NOT be
-  // reported as a cancel (it would double-fire alongside onselect).
+  // Selecting closes the menu too; that close is not a cancel.
   let selecting = false;
 
-  // Pin the invisible trigger over the opener's rect so the menu opens there
-  // (position:fixed lives in the CSS; these override the centered fallback).
+  // Pin the invisible trigger over the opener's rect, or center it.
   let anchorStyle = $derived(
     anchor
       ? `top:${anchor.y}px; left:${anchor.x}px; width:${anchor.width}px; height:${anchor.height}px;`
@@ -40,11 +37,8 @@
   }
 </script>
 
-<!-- Same shadcn DropdownMenu as the "New" button's type menu (Toolbar), so it
-     opens, highlights, and keyboard-navigates identically — but populated from
-     getValidChildTypes so it only offers valid child types for this parent. The
-     menu is controlled via bind:open; an invisible trigger pinned over the
-     opener's rect only anchors the content. -->
+<!-- The same DropdownMenu as Toolbar's New menu, offering only valid child types.
+     The invisible trigger only anchors the content. -->
 <DropdownMenu.Root bind:open={menuOpen} onOpenChange={handleOpenChange}>
   <DropdownMenu.Trigger
     data-testid="type-picker-trigger"
@@ -72,8 +66,7 @@
 </DropdownMenu.Root>
 
 <style>
-  /* Invisible anchor: position:fixed here; top/left (and width/height when a
-     rect is given) are set inline from the `anchor` prop. */
+  /* Geometry is set inline from `anchor`. */
   :global(.type-picker-anchor) {
     position: fixed;
     width: 0;

@@ -6,8 +6,7 @@ import { serializeQuery } from "./query";
 
 const ALWAYS_VISIBLE_KEY_SET = new Set<ColumnKey>(ALWAYS_VISIBLE_KEYS);
 
-// Duplicated verbatim by the pre-paint FOUC guard in index.html; exported so
-// src/lib/fouc-guard.test.ts can assert the two stay in sync.
+// Duplicated in index.html's pre-paint FOUC guard; fouc-guard.test.ts pins the match.
 export const STORAGE_KEY = "nibs-filter-preferences";
 
 const DEFAULTS: FilterPreferences = {
@@ -16,38 +15,15 @@ const DEFAULTS: FilterPreferences = {
   theme: DEFAULT_THEME,
 };
 
-// Resolve the persisted filter to a canonical query STRING. Two formats are
-// accepted so a returning user never loses their filter or crashes the load:
-//   - New: `q` is already a query string — returned verbatim (Preferences
-//     re-parses it, so a hand-edited/foreign value is tolerated downstream).
-//   - Legacy: an older build persisted the structured `filter: NibFilter`
-//     directly. It is serialized to the equivalent canonical string. This is a
-//     FAITHFUL translation — a persisted `excludeStatus` becomes `-status:…`
-//     (behaviorally identical to hiding those statuses), NOT rewritten into a
-//     status include-list. That old include-list rewrite was for the retired
-//     hide-completed toggle; folding it in here would mangle a `-status:X`
-//     negation on reload (see nibs-grvv Phase-2 note).
-// serializeQuery covers EVERY NibFilter field — the box owns the relationship and
-// existence keys and the area path — so a legacy structured blob translates in
-// full, with nothing dropped.
+// Resolve the persisted filter to a query string. `q` is returned verbatim; an
+// older blob's structured `filter` is serialized, so a persisted `excludeStatus`
+// becomes `-status:…`.
 //
-// PERSISTED-FORMAT NOTE — a status group token stores a RULE, not a set.
-// serializeQuery collapses a group wherever all of its members are present, so a
-// persisted `status:draft,todo,in-progress` is rewritten to `status:open` the
-// next time it is saved (same for the `?q=` link built from it). What was an
-// enumerated choice of three statuses becomes "everything not closed". Add a
-// status to STATUSES and every stored or shared `status:open` widens to include
-// it, and two clients on different versions resolve the same link differently.
-//
-// Collapse is NOT limited to an exact whole-list match, so this applies to more
-// stored queries than it reads like: `status:draft,todo,in-progress,completed`
-// persists as `status:open,completed` and widens later too. The rule is per
-// group, not per token — a value outside every group (`completed` here) stays
-// an enumerated choice and never widens.
-// That is the intended behavior — group membership is derived on purpose (see
-// constants.ts) — but it means the stored string is not a faithful record of
-// what the user ticked. CLOSED_STATUSES / OPEN_STATUSES are pinned verbatim by
-// filter.test.ts, so growing the vocabulary is a deliberate act, not a silent one.
+// A status group is stored as a rule, not a set. serializeQuery collapses every
+// group whose members are all present, so `status:draft,todo,in-progress,completed`
+// persists as `status:open,completed`, and a status later added to the open group
+// widens every stored or shared `status:open`. Values outside every group stay
+// enumerated.
 function parseQueryField(parsed: Record<string, unknown>): string {
   if (typeof parsed.q === "string") return parsed.q;
   const legacy = parsed.filter;
@@ -59,22 +35,14 @@ function parseQueryField(parsed: Record<string, unknown>): string {
 
 const VALID_COLUMN_KEYS = new Set<string>(ALL_COLUMN_KEYS);
 
-// One-time load migration for column-key renames (state → status, effort →
-// estimate). Preferences persisted before a rename stored the column under its
-// old key in the per-view visibility/order arrays, the per-view widths map, and
-// the active tableSort's `field`. Rewrite each occurrence to the new key on the
-// RAW parsed blob BEFORE the validators run, so the column keeps its persisted
-// position, width, and sort — otherwise the now-unknown old key is dropped by the
-// visibility/widths validators, appended out of place by parseColumnOrder, and an
-// old tableSort field is rejected as invalid (sort silently lost).
+// Renamed column keys. Applied to the raw blob before validation, which would
+// otherwise drop the old key and lose that column's position, width and sort.
 const LEGACY_COLUMN_KEY_RENAMES: Record<string, string> = { state: "status", effort: "estimate" };
 
 function renameLegacyColumnKey(key: string): string {
   return LEGACY_COLUMN_KEY_RENAMES[key] ?? key;
 }
 
-// Rename legacy keys in one persisted per-view ARRAY map (columnVisibility /
-// columnOrder): each level's array has its string elements renamed in place.
 function migratePerViewArray(raw: unknown): void {
   if (typeof raw !== "object" || raw === null) return;
   for (const level of Object.values(raw as Record<string, unknown>)) {
@@ -85,10 +53,7 @@ function migratePerViewArray(raw: unknown): void {
   }
 }
 
-// Rename legacy keys in the per-view WIDTHS map: each level is a {columnKey:
-// width} object whose KEYS are renamed in place. A pre-existing entry under the
-// new key wins (the legacy one is discarded) so a partial-migration blob can't
-// clobber a real "status" width.
+// An existing entry under the new key wins over the legacy one.
 function migratePerViewWidths(raw: unknown): void {
   if (typeof raw !== "object" || raw === null) return;
   for (const level of Object.values(raw as Record<string, unknown>)) {
@@ -103,15 +68,13 @@ function migratePerViewWidths(raw: unknown): void {
   }
 }
 
-// Rename a legacy tableSort.field in place.
 function migrateTableSortField(raw: unknown): void {
   if (typeof raw !== "object" || raw === null) return;
   const sort = raw as Record<string, unknown>;
   if (typeof sort.field === "string") sort.field = renameLegacyColumnKey(sort.field);
 }
 
-// Apply the legacy column-key renames across every persisted field that carries a
-// column key. Mutates the freshly-parsed blob owned by loadPreferences.
+// Mutates `parsed` in place.
 function migrateLegacyColumnKeys(parsed: Record<string, unknown>): void {
   migratePerViewArray(parsed.columnVisibility);
   migratePerViewArray(parsed.columnOrder);
@@ -119,10 +82,8 @@ function migrateLegacyColumnKeys(parsed: Record<string, unknown>): void {
   migrateTableSortField(parsed.tableSort);
 }
 
-// Shared per-view map parser: one VIEW_LEVELS loop, with the concern-specific
-// per-level validator injected. A level is included only when the validator
-// returns a value; the whole map collapses to undefined when no level survives
-// (so an absent/garbage field stays undefined and Preferences supplies defaults).
+// Keeps each view level validateLevel accepts; undefined when none survives, so
+// Preferences supplies the defaults.
 export function parsePerViewMap<T>(
   raw: unknown,
   validateLevel: (raw: unknown) => T | undefined,
@@ -138,9 +99,7 @@ export function parsePerViewMap<T>(
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
-// Per-level validator for columnVisibility: keep valid column keys, always
-// re-add the alwaysVisible columns (title today) so they survive a round-trip.
-// A non-array (missing/garbage) level yields undefined so it is dropped.
+// Keeps valid column keys and re-adds the always-visible columns.
 function validateVisibilityLevel(raw: unknown): ColumnKey[] | undefined {
   if (!Array.isArray(raw)) return undefined;
   const filtered = raw.filter(
@@ -154,12 +113,8 @@ function validateVisibilityLevel(raw: unknown): ColumnKey[] | undefined {
   return filtered.length > 0 ? filtered : undefined;
 }
 
-// Per-level validator for columnOrder: keep the persisted order of valid,
-// non-duplicate column keys, then APPEND any ColumnKey that is missing (in
-// canonical ALL_COLUMN_KEYS order) so a newly-added column still appears — the
-// resolved order is (persisted valid ∪ missing-appended). Unknown/duplicate keys
-// are dropped. A non-array (missing/garbage) level yields undefined so it is
-// dropped and Preferences supplies the default order.
+// Keeps valid, unique keys in persisted order, then appends every missing key in
+// ALL_COLUMN_KEYS order so a new column still appears.
 export function parseColumnOrder(raw: unknown): ColumnKey[] | undefined {
   if (!Array.isArray(raw)) return undefined;
   const seen = new Set<ColumnKey>();
@@ -176,8 +131,7 @@ export function parseColumnOrder(raw: unknown): ColumnKey[] | undefined {
   return ordered;
 }
 
-// Per-level validator for columnWidths: keep valid column keys mapped to
-// positive finite numbers. A non-object (or array) level yields undefined.
+// Keeps valid column keys mapped to positive finite numbers.
 function validateWidthsLevel(raw: unknown): Partial<Record<ColumnKey, number>> | undefined {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
   const widths: Partial<Record<ColumnKey, number>> = {};
@@ -198,8 +152,6 @@ function parseDetailPanelWidth(raw: unknown): number | undefined {
 
 const VALID_DETAIL_PANEL_POSITIONS = new Set<string>(DETAIL_PANEL_POSITIONS);
 
-// Optional like detailPanelWidth/rowDensity: return undefined for
-// missing/garbage so Preferences supplies the concrete default.
 function parseDetailPanelPosition(raw: unknown): DetailPanelPosition | undefined {
   if (typeof raw === "string" && VALID_DETAIL_PANEL_POSITIONS.has(raw)) return raw as DetailPanelPosition;
   return undefined;
@@ -207,8 +159,6 @@ function parseDetailPanelPosition(raw: unknown): DetailPanelPosition | undefined
 
 const VALID_OPEN_DETAIL_GESTURES = new Set<string>(OPEN_DETAIL_GESTURES);
 
-// Optional like detailPanelPosition: return undefined for missing/garbage so
-// Preferences supplies the concrete default ("single", today's behavior).
 function parseOpenDetailOn(raw: unknown): OpenDetailGesture | undefined {
   if (typeof raw === "string" && VALID_OPEN_DETAIL_GESTURES.has(raw)) return raw as OpenDetailGesture;
   return undefined;
@@ -228,8 +178,6 @@ function parseRowDensity(raw: unknown): RowDensity | undefined {
 
 const VALID_FONT_SIZES = new Set<string>(Object.keys(FONT_SCALES));
 
-// Optional like rowDensity: return undefined for missing/garbage so Preferences
-// supplies the concrete default (medium).
 function parseFontSize(raw: unknown): FontSize | undefined {
   if (typeof raw !== "string" || !VALID_FONT_SIZES.has(raw)) return undefined;
   return raw as FontSize;
@@ -237,8 +185,6 @@ function parseFontSize(raw: unknown): FontSize | undefined {
 
 const VALID_BLOCKED_EMPHASES = new Set<string>(BLOCKED_EMPHASES);
 
-// Optional like rowDensity: return undefined for missing/garbage so Preferences
-// supplies the concrete default.
 function parseBlockedEmphasis(raw: unknown): BlockedEmphasis | undefined {
   if (typeof raw !== "string" || !VALID_BLOCKED_EMPHASES.has(raw)) return undefined;
   return raw as BlockedEmphasis;
@@ -246,31 +192,21 @@ function parseBlockedEmphasis(raw: unknown): BlockedEmphasis | undefined {
 
 const VALID_REGION_BAND_MODES = new Set<string>(REGION_BAND_MODES);
 
-// Optional like blockedEmphasis. A stored "always" from a build before the mode
-// existed lands here as garbage and returns undefined, so such a session comes
-// back on the current default rather than on a mode this build cannot draw.
+// A retired mode such as "always" is unknown here and falls back to the default.
 function parseRegionBands(raw: unknown): RegionBandMode | undefined {
   if (typeof raw !== "string" || !VALID_REGION_BAND_MODES.has(raw)) return undefined;
   return raw as RegionBandMode;
 }
 
-// Optional like rowDensity/blockedEmphasis: return undefined for
-// missing/garbage so Preferences supplies the concrete default.
 function parsePreviewOpen(raw: unknown): boolean | undefined {
   return typeof raw === "boolean" ? raw : undefined;
 }
 
-// The full sortable-field set is single-sourced in columns.ts (derived from
-// COLUMNS[].sortable). A persisted field naming a column that was removed or made
-// non-sortable falls out of this set and is treated as off (no unset-vs-off
-// ambiguity), so old preferences never crash or pin a sort to a gone column.
+// A persisted field naming a column that is gone or no longer sortable leaves the
+// sort off.
 const VALID_TABLE_SORT_FIELDS = new Set<string>(SORTABLE_COLUMN_KEYS);
 const VALID_TABLE_SORT_DIRECTIONS = new Set<string>(["asc", "desc"]);
 
-// Optional like blockedEmphasis: return the object only when BOTH field and
-// direction are valid enums; else undefined so Preferences treats it as off
-// (null). An absent/invalid tableSort means "no sort" — no unset-vs-off
-// ambiguity.
 function parseTableSort(raw: unknown): TableSort | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
   const { field, direction } = raw as Record<string, unknown>;
@@ -285,9 +221,7 @@ function parseTableSort(raw: unknown): TableSort | undefined {
 
 const VALID_THEMES = new Set<string>(THEMES.map(t => t.value));
 
-// Validate a persisted theme against the known set, falling back to the default
-// for missing/garbage/unknown values. (Unlike the *optional* prefs above which
-// return undefined, theme always resolves to a concrete value.)
+// Unlike the optional preferences above, theme always resolves to a concrete value.
 export function parseTheme(raw: unknown): Theme {
   if (typeof raw === "string" && VALID_THEMES.has(raw)) return raw as Theme;
   return DEFAULT_THEME;
@@ -327,12 +261,10 @@ export function loadPreferences(): FilterPreferences {
 
 export function savePreferences(prefs: FilterPreferences): void {
   try {
-    // Persist the canonical query STRING under `q` (mirroring the `?q=` URL
-    // param and marking the new format for loadPreferences); the remaining
-    // preferences persist structured, exactly as before.
+    // The query persists as a string under `q`, like the `?q=` URL param.
     const { query, ...rest } = prefs;
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ q: query, ...rest }));
   } catch {
-    // Silently fail if localStorage is not available (SSR, privacy mode, etc.)
+    // localStorage may be unavailable (e.g. privacy mode).
   }
 }

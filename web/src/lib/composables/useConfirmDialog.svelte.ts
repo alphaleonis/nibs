@@ -1,9 +1,4 @@
-/**
- * Composable for managing confirm dialog state.
- *
- * Provides reactive state (open, title, message, label, variant, action)
- * and a `showConfirm(opts)` method to trigger the dialog.
- */
+/** State for the single shared confirm dialog. */
 
 export interface ConfirmDialogOptions {
   title: string;
@@ -11,25 +6,13 @@ export interface ConfirmDialogOptions {
   label: string;
   variant: "danger" | "warning";
   action: () => void;
-  /** Optional secondary "Save" action. Present ONLY for the dirty-nav
-   *  guard, which offers Save alongside Discard/Cancel; omitted by Delete/Archive
-   *  confirms, which must render no Save button. */
+  /** Optional secondary Save action, for the dirty-nav guard only. */
   saveLabel?: string;
   saveAction?: () => void;
-  /** Called when THIS confirm is abandoned without the user picking its primary
-   *  (Discard) or Save action — i.e. dismissed (Cancel / Escape / overlay) OR
-   *  superseded by a later `showConfirm` before it was answered. It runs exactly
-   *  once and only for its own invocation, so a caller awaiting a promise can
-   *  settle it here knowing a LATER dialog can never trigger it. This is what
-   *  makes the single shared dialog safe under overlapping confirms: without it,
-   *  a superseding confirm silently orphaned the previous one's pending promise
-   *  (nibs-an5d). Omitted by Delete/Archive confirms, which await nothing.
-   *
-   *  CONTRACT: `onDismiss` MUST only settle its own awaited promise (resolve/
-   *  reject). It MUST NOT call `close()` / `showConfirm()` or otherwise mutate
-   *  dialog state — on supersession it runs AFTER the new confirm is installed
-   *  (see `showConfirm`), so touching state here would null/orphan the live
-   *  confirm the user is now looking at. */
+  /** Runs once when THIS confirm ends without its primary or Save action:
+   *  dismissed, or superseded by a later `showConfirm`. Only settle your own
+   *  promise here. On supersession it runs after the new confirm is installed,
+   *  so touching dialog state would clobber the live one. */
   onDismiss?: () => void;
 }
 
@@ -40,19 +23,13 @@ export interface ConfirmDialogState {
   readonly label: string;
   readonly variant: "danger" | "warning";
   readonly action: (() => void) | null;
-  /** The opt-in secondary Save action + its label, or null when this confirm
-   *  didn't request one (Delete/Archive). */
+  /** null unless this confirm requested a Save action. */
   readonly saveLabel: string | null;
   readonly saveAction: (() => void) | null;
   showConfirm: (opts: ConfirmDialogOptions) => void;
   close: () => void;
-  /** Settle a Cancel / Escape / overlay dismissal of the LIVE confirm: close the
-   *  dialog, then run its dismissal owner. `ConfirmDialog` calls this for every
-   *  dismissal route, so the capture→close→fire sequence lives in one named method
-   *  the component owns — there is no per-route host wiring that could drop the
-   *  owner fire (e.g. by being rewritten to a bare `close()`, which would
-   *  reintroduce the nibs-an5d leak). The Cancel-fires-the-owner behavior is
-   *  covered at the component seam in ConfirmDialog.test.ts. (nibs-an5d/nibs-imgm) */
+  /** Close the live confirm, then run its `onDismiss`. Route every dismissal
+   *  (Cancel / Escape / overlay) here, never through a bare `close()`. */
   dismiss: () => void;
 }
 
@@ -68,23 +45,15 @@ export function createConfirmDialog(): ConfirmDialogState {
   let dismissAction: (() => void) | null = $state(null);
 
   function showConfirm(opts: ConfirmDialogOptions) {
-    // A new confirm reuses the single dialog component, so it SUPERSEDES any
-    // still-pending one. Settle that superseded confirm (run its dismissal owner)
-    // so a caller awaiting it never hangs — the exact leak nibs-an5d fixed. Capture
-    // it BEFORE overwriting the slot, run it AFTER the new state is installed so a
-    // re-entrant showConfirm from within it (should one ever occur) can't be
-    // clobbered. Nulled here because the superseded owner is one-shot. Relies on the
-    // onDismiss CONTRACT (see ConfirmDialogOptions): the superseded owner only
-    // settles its own promise and never touches dialog state, so the confirm we just
-    // installed survives `superseded?.()` unmolested.
+    // Settle the superseded confirm after installing this one, so its awaiting
+    // caller does not hang.
     const superseded = dismissAction;
     title = opts.title;
     message = opts.message;
     label = opts.label;
     variant = opts.variant;
     action = opts.action;
-    // Reset to null when this confirm doesn't opt into a Save action, so a prior
-    // dirty-guard invocation never leaks a Save button onto a later Delete/Archive.
+    // Reset so an earlier Save action never shows on a later confirm.
     saveLabel = opts.saveLabel ?? null;
     saveAction = opts.saveAction ?? null;
     dismissAction = opts.onDismiss ?? null;
@@ -101,14 +70,7 @@ export function createConfirmDialog(): ConfirmDialogState {
   }
 
   function dismiss() {
-    // Settle THIS confirm's dismissal owner. A dirty-guard "cancel" means keep my
-    // changes / stay put, so its owner must run. Capture it BEFORE close() nulls it,
-    // then fire it AFTER close(). A confirm that installed no owner (Delete/Archive)
-    // just closes, so a dismissal here can never resolve a different dialog's pending
-    // promise. `ConfirmDialog` calls this for every dismissal route (Cancel / Escape /
-    // overlay), so the capture→close→fire sequence lives in the component rather than
-    // an inline host binding a future edit could rewrite to a bare close() that drops
-    // the owner fire (nibs-an5d). (nibs-an5d/nibs-imgm)
+    // Capture before close() clears it.
     const owner = dismissAction;
     close();
     owner?.();

@@ -17,11 +17,8 @@
   let color = $derived(statusDotColors[status] ?? "var(--muted-foreground)");
 </script>
 
-<!-- Decorative (lucide marks the svg aria-hidden, no aria-label): status is
-     conveyed by the adjacent status text at most call sites. Where no status
-     text is adjacent (e.g. related-nib lists, beside the title) the glyph is the
-     only status cue — a pre-existing a11y gap carried over from StatusDot, not
-     introduced here. data-testid is for test queries. -->
+<!-- Decorative: lucide sets aria-hidden. Where no status text is adjacent (e.g.
+     related-nib lists) the glyph is the only status cue, an open a11y gap. -->
 <Icon
   {size}
   data-testid="status-icon"

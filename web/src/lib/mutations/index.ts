@@ -1,4 +1,3 @@
-// Types
 export type {
   CreateNibInput,
   UpdateNibInput,
@@ -20,7 +19,6 @@ export type {
   AnyCommand,
 } from "./types";
 
-// Command factories
 export {
   createNib,
   updateNib,
@@ -39,8 +37,6 @@ export {
   reparentAndReorder,
 } from "./commands";
 
-// Dispatcher
 export { MutationDispatcher } from "./dispatcher";
 
-// Store
 export { MutationStore, initMutationStore, getMutationStore } from "./store.svelte";

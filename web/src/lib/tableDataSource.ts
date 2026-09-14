@@ -1,19 +1,10 @@
 /**
- * Pure decision core for the tree table's live data source: it decides *when* to
- * refetch the nib list in response to a `NIB_CHANGED_SUBSCRIPTION` event. It owns
- * the synchronous branch logic that is easy to get wrong — dedup, defer-the-
- * delete-refetch-until-the-fade-plays, single-pending-timer, and throw isolation
- * — and nothing reactive.
+ * Decides when the tree table refetches the nib list in response to change
+ * events: dedup, deferring a delete's refetch until its fade plays, one pending
+ * timer, and refetch error isolation.
  *
- * Framework-free by design: ZERO Svelte and ZERO urql imports. The Svelte/urql
- * concerns (the query store, the subscription store, and the `NibChangeTracker`
- * whose highlight/fade `$state` mutates on async timers) stay in the adapter
- * (`composables/useTableData.svelte.ts`) and reach this core only through the
- * injected `SourcePorts`. That keeps this decision logic provable in plain vitest
- * with a fake clock — no jsdom, no `$effect.root`, no urql mock.
- *
- * Distinct from `tableData.ts` / `buildShapedTableData`, which assembles the view rows
- * from a nib list; this decides when to (re)source that list.
+ * No Svelte or urql imports: the adapter (`composables/useTableData.svelte.ts`)
+ * supplies those through `SourcePorts`, so this runs under a fake clock.
  */
 
 /** The subset of a `nibChanged` payload this core inspects. */
@@ -28,21 +19,16 @@ export interface NibChangeEvent {
 export type DeferredHandle = unknown;
 
 export interface SourcePorts {
-  /** Refresh the nib list. Adapter injects `result.reexecute({ requestPolicy:
-   *  "network-only" })`. May throw or be absent — the core isolates it. */
+  /** Refresh the nib list. A throw is caught and reported. */
   requestRefetch(): void;
-  /** Schedule a deferred callback. Adapter injects `setTimeout`. */
   scheduleDeferred(fn: () => void, ms: number): DeferredHandle;
-  /** Cancel a previously scheduled callback. Adapter injects `clearTimeout`. */
   cancelDeferred(handle: DeferredHandle): void;
-  /** Apply the change to view-side state. Adapter injects
-   *  `changeTracker.handleEvent`. Called exactly ONCE per fresh event (gated by
-   *  this core's dedup), and deliberately NOT wrapped in try/catch (it is total). */
+  /** Apply the change to view-side state, once per fresh event. Must not throw:
+   *  it is not wrapped in try/catch. */
   applyChange(event: NibChangeEvent): void;
-  /** How long a deleted row's fade-out plays. Adapter injects
-   *  `() => changeTracker.fadeDurationMs`. Read at schedule time. */
+  /** How long a deleted row's fade-out plays. Read at schedule time. */
   fadeDurationMs(): number;
-  /** Surface a failure. Defaults to `console.error`. Never swallows. */
+  /** Surface a failure. Defaults to `console.error`. */
   reportError?(context: string, err: unknown): void;
 }
 
@@ -59,23 +45,17 @@ export function createTableDataSource(ports: SourcePorts): TableDataSource {
   const reportError =
     ports.reportError ?? ((context: string, err: unknown) => console.error(context, err));
 
-  // Content key of the last-applied event. urql re-emits a fresh wrapper object
-  // on every reactive cycle, so identity comparison is unreliable — compare by
-  // content. The payload etag is folded in so a genuine second edit to the SAME
-  // nib (new etag) is not swallowed, while a burst of duplicate emissions for one
-  // commit (shared etag) collapses. `deleted`/`archived` carry a null nib → etag
-  // falls back to "" so their (type:nibId) dedup is unaffected.
+  // Compared by content, not identity. The etag keeps a second edit to the same
+  // nib distinct while repeated emissions of one change collapse; a `deleted`
+  // event carries no nib, so its etag part is "".
   let lastEventKey = "";
 
-  // Exactly one pending deferred-delete refetch. A new delete cancels + replaces
-  // the prior one (never cleared per non-delete event — that would cut a still-
-  // playing fade short); `destroy()` clears it. `undefined` means none pending —
-  // checked with `!== undefined` because a valid handle can be falsy (e.g. `0`).
+  // The single pending deferred-delete refetch; a new delete replaces it.
+  // Checked with `!== undefined` because a valid handle can be falsy (`0`).
   let pendingDelete: DeferredHandle | undefined;
 
-  // Isolate the fragile refetch: a throwing/absent `requestRefetch` must never
-  // escape `onChangeEvent`, or (in the adapter) it would abort Svelte's effect
-  // flush and silently take the live bridge down for the rest of the session.
+  // A throw must not escape `onChangeEvent`: in the adapter it would abort
+  // Svelte's effect flush.
   function safeRefetch(): void {
     try {
       ports.requestRefetch();
@@ -90,12 +70,10 @@ export function createTableDataSource(ports: SourcePorts): TableDataSource {
       if (key === lastEventKey) return;
       lastEventKey = key;
 
-      // Once per fresh event, before the refetch decision. Total, so unwrapped.
       ports.applyChange(event);
 
       if (event.type === "deleted") {
-        // Defer the refetch so the row's fade-out plays before it leaves the
-        // dataset. Replace (not just add) any prior pending delete timer.
+        // Defer so the row's fade-out plays before it leaves the dataset.
         if (pendingDelete !== undefined) ports.cancelDeferred(pendingDelete);
         pendingDelete = ports.scheduleDeferred(() => {
           pendingDelete = undefined;

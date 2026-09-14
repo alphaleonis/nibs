@@ -54,9 +54,6 @@
     { value: "comfortable", label: "Comfortable" },
   ];
 
-  // "Always" is deliberately absent: it is the behaviour that shipped first and
-  // the one the measurement in nibs-ke8o argues against, so carrying it forward
-  // would preserve a default nobody defended.
   const regionBandOptions: { value: RegionBandMode; label: string }[] = [
     { value: "on-drag", label: "While dragging" },
     { value: "never", label: "Never" },
@@ -84,8 +81,6 @@
     { value: "double", label: "Double click" },
   ];
 
-  // Static label shared by the gear trigger's aria-label and its Tooltip.Content,
-  // defined once so the accessible name and the visible tooltip can't drift apart.
   const settingsLabel = "Settings";
 
   const uid = idCounter++;
@@ -102,15 +97,9 @@
     open = false;
   }
 
-  // clickOutside "inside" predicate. The gear trigger toggles the panel, so a
-  // pointerdown on it must not also dismiss (double-fire). The Theme control is a
-  // shadcn Select whose dropdown content portals to document.body — i.e. a
-  // body-level sibling of this <aside>, which clickOutside would otherwise read
-  // as "outside" and dismiss the whole panel on the very click that picks an
-  // option. Treat any pointerdown within an OPEN portaled select popover as
-  // inside. The `[data-state='open']` filter is load-bearing: bits-ui keeps
-  // closed content mounted (data-state="closed") for its ~100ms exit animation,
-  // so an unfiltered match would defer clicks to a dropdown that is already gone.
+  // Not "outside": the gear trigger, which toggles the panel itself, and the Theme
+  // select's content, which is portaled to <body>. Match only open content: closed
+  // content stays mounted through its exit animation.
   function isInsideOrTrigger(target: Node): boolean {
     if (triggerEl?.contains(target)) return true;
     return (
@@ -119,27 +108,14 @@
     );
   }
 
-  // Escape-to-dismiss listens on `document`, not on the <aside>, because this is
-  // a non-modal panel that does NOT trap focus: the user can Tab into the
-  // (portaled-sibling) background, and a keydown handler bound to the <aside>
-  // would never see the event. Mirrors the clickOutside document-listener
-  // rationale. The listener is only attached while open, so Escape is a no-op
-  // when the panel is closed.
+  // Listens on `document`: focus is not trapped, so a handler on the <aside> would
+  // miss Escape pressed after tabbing out.
   $effect(() => {
     if (!open) return;
     function onKeydown(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
-      // A portaled select popover (e.g. the Theme dropdown) is OPEN — defer to it.
-      // bits-ui's escape-layer only calls e.preventDefault(), never
-      // stopPropagation(), and both listeners sit on `document` in the bubble
-      // phase, so without this guard the sheet's Escape handler would ALSO fire and
-      // close the whole panel on the Escape meant to dismiss just the dropdown. The
-      // select tears its content down; a second Escape (none open) then closes the
-      // panel. The `[data-state='open']` filter matters: bits-ui flips content to
-      // data-state="closed" synchronously on close but keeps it mounted ~100ms for
-      // the exit animation — matching that lingering closed content would drop a
-      // legitimate Escape (needing a third press). Mirrors the isInsideOrTrigger
-      // select-content guard on clickOutside.
+      // Defer to an open select: bits-ui's escape layer, also on `document`, only
+      // calls preventDefault, so this would otherwise close the panel too.
       if (document.querySelector("[data-slot='select-content'][data-state='open']")) return;
       e.preventDefault();
       close();
@@ -148,24 +124,15 @@
     return () => document.removeEventListener("keydown", onKeydown);
   });
 
-  // Focus management. On open, move focus into the panel; on close, return it to
-  // the gear trigger. This is a non-modal panel: focus is NOT trapped, so nothing
-  // pulls focus back if the user tabs out. `open` is the only tracked dependency
-  // (element reads are untracked) and `wasOpen` guards against refocusing on every
-  // render — we only act on the closed<->open transition.
+  // Move focus into the panel on open and back to the trigger on close, on the
+  // transition only.
   let wasOpen = false;
   $effect(() => {
     const isOpen = open;
     untrack(() => {
       if (isOpen && !wasOpen) {
         wasOpen = true;
-        // Defer a microtask: the bits-ui Portal mounts this <aside> (and assigns
-        // panelEl via bind:this) a microtask AFTER this effect runs, so a
-        // synchronous panelEl?.focus() would no-op. The close path below targets
-        // the always-mounted trigger, so it needs no such deferral.
-        // preventScroll: focusing a fixed, off-canvas panel/trigger must not
-        // scroll the page — notably the close-path refocus on outside-click,
-        // which would otherwise jump to the gear if the toolbar is scrolled away.
+        // Deferred: the Portal has not mounted the <aside> when this runs.
         queueMicrotask(() => panelEl?.focus({ preventScroll: true }));
       } else if (!isOpen && wasOpen) {
         wasOpen = false;
@@ -175,19 +142,9 @@
   });
 </script>
 
-<!-- Genuinely non-modal settings panel: role="dialog" with
-     aria-modal="false", no overlay, the page stays scrollable, and focus is not
-     trapped — so the table behind stays visible/interactive while the user
-     previews settings (row density now).
-     Hand-wired off bits-ui Dialog because Dialog.Content hardcodes
-     aria-modal="true" (not overridable via props); here we portal a plain <aside>
-     and hand-wire Esc + click-outside dismissal. Do NOT reintroduce an overlay,
-     body scroll lock, or focus trap — that would break the non-modal contract. -->
-<!-- TooltipButton owns the tooltip + the single <button>. bind:ref exposes that
-     button as triggerEl (needed for focus return + clickOutside `contains`), and
-     aria-expanded / aria-controls forward through. The wrapper spreads the
-     tooltip's props first and applies our onclick last, so the panel-toggle
-     OVERRIDES and behavior is unchanged. -->
+<!-- Non-modal panel: no overlay, scroll lock or focus trap, so the table stays
+     usable while settings are previewed. Not bits-ui Dialog, whose content
+     hardcodes aria-modal="true". -->
 <TooltipButton
   label={settingsLabel}
   variant="ghost"
@@ -202,8 +159,7 @@
 
 {#if open}
   <Portal>
-    <!-- role="dialog" on <aside> is intentional: this IS a (non-modal) dialog.
-         The implicit "complementary" landmark is replaced on purpose. -->
+    <!-- role="dialog" replaces the <aside>'s complementary landmark. -->
     <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
     <aside
       bind:this={panelEl}

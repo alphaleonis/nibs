@@ -4,29 +4,15 @@
   import WithTooltip from "./WithTooltip.svelte";
   import { queryHelpSections } from "../query";
 
-  // In-UI reference for the filter query language, opened from a `?` button at the
-  // end of the filter band. The grammar is powerful but was undiscoverable: the
-  // placeholder hints one token and the autocomplete only helps once you are
-  // already typing something it recognizes.
-  //
-  // The token rows are GENERATED from the vocabulary the parser reads (see
-  // `query/help.ts`), so this panel cannot list a token the box would reject.
-  //
-  // Content is computed once — the vocabulary is module-level constant data, not
-  // reactive state, so there is nothing here to re-derive per render.
+  // Reference for the filter query language. The token rows are built from the
+  // parser's vocabulary (query/help.ts).
   const sections = queryHelpSections();
 
-  // Shared by the trigger's accessible name and its tooltip text — the two are
-  // separate mechanisms (aria-label names the control, the tooltip is the visible
-  // hint) and both should read the same.
   const triggerLabel = "Query syntax help";
 </script>
 
 <Popover.Root>
-  <!-- CHAIN mode: Popover.Trigger runs its own mergeProps over the spread, so the
-       tooltip's hover/focus handlers chain with the popover's open handler — hover
-       hints, click still opens the panel. Every other control in this band hints
-       through the same styled tooltip. -->
+  <!-- WithTooltip CHAIN mode: hover hints, click opens the panel. -->
   <WithTooltip tooltip={triggerLabel}>
     {#snippet trigger({ props })}
       <Popover.Trigger
@@ -39,10 +25,8 @@
       </Popover.Trigger>
     {/snippet}
   </WithTooltip>
-  <!-- Constrained height with internal scroll: the reference is longer than a
-       popover should ever grow, and the band it anchors to sits near the top of
-       the viewport. `align="end"` keeps it inside the window when the trigger is
-       at the right edge of the row. -->
+  <!-- Height-capped with internal scroll: the reference is taller than a popover
+       should grow. -->
   <Popover.Content
     align="end"
     data-testid="query-help-panel"

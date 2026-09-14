@@ -3,67 +3,31 @@ import { PerViewMap } from "./perViewMap.svelte";
 import type { ViewTransition } from "./viewTransition";
 
 /**
- * Owns the tree's expand/collapse state, lifted out of TreeTable so it survives
- * a TreeTable remount. App wraps the whole Resizable.PaneGroup (including the
- * TreeTable pane) in {#key position} to re-orient the split when the detail panel
- * docks right vs. bottom (PaneForge fixes split direction at pane-group creation).
- * If collapse state lived inside TreeTable as component-local $state it would reset
- * on every dock toggle, silently re-expanding every branch. Instead this state is
- * instantiated in App.svelte OUTSIDE the keyed block and shared via context —
- * mirroring SelectionState/DragState.
+ * The tree's expand/collapse and scroll state. App creates it outside its
+ * `{#key position}` block, which remounts TreeTable on a dock toggle, so the
+ * state survives the remount.
  */
 export class TreeViewState {
   /**
-   * IDs of collapsed tree nodes. Private $state exposed read-only via the
-   * `collapsedIds` getter; all mutation goes through the methods below, each of
-   * which assigns a FRESH Set (never mutates in place) so Svelte's reactivity
-   * tracks the change. The reassign-fresh-Set invariant matches
-   * SelectionState/DragState; the private-field + ReadonlySet getter here is a
-   * STRICTER encapsulation than those siblings, which still expose public $state.
-   *
-   * The read-only guarantee is compile-time only: TS blocks `.add()`/`.delete()`
-   * on the getter's typed view, but `ReadonlySet` is erased at runtime, so a cast
-   * or a non-TS caller could still mutate the backing Set in place (and silently
-   * skip reactivity). The getter returns the live reference deliberately —
-   * `sameSet` and the reassign-identity tests depend on that identity — so writes
-   * must keep going through the methods below rather than through the getter.
+   * IDs of collapsed nodes. Change only through the methods below, which assign a
+   * fresh Set so Svelte tracks the change. The getter returns this live Set;
+   * `ReadonlySet` is not enforced at runtime.
    */
   #collapsedIds: Set<string> = $state(new Set());
 
   /**
-   * The remembered vertical scroll offset of the view currently on screen; every
-   * other view's is parked in `#scrollByLevel` until it comes back.
+   * The remembered scroll offset of the view on screen; other views' offsets
+   * are parked in `#scrollByLevel`.
    *
-   * It TRACKS the container rather than mirroring it: a genuine scroll records
-   * the container's value here, but a restore whose write the container clamped
-   * (a momentarily shorter list, or the taller pane a dock toggle produces)
-   * leaves this at the offset the user actually chose, so the position is honored
-   * again once the room is back rather than ratcheting toward the top. Parking
-   * it under a view carries that offset forward unchanged, but every route back
-   * to the viewport goes through the restore write, which re-clamps — so an
-   * offset larger than the current geometry can never put the viewport
-   * somewhere impossible.
-   *
-   * Held here (outside App's {#key position} block) so it survives the PaneForge
-   * PaneGroup remount on a dock toggle, same rationale as collapsedIds. Unlike collapsedIds
-   * this is a plain public primitive with no in-place-mutation footgun, so it
-   * needs no private-field/getter encapsulation — it matches SelectionState's
-   * public $state fields.
+   * A restore the container clamps (a shorter list, a taller pane) leaves this
+   * at the user's offset, so it is re-applied once there is room.
    */
   scrollTop: number = $state(0);
 
   /**
-   * The parked scroll offset of every view that is NOT on screen, so a switch
-   * away and back lands where the user left off instead of at the top.
-   *
-   * Deliberately EPHEMERAL (no persistence group): the preferences blob has a
-   * single key and no version field, and `parsePerViewMap` silently discards a
-   * level whose name it no longer recognizes — so a renamed view level would
-   * drop its data without a sound. A scroll offset surviving a reload is not
-   * worth entering that hazard for.
-   *
-   * The payload being a NUMBER is what admits the non-copying `stored ?? dflt`
-   * combinator here — see the aliasing rule on `PerViewMapOpts.resolve`.
+   * Parked scroll offsets of the views not on screen. Not persisted.
+   * `stored ?? dflt` is safe only because the payload is a number (see
+   * `PerViewMapOpts.resolve`).
    */
   #scrollByLevel = new PerViewMap<number>({
     defaultValue: 0,
@@ -71,52 +35,30 @@ export class TreeViewState {
   });
 
   /**
-   * A view switch recorded by `switchViewLevel` and not yet reconciled. A
-   * consumed-and-cleared pending slot, modeled on
-   * `SelectionState.pendingEnsureVisibleId`: the write path records it, TreeTable's
-   * applier effect reads it once, acts, and calls `clearTransition`.
-   *
-   * It exists because the switch itself carries information the new state cannot:
-   * `prefs.viewLevel` says which view is on screen, never that it just changed or
-   * what it changed FROM.
+   * A view switch recorded by `beginTransition` and not yet reconciled.
+   * TreeTable's applier effect reads it once and calls `clearTransition`.
+   * `prefs.viewLevel` cannot stand in: it never says the view just changed, or
+   * from what.
    */
   #pendingTransition: ViewTransition | null = $state(null);
 
   /**
-   * Bumped whenever a transition swaps `scrollTop` for another view's offset.
-   * Scroll ownership in `useScrollRestore` is keyed on (element, epoch), so
-   * advancing this retires the current claim on an element that is NOT being
-   * recreated — which is exactly a view switch, where the same container now
-   * shows different content and the offset it is sitting at means something
-   * else. Retiring ownership is what re-arms `restore()` onto the incoming
-   * view's offset.
+   * Bumped when a transition swaps `scrollTop` for another view's offset.
+   * `useScrollRestore` keys ownership on (element, epoch), so a bump makes it
+   * restore the incoming offset into the same container.
    */
   #scrollEpoch: number = $state(0);
 
   /**
-   * The view level currently ON SCREEN — the destination of the last transition
-   * that was reconciled, seeded at construction.
-   *
-   * Distinct from `prefs.viewLevel`, which flips synchronously at the write and
-   * so already names the incoming view while the outgoing one is still rendered.
-   * The applier passes it to `switchScroll` as the key to park the outgoing
-   * offset under: that offset was measured in the geometry of the view that was
-   * actually rendered, which is what this names and the preference does not.
-   *
-   * It is NOT a source for `switchViewLevel`'s `from`, which it superficially
-   * resembles: it lags a full transition (it advances only when one is consumed)
-   * and is absent entirely for a caller holding no `TreeViewState`.
+   * The view level on screen: the destination of the last reconciled
+   * transition. Unlike `prefs.viewLevel`, it still names the outgoing view until
+   * the applier reconciles, so the applier parks the outgoing offset under it.
+   * It lags a transition, so do not use it as `switchViewLevel`'s `from`.
    */
-  // No seed: the constructor assigns unconditionally, so an initializer here is
-  // discarded before any caller can observe it — and one naming a level would
-  // contradict the required parameter below.
   #activeLevel: ViewLevel = $state()!;
 
-  /** `initialLevel` is required rather than defaulted: it is the key the FIRST
-   *  parked scroll offset is filed under, so a construction site that let it
-   *  fall back to the default while the restored preference named another view
-   *  would file that offset under a view the user was never in — silently, and
-   *  with nothing to hint at it later. */
+  /** Required: the first parked scroll offset is filed under this level, so a
+   *  default differing from the restored preference would misfile it. */
   constructor(initialLevel: ViewLevel) {
     this.#activeLevel = initialLevel;
   }
@@ -142,10 +84,9 @@ export class TreeViewState {
     return this.#activeLevel;
   }
 
-  /** Record a view switch for the applier to reconcile. Called BEFORE the write
-   *  that changes the level, so `from` is still readable. A second call before
-   *  the first is consumed replaces it: only the last destination is rendered,
-   *  and the reconcile is against the view that ends up on screen. */
+  /** Record a view switch for the applier to reconcile. Call before the write
+   *  that changes the level. A second call before the first is consumed
+   *  replaces it. */
   beginTransition(from: ViewLevel, to: ViewLevel): void {
     this.#pendingTransition = { from, to };
   }
@@ -157,18 +98,12 @@ export class TreeViewState {
     this.#pendingTransition = null;
   }
 
-  /** Hand the live scroll offset over from one view to another: park it under
-   *  the view it was measured in, adopt whatever the destination last left
-   *  behind (0 if it has never been scrolled), and retire the ownership keyed to
-   *  the old offset so the restore re-applies against the new one.
+  /** Park the live offset under `from`, adopt `to`'s parked offset (0 if none),
+   *  and bump the epoch so the restore re-applies.
    *
-   *  A view hands the offset to ITSELF when two switches collapse into one
-   *  pending slot and land back where they started; the planner cannot see that
-   *  (it decides from `transition.from`, while the applier supplies the origin
-   *  from `activeLevel`), so the identity check belongs here, the one place both
-   *  levels are known. The swap would be value-preserving anyway — what it costs
-   *  is an epoch bump, which retires scroll ownership and makes the restore
-   *  re-apply an offset nothing asked to change. */
+   *  `from === to` occurs when two switches collapse into one pending slot and
+   *  land back where they started. The planner decides from `transition.from`
+   *  and cannot see it, so the no-op check lives here. */
   switchScroll(from: ViewLevel, to: ViewLevel): void {
     if (from === to) return;
     this.#scrollByLevel.setLevel(from, this.scrollTop);
@@ -199,8 +134,6 @@ export class TreeViewState {
 
   /** Collapse exactly the given ids (e.g. all parent ids). */
   collapseAll(ids: Iterable<string>): void {
-    // Delegates to setCollapsed so there is a single implementation point — the
-    // two names are kept for call-site readability, not divergent behavior.
     this.setCollapsed(ids);
   }
 

@@ -1,13 +1,10 @@
 /**
- * Minimal reactive binder around `NIB_CHANGED_SUBSCRIPTION` — the only
- * rune-bearing unit of the live nib-change model. It owns the urql subscription
- * lifecycle (open / re-subscribe / pause) and reference-dedup; classification,
- * self-echo suppression, dedup policy, and the payload→snapshot mapping all live
- * in the pure reducer (`nibChange.ts`).
+ * Reactive binder around `NIB_CHANGED_SUBSCRIPTION`. It owns the urql
+ * subscription lifecycle; classification, self-echo suppression and the
+ * payload→snapshot mapping belong in the pure reducer (`nibChange.ts`).
  *
- * The whole model NOTIFIES only: it exposes reactive `gone` / `external` /
- * `error`. Banners, highlights, and the pending/keep-mine/apply conflict
- * lifecycle belong to the view and the form model.
+ * It only notifies. Banners, highlights and conflict handling belong to the
+ * view and the form model.
  */
 
 import { untrack } from "svelte";
@@ -34,9 +31,8 @@ export interface LiveNibOptions {
 }
 
 export interface LiveNib {
-  /** Why the viewed nib left its location on the server, or null while it is
-   *  still there (resets on nibId change). `"archived"` still exists and is
-   *  still savable; `"deleted"` is not. */
+  /** Why the viewed nib left its location, or null (resets on nibId change).
+   *  An `"archived"` nib is still savable; a `"deleted"` one is not. */
   readonly gone: NibGoneReason | null;
   /** Latest non-self, de-duped external snapshot (null until one arrives). */
   readonly external: NibSnapshot | null;
@@ -46,27 +42,23 @@ export interface LiveNib {
 export function createLiveNib(opts: LiveNibOptions): LiveNib {
   const subStore = opts.subscriptionStore ?? urqlSubscriptionStore;
 
-  // `$state.raw`: state is replaced wholesale (never mutated in place), so the
-  // reducer's reference-stability doubles as reactivity-dedup — assigning the
-  // same reference back is a `!==` no-op and fires nothing.
+  // `$state.raw`: replace, never mutate. The reducer returns the same reference
+  // when nothing changed, and reassigning it fires nothing.
   let state = $state.raw<NibChangeState>(initialNibChangeState);
   let error = $state<unknown>(undefined);
 
-  // Plain (non-reactive) dedup guard on the store's emitted `data` object —
-  // the urql store re-emits the same reference on unrelated field changes.
+  // Non-reactive: the store can re-emit the same `data` object.
   let lastSubData: unknown = null;
 
   $effect(() => {
+    // `id` is the only tracked read; assignments in the callback below do not
+    // re-run this effect.
     const id = opts.nibId();
 
-    // Re-subscription boundary (id change): reset per-nib state. This runs only
-    // when `id` (the sole tracked read) changes — event assignments happen in
-    // the async callback below and never re-run this effect.
     lastSubData = null;
     state = initialNibChangeState;
     error = undefined;
 
-    // Create mode / no id: do not open a subscription.
     if (!id) return;
 
     const store = subStore({
@@ -88,8 +80,7 @@ export function createLiveNib(opts: LiveNibOptions): LiveNib {
       const event = data.nibChanged;
       if (!event) return;
 
-      // Read selfEtag LIVE (untracked) so a post-save etag change filters the
-      // echo without re-subscribing this effect.
+      // Untracked, so a post-save etag change does not re-subscribe.
       const self = untrack(() => opts.selfEtag()) ?? null;
       state = classifyNibEvent(state, event, self);
     });

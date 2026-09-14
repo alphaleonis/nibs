@@ -1,12 +1,9 @@
 /**
- * Buffered nib-form model — the single, boundary-testable "nib being edited"
- * substance shared by the detail panel and editor (the unified nib view).
+ * The buffered "nib being edited" model shared by the detail panel and editor.
  *
- * Two capability types behind separate constructors (a type-safe create/edit
- * split): edit-only concerns (etag, tag-diff, conflict, applyExternal) cannot
- * be invoked in create mode, and the create-only template-swap cannot leak into
- * edit mode. `MutationStore` is injected via `FormDeps`; the model has no DOM,
- * urql, or subscription imports.
+ * Create and edit are separate classes: etag, tag diffing and conflict handling
+ * exist only on `EditForm`, template swapping only on `CreateForm`. Mutations are
+ * injected through `FormDeps`; no DOM, urql or subscription imports.
  */
 
 import type { MutationStore } from "./mutations/store.svelte";
@@ -23,11 +20,10 @@ export interface NibSnapshot {
   readonly type: string;
   readonly priority: string;
   readonly estimate: string;
-  /** The DIRECT milestone assignment, verbatim: "" for a nib in no queue of its
-   *  own, including one scheduled through an assigned ancestor. */
+  /** The DIRECT milestone assignment, verbatim: "" even for a nib scheduled
+   *  through an assigned ancestor. */
   readonly milestone: string;
-  /** The DIRECT area assignment, verbatim: "" for a nib in no area. Unlike
-   *  `milestone` it names no nib, so it is a plain declared path. */
+  /** The area assignment (a declared path), verbatim; "" for none. */
   readonly area: string;
   readonly tags: readonly string[];
   readonly body: string;
@@ -51,20 +47,13 @@ export interface NibFormFields {
   type: string; // the type setter swaps the body template in create mode only
   priority: string;
   estimate: string;
-  /** Edit mode only: `CreateNibInput` declares no milestone, so a create form
-   *  carries "" here and never sends it. */
+  /** Edit mode only: `CreateNibInput` has no milestone, so a create form never sends it. */
   milestone: string;
-  /** Both modes: `CreateNibInput` DOES declare `area`, so a create form sends
-   *  whatever this carries. */
   area: string;
   body: string;
-  /** Replace the body wholesale, marking the buffer dirty exactly like typing does.
-   *
-   *  Default (opts unset / `reinitEditor: false`) is in-place: an open editor pane
-   *  syncs the change via a minimal-diff doc transaction (see MarkdownEditor's
-   *  external-value sync), preserving undo/cursor/scroll — the safe choice for an
-   *  out-of-band edit like a rendered task-checkbox flip. Pass
-   *  `{ reinitEditor: true }` to force a full editor re-init (`{#key}` remount). */
+  /** Replace the body, dirtying the buffer like typing does. By default an open
+   *  editor syncs in place, keeping undo, cursor and scroll; `reinitEditor: true`
+   *  remounts it instead. */
   setBody(value: string, opts?: { reinitEditor?: boolean }): void;
   readonly tags: readonly string[];
   addTag(tag: string): void;
@@ -80,19 +69,10 @@ export type CreateOutcome =
 
 export type EditOutcome =
   | { kind: "saved"; snapshot: NibSnapshot }
-  // `remote` is the known-conflicting snapshot when we detected the change
-  // proactively (via `noteExternalChange`); it is `null` for a server-side
-  // if-match rejection that raced the subscription — the live subscription
-  // backfills the snapshot into `externalChange` moments later.
+  // `remote` is null for a server-side if-match rejection that raced the
+  // subscription, which delivers the snapshot to `externalChange` afterwards.
   | { kind: "conflict"; remote: NibSnapshot | null }
-  // The target nib no longer resolves on the server (surfaced as
-  // extensions.code = "NOT_FOUND"). Distinct from a plain error so the presenter
-  // routes it to the gone/deleted notice via `noteMissing` instead of showing the
-  // raw "target nib not found" toast. On the edit-save path this marks the edited
-  // nib's OWN deletion: an archived nib stays in the store and its Update lands as
-  // "saved", and the save input carries no blocking fields, so a concurrently-
-  // deleted blocking target (the other NOT_FOUND source, via updateTargetClone's
-  // %w wrap) is not reachable here.
+  // The edited nib no longer exists on the server; see `isNotFound`.
   | { kind: "missing" }
   | { kind: "error"; message?: string };
 
@@ -126,23 +106,13 @@ function fieldsFromSnapshot(s: NibSnapshot): FieldValues {
 }
 
 /**
- * Recognize a server-side optimistic-concurrency rejection (stale if-match).
+ * Whether a mutation failed on a stale if-match.
  *
- * PRIMARY signal: the structured GraphQL `extensions.code === "ETAG_MISMATCH"`,
- * attached by the backend error presenter (cmd/serve.go, `etagErrorPresenter`)
- * to ONLY the typed `*nibcore.ETagMismatchError`. It is wrapping-proof (survives
- * message rewording and urql's "[GraphQL] " prefix) and cannot be confused with
- * a validation/generic error that merely mentions "etag".
- *
- * FALLBACK signal: a substring match on the human-readable message
- * "etag mismatch: provided <x>, current is <y>" (see internal/nibcore/core.go,
- * `ETagMismatchError.Error`). This is defense-in-depth on the one path that
- * reaches this classifier — `EditForm.save()` over HTTP — so conflict routing
- * still works if the structured code ever goes missing (an `etagErrorPresenter`
- * regression, or a future non-HTTP error path that skips the presenter). The
- * format is pinned on both sides: Go `TestETagMismatchErrorFormat`
- * (internal/nibcore) and the "substring fallback" cases in nibForm.svelte.test.ts
- * — keep them in lockstep.
+ * Primary: `extensions.code === "ETAG_MISMATCH"`, which cmd/serve.go's
+ * `etagErrorPresenter` attaches only to `*nibcore.ETagMismatchError`. Fallback:
+ * the message substring "etag mismatch", in case the code goes missing. The
+ * message format is pinned by Go's `TestETagMismatchErrorFormat` and the
+ * "substring fallback" cases in nibForm.svelte.test.ts.
  */
 function isEtagConflict(message: string | undefined, code?: string): boolean {
   if (code === "ETAG_MISMATCH") return true;
@@ -150,37 +120,20 @@ function isEtagConflict(message: string | undefined, code?: string): boolean {
 }
 
 /**
- * Recognize a mutation that failed because the target nib no longer resolves on
- * the server (a genuine DELETE).
+ * Whether a mutation failed because its target nib no longer exists:
+ * `extensions.code === "NOT_FOUND"`, which `etagErrorPresenter` attaches to any
+ * error carrying `nib.ErrNotFound`. No message fallback, because many unrelated
+ * errors say "not found" and this routes the whole view to the gone notice.
  *
- * Keyed ONLY on the structured GraphQL `extensions.code === "NOT_FOUND"`, which
- * the backend error presenter (cmd/serve.go, `etagErrorPresenter`) attaches to
- * any error carrying `nib.ErrNotFound`. Unlike `isEtagConflict`, there is NO
- * human-readable substring fallback: a NOT_FOUND classification routes the whole
- * view to gone/deleted (a stronger, less-recoverable action than the conflict
- * resolver), so it must require the structured code rather than guess from prose
- * — many benign errors mention "not found" (a missing parent, a missing blocker)
- * without the edited nib itself being gone. The Go side is pinned by
- * cmd/serve_errorpresenter_test.go (TestETagErrorPresenter_TagsNotFound).
- *
- * Routing a NOT_FOUND to gone/deleted is sound for `EditForm.save()` only because
- * its `UpdateNibInput` sends no blocking fields — so the sole ErrNotFound it can
- * raise is the edited nib's own deletion. (A deleted blocking target also mints
- * NOT_FOUND via updateTargetClone's %w wrap; a missing parent does not, as
- * validateAndSetParent formats with %s.) If blocking fields are added to that
- * input, a concurrently-deleted blocking target would also mint NOT_FOUND and
- * misroute the edited nib.
+ * Reading it as the edited nib's own deletion holds only while `EditForm.save()`
+ * sends no blocking fields: a deleted blocking target also yields NOT_FOUND
+ * (updateTargetClone wraps with %w).
  */
 function isNotFound(code?: string): boolean {
   return code === "NOT_FOUND";
 }
 
-/**
- * Order-insensitive but duplicate-SENSITIVE tag equality (a multiset compare via
- * a sorted element-wise comparison). Add-then-remove returns to baseline, while
- * ["x","x"] and ["x","y"] are correctly unequal — the latter mattered once this
- * fed #matchesFields (the convergence decision that gates a real write path).
- */
+/** Multiset tag equality: order-insensitive, duplicate-sensitive. */
 function sameTags(a: readonly string[], b: readonly string[]): boolean {
   if (a.length !== b.length) return false;
   const sa = [...a].sort();
@@ -189,34 +142,19 @@ function sameTags(a: readonly string[], b: readonly string[]): boolean {
 }
 
 /**
- * Line-ending-insensitive body equality (`\r\n` and a lone `\r` each collapse to
- * one `\n` on both sides, so a CRLF pair counts as ONE break, not two).
+ * Body equality ignoring line endings. A body enters the form with the file's
+ * endings, but MarkdownEditor emits CodeMirror's LF doc, so a byte compare would
+ * keep a CRLF nib dirty after one keystroke.
  *
- * The two sides can hold the same content in different encodings: a body enters
- * the form with whatever endings the file has (the backend does not normalize),
- * but MarkdownEditor's `onchange` emits CodeMirror's always-LF doc, which the
- * view assigns straight to `body`. A byte-exact compare would therefore keep a
- * CRLF nib dirty forever after one keystroke, and `#matchesFields` would never
- * converge.
- *
- * Comparison-side only, by design: `body` keeps its CRLF until the user edits.
- * Normalizing where a body ENTERS the form instead would commit to a
- * CRLF->LF-on-open policy with an unverified etag / round-trip blast radius
- * (see the MarkdownEditor docblock). Because #matchesFields gates a real write,
- * a buffer differing from the remote only in line endings now takes the write
- * path — persisting the LF body over a CRLF remote. That is a genuine content
- * change on disk, accepted because reaching it requires the user to have edited.
+ * Only comparisons normalize; `body` keeps its CRLF until edited. A buffer that
+ * differs from the remote only in endings therefore converges, and saving it
+ * writes the LF body.
  */
 function sameBody(a: string, b: string): boolean {
   return a.replace(/\r\n?/g, "\n") === b.replace(/\r\n?/g, "\n");
 }
 
-/**
- * Shared working-copy-vs-baseline machinery. Owns the buffered fields, the
- * baseline used for `dirty`/tag-diffing, the `saving` flag, and the body
- * version counter. The `type` setter delegates to `afterTypeChange`, which the
- * create subclass overrides for template swapping.
- */
+/** The working copy and its baseline, `saving`, and the body version counter. */
 abstract class BaseForm implements NibFormFields {
   protected readonly deps: FormDeps;
 
@@ -285,15 +223,6 @@ abstract class BaseForm implements NibFormFields {
 
   setBody(value: string, opts?: { reinitEditor?: boolean }): void {
     this.body = value;
-    // A body change alone marks the buffer dirty via the derived `dirty` getter
-    // (sameBody(body, baseline) — so a body differing from the baseline only in
-    // line endings does NOT dirty it). DEFAULT is in-place / non-remounting: an open editor
-    // pane syncs the new body via a minimal-diff doc transaction that preserves
-    // undo history / cursor / scroll — the safe choice for an
-    // out-of-band edit like the task-checkbox flip. Pass `{ reinitEditor: true }`
-    // to force a full editor re-init (the `{#key bodyVersion}` remount) instead.
-    // (Genuine baseline resets — discard / applyExternal / afterTypeChange —
-    // call bumpBodyVersion() directly, not through here.)
     if (opts?.reinitEditor === true) this.bumpBodyVersion();
   }
 
@@ -381,8 +310,8 @@ abstract class BaseForm implements NibFormFields {
 }
 
 /**
- * Create form. Seeds a per-type body template and swaps it when the type
- * changes while the body is still untouched (body === last template).
+ * Create form. Seeds a per-type body template and swaps it on a type change
+ * while the body still equals the last template.
  */
 export class CreateForm extends BaseForm implements NibFormFields {
   readonly mode = "create" as const;
@@ -403,11 +332,7 @@ export class CreateForm extends BaseForm implements NibFormFields {
       type,
       priority: "",
       estimate: "",
-      // No milestone: `CreateNibInput` declares no such field, so the server
-      // accepts no assignment at create time and the control is not rendered.
       milestone: "",
-      // Area is unset rather than unsendable: `CreateNibInput` DOES declare it,
-      // so the control is rendered and whatever it holds reaches save().
       area: "",
       tags: [],
       body: template,
@@ -417,20 +342,12 @@ export class CreateForm extends BaseForm implements NibFormFields {
   }
 
   protected override afterTypeChange(newType: string): void {
-    // A milestone takes no area (`takesAssignmentAxes`), and the Area control is
-    // hidden the moment the type says so — a buffered value would then be sent
-    // from a row the user can no longer see, and the create refused with "a
-    // milestone cannot have an area". Cleared rather than merely withheld at
-    // save(): a hidden value that reappears on switching back is a write nobody
-    // chose. Ahead of the template early-return below, which answers a question
-    // about the BODY and must not gate this. No re-baseline is owed for it, as
-    // it is for the swapped body: `CreateDefaults` declares no area, so a create
-    // form's baseline area is "" and clearing lands back on it.
+    // A milestone takes no area and hides the Area control, so clear the value
+    // rather than send one the user cannot see. Keep this above the template
+    // early-return. No re-baseline: a create form's baseline area is always "".
     if (!takesAssignmentAxes(newType)) this.area = "";
 
-    // Template policy by equality: only swap while the body is "untouched"
-    // (equal to the last template). Deleting the body back to the template
-    // re-enables the swap; an edited body is left alone.
+    // Swap only while the body is untouched.
     if (this.body !== this.#lastTemplate) return;
 
     const template = getBodyTemplate(newType);
@@ -461,11 +378,7 @@ export class CreateForm extends BaseForm implements NibFormFields {
 
     this.setSaving(true);
     try {
-      // suppressToast: save() OWNS the messaging for this call (mirrors the edit
-      // path). The direct Save button (ActiveNibView.handleSave) and the dirty-nav
-      // guard each surface a create error exactly once — so the dispatcher must not
-      // also toast it (would double up), and client-side early-returns above (empty
-      // title) that never reach the dispatcher still get that single feedback.
+      // The callers (ActiveNibView.handleSave, the dirty-nav guard) show the error.
       const result = await this.deps.mutations.execute(createNibCmd(input), {
         suppressToast: true,
       });
@@ -483,8 +396,7 @@ export class CreateForm extends BaseForm implements NibFormFields {
         priority: created?.priority ?? this.priority,
         estimate: created?.estimate ?? this.estimate,
         milestone: "",
-        // CREATE_NIB_MUTATION selects no `area`, so the sent value stands in:
-        // the server accepted it, since a refused area returns above.
+        // CREATE_NIB_MUTATION selects no `area`; a refused one returned above.
         area: this.area,
         tags: created?.tags ?? [...this.tags],
         body: created?.body ?? this.body,
@@ -523,20 +435,14 @@ export class EditForm extends BaseForm implements NibFormFields {
 
   get externalChange(): NibSnapshot | null {
     const remote = this.#externalChange;
-    // Once the working copy has converged back to the recorded remote's
-    // field values there is nothing left to resolve — clear the warning even
-    // though the etags still differ. This is DERIVED (not one-shot): diverging
-    // again re-surfaces it. `save()` applies the SAME convergence check, so the
-    // two accessors never disagree: on a converged buffer save() performs a real
-    // write against the remote etag rather than a silent no-op.
+    // Hidden while the working copy matches the remote, shown again on divergence.
+    // save() uses the same check.
     if (!remote || this.#matchesFields(remote)) return null;
     return remote;
   }
 
-  /** Whether the working copy already equals the remote snapshot's field values.
-   *  Title is compared trimmed — save() writes `title.trim()`, so convergence must
-   *  be judged against what would actually be persisted, not the raw buffer. The
-   *  body is compared line-ending-insensitively (sameBody). */
+  /** Whether the working copy equals the remote's fields as save() would write
+   *  them: title trimmed, body compared with `sameBody`. */
   #matchesFields(remote: NibSnapshot): boolean {
     return (
       this.title.trim() === remote.title &&
@@ -575,30 +481,19 @@ export class EditForm extends BaseForm implements NibFormFields {
 
     const external = this.#externalChange;
     if (external && !opts?.overwrite) {
-      // Only a buffer that STILL diverges from the recorded remote is a genuine,
-      // unresolved conflict — surface the resolver without dispatching. If the
-      // working copy has converged to the remote's field values (the same check
-      // the `externalChange` getter uses, so the two never disagree),
-      // there is nothing to resolve: the content we'd send already equals the
-      // server's current revision. Fall through to a REAL write below, using the
-      // remote's etag as if-match, so Save legitimately succeeds and rebaselines
-      // instead of a silent, feedback-less no-op.
+      // A buffer that has converged to the remote is not a conflict: it falls
+      // through and writes with the remote's etag.
       if (!this.#matchesFields(external)) {
         return { kind: "conflict", remote: external };
       }
     }
 
-    // if-match selection:
-    // - overwrite → last-write-wins: re-adopt the known REMOTE etag, or omit
-    //   if-match entirely when no remote is known. Omitting lets the write land
-    //   ONLY under the default `require_if_match: false`; under `true` the
-    //   backend returns ETagRequiredError and the write does NOT land. The
-    //   no-remote overwrite branch is currently unreachable from the UI anyway
-    //   (Overwrite renders only while `externalChange` is set).
-    // - converged proactive change (external set, non-overwrite) → the REMOTE
-    //   etag: the content equals the remote and that etag is the server's
-    //   current state, so the write lands, advances the etag, and rebaselines.
-    // - normal save → our baseline etag.
+    // if-match:
+    // - overwrite: the remote etag, or none when no remote is known, which lands
+    //   only while `require_if_match` is false. The UI offers Overwrite only with
+    //   a remote.
+    // - converged external change: the remote etag.
+    // - otherwise: the baseline etag.
     const ifMatch = opts?.overwrite
       ? (external?.etag ?? undefined)
       : external
@@ -614,21 +509,15 @@ export class EditForm extends BaseForm implements NibFormFields {
       estimate: this.estimate || null,
       body: this.body,
     };
-    // Sent ONLY when it changed, unlike its neighbors in the literal above.
-    // Re-asserting an unchanged assignment is not a no-op on the server:
-    // validateAndSetMilestone runs the assignment door before comparing old to
-    // new, so an open nib assigned to a milestone that has since COMPLETED would
-    // have every later save refused — including one that only touched the title.
-    // Omitting leaves both the assignment and its queue key alone, which is what
-    // an unchanged field means.
+    // Send milestone only when it changed: validateAndSetMilestone runs the
+    // assignment door on every assignment sent, so re-sending one to a
+    // since-completed milestone would refuse an unrelated save.
     if (this.milestone !== this.baseline.milestone) {
       input.milestone = this.milestone || null;
     }
 
-    // Also sent only when it changed, but for a weaker reason than milestone's:
-    // preValidateSubject runs ValidateArea over the CLONE on every update, so
-    // re-asserting an unchanged area is judged identically to omitting it. This
-    // is minimal-diff hygiene, not a guard against a refusal.
+    // Area only when changed too, though re-sending it is validated the same as
+    // omitting it.
     if (this.area !== this.baseline.area) {
       input.area = this.area || null;
     }
@@ -640,33 +529,19 @@ export class EditForm extends BaseForm implements NibFormFields {
 
     this.setSaving(true);
     try {
-      // `suppressToast: true` — save() OWNS the messaging for this call. A
-      // server-side 409 is routed into the inline conflict resolver (below), and
-      // a plain error is surfaced by the caller via the returned `error` outcome;
-      // either way the raw `toast.error(<GraphQL message>)` the dispatcher would
-      // otherwise fire must NOT race ahead of that (the whole point of suppressing it).
+      // A 409 goes to the inline conflict resolver and other errors to the caller.
       const result = await this.deps.mutations.execute(
         updateNibCmd(this.id, input, ifMatch),
         { suppressToast: true },
       );
       if (!result.ok) {
-        // Route a server-side if-match rejection into the SAME conflict resolver
-        // as the proactive path — the buffer stays dirty, so nothing is clobbered.
-        // Classified on the structured `errorCode` first (extensions.code), with
-        // the message substring as a fallback (isEtagConflict). The remote
-        // snapshot isn't in the error, so `remote` is `this.#externalChange`: the
-        // proactively-recorded remote if the subscription already delivered one,
-        // else null — in which case the presenter (useActiveView) one-shot-fetches
-        // the current snapshot so the resolver isn't stuck waiting on the sub.
+        // `remote` is null when the subscription has not delivered the change
+        // yet; useActiveView then fetches the current snapshot.
         if (!opts?.overwrite && isEtagConflict(result.error, result.errorCode)) {
           return { kind: "conflict", remote: this.#externalChange };
         }
-        // A deleted nib surfaces as NOT_FOUND (GetForUpdate returns ErrNotFound
-        // before any if-match check, so it is never an etag conflict). Report it
-        // as `missing` — not a plain error — so the presenter routes the view to
-        // gone/deleted rather than showing the raw "not found" toast. Not gated
-        // on `overwrite`: force-saving over a nib that no longer exists is just as
-        // impossible, so it too must route to the deleted notice.
+        // A deleted nib fails GetForUpdate before any if-match check, with or
+        // without overwrite.
         if (isNotFound(result.errorCode)) {
           return { kind: "missing" };
         }

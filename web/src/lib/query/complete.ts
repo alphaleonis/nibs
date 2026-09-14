@@ -7,28 +7,19 @@ export type CompletionKind = "field" | "value" | "tag";
 
 // --- The completable vocabulary ------------------------------------------------
 //
-// Completion offers the whole query language, not just the five metadata facets.
-// The relationship and existence halves are derived from `REL_TOKEN_ORDER`, which is
-// also what recognition reads: `recognizeRelationship` goes through `REL_ID_FIELDS`
-// and `EXISTENCE_TOKENS`, and both are built from that one array. Offering a
-// spelling the parser rejects therefore requires breaking `relations.ts` itself.
-// They are deliberately NOT added to `FIELD_SPECS`: `has`/`no`/`is` are not
-// metadata fields, and `parse.ts`, `serialize.ts` and `spans.ts` all read that
-// structure — a pseudo-field there would change parsing and highlighting too.
-//
-// The `area` field-name comes from `area.ts` for the same reason, and its VALUES
-// are a per-store vocabulary the caller passes in.
+// Relationship and existence names derive from `REL_TOKEN_ORDER`, the array
+// recognition is built from. Do not add them to `FIELD_SPECS`: parse, serialize
+// and spans treat its entries as metadata fields. Area paths come from the caller.
 
 const METADATA_FIELD_NAMES: readonly string[] = FIELD_SPECS.map((s) => s.name);
 
-/** Relationship-id field names, in canonical token order (`parent`, `ancestor`, …). */
+/** Relationship-id field names in canonical order. */
 const REL_ID_NAMES: readonly string[] = REL_TOKEN_ORDER.flatMap((t) =>
   t.kind === "id" ? [t.name] : [],
 );
 
-/** Existence word (`has`/`no`/`is`) → the values it accepts, both in first-appearance
- *  order. Only dimensions the server has a predicate for appear, because only those
- *  are enumerated in `REL_TOKEN_ORDER`. */
+/** Existence word (`has`/`no`/`is`) → the values it accepts, in first-appearance
+ *  order. */
 const EXISTENCE_VALUES: ReadonlyMap<string, readonly string[]> = (() => {
   const byWord = new Map<string, string[]>();
   for (const spec of REL_TOKEN_ORDER) {
@@ -43,11 +34,7 @@ const EXISTENCE_VALUES: ReadonlyMap<string, readonly string[]> = (() => {
   return byWord;
 })();
 
-/** Every completable field name: metadata, then relationship ids, then existence
- *  words, then the ownership axis — the three token blocks in the order
- *  `serializeQuery` emits them. A leading `-` narrows this to the metadata half —
- *  negation is a metadata-only feature, so offering the rest there would suggest
- *  tokens the parser parks as invalid. */
+/** Every completable field name, in `serializeQuery`'s block order. */
 const ALL_FIELD_NAMES: readonly string[] = [
   ...METADATA_FIELD_NAMES,
   ...REL_ID_NAMES,
@@ -55,22 +42,18 @@ const ALL_FIELD_NAMES: readonly string[] = [
   AREA_FIELD,
 ];
 
-/** Caller-supplied completion behavior. */
 export interface CompletionOptions {
-  /** The user asked for completions explicitly (Ctrl+Space) rather than by typing.
-   *  Only then does an empty token yield the field list instead of `null`. */
+  /** Completion was requested explicitly (Ctrl+Space); an empty token then yields
+   *  the field list instead of `null`. */
   explicit?: boolean;
-  /** The runtime areas vocabulary, completing `area:<partial>`. Absent, and while
-   *  it is loading or unavailable, it offers nothing: its own `completions` returns
-   *  an empty list in both of those states, which becomes `null` here. */
+  /** The areas vocabulary for `area:<partial>`. Offers nothing while loading or
+   *  unavailable. */
   areas?: AreaVocabulary;
 }
 
 /**
- * A context-aware completion for the token immediately left of the caret.
- * `items` are the suggestions to display; `apply(item)` produces the new input
- * text and caret position after inserting the chosen item (only the token-so-far
- * is rewritten — text after the caret is untouched).
+ * Suggestions for the token left of the caret. `apply(item)` returns the new text
+ * and caret, rewriting only the token-so-far.
  */
 export interface Completion {
   kind: CompletionKind;
@@ -79,32 +62,21 @@ export interface Completion {
 }
 
 /**
- * Synchronous autocomplete for the query input. Given the full text and caret
- * offset, return suggestions for the token being typed (the run of non-space
- * characters ending at the caret), or `null` when there is nothing to suggest:
+ * Synchronous autocomplete for the query input: suggestions for the run of
+ * non-space characters ending at `caret`, or `null`:
  *
- * - a partial field name (`ty`, `blo`, `-ty`) → matching field names (prefix match);
- * - `field:` / `field:partial` for a known enum → that field's group names, then
- *   its values (substring);
- * - `tags:partial` → matching entries from `availableTags` (substring);
- * - `has:` / `no:` / `is:` → the existence dimensions that word accepts (substring);
- * - `area:` / `area:partial` → the declared area paths the grammar can carry, in
- *   declaration order (case-insensitive substring), from the vocabulary in
- *   `options.areas` — paths with interior whitespace are withheld, since there is
- *   no quoting to insert them with (see the `AREA_FIELD` branch below);
- * - an unknown field (`title:`) → `null`;
- * - an empty token → `null`, unless `options.explicit` (Ctrl+Space), which yields
- *   the full field list.
+ * - a partial field name (`ty`, `blo`, `-ty`) → matching field names (prefix);
+ * - `field:partial` for a known enum → its group names, then values (substring);
+ * - `tags:partial` → matching `availableTags` (substring);
+ * - `has:` / `no:` / `is:` → the values that word accepts (substring);
+ * - `area:partial` → declared paths from `options.areas` that contain no
+ *   whitespace (case-insensitive substring);
+ * - any other field (`title:`, `parent:`) → `null`; relationship ids come from the
+ *   caller's async typeahead;
+ * - an empty token → `null`, unless `options.explicit`, which yields every field.
  *
- * Relationship-id VALUES (`parent:<id>`) are not completed here — they come from
- * the asynchronous nib typeahead in the caller.
- *
- * Area paths are a per-store vocabulary that arrives over the wire, and tags are
- * collected from the loaded nibs; both are supplied by the caller rather than
- * imported, so this stays a pure function of its arguments.
- *
- * Multi-value tokens complete the segment after the last comma and never
- * re-suggest a value already chosen earlier in the same token.
+ * A multi-value token completes the segment after its last comma and does not
+ * offer values it already holds.
  */
 export function getCompletion(
   text: string,
@@ -130,10 +102,8 @@ export function getCompletion(
     if (items.length === 0) return null;
     const before = text.slice(0, start);
     const after = text.slice(caret);
-    // A caret jammed against the next token — reachable through the explicit trigger,
-    // the only path on which an empty token completes at all — would otherwise glue
-    // the insert onto that token, merging two into one and dropping a filter facet.
-    // The caret still lands after the colon, ready for the value.
+    // An explicit trigger can complete with the caret against the next token; a
+    // space keeps the two from merging. The caret still lands after the colon.
     const separator = after !== "" && !/\s/.test(after[0]) ? " " : "";
     return {
       kind: "field",
@@ -147,20 +117,13 @@ export function getCompletion(
 
   const name = body.slice(0, colon);
 
-  // Area paths, from the runtime vocabulary. Scalar like the existence values —
-  // the whole post-colon run is the segment — and NOT lowercased, because area
-  // paths are case-sensitive (query/area.ts). Negation is excluded for the same
-  // reason it is there: `-area:` has no filter key to write and the parser parks it.
+  // Area paths: the whole post-colon run is the segment, not lowercased because
+  // paths are case-sensitive.
   if (!negated && name.toLowerCase() === AREA_FIELD) {
     const segment = body.slice(colon + 1);
-    // A declared path may carry interior whitespace — `validateAreaNodes`
-    // (internal/config/areas.go) does not reject it — while this grammar splits
-    // tokens on whitespace and has no quoting. Accepting `Web UI` writes
-    // `area:Web` plus a bare `UI` in free text: the area filter lost, drag reorder
-    // disabled (`isDragAllowed`, filter.ts), and the chip naming `area:Web`, a
-    // token the user never typed. So the menu offers only what it can insert.
-    // Whether the grammar should quote instead, or the config forbid the space, is
-    // nibs-52z1.
+    // `validateAreaNodes` (internal/config/areas.go) allows interior whitespace in
+    // a declared name, but the grammar splits on whitespace and has no quoting:
+    // inserting `Web UI` would write `area:Web` plus free text `UI`.
     const items = (options.areas?.completions(segment) ?? []).filter((p) => !/\s/.test(p));
     if (items.length === 0) return null;
     const before = text.slice(0, caret - segment.length);
@@ -172,9 +135,7 @@ export function getCompletion(
     };
   }
 
-  // Existence values (`has:parent`, `is:blocked`). Scalar — no comma multi-value —
-  // so the whole post-colon run is the segment. Negated tokens are excluded for the
-  // same reason their field names are.
+  // Existence values: scalar, so the whole post-colon run is the segment.
   const existence = negated ? undefined : EXISTENCE_VALUES.get(name.toLowerCase());
   if (existence) {
     const segment = body.slice(colon + 1).toLowerCase();
@@ -189,8 +150,6 @@ export function getCompletion(
     };
   }
 
-  // Value completion for a known metadata field; unknown fields get no static
-  // suggestions (relationship-id values are the caller's async typeahead).
   const spec = fieldSpec(name);
   if (!spec) return null;
 

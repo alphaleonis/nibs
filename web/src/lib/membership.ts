@@ -1,47 +1,25 @@
 import { CLOSED_STATUSES, RELEASING_STATUSES } from "./constants";
 
 /**
- * The client's copy of the server's milestone-membership rules — the mirrors of
- * `membership.ResolvedMilestoneID` and `(*membership.View).MilestoneOf`
- * (internal/membership/membership.go). The first is DIRECT assignment, the
- * second the DERIVED membership that inherits up the parent chain; a grouping
- * lens wants the second, and `nibs list --backlog` and the `noMilestone` filter
- * are its complement.
+ * The client's copy of the server's milestone-membership rules: mirrors of
+ * `membership.ResolvedMilestoneID` (DIRECT assignment) and
+ * `(*membership.View).MilestoneOf` (DERIVED membership, inherited up the parent
+ * chain) in internal/membership/membership.go. A grouping lens wants the second.
  *
- * It exists because `Nib.milestone` is reported VERBATIM on the wire: the field
- * is autobound with no resolver of its own, and the schema says so in as many
- * words. An assignment naming a missing nib, or one naming a nib that is not a
- * milestone, arrives here exactly as it is stored — so nothing has applied the
- * rule by the time the web sees the row, and a grouping lens that draws a row
- * into a milestone's section without applying it puts that row in a section
- * whose queue the server does not agree it is in.
+ * `Nib.milestone` is reported verbatim on the wire, so an assignment naming a
+ * missing or non-milestone nib arrives as stored. Apply these rules before
+ * drawing a row into a milestone's section.
  *
- * The lookup's DOMAIN is the caller's, and the two sides do not have the same
- * one. Go answers over the whole store (`membership.Compute(reader.All())`); a
- * client lookup can only span the rows the page holds, and that set is
- * server-filtered. For `resolvedMilestoneId` narrowing the domain moves answers
- * only toward "" — the same key resolves to the same nib or to none — so
- * filtering a milestone out of the result set makes its members read as
- * unassigned, and they are drawn in Backlog while the server still holds them
- * in that milestone's queue. That is the safe direction (a row in Backlog
- * claims no queue it is not in), and it is the direction the parity contract
- * cannot see: its lookup is always total over the fixture. `milestoneOf` does
- * NOT inherit that property — its walk continues past the step the narrowing
- * emptied — and its own doc says what it does instead. "" is MEMBERLESS in the
- * MILESTONE ordering scope, not a group — see `Scope` in
- * internal/graph/orderer.go.
+ * Go answers over the whole store; a client lookup spans only the rows the page
+ * holds, which the server has filtered. For `resolvedMilestoneId` a narrower
+ * lookup moves answers only toward "", so a hidden milestone's members read as
+ * unassigned. `milestoneOf` behaves differently; see its doc.
  *
  * Held to the Go rules by ./generated/membershipContract.ts, replayed in
- * membership.test.ts. See internal/membershipcontract for which direction of
- * drift each test catches, and for the bound they all share.
+ * membership.test.ts; see internal/membershipcontract.
  */
 
-/**
- * The subject of the rules: the four wire fields they read, and nothing else.
- * `TreeNib` satisfies it structurally, so a lens passes its own rows straight
- * in — a narrower parameter than the row type keeps this module out of the
- * table's shape.
- */
+/** The four wire fields the rules read. `TreeNib` satisfies it structurally. */
 export interface MembershipNib {
   readonly id: string;
   /** The EFFECTIVE type, which is what `Nib.type` reports. */
@@ -49,104 +27,59 @@ export interface MembershipNib {
   /** The stored assignment, verbatim. */
   readonly milestone: string;
   /**
-   * The RESOLVED parent, which is what `Nib.parentId` reports: null both for a
-   * nib with no parent and for one whose stored link names no nib
-   * (internal/graph/schema.resolvers.go, `(*nibResolver).ParentID`). The raw
-   * stored link is a different wire field, `storedParentId`, and this is not
-   * it.
+   * The RESOLVED parent (`Nib.parentId`): null both for no parent and for a
+   * stored link naming no nib. Not `storedParentId`.
    *
-   * Only `milestoneOf` reads it. Go walks the raw `parent:` and resolves it
-   * through the View's index at each step (internal/membership/membership.go),
-   * so the two sides start from different fields, and the wire's reading is the
-   * wider one: `Nib.parentId` resolves through `(*Core).Get`, which retries with
-   * the configured prefix prepended, while the View indexes by exact id. They
-   * agree anyway because nibcore rewrites every stored link id to its full form
-   * in memory before either side reads it — internal/nibcore/canonicalize.go
-   * applies one resolve to `parent:` and `milestone:` alike — so a Core-backed
-   * store never holds a short-form parent that the wire resolves and the walk
-   * misses.
+   * Go's walk reads the raw `parent:` through an exact-id index instead, while
+   * `Nib.parentId` also tries the prefixed form. They agree because nibcore
+   * canonicalizes resolvable stored link ids to their full form
+   * (internal/nibcore/canonicalize.go).
    */
   readonly parentId: string | null;
 }
 
 /**
- * Resolves an id to a nib, or to nothing when the id names none — the mirror of
+ * Resolves an id to a nib, or null/undefined when it names none — the mirror of
  * Go's `membership.Lookup`.
  *
- * Both absence values are accepted so neither shape of caller needs an adapter:
- * a closure over a `Map` returns `byId.get(id)` with no `?? null`, and one over
- * a GraphQL result returns `byId[id] ?? null`. Pass a CLOSURE, never the method
- * itself — `const lookup: MembershipLookup = byId.get` type-checks clean (the
- * lib declares `get(key: K): V | undefined` with no `this` parameter) and then
- * throws on the first call, because `Map.prototype.get` needs its receiver.
+ * Pass a closure (`(id) => byId.get(id)`), never `byId.get` itself: that
+ * type-checks and then throws on the first call, having lost its receiver.
  */
 export type MembershipLookup = (id: string) => MembershipNib | null | undefined;
 
-/**
- * The one type the rules below treat as a container of its own. Exported so a
- * caller that has to ask the same question — a grouping lens deciding which
- * nibs HEAD its sections — spells it the way the rules do, rather than growing
- * a second literal that a vocabulary change would leave behind.
- */
+/** The one type the rules treat as a container of its own. Compare against this, not a literal. */
 export const MILESTONE_TYPE = "milestone";
 
 /**
- * Whether a nib of this type takes an assignment on EITHER membership axis —
- * the mirror of `nibtypes.RefusedAxes`, which returns nil for every non-
- * milestone type and refuses both the milestone axis and the area axis for a
- * milestone ("a milestone is a waypoint, not work: it takes neither a milestone
- * assignment nor an area"). It is therefore the first of `resolvedMilestoneId`'s
- * three clauses AND the gate on an area assignment, under one name rather than
- * two copies of one rule.
+ * Whether a nib of this type may carry either assignment axis (milestone or
+ * area) — the mirror of `nibtypes.RefusedAxes`, which refuses both for a
+ * milestone and neither for any other type.
  *
- * Exported because a caller can hold a TYPE and no nib: a drag deciding whether
- * the rows it carries could ever join the group under the cursor is asking this
- * and nothing else. `resolvedMilestoneId` calls it rather than restating it, so
- * the generated contract — which has a milestone-typed subject carrying a
- * resolvable assignment — pins this predicate through that caller.
+ * Exported for callers holding a type and no nib, such as a drag deciding
+ * whether its rows could join a group.
  */
 export function takesAssignmentAxes(type: string): boolean {
   return type !== MILESTONE_TYPE;
 }
 
 /**
- * Whether a milestone in this status still accepts an assignment from a subject
- * in that one — the mirror of the assignment door in `validateAndSetMilestone`
- * (internal/graph/resolver.go).
- *
- * A milestone whose status RELEASES its dependents has let its queue go, so
- * planning open work for it is refused; a HOLDING one (`deferred`) is parked and
- * coming back, so it keeps accepting work. The subject's own closure is the
- * exemption: retro-assigning finished work to a finished wave writes a record
- * after the fact and leaves nothing planned for a wave that ended.
- *
- * Asked over STATUS NAMES rather than roles because that is what a caller
- * holds — a nib's `status` field on one side, a milestone row's on the other.
- * Unlike the exclusivity rule, this one is decidable on the client: both
- * statuses are on the row, and neither is a question about nibs the page may
- * not have loaded.
+ * Whether a milestone in `milestoneStatus` accepts an assignment from a subject
+ * in `subjectStatus` — the mirror of the assignment door in
+ * `validateAndSetMilestone` (internal/graph/resolver.go). A milestone in a
+ * releasing status refuses open work; closed work is always accepted.
  */
 export function milestoneAcceptsAssignment(milestoneStatus: string, subjectStatus: string): boolean {
   return !RELEASING_STATUSES.includes(milestoneStatus) || CLOSED_STATUSES.includes(subjectStatus);
 }
 
 /**
- * The id of the milestone whose queue this nib is directly in, or "" for a nib
- * in no queue at all.
+ * The id of the milestone whose queue this nib is DIRECTLY in, or "": the
+ * subject is not a milestone, the target exists, and the target is
+ * milestone-typed. There is no ancestor walk; that is `milestoneOf`.
  *
- * Three clauses, all three load-bearing: the subject is not itself a milestone
- * (a milestone is a container of its own, even when hand-edited data assigns
- * it), the target exists, and the target is milestone-typed.
- *
- * It reads the nib's OWN `milestone:` field — there is no ancestor walk, so a
- * task under an assigned epic is in no queue of its own. That is a grouping
- * lens's question, and `milestoneOf` below is its answer; this is the step that
- * rule takes at each nib, not a substitute for it. "" is MEMBERLESS in the
- * MILESTONE ordering scope, not a group: see `Scope` in
- * internal/graph/orderer.go.
- *
- * Returns the TARGET's id rather than the stored string, mirroring Go, so a
- * lookup that resolves an id to its canonical form is honored.
+ * Returns the target's id, not the stored string, so a canonicalizing lookup is
+ * honored. "" is MEMBERLESS in the MILESTONE ordering scope, not a group: see
+ * `Scope` in internal/graph/orderer.go.
  */
 export function resolvedMilestoneId(subject: MembershipNib, lookup: MembershipLookup): string {
   if (subject.milestone === "" || !takesAssignmentAxes(subject.type)) return "";
@@ -156,55 +89,24 @@ export function resolvedMilestoneId(subject: MembershipNib, lookup: MembershipLo
 }
 
 /**
- * The id of the milestone this nib TRANSITIVELY belongs to, or "" for a nib in
- * the backlog — the mirror of Go's `(*membership.View).MilestoneOf`, and the
- * rule the server's own `noMilestone` filter answers over
- * (internal/graph/filters.go). Group by anything else and the client disagrees
- * with `no:milestone` about which nibs are backlog.
+ * The id of the milestone this nib TRANSITIVELY belongs to, or "" for backlog —
+ * the mirror of `(*membership.View).MilestoneOf`, which the server's
+ * `noMilestone` filter reads (internal/graph/filters.go).
  *
- * The subject's own resolved assignment when it has one, else the nearest
- * resolved assignment up the structural parent chain. The walk stops at a
- * milestone-typed ancestor — a milestone parent is decomposition data, not an
- * assignment, so its subtree does not inherit whatever the milestone is nested
- * under — and the visited set makes a parent cycle terminate rather than
- * recurse forever, since `parent:` is hand-editable and nothing forbids one.
+ * The subject's own resolved assignment, else the nearest one up the parent
+ * chain. The walk stops at a milestone-typed ancestor and terminates on a parent
+ * cycle. Each step calls `resolvedMilestoneId`; the loop's milestone-type check
+ * decides whether the walk continues and is not a copy of that rule.
  *
- * Each step goes through `resolvedMilestoneId` rather than restating its three
- * clauses: the generated contract pins the mirror, not its callers, so a second
- * copy of the direct rule would drift with nothing to catch it. The
- * milestone-typed test in the loop is NOT that restatement — it decides whether
- * the WALK continues, which is a question `resolvedMilestoneId` has no way to
- * answer, and Go's walk carries the same test for the same reason.
+ * The lookup must be EXACT, not canonicalizing, because Go's walk indexes by
+ * exact id: contract row `t6` answers `nibs-m4` for `resolvedMilestoneId` and ""
+ * here. A `Map.get` closure over loaded rows is exact.
  *
- * The lookup must be EXACT — it must not canonicalize an id to its full form.
- * Go's walk can only ever use the View's own `byID` index, so a canonicalizing
- * lookup here would follow a link Go's walk misses; contract row `t6` is that
- * shape, answering `nibs-m4` for `resolvedMilestoneId` and "" for `milestoneOf`.
- * `resolvedMilestoneId` states the opposite precondition, so one
- * `MembershipLookup` serves two rules that want different things from it and
- * nothing in the type system separates them. A lookup built from loaded rows —
- * a `Map.get` closure — is exact, which is why this is a documented
- * precondition rather than a second type.
- *
- * Its behavior under a NARROWED lookup is the opposite of the direct rule's,
- * and a lens has to know it, in both directions:
- *
- * Losing a MILESTONE from the lookup moves `resolvedMilestoneId` only toward ""
- * (see the module doc), but here the walk continues past the step that answered
- * "" and can land on an ANCESTOR's assignment — so a filter hiding one milestone
- * can draw its members in a different milestone's section rather than in
- * Backlog.
- *
- * Losing an intermediate ANCESTOR collapses the answer instead: `lookup(parentId)`
- * returns nothing, the loop exits, and the row reads as Backlog while the
- * server's `noMilestone` — answered over the whole store — still holds it in its
- * milestone's queue. That is the direction an ordinary filter produces, because
- * the epics and features carrying the assignments drop off the page while their
- * tasks remain; `tree.ts` already promotes a node to a root when its parent is
- * absent from the loaded set, so a page routinely lacks them.
- *
- * The parity contract is blind to both — its lookup is total over the fixture —
- * so membership.test.ts holds a case of each.
+ * Under a narrowed lookup, unlike `resolvedMilestoneId`:
+ * - losing a MILESTONE can move the answer to an ancestor's milestone, not "";
+ * - losing an intermediate ANCESTOR collapses the answer to "" while the server
+ *   still holds the row in a queue. An ordinary type or status filter does this.
+ * The parity contract's lookup is total, so membership.test.ts covers both.
  */
 export function milestoneOf(subject: MembershipNib, lookup: MembershipLookup): string {
   const visited = new Set<string>();

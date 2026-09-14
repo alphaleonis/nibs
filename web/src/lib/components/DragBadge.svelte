@@ -5,12 +5,8 @@
   const drag = useDrag();
 
   let count = $derived(drag.draggedIds.length);
-  // The badge's border carries the same treatment as the row's indicator, so the
-  // two halves of one affordance are recognizably the same event.
-  //
-  // A Record over the treatments, the `QUEUE_STYLED` discipline: a fourth one is
-  // a compile error here until it says what the badge does with it, rather than
-  // falling through to the neutral border.
+  // The border matches the row indicator's treatment. A Record, so a new
+  // DropTreatment fails to compile until it has a border.
   const BORDER: Record<DropTreatment, string> = {
     parent: "border-border",
     queue: "border-region-queue",
@@ -19,25 +15,16 @@
   let treatment = $derived(dropTreatment(drag.dropAccepted));
   let border = $derived(treatment === null ? "border-border" : BORDER[treatment]);
 
-  // The badge's own box, for the clamp below. 0 until the first measurement,
-  // which only makes the first frame of a drag unclamped.
+  // 0 until first measured, so a drag's first frame is unclamped.
   let badgeWidth = $state(0);
   let badgeHeight = $state(0);
 
   const CURSOR_GAP = 12;
   const EDGE_MARGIN = 8;
 
-  // Kept inside the viewport instead of being clamped BY it. The badge is
-  // `position: fixed` with no ancestor establishing a containing block, so the
-  // viewport is one: with only `left` set, shrink-to-fit gives it the space to
-  // the RIGHT of the cursor, and a destination name is as long as a container's
-  // title. Measured against the fixture in e2e/drag-affordance.test.ts: without
-  // this clamp the pill runs to 1526px in a 1440px viewport, where a fixed box
-  // adds no scrollable overflow and nothing scrolls to reveal it. The wrap
-  // `whitespace-nowrap` prevents needs the clamp gone TOO — with it in place the
-  // badge is never squeezed, so no test exercises that class on its own, and
-  // `truncate` on the label is what lets a long name ellipsize rather than
-  // widen. Read per pointermove, which is when a stale viewport size would show.
+  // Clamp inside the viewport: a fixed box with only `left` set overflows to the
+  // right of the cursor for a long destination name, and nothing scrolls to reveal
+  // it (e2e/drag-affordance.test.ts).
   let left = $derived(
     Math.max(EDGE_MARGIN, Math.min(drag.cursorX + CURSOR_GAP, window.innerWidth - badgeWidth - EDGE_MARGIN)),
   );
@@ -46,13 +33,9 @@
   );
 </script>
 
-<!-- The sentence a release would carry out, following the cursor.
-     `dropLabel` is set from an ACCEPTED plan only, so a refused target leaves
-     the destination line off and the badge falls back to the count (or
-     disappears entirely on a single-row drag). App.svelte's handleDrop explains
-     the refusal on release, except for `drop-on-self` — the cancel gesture,
-     which is silent by design and so leaves a single-row drag with no signal at
-     all. -->
+<!-- What a release would do, following the cursor. `dropLabel` exists only for
+     an accepted drop, so over a refused target the badge shows just the count,
+     or nothing on a single-row drag. -->
 {#if drag.isDragging && (drag.dropLabel !== null || count > 1)}
   <div
     bind:clientWidth={badgeWidth}
@@ -65,8 +48,7 @@
       <span data-testid="drag-badge-count">{count} items</span>
     {/if}
     {#if drag.dropLabel !== null}
-      <!-- The label is the part that can be arbitrarily long — a container's
-           whole title — so it is what gives way when the max-width binds. -->
+      <!-- The label is what truncates when max-width binds. -->
       <span data-testid="drag-badge-label" class="truncate">{drag.dropLabel}</span>
     {/if}
   </div>

@@ -3,14 +3,9 @@ import type { Region } from "./ordering/region";
 export type DropZone = "before" | "after" | "reparent";
 
 /**
- * What an ACCEPTED plan tells the affordance: the sentence it will carry out,
- * and what KIND of write it is — the list for a move, nothing but the kind for
- * an assignment, which writes no position. They travel together because a
- * refusal has neither, so nothing can end up showing one without the other.
- *
- * The plan's own discriminant rather than a nullable region, so a surface
- * coloring by axis has to answer for the arm that has none instead of reading
- * `region?.axis` and taking the parent axis's colors by default.
+ * What an accepted plan tells the affordance: its label and the kind of write,
+ * with the region for a move. Discriminated by kind rather than a nullable
+ * region, so a surface coloring by axis must handle an assignment explicitly.
  */
 export type AcceptedDrop =
   | { readonly kind: "position"; readonly label: string; readonly region: Region }
@@ -25,12 +20,8 @@ export class DragState {
   dropTargetId: string | null = $state(null);
   dropZone: DropZone | null = $state(null);
   dropValid: boolean = $state(false);
-  /**
-   * The accepted plan, or null while nothing would happen — what the badge and
-   * the row indicator are drawn from.
-   */
+  /** The accepted plan the badge and row indicator draw from, or null. */
   dropAccepted: AcceptedDrop | null = $state(null);
-  /** The accepted plan's own sentence, or null while nothing would happen. */
   dropLabel: string | null = $derived(this.dropAccepted?.label ?? null);
 
   /** Cursor position (for the badge) */

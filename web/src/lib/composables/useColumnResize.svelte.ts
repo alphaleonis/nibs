@@ -64,10 +64,8 @@ export function useColumnResize(opts: {
       const cell = tableEl.rows[i].cells[colIdx];
       if (cell) maxWidth = Math.max(maxWidth, cell.offsetWidth);
     }
-    // Restore fixed layout
     tableEl.style.tableLayout = savedLayout;
     tableEl.style.width = savedWidth;
-    // Add padding buffer
     return maxWidth > 0 ? maxWidth + 8 : null;
   }
 

@@ -37,12 +37,8 @@ export function useDrag(): DragState {
 }
 
 /**
- * The view core, supplied as a GETTER rather than as the spine itself.
- *
- * The spine's identity changes once, when the areas vocabulary arrives, and a
- * component that captured the value at setup would hold the pre-load one for the
- * rest of the session. Read through the getter, a `$derived` re-runs on that
- * change and a delegated handler reads the current spine at call time.
+ * The view spine, as a getter: its identity changes when the areas vocabulary
+ * arrives, so a value captured at setup would stay stale.
  */
 export function provideViewSpine(get: () => ViewSpine) { setContext(VIEW_SPINE_KEY, get); }
 export function useViewSpine(): () => ViewSpine {
@@ -52,49 +48,28 @@ export function useViewSpine(): () => ViewSpine {
 }
 
 /**
- * The milestones a nib can be assigned to, supplied as a GETTER for the same
- * reason the view spine is: the list arrives after first paint and grows as
- * milestones are created, so a component that captured the array at setup would
- * offer an empty picker for the rest of the session.
- *
- * Ambient rather than a prop because two unrelated consumers ask — the detail
- * panel's field and the row context menu's submenu — and neither sits on a path
- * that would otherwise carry it.
+ * The milestones a nib can be assigned to, as a getter: the list arrives after
+ * first paint and grows as milestones are created.
  */
 export function provideMilestones(get: () => readonly MilestoneOption[]) { setContext(MILESTONES_KEY, get); }
 export function useMilestones(): () => readonly MilestoneOption[] {
   const g = getContext<() => readonly MilestoneOption[]>(MILESTONES_KEY);
-  // Optional, like useConnection and unlike its throwing siblings: a component
-  // rendered without a provider still has a correct answer to give — no
-  // milestone can be offered — where a missing selection or drag state is a
-  // programming error with no sensible stand-in.
+  // Optional: without a provider, no milestone is offered.
   return g ?? (() => []);
 }
 
 export function provideConnection(c: ConnectionRecovery) { setContext(CONNECTION_KEY, c); }
 /**
- * The live-socket recovery handle, or undefined outside a provider.
- *
- * Deliberately optional where its siblings throw: a region reads this only to
- * re-read its query after a reconnect, which is a no-op in a test that never
- * disconnects. Requiring it would force every existing render site to supply
- * one to test behavior unrelated to connectivity.
+ * The live-socket recovery handle, or undefined outside a provider, where there
+ * is no reconnect to re-read after.
  */
 export function useConnection(): ConnectionRecovery | undefined {
   return getContext<ConnectionRecovery | undefined>(CONNECTION_KEY);
 }
 
 /**
- * Re-ask the store's configuration, offered to whatever renders the dead end a
- * failed config query leaves behind.
- *
- * Optional like useConnection and unlike its throwing siblings: a component
- * rendered without a provider has a correct thing to do — offer no retry — and
- * requiring one would make every render site supply it to test behavior that has
- * nothing to do with the config query.
- *
- * The ACTION rather than the query store, so the only thing reachable from the
- * view is the one the view is entitled to do.
+ * Re-run the store's config query, for the dead end a failed one leaves. Undefined
+ * outside a provider: offer no retry.
  */
 export function provideConfigRetry(retry: () => void) { setContext(CONFIG_RETRY_KEY, retry); }
 export function useConfigRetry(): (() => void) | undefined {
@@ -146,32 +121,20 @@ export function makeTestContext(
   const m = new Map<string, unknown>();
   m.set(SELECTION_KEY, selection);
   m.set(DRAG_KEY, drag);
-  // Always provide the default column adapters so components that render table
-  // cells/headers (TreeTable, TreeTableRow) work in tests without wrapping them
-  // in <ColumnAdapters>. Mirrors how the real app provides them.
+  // Provided as the app's <ColumnAdapters> does, so table components render
+  // without wrapping.
   m.set(COLUMN_ADAPTERS_KEY, columnAdapters);
-  // Always provide a view spine, so components that build rows work in tests
-  // without one. The default declares no areas — the same answer a project with
-  // no `areas:` block gets.
+  // Default: a spine declaring no areas.
   const spine = opts?.viewSpine ?? EMPTY_SPINE;
   m.set(VIEW_SPINE_KEY, () => spine);
-  // Always provide a milestone list so components carrying an assignment
-  // affordance render in tests without extra setup. The default is empty — the
-  // same answer a project with no milestones gives.
+  // Default: no milestones.
   const milestones = opts?.milestones ?? [];
   m.set(MILESTONES_KEY, () => milestones);
-  // Always provide a tree-view so components that read collapse state work in
-  // tests without extra setup.
   m.set(TREE_VIEW_KEY, opts?.treeView ?? new TreeViewState(DEFAULT_VIEW_LEVEL));
-  // Only when the caller supplies one: the retry affordance is rendered only
-  // where a retry exists, so a test that omits it is testing the no-provider
-  // arm on purpose.
+  // Only when supplied; omitting it tests the no-retry path.
   if (opts?.configRetry) m.set(CONFIG_RETRY_KEY, opts.configRetry);
   if (opts?.confirmDialog) m.set(CONFIRM_DIALOG_KEY, opts.confirmDialog);
-  // Always provide an active-view so components that open/sync the unified nib
-  // view (TreeTable rows, RowContextMenu) work in tests without extra setup.
-  // Default mirrors selection: `open` selects, `requestClose` closes, and the
-  // guard-bypass `syncTo`/transitions are no-ops (selection is the observable).
+  // Default stub: `open` selects, `requestClose` closes, the rest are no-ops.
   m.set(ACTIVE_VIEW_KEY, opts?.activeView ?? {
     state: { kind: 'closed' },
     form: null,
@@ -192,16 +155,12 @@ export function makeTestContext(
     save: async () => undefined,
     requestClose: async () => { selection.close(); },
     syncTo: () => {},
-    // "stale", not "closed": from a `closed` state the real noteMissing returns
-    // "stale" for every call ("closed" is only reachable from `viewing` with a
-    // pristine form), and the token is what tells the caller who owns healing
-    // the URL.
+    // From a `closed` state the real noteMissing always returns "stale".
     noteMissing: () => "stale",
     invalidateDetailSeed: () => {},
     dispose: () => {},
   } satisfies ActiveView);
-  // Always provide a history-nav so components that read it work in tests without extra setup.
-  // Default is a select-only stub that mirrors selection without touching browser history.
+  // Default stub mirrors selection without touching browser history.
   m.set(HISTORY_NAV_KEY, opts?.historyNav ?? {
     navigateToNib: (id: string) => selection.select(id),
     closePanel: () => selection.close(),

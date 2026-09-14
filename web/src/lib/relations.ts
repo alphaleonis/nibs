@@ -17,9 +17,8 @@ export interface RelationConfig {
 }
 
 /**
- * Single source of truth for how each relation is drawn (icon, color, label).
- * Consumed by RelationBadge (pill + bare-icon variants) and by the opt-in
- * Blocking / Blocked-by count columns in TreeTableRow, so the two cannot drift.
+ * How each relation is drawn, shared by RelationBadge and the Blocking /
+ * Blocked-by count columns (ColumnAdapters.svelte).
  */
 export const RELATION_CONFIG: Record<RelationKind, RelationConfig> = {
   blocked: {
