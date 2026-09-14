@@ -142,19 +142,6 @@ export class SelectionState {
     this.anchorId = null;
   }
 
-  /** Clears everything, including `selectedNibId` and `pendingEnsureVisibleId`.
-   *
-   *  Not for post-mutation cleanup: it would close a panel showing a nib the
-   *  mutation never touched, discarding unsaved edits. Use `clearAfterMutation`
-   *  (actionTarget.ts). */
-  clearAll(): void {
-    this.selectedIds = new Set();
-    this.selectedNibId = null;
-    this.focusedNibId = null;
-    this.anchorId = null;
-    this.pendingEnsureVisibleId = null;
-  }
-
   /** Request that TreeTable expand ancestors and scroll nibId into view */
   ensureVisible(nibId: string): void {
     this.pendingEnsureVisibleId = nibId;

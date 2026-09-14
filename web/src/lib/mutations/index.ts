@@ -33,6 +33,7 @@ export {
   archiveBatch,
   setStatusBatch,
   setPriorityBatch,
+  setMilestoneBatch,
   reparentBatch,
   reparentAndReorder,
 } from "./commands";
