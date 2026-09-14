@@ -1,7 +1,9 @@
 package config
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -23,25 +25,49 @@ type AreaConfig struct {
 	// checked against any known set.
 	Color string `yaml:"color,omitempty"`
 
-	// Not a sort key: Paths enumerates in declaration order.
-	Order    string       `yaml:"order,omitempty"`
 	Children []AreaConfig `yaml:"children,omitempty"`
 }
 
 // Validate returns the first fault in the declared vocabulary. An absent or
 // empty vocabulary is valid.
 func (a *Areas) Validate() error {
-	return validateAreaNodes(a.Roots(), "")
+	// File order, so the "area #N" a fault names counts entries as the file does.
+	return validateAreaNodes(a.fileNodes(), "")
 }
 
 // Roots returns the declared forest's top-level nodes, each carrying its own
-// children. Read through this rather than the Nodes field — the receiver may be
-// nil.
+// children, with every set of siblings sorted by name. Where a node sits in
+// areas.yml carries no meaning; alphabetical is what keeps a name findable as the
+// vocabulary grows. The result is a copy. Read through this rather than the Nodes
+// field — the receiver may be nil.
 func (a *Areas) Roots() []AreaConfig {
+	return sortedAreaNodes(a.fileNodes())
+}
+
+func (a *Areas) fileNodes() []AreaConfig {
 	if a == nil {
 		return nil
 	}
 	return a.Nodes
+}
+
+func sortedAreaNodes(nodes []AreaConfig) []AreaConfig {
+	if len(nodes) == 0 {
+		return nil
+	}
+	sorted := slices.Clone(nodes)
+	for i := range sorted {
+		sorted[i].Children = sortedAreaNodes(sorted[i].Children)
+	}
+	slices.SortFunc(sorted, func(x, y AreaConfig) int {
+		// Case-insensitive first; the byte comparison only orders names that
+		// differ in case alone, so the order is total.
+		return cmp.Or(
+			strings.Compare(strings.ToLower(x.Name), strings.ToLower(y.Name)),
+			strings.Compare(x.Name, y.Name),
+		)
+	})
+	return sorted
 }
 
 // parent is the path these areas hang under, empty at the top level.
@@ -54,21 +80,21 @@ func validateAreaNodes(areas []AreaConfig, parent string) error {
 		}
 		if name != area.Name {
 			return fmt.Errorf("area %q %s has leading or trailing whitespace in its name; an `area:` value would have to carry the same spaces to match it",
-				area.Name, areaLocation(parent))
+				RenderAreaPath(area.Name), areaLocation(parent))
 		}
 		// INTERIOR whitespace is permitted: this runs on every load, so tightening
 		// it would fail a config valid today.
 		path := joinAreaPath(parent, name)
 		if strings.Contains(name, AreaPathSeparator) {
 			return fmt.Errorf("area %q %s has a %q in its name; nest the child under its parent instead, which is what makes the path",
-				name, areaLocation(parent), AreaPathSeparator)
+				RenderAreaPath(name), areaLocation(parent), AreaPathSeparator)
 		}
 		if _, dup := seen[name]; dup {
-			return fmt.Errorf("duplicate area %q; two siblings with one name make one path mean two nodes", path)
+			return fmt.Errorf("duplicate area %q; two siblings with one name make one path mean two nodes", RenderAreaPath(path))
 		}
 		seen[name] = struct{}{}
 		if err := ValidateAreaColor(area.Color); err != nil {
-			return fmt.Errorf("area %q: %w", path, err)
+			return fmt.Errorf("area %q: %w", RenderAreaPath(path), err)
 		}
 		if err := validateAreaNodes(area.Children, path); err != nil {
 			return err
@@ -81,7 +107,7 @@ func areaLocation(parent string) string {
 	if parent == "" {
 		return "at the top level"
 	}
-	return fmt.Sprintf("under %q", parent)
+	return fmt.Sprintf("under %q", RenderAreaPath(parent))
 }
 
 // ValidateAreaColor checks a color against the shape AreaConfig.Color permits.
@@ -93,12 +119,12 @@ func ValidateAreaColor(color string) error {
 		switch len(rest) {
 		case 3, 4, 6, 8:
 		default:
-			return fmt.Errorf("color %q is not a usable hex code; use #RGB, #RGBA, #RRGGBB or #RRGGBBAA", color)
+			return fmt.Errorf("color %q is not a usable hex code; use #RGB, #RGBA, #RRGGBB or #RRGGBBAA", echoedYAMLName(color))
 		}
 		for _, r := range rest {
 			isHex := (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
 			if !isHex {
-				return fmt.Errorf("color %q is not a usable hex code; use #RGB, #RGBA, #RRGGBB or #RRGGBBAA", color)
+				return fmt.Errorf("color %q is not a usable hex code; use #RGB, #RGBA, #RRGGBB or #RRGGBBAA", echoedYAMLName(color))
 			}
 		}
 		return nil
@@ -106,7 +132,7 @@ func ValidateAreaColor(color string) error {
 	for _, r := range color {
 		isLetter := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
 		if !isLetter {
-			return fmt.Errorf("color %q is neither a color name nor a hex code", color)
+			return fmt.Errorf("color %q is neither a color name nor a hex code", echoedYAMLName(color))
 		}
 	}
 	return nil
@@ -119,8 +145,8 @@ func joinAreaPath(parent, name string) string {
 	return parent + AreaPathSeparator + name
 }
 
-// Paths returns every declared area path in DECLARATION order, a parent
-// immediately before the subtree it heads.
+// Paths returns every declared area path in Roots' order: siblings by name, a
+// parent immediately before the subtree it heads.
 func (a *Areas) Paths() []string {
 	var paths []string
 	appendAreaPaths(&paths, a.Roots(), "")
@@ -175,16 +201,14 @@ func truncateListedArea(path string) string {
 
 // Get returns the declared node at path (`web/dashboard`), or nil.
 func (a *Areas) Get(path string) *AreaConfig {
-	return findArea(a.Roots(), path)
+	return findArea(a.fileNodes(), path)
 }
 
-func (a *Areas) Declared() bool {
-	return len(a.Roots()) > 0
+func (a *Areas) IsEmpty() bool {
+	return len(a.fileNodes()) == 0
 }
 
-// IsValid reports whether path names a declared area. The empty string does not
-// — check for an unset `area:` separately.
-func (a *Areas) IsValid(path string) bool {
+func (a *Areas) Exists(path string) bool {
 	return a.Get(path) != nil
 }
 
@@ -219,7 +243,7 @@ func (e *AreaError) Error() string {
 // ValidateAssignment checks an `area:` value the caller SUPPLIED against the
 // declared vocabulary. The empty string passes.
 func (a *Areas) ValidateAssignment(path string) error {
-	if path == "" || a.IsValid(path) {
+	if path == "" || a.Exists(path) {
 		return nil
 	}
 	return &AreaError{Path: RenderAreaPath(path), Declared: a.declaredList()}
@@ -228,7 +252,7 @@ func (a *Areas) ValidateAssignment(path string) error {
 // declaredList renders the vocabulary for a refusal, or "" when the store
 // declares none. AreaError's no-areas wording keys on that empty string.
 func (a *Areas) declaredList() string {
-	if !a.Declared() {
+	if a.IsEmpty() {
 		return ""
 	}
 	return a.List()
@@ -237,7 +261,7 @@ func (a *Areas) declaredList() string {
 // ValidateStored re-checks the `area:` a nib ALREADY HOLDS, which need not have
 // come from the request. nibID lets the refusal name the nib to fix.
 func (a *Areas) ValidateStored(nibID, path string) error {
-	if path == "" || a.IsValid(path) {
+	if path == "" || a.Exists(path) {
 		return nil
 	}
 	return &AreaError{Path: RenderAreaPath(path), Declared: a.declaredList(), NibID: safetext.Strip(nibID)}

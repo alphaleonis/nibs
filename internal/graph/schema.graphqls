@@ -31,7 +31,7 @@ type Config {
   "Configured nib ID prefix (e.g., 'nibs-', 'myproj-'). Empty if unset."
   prefix: String!
   """
-  The declared areas, FLATTENED in declaration order — a parent immediately
+  The declared areas, FLATTENED with siblings sorted by name — a parent immediately
   before the subtree it heads (config.Areas.Paths' order). That ordering is the
   CONTRACT, not an incidental: a node's subtree is the maximal run of following
   entries with a greater `depth`, which is how a client answers the
@@ -259,7 +259,7 @@ type Mutation {
   them refused for it.
 
   Returns the whole Config rather than the edited node. `Config.areas` is
-  flattened in declaration order and a subtree is the maximal following run at
+  flattened with siblings sorted by name and a subtree is the maximal following run at
   greater `depth`, so a client cannot splice one node into its copy correctly.
   It is also the shape `configChanged` delivers, so a client re-renders from one
   shape whether the edit was its own or another process's.
@@ -323,7 +323,7 @@ input CreateNibInput {
   title: String!
   "Nib type (defaults to 'task')"
   type: String
-  "Status (defaults to 'todo')"
+  "Status; omitted or empty takes the store's nibs.default_status ('todo' unless configured)"
   status: String
   "Priority level (defaults to 'normal')"
   priority: String
@@ -744,8 +744,8 @@ input NibFilter {
   siblingId treat it. Such a nib still reports its unresolvable link under
   storedParentId, which is not a parent and does not affect this filter.
 
-  Combining false with the parentId FILTER is refused: no nib both has a given
-  parent and has none. See parentId.
+  Combining false with the parentId or ancestorId FILTER is refused: no nib both
+  has a given parent or ancestor and has no parent. See parentId.
   """
   hasParent: Boolean
   """
@@ -792,6 +792,10 @@ input NibFilter {
   and never could. Unlike the not-found refusal above it carries no
   extensions.code, so a GraphQL client sees a generic error; the CLI reports
   VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
+
+  Combining it with hasParent: false is refused exactly as parentId's pair is,
+  with extensions.code = "FILTER_CONTRADICTION": every nib this field matches
+  has a parent, so no store state satisfies both halves.
   """
   ancestorId: String
   """
@@ -851,7 +855,7 @@ input NibFilter {
   VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
   """
   blockingId: String
-  "Tri-state: true keeps nibs blocked by others (via incoming blocking links or blocked_by field), false keeps exactly the unblocked ones, null does not filter"
+  "Tri-state: true keeps nibs with a blocker whose status has not released them, false keeps exactly the unblocked ones, null does not filter. A completed or scrapped nib is never blocked"
   isBlocked: Boolean
   """
   Tri-state: true keeps nibs that have explicit blocked_by entries, false keeps
@@ -910,10 +914,9 @@ input NibFilter {
   engine's queue scope also groups by — the stored id must name an existing,
   milestone-typed nib to count, so a dangling assignment matches nothing
   (known gap, tracked as nibs-4h8f: such an assignment is dropped silently
-  rather than flagged). Resolution checks the target's type, never the
-  assignee's: a milestone-typed nib hand-edited to carry an assignment — a
-  shape the write path refuses — is in this set even though noMilestone's
-  derived reading keeps it in the backlog set. This is DIRECT assignment
+  rather than flagged). A milestone-typed nib is never in this set, including
+  one hand-edited to carry an assignment — a shape the write path refuses. This
+  is DIRECT assignment
   only: the structural children of an assigned nib are planned work in the
   derived sense noMilestone reads, but they are not in this set.
 
@@ -928,6 +931,11 @@ input NibFilter {
   an id that names no milestone — the mistake updateNib's milestone field
   refuses with a message of the same shape. Omit the field to leave it
   unfiltered.
+
+  Combining it with noMilestone: true is refused exactly as parentId's pair with
+  hasParent: false is, with extensions.code = "FILTER_CONTRADICTION": every nib
+  in this set belongs to that milestone, so none is in the backlog. The flag
+  surface refuses `nibs list --milestone X --backlog` with the same exit status.
   """
   milestone: String
   """
@@ -941,10 +949,10 @@ input NibFilter {
   Milestone-typed nibs belong to no milestone themselves — a milestone is a
   container, not a member — so they sit in the true set; combine with
   excludeType: ["milestone"] to keep them out. A dangling or non-milestone
-  assignment schedules nothing and leaves the nib in the true set. A
-  milestone-typed nib hand-edited to carry an assignment — a shape the write
-  path refuses — also sits in the true set here while the milestone filter's
-  resolved-assignment reading places it in that milestone's queue set.
+  assignment schedules nothing and leaves the nib in the true set.
+
+  Combining true with the milestone FILTER is refused: no nib is both in a given
+  milestone's queue and in the backlog. See milestone.
   """
   noMilestone: Boolean
   """

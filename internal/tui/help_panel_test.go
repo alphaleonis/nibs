@@ -6,11 +6,104 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/alphaleonis/nibs/internal/nib"
 )
+
+// A list taking filter input owns every printable key, so q and ? become part
+// of the filter text instead of quitting or toggling help.
+func TestAFilteringListTakesQAndQuestionMark(t *testing.T) {
+	stubViews := []struct {
+		name   string
+		open   func(app *App)
+		state  viewState
+		filter func(app *App) list.Model
+	}{
+		{"list", func(*App) {}, viewList, func(a *App) list.Model { return a.list.list }},
+		{"parent picker", func(a *App) { sendKey(a, tea.KeyPressMsg{Code: 'p', Text: "p"}) }, viewParentPicker, func(a *App) list.Model { return a.parentPicker.list }},
+		{"status picker", func(a *App) { sendKey(a, tea.KeyPressMsg{Code: 's', Text: "s"}) }, viewStatusPicker, func(a *App) list.Model { return a.statusPicker.list }},
+		{"priority picker", func(a *App) { sendKey(a, tea.KeyPressMsg{Code: 'P', Text: "P"}) }, viewPriorityPicker, func(a *App) list.Model { return a.priorityPicker.list }},
+		{"estimate picker", func(a *App) { sendKey(a, tea.KeyPressMsg{Code: 'E', Text: "E"}) }, viewEstimatePicker, func(a *App) list.Model { return a.estimatePicker.list }},
+		{"blocking picker", func(a *App) { sendKey(a, tea.KeyPressMsg{Code: 'b', Text: "b"}) }, viewBlockingPicker, func(a *App) list.Model { return a.blockingPicker.list }},
+		{"tag picker", func(a *App) { a.Update(openTagPickerMsg{}) }, viewTagPicker, func(a *App) list.Model { return a.tagPicker.list }},
+	}
+
+	type view struct {
+		name   string
+		setup  func(t *testing.T) *App
+		state  viewState
+		filter func(app *App) list.Model
+	}
+	var views []view
+	for _, sv := range stubViews {
+		views = append(views, view{sv.name, func(t *testing.T) *App {
+			nibs := pickerTestNibs()
+			nibs[1].Tags = []string{"quux"}
+			app, _ := setupTestApp(t, nibs)
+			if !focusOn(app, "nib-2") {
+				t.Fatal("premise failed: could not focus a task")
+			}
+			sv.open(app)
+			return app
+		}, sv.state, sv.filter})
+	}
+	views = append(views, view{"detail links", func(t *testing.T) *App {
+		app := detailOnLinkedNib(t, 2, 120, 40)
+		if !app.detail.linksActive {
+			t.Fatal("premise failed: the detail view did not focus its links")
+		}
+		return app
+	}, viewDetail, func(a *App) list.Model { return a.detail.linkList }})
+
+	for _, v := range views {
+		t.Run(v.name, func(t *testing.T) {
+			app := v.setup(t)
+			if app.state != v.state {
+				t.Fatalf("premise failed: state = %d, want %d", app.state, v.state)
+			}
+			app.Update(tea.KeyPressMsg{Code: '/', Text: "/"})
+			if got := v.filter(app).FilterState(); got != list.Filtering {
+				t.Fatalf("premise failed: filter state = %v after /, want filtering", got)
+			}
+			helpBefore := app.helpExpanded
+
+			_, quitCmd := app.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
+			app.Update(tea.KeyPressMsg{Code: '?', Text: "?"})
+
+			if app.state != v.state {
+				t.Errorf("state = %d after typing q and ?, want %d", app.state, v.state)
+			}
+			if got := v.filter(app).FilterValue(); got != "q?" {
+				t.Errorf("filter text = %q, want %q", got, "q?")
+			}
+			if app.helpExpanded != helpBefore {
+				t.Error("typing ? into the filter toggled the help panel")
+			}
+			if quitCmd != nil {
+				if _, quit := runCmdNonBlocking(quitCmd).(tea.QuitMsg); quit {
+					t.Error("typing q into the filter quit the app")
+				}
+			}
+		})
+	}
+}
+
+// runCmdNonBlocking returns cmd's message, or nil when cmd blocks (a cursor
+// blink does).
+func runCmdNonBlocking(cmd tea.Cmd) tea.Msg {
+	done := make(chan tea.Msg, 1)
+	go func() { done <- cmd() }()
+	select {
+	case msg := <-done:
+		return msg
+	case <-time.After(10 * time.Millisecond):
+		return nil
+	}
+}
 
 // helpEntryOnScreen is how an entry reads once the frame is collapsed to single
 // spaces. Only the first nine characters of the description are asked for:

@@ -149,6 +149,37 @@ func TestRenderBodyKeepsFirstLineIndent(t *testing.T) {
 	}
 }
 
+func TestMarkdownBodyWrapsToThePaneWidth(t *testing.T) {
+	body := strings.Repeat("lorem ipsum dolor sit amet ", 12)
+	b := &nib.Nib{ID: "nibs-test", Title: "Wrap", Status: "todo", Type: "task", Body: body}
+
+	for _, width := range []int{50, 100, 160} {
+		t.Run(fmt.Sprintf("detail at %d", width), func(t *testing.T) {
+			m := newDetailModel(b, &StubBackend{Nibs: map[string]*nib.Nib{b.ID: b}}, config.Default(), width, 40)
+			vpWidth := width - 4
+			out := m.renderBody(vpWidth)
+			assertLinesFit(t, out, vpWidth)
+			if width > 80 && lipgloss.Height(out) >= lipgloss.Height(m.renderBody(50)) {
+				t.Errorf("body at %d cells is as tall as at 50: it is not using the wider pane", vpWidth)
+			}
+		})
+		t.Run(fmt.Sprintf("preview at %d", width), func(t *testing.T) {
+			p := newPreviewModel(b, width, 40)
+			assertLinesFit(t, p.renderBody(), width-4)
+		})
+	}
+}
+
+func assertLinesFit(t *testing.T, s string, width int) {
+	t.Helper()
+	for _, line := range strings.Split(s, "\n") {
+		if w := lipgloss.Width(line); w > width {
+			t.Errorf("line is %d cells wide, pane holds %d: %q", w, width, stripAnsi(line))
+			return
+		}
+	}
+}
+
 // detailScrollPctRe reads the percentage off a painted frame. The footer's help
 // row is the frame's last line and the percentage is the first thing on it, so
 // the last match is the one the reader sees.
@@ -256,6 +287,33 @@ func TestTheLinksBoxFitsAShortTerminal(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// A link row's title budget has to subtract the type and status columns the row
+// actually draws. Sized from narrower columns, the row outgrows the box and is
+// clipped, and the title loses its ellipsis.
+func TestALinkRowTruncatesItsTitleInsteadOfBeingClipped(t *testing.T) {
+	parent := &nib.Nib{ID: "p1", Title: strings.Repeat("Long parent title ", 12), Status: "todo", Type: "epic"}
+	child := &nib.Nib{ID: "c1", Title: "Child", Status: "todo", Type: "task", Parent: "p1"}
+	backend := &StubBackend{Nibs: map[string]*nib.Nib{parent.ID: parent, child.ID: child}}
+
+	for _, width := range []int{100, 160} {
+		t.Run(fmt.Sprintf("width %d", width), func(t *testing.T) {
+			m := newDetailModel(child, backend, config.Default(), width, 40)
+			var row string
+			for _, line := range strings.Split(stripAnsi(m.linksBox()), "\n") {
+				if strings.Contains(line, "p1") {
+					row = line
+				}
+			}
+			if row == "" {
+				t.Fatalf("premise failed: no link row for p1 in the links box")
+			}
+			if !strings.Contains(row, "...") {
+				t.Errorf("the link row was clipped rather than truncated: %q", row)
+			}
+		})
 	}
 }
 

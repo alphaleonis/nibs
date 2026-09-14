@@ -139,7 +139,6 @@ func TestExitCode(t *testing.T) {
 		{ErrTextAmbiguous, ExitValidation}, // 2
 		{ErrConflict, ExitConflict},        // 4
 		{ErrFileError, ExitIO},             // 5
-		{ErrNoNibsDir, ExitIO},             // 5
 		{ErrUncategorized, ExitError},      // 1
 		{"SOMETHING_ELSE", ExitError},      // 1
 		{"", ExitError},                    // 1
@@ -170,7 +169,6 @@ var generalCodeExpectations = map[string]string{
 	ErrNotFound:      ErrNotFound,
 	ErrConflict:      ErrConflict,
 	ErrFileError:     ErrFileError,
-	ErrNoNibsDir:     ErrFileError,
 	ErrUncategorized: ErrUncategorized,
 }
 
@@ -182,8 +180,7 @@ var generalCodeExpectations = map[string]string{
 // class must be the code whose meaning is the class's own, never a
 // specialization. HIERARCHY generalizing to VALIDATION_ERROR is the case the
 // aggregation rule depends on — reporting HIERARCHY for a mixed exit-2 response
-// would assert an illegal parent type about a failure that is not one — and
-// NO_BEANS_DIR generalizing to FILE_ERROR is the same shape one class over.
+// would assert an illegal parent type about a failure that is not one.
 //
 // Two properties are then asserted over every row, because they are what the
 // caller relies on and neither is visible from a single mapping:

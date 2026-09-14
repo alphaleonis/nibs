@@ -10,6 +10,28 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+func TestRenderTagsCompactCutsByDisplayCells(t *testing.T) {
+	tests := []struct {
+		name string
+		tag  string
+		want string
+	}{
+		{"ascii within the limit", "abcdefghijkl", "abcdefghijkl"},
+		{"ascii over the limit", "abcdefghijklm", "abcdefghij.."},
+		{"multibyte within the limit", "éééééééééééé", "éééééééééééé"},
+		{"multibyte over the limit", "ééééééééééééé", "éééééééééé.."},
+		{"wide runes over the limit", "a日本語日本語", "a日本語日.."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := strings.TrimSpace(ansi.Strip(RenderTagsCompact([]string{tt.tag}, 1)))
+			if got != tt.want {
+				t.Errorf("RenderTagsCompact(%q) = %q, want %q", tt.tag, got, tt.want)
+			}
+		})
+	}
+}
+
 // titleDisplayColumn returns the display column where the title text starts,
 // accounting for multi-byte UTF-8 characters that occupy 1 display cell.
 func titleDisplayColumn(rendered, title string) int {

@@ -68,7 +68,7 @@ func closeQueueGate(ctx context.Context, cmd *cobra.Command, app *App, resolver 
 		if move || unassign {
 			return nil, cmdError(closeJSON, output.ErrValidation,
 				"--move-open-to and --unassign-open dispose of a milestone's queue, and %s is a %s",
-				stripControlChars(subject.ID), subject.EffectiveType())
+				stripControlChars(subject.ID), stripControlChars(subject.EffectiveType()))
 		}
 		return nil, nil
 	}
@@ -384,7 +384,7 @@ func resolveMoveOpenTarget(ctx context.Context, app *App, resolver *graph.Resolv
 	}
 	if typ := target.EffectiveType(); typ != "milestone" {
 		return nil, cmdError(closeJSON, output.ErrValidation,
-			"milestone target %s has type %s, not milestone", stripControlChars(target.ID), typ)
+			"milestone target %s has type %s, not milestone", stripControlChars(target.ID), stripControlChars(typ))
 	}
 	if target.ID == subject.ID {
 		return nil, cmdError(closeJSON, output.ErrValidation,
@@ -578,7 +578,7 @@ func closeCheckPointer(namesEveryBlockedMember bool) string {
 func closeCheckNamesCause(areas *config.Areas, err error) bool {
 	var areaErr *config.AreaError
 	if errors.As(err, &areaErr) {
-		return areas.Declared()
+		return !areas.IsEmpty()
 	}
 	return true
 }

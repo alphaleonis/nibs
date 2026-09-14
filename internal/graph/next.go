@@ -23,8 +23,9 @@ const (
 )
 
 // NextTally counts what a walk declined, so a "nothing to do" answer can say
-// WHY rather than only that. Counts are of declines, not of distinct nodes:
-// one nib can be counted twice, and under two of the counters.
+// WHY rather than only that. Counts are of distinct nibs: `nibs next` prints them
+// as "N closed", so a nib the walk reaches twice is counted once, under the
+// counter for the first place the walk stopped at it.
 type NextTally struct {
 	// Declines to enter a node whose status is closed.
 	Closed int
@@ -162,8 +163,10 @@ type nextWalk struct {
 	reader   NibReader
 	blocking BlockingChecker
 	cfg      *config.Config
-	// visited bounds the descent over a cyclic parent chain, which the
-	// recursion would otherwise follow forever.
+	// visited holds every nib the walk has already stopped at: entered, or
+	// declined as closed. It bounds the descent over a cyclic parent chain,
+	// which the recursion would otherwise follow forever, and it keeps a nib
+	// reachable both as a queue entry and as a child out of the tally twice.
 	visited map[string]bool
 	// aheadOf holds the active queue's inversions, keyed by the entry sitting
 	// AHEAD of its blocker — the half that makes queue order unusable for that
@@ -190,8 +193,13 @@ func (w *nextWalk) indexInversions(milestoneID string) {
 // of which apply to queue entries alone.
 func (w *nextWalk) walk(entries []*nib.Nib, isQueue bool) {
 	for i, e := range entries {
+		// Already reached through an earlier entry's decomposition, which
+		// either counted it or found nothing startable at or under it.
+		if w.visited[e.ID] {
+			continue
+		}
 		if w.cfg.IsClosedStatus(e.Status) {
-			w.res.Tally.Closed++
+			w.countClosed(e)
 			continue
 		}
 		if isQueue {
@@ -231,7 +239,7 @@ func (w *nextWalk) descend(n *nib.Nib, path []*nib.Nib) []*nib.Nib {
 	candidates := make([]*nib.Nib, 0, len(children))
 	for _, c := range children {
 		if w.cfg.IsClosedStatus(c.Status) {
-			w.res.Tally.Closed++
+			w.countClosed(c)
 			continue
 		}
 		if onPath(path, c.ID) {
@@ -265,6 +273,16 @@ func (w *nextWalk) descend(n *nib.Nib, path []*nib.Nib) []*nib.Nib {
 		}
 	}
 	return nil
+}
+
+// countClosed tallies a closed nib the first time the walk declines it. Marking
+// it visited is safe for the descent: a closed nib is never entered.
+func (w *nextWalk) countClosed(n *nib.Nib) {
+	if w.visited[n.ID] {
+		return
+	}
+	w.visited[n.ID] = true
+	w.res.Tally.Closed++
 }
 
 // onPath reports whether id is already a step of the descent that reached here.

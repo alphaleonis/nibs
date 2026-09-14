@@ -78,6 +78,33 @@ func TestCheckAllLinksInMapAssignmentResolution(t *testing.T) {
 		})
 	}
 
+	// A milestone-typed nib is in no milestone whatever its `milestone:` says —
+	// membership.ResolvedMilestoneID's subject clause — so it conflicts with
+	// nothing from either end of the walk.
+	milestoneTyped := []struct {
+		name string
+		nibs map[string]*nib.Nib
+	}{
+		{"a milestone-typed subject is in no milestone", map[string]*nib.Nib{
+			"chk-ms1": {ID: "chk-ms1", Status: "todo", Type: "milestone", Path: "data/chk-ms1--one.md"},
+			"chk-ep1": {ID: "chk-ep1", Status: "todo", Type: "epic", Path: "data/chk-ep1--epic.md", Milestone: "chk-ms1"},
+			"chk-ms2": {ID: "chk-ms2", Status: "todo", Type: "milestone", Path: "data/chk-ms2--two.md", Parent: "chk-ep1", Milestone: "chk-ms1"},
+		}},
+		{"a milestone-typed ancestor is in no milestone", map[string]*nib.Nib{
+			"chk-ms1": {ID: "chk-ms1", Status: "todo", Type: "milestone", Path: "data/chk-ms1--one.md"},
+			"chk-ms2": {ID: "chk-ms2", Status: "todo", Type: "milestone", Path: "data/chk-ms2--two.md", Milestone: "chk-ms1"},
+			"chk-ep1": {ID: "chk-ep1", Status: "todo", Type: "epic", Path: "data/chk-ep1--epic.md", Parent: "chk-ms2", Milestone: "chk-ms1"},
+		}},
+	}
+	for _, tt := range milestoneTyped {
+		t.Run(tt.name, func(t *testing.T) {
+			result := CheckAllLinksInMap(tt.nibs, "", "chk-")
+			if len(result.AssignmentConflicts) != 0 {
+				t.Errorf("conflicts = %+v, want none", result.AssignmentConflicts)
+			}
+		})
+	}
+
 	t.Run("a parent cycle terminates", func(t *testing.T) {
 		nibs := map[string]*nib.Nib{
 			"chk-ms1": {ID: "chk-ms1", Status: "todo", Type: "milestone", Path: "data/chk-ms1--one.md"},

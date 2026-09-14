@@ -53,7 +53,7 @@ export type CreateNibInput = {
   prefix?: string | null | undefined;
   /** Priority level (defaults to 'normal') */
   priority?: string | null | undefined;
-  /** Status (defaults to 'todo') */
+  /** Status; omitted or empty takes the store's nibs.default_status ('todo' unless configured) */
   status?: string | null | undefined;
   /** Tags for categorization */
   tags?: Array<string> | null | undefined;
@@ -79,6 +79,10 @@ export type NibFilter = {
    * and never could. Unlike the not-found refusal above it carries no
    * extensions.code, so a GraphQL client sees a generic error; the CLI reports
    * VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
+   *
+   * Combining it with hasParent: false is refused exactly as parentId's pair is,
+   * with extensions.code = "FILTER_CONTRADICTION": every nib this field matches
+   * has a parent, so no store state satisfies both halves.
    */
   ancestorId?: string | null | undefined;
   /**
@@ -198,11 +202,11 @@ export type NibFilter = {
    * siblingId treat it. Such a nib still reports its unresolvable link under
    * storedParentId, which is not a parent and does not affect this filter.
    *
-   * Combining false with the parentId FILTER is refused: no nib both has a given
-   * parent and has none. See parentId.
+   * Combining false with the parentId or ancestorId FILTER is refused: no nib both
+   * has a given parent or ancestor and has no parent. See parentId.
    */
   hasParent?: boolean | null | undefined;
-  /** Tri-state: true keeps nibs blocked by others (via incoming blocking links or blocked_by field), false keeps exactly the unblocked ones, null does not filter */
+  /** Tri-state: true keeps nibs with a blocker whose status has not released them, false keeps exactly the unblocked ones, null does not filter. A completed or scrapped nib is never blocked */
   isBlocked?: boolean | null | undefined;
   /**
    * Include only nibs mentioned in the given nib's body.
@@ -232,10 +236,9 @@ export type NibFilter = {
    * engine's queue scope also groups by — the stored id must name an existing,
    * milestone-typed nib to count, so a dangling assignment matches nothing
    * (known gap, tracked as nibs-4h8f: such an assignment is dropped silently
-   * rather than flagged). Resolution checks the target's type, never the
-   * assignee's: a milestone-typed nib hand-edited to carry an assignment — a
-   * shape the write path refuses — is in this set even though noMilestone's
-   * derived reading keeps it in the backlog set. This is DIRECT assignment
+   * rather than flagged). A milestone-typed nib is never in this set, including
+   * one hand-edited to carry an assignment — a shape the write path refuses. This
+   * is DIRECT assignment
    * only: the structural children of an assigned nib are planned work in the
    * derived sense noMilestone reads, but they are not in this set.
    *
@@ -250,6 +253,11 @@ export type NibFilter = {
    * an id that names no milestone — the mistake updateNib's milestone field
    * refuses with a message of the same shape. Omit the field to leave it
    * unfiltered.
+   *
+   * Combining it with noMilestone: true is refused exactly as parentId's pair with
+   * hasParent: false is, with extensions.code = "FILTER_CONTRADICTION": every nib
+   * in this set belongs to that milestone, so none is in the backlog. The flag
+   * surface refuses `nibs list --milestone X --backlog` with the same exit status.
    */
   milestone?: string | null | undefined;
   /**
@@ -263,10 +271,10 @@ export type NibFilter = {
    * Milestone-typed nibs belong to no milestone themselves — a milestone is a
    * container, not a member — so they sit in the true set; combine with
    * excludeType: ["milestone"] to keep them out. A dangling or non-milestone
-   * assignment schedules nothing and leaves the nib in the true set. A
-   * milestone-typed nib hand-edited to carry an assignment — a shape the write
-   * path refuses — also sits in the true set here while the milestone filter's
-   * resolved-assignment reading places it in that milestone's queue set.
+   * assignment schedules nothing and leaves the nib in the true set.
+   *
+   * Combining true with the milestone FILTER is refused: no nib is both in a given
+   * milestone's queue and in the backlog. See milestone.
    */
   noMilestone?: boolean | null | undefined;
   /**

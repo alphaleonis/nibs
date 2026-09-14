@@ -197,6 +197,14 @@ func TestIsNewer(t *testing.T) {
 		{"v0.7.0", "v0.6.0", false, true},
 		{"v0.6.0-rc.1", "v0.6.0", true, true}, // prerelease < release
 		{"v0.6.0", "v0.6.0-rc.1", false, true},
+		// A `git describe` build sits past its base tag, not before it.
+		{"v0.8.3-484-g91fe7c8-dirty", "v0.8.3", false, true},
+		{"v0.8.3-484-g91fe7c8", "v0.8.3", false, true},
+		{"v0.8.3-1-g91fe7c8", "v0.8.4", true, true},
+		{"v0.8.3-rc.1-2-g91fe7c8", "v0.8.3-rc.1", false, true},
+		{"v0.8.3-rc.1-2-g91fe7c8", "v0.8.3", true, true},
+		{"v0.8.3-dirty", "v0.8.3", false, true},
+		{"v0.8.3-dirty", "v0.8.4", true, true},
 		{"v0.5.0", "garbage", false, false},
 		{"garbage", "v0.6.0", false, false},
 	}

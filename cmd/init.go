@@ -93,7 +93,7 @@ var initCmd = &cobra.Command{
 			// Derived failure — suggest the escape hatch.
 			return cmdError(initJSON, output.ErrValidation,
 				"derived prefix %q (from directory %q) is not valid: %v\npass --prefix explicitly",
-				prefix, dirName, err)
+				stripControlChars(prefix), stripControlChars(dirName), err)
 		}
 
 		// Load user config to seed preferences into the new project

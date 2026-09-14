@@ -8,6 +8,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/membership"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/safetext"
 )
 
 // QueueNameLimit caps how many ids a queue refusal enumerates before it
@@ -54,18 +55,12 @@ type MilestoneRetypeError struct {
 }
 
 func (e *MilestoneRetypeError) Error() string {
-	named := e.Held
-	more := ""
-	if len(named) > QueueNameLimit {
-		named = named[:QueueNameLimit]
-		more = fmt.Sprintf(", and %d more", len(e.Held)-QueueNameLimit)
-	}
 	subject := fmt.Sprintf("%d nibs are", len(e.Held))
 	if len(e.Held) == 1 {
 		subject = "1 nib is"
 	}
-	return fmt.Sprintf("cannot change milestone %s to %s: %s still assigned to it (%s%s), and the assignment would name a nib that is no longer a milestone — clear the assignments first, or leave the type alone",
-		e.MilestoneID, e.NewType, subject, strings.Join(named, ", "), more)
+	return fmt.Sprintf("cannot change milestone %s to %s: %s still assigned to it (%s), and the assignment would name a nib that is no longer a milestone — clear the assignments first, or leave the type alone",
+		safetext.Strip(e.MilestoneID), e.NewType, subject, namedMembers(e.Held))
 }
 
 // memberIDs reads the ids out of a member set in queue order, so no store pointer
@@ -103,12 +98,6 @@ type MilestoneQueueOpenError struct {
 }
 
 func (e *MilestoneQueueOpenError) Error() string {
-	named := e.Open
-	more := ""
-	if len(named) > QueueNameLimit {
-		named = named[:QueueNameLimit]
-		more = fmt.Sprintf(", and %d more", len(e.Open)-QueueNameLimit)
-	}
 	subject := fmt.Sprintf("%d open nibs are", len(e.Open))
 	if len(e.Open) == 1 {
 		subject = "1 open nib is"
@@ -117,8 +106,8 @@ func (e *MilestoneQueueOpenError) Error() string {
 	if len(e.Holding) > 0 {
 		holding = fmt.Sprintf(", or close it as %s to keep the queue", strings.Join(e.Holding, " / "))
 	}
-	return fmt.Sprintf("cannot close milestone %s as %s: %s still assigned to its queue (%s%s) — reassign the open work to another milestone or clear its assignments first%s",
-		e.MilestoneID, e.Status, subject, strings.Join(named, ", "), more, holding)
+	return fmt.Sprintf("cannot close milestone %s as %s: %s still assigned to its queue (%s) — reassign the open work to another milestone or clear its assignments first%s",
+		safetext.Strip(e.MilestoneID), e.Status, subject, namedMembers(e.Open), holding)
 }
 
 // refuseClosingFullQueue is decision 1.5 read off the state the request LEAVES:

@@ -30,13 +30,12 @@ func findSection(lines []string, heading string, matchLevel int) (section, bool)
 // level gate. match receives the heading text with its "#" markers stripped, and
 // the already-lower-cased target.
 func scanSection(lines []string, target string, matchLevel int, match func(text, target string) bool) (section, bool) {
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if !isHeading(trimmed) {
+	levels := headingLevels(lines)
+	for i, l := range levels {
+		if l == 0 {
 			continue
 		}
-		l := HeadingLevel(trimmed)
-		text := strings.TrimSpace(trimmed[l:])
+		text := strings.TrimSpace(strings.TrimSpace(lines[i])[l:])
 		if !match(text, target) || (matchLevel != AnyLevel && l != matchLevel) {
 			continue
 		}
@@ -44,8 +43,7 @@ func scanSection(lines []string, target string, matchLevel int, match func(text,
 		// The section ends at the next heading of equal or higher level.
 		end := len(lines)
 		for j := i + 1; j < len(lines); j++ {
-			jTrimmed := strings.TrimSpace(lines[j])
-			if isHeading(jTrimmed) && HeadingLevel(jTrimmed) <= l {
+			if levels[j] != 0 && levels[j] <= l {
 				end = j
 				break
 			}
@@ -123,6 +121,44 @@ func SetAtLevel(body string, matchLevel, appendLevel int, heading, content strin
 		return "\n" + section, true
 	}
 	return strings.TrimRight(body, "\n") + "\n\n" + section, true
+}
+
+// headingLevels returns each line's heading level, or 0 for a line that is not a
+// heading — including one inside a fenced code block, where "# comment" is code.
+// A fence opens with a run of three or more backticks or tildes and closes on a
+// line holding only a run of the same character at least as long.
+func headingLevels(lines []string) []int {
+	levels := make([]int, len(lines))
+	var fenceChar byte
+	fenceLen := 0
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if fenceLen > 0 {
+			if n := fenceRun(trimmed, fenceChar); n >= fenceLen && n == len(trimmed) {
+				fenceLen = 0
+			}
+			continue
+		}
+		if len(trimmed) > 0 && (trimmed[0] == '`' || trimmed[0] == '~') {
+			if n := fenceRun(trimmed, trimmed[0]); n >= 3 {
+				fenceChar, fenceLen = trimmed[0], n
+				continue
+			}
+		}
+		if isHeading(trimmed) {
+			levels[i] = HeadingLevel(trimmed)
+		}
+	}
+	return levels
+}
+
+// fenceRun counts the leading run of c in line.
+func fenceRun(line string, c byte) int {
+	n := 0
+	for n < len(line) && line[n] == c {
+		n++
+	}
+	return n
 }
 
 func isHeading(line string) bool {

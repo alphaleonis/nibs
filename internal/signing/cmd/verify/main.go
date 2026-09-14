@@ -69,8 +69,8 @@ func runCheckKey(v *signing.Verifier) error {
 	if err := v.Verify([]byte(canary), ed25519.Sign(key, []byte(canary))); err != nil {
 		return fmt.Errorf("the private key in %s does not correspond to ANY of the %d public keys in "+
 			"internal/signing/keys/.\n"+
-			"  A release signed with it would be published, look valid, and then be rejected by every\n"+
-			"  nibs binary once signature verification is required — recoverable only by reinstalling.\n"+
+			"  A release signed with it would be published and look valid, but `nibs upgrade` rejects\n"+
+			"  its checksums.txt signature, so no installed nibs could upgrade to it.\n"+
 			"  Either set the secret to a key whose public half is embedded, or embed this key's public\n"+
 			"  half and ship a release carrying it before signing with it", keyEnv, v.Keys())
 	}

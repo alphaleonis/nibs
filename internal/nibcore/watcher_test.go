@@ -551,6 +551,62 @@ func TestWatcherSameIdSlugRenameNotEvicted(t *testing.T) {
 	}
 }
 
+// TestWatcherSameIdSlugRenameInSubdirectoryNotEvicted is the slug rename above
+// for a nib living in a data/ subdirectory, which Load enrolls: the by-id scan
+// must look where Load looks, or the nib falls through to the genuine-delete
+// path.
+func TestWatcherSameIdSlugRenameInSubdirectoryNotEvicted(t *testing.T) {
+	const nibID = "sb21"
+
+	for _, createFirst := range []bool{false, true} {
+		name := "remove-first"
+		if createFirst {
+			name = "create-first"
+		}
+		t.Run(name, func(t *testing.T) {
+			core, nibsDir, filename := watchingCore(t, nibID)
+
+			subDir := dataPath(nibsDir, "sub")
+			if err := os.MkdirAll(subDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			oldAbs := filepath.Join(subDir, filename)
+			if err := os.Rename(dataPath(nibsDir, filename), oldAbs); err != nil {
+				t.Fatalf("move into subdirectory: %v", err)
+			}
+			if err := core.Load(); err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			wantOld := store.DataDirName + "/sub/" + filename
+			if n, err := core.Get(nibID); err != nil || n.Path != wantOld {
+				t.Fatalf("precondition: Get(%q) = %+v, %v; want Path %q", nibID, n, err, wantOld)
+			}
+
+			newAbs := filepath.Join(subDir, nibID+"--new-slug.md")
+			if err := os.Rename(oldAbs, newAbs); err != nil {
+				t.Fatalf("slug rename: %v", err)
+			}
+
+			setWatching(core)
+			ch, unsub := core.Subscribe()
+			defer unsub()
+
+			driveMove(core, oldAbs, newAbs, createFirst)
+
+			got := collectNibEvents(t, ch, nibID, 150*time.Millisecond)
+			assertNoDeletedFor(t, got, nibID)
+
+			n, err := core.Get(nibID)
+			if err != nil {
+				t.Fatalf("nib evicted from store during slug rename (data loss): Get(%q) = %v", nibID, err)
+			}
+			if want := store.DataDirName + "/sub/" + nibID + "--new-slug.md"; n.Path != want {
+				t.Errorf("stored Path = %q, want %q", n.Path, want)
+			}
+		})
+	}
+}
+
 // TestWatcherSameIdSluglessRenameNotEvicted covers nibs-mccz: a same-id rename
 // that DROPS the slug from a prefixed nib (nibs-x9z2--move-test.md ->
 // nibs-x9z2.md) must NOT evict the nib. Every configured id prefix ends in a
@@ -1107,4 +1163,29 @@ func TestWatcherObservesExternalAtomicWrite(t *testing.T) {
 	if got.Title != newTitle {
 		t.Errorf("stored Title = %q, want %q — the watcher never applied the external edit", got.Title, newTitle)
 	}
+}
+
+// TestSetWarnWriterWhileWatching swaps the warn writer while the watcher is
+// about to warn about an arriving file. It asserts only that the warning
+// arrives; what fails on an unsynchronized swap is the -race lane.
+//
+// The file is written BEFORE the swapping starts: the race detector treats a
+// file write as preceding every later file read, so a swap made before the
+// write would be ordered ahead of the watcher's read and go unreported.
+func TestSetWarnWriterWhileWatching(t *testing.T) {
+	core, nibsDir := setupTestCore(t)
+	warnings := &syncBuffer{}
+	core.SetWarnWriter(warnings)
+	if err := core.StartWatching(); err != nil {
+		t.Fatalf("StartWatching() error = %v", err)
+	}
+	defer func() { _ = core.StopWatching() }()
+
+	if err := os.WriteFile(filepath.Join(storeData(t, nibsDir), "tnib-bad.md"), []byte("not a nib\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the watcher's warning about the unparseable file", func() bool {
+		core.SetWarnWriter(warnings)
+		return strings.Contains(warnings.String(), "failed to load nib")
+	})
 }

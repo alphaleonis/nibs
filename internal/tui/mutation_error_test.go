@@ -30,6 +30,34 @@ import (
 // real guard's own text is checked against the resolver further down.
 const refusalReason = "cannot close tnib-mile: 3 open nibs are still assigned to its queue"
 
+func TestCopyFromTheDetailViewReportsItsOutcomeKind(t *testing.T) {
+	app, _ := setupTestApp(t, pickerTestNibs())
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if app.state != viewDetail {
+		t.Fatalf("premise failed: expected the detail view, got state %d", app.state)
+	}
+	orig := clipboardWriteAll
+	t.Cleanup(func() { clipboardWriteAll = orig })
+
+	clipboardWriteAll = func(string) error { return errors.New("no clipboard utilities") }
+	sendKey(app, tea.KeyPressMsg{Code: 'y', Text: "y"})
+	if !strings.Contains(app.detail.statusMessage, "no clipboard utilities") {
+		t.Fatalf("detail footer message = %q, want the copy failure", app.detail.statusMessage)
+	}
+	if app.detail.statusKind != statusWarn {
+		t.Errorf("detail statusKind after a failed copy = %v, want statusWarn", app.detail.statusKind)
+	}
+
+	clipboardWriteAll = func(string) error { return nil }
+	sendKey(app, tea.KeyPressMsg{Code: 'y', Text: "y"})
+	if !strings.HasPrefix(app.detail.statusMessage, "Copied ") {
+		t.Fatalf("detail footer message = %q, want the copy confirmation", app.detail.statusMessage)
+	}
+	if app.detail.statusKind != statusOK {
+		t.Errorf("detail statusKind after a successful copy = %v, want statusOK", app.detail.statusKind)
+	}
+}
+
 func pickerTestNibs() []*nib.Nib {
 	return []*nib.Nib{
 		{ID: "nib-1", Title: "First", Type: "milestone", Status: "todo", Order: "1"},

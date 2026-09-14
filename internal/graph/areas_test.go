@@ -61,10 +61,10 @@ func pathsOf(areas []*model.Area) []string {
 	return out
 }
 
-// TestConfigResolverFlattensAreasInDeclarationOrder pins the shape of the wire
-// list: declaration order, a parent immediately before the subtree it heads,
-// depth counted from a root.
-func TestConfigResolverFlattensAreasInDeclarationOrder(t *testing.T) {
+// TestConfigResolverFlattensAreasSortedByName pins the shape of the wire list:
+// siblings by name, a parent immediately before the subtree it heads, depth
+// counted from a root.
+func TestConfigResolverFlattensAreasSortedByName(t *testing.T) {
 	tests := []struct {
 		name  string
 		areas []config.AreaConfig
@@ -76,45 +76,45 @@ func TestConfigResolverFlattensAreasInDeclarationOrder(t *testing.T) {
 			want:  []areaWire{},
 		},
 		{
-			name: "roots keep the file's order, not an alphabetical one",
+			name: "roots sort by name, not the file's order",
 			areas: []config.AreaConfig{
 				{Name: "infra"},
 				{Name: "auth"},
 				{Name: "api"},
 			},
-			want: []areaWire{{"infra", 0}, {"auth", 0}, {"api", 0}},
+			want: []areaWire{{"api", 0}, {"auth", 0}, {"infra", 0}},
 		},
 		{
 			name: "a parent comes immediately before its subtree",
 			areas: []config.AreaConfig{
-				{Name: "web", Children: []config.AreaConfig{{Name: "dashboard"}, {Name: "settings"}}},
-				{Name: "infra"},
+				{Name: "web", Children: []config.AreaConfig{{Name: "settings"}, {Name: "dashboard"}}},
+				{Name: "api"},
 			},
 			want: []areaWire{
+				{"api", 0},
 				{"web", 0},
 				{"web/dashboard", 1},
 				{"web/settings", 1},
-				{"infra", 0},
 			},
 		},
 		{
 			name: "a deeper subtree is emitted before the parent's next sibling",
 			areas: []config.AreaConfig{
-				{Name: "web", Children: []config.AreaConfig{
+				{Name: "auth", Children: []config.AreaConfig{
 					{Name: "settings", Children: []config.AreaConfig{
 						{Name: "billing", Children: []config.AreaConfig{{Name: "invoices"}}},
 					}},
-					{Name: "dashboard"},
+					{Name: "tokens"},
 				}},
-				{Name: "auth"},
+				{Name: "web"},
 			},
 			want: []areaWire{
-				{"web", 0},
-				{"web/settings", 1},
-				{"web/settings/billing", 2},
-				{"web/settings/billing/invoices", 3},
-				{"web/dashboard", 1},
 				{"auth", 0},
+				{"auth/settings", 1},
+				{"auth/settings/billing", 2},
+				{"auth/settings/billing/invoices", 3},
+				{"auth/tokens", 1},
+				{"web", 0},
 			},
 		},
 		{
@@ -146,13 +146,13 @@ func TestConfigResolverFlattensAreasInDeclarationOrder(t *testing.T) {
 func TestConfigResolverFlattensTheSampleProjectVocabulary(t *testing.T) {
 	got := wireOf(resolveAreaList(t, sampleProjectAreas(t)))
 	want := []areaWire{
-		{"auth", 0},
 		{"api", 0},
 		{"api/webhooks", 1},
+		{"auth", 0},
+		{"docs", 0},
+		{"infra", 0},
 		{"web", 0},
 		{"web/dashboard", 1},
-		{"infra", 0},
-		{"docs", 0},
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("areas = %v, want %v", got, want)
@@ -160,7 +160,7 @@ func TestConfigResolverFlattensTheSampleProjectVocabulary(t *testing.T) {
 }
 
 // A store declaring no areas answers with an empty list. Declaring none is a
-// normal, permanent state (config.Areas.Declared), not a failure, so the
+// normal, permanent state (config.Areas.IsEmpty), not a failure, so the
 // resolver must not error and must not omit the field.
 //
 // It says nothing about null-vs-[] on the wire, because that is not this
@@ -233,7 +233,7 @@ func TestAreasOrderingCarriesSubtreeMembership(t *testing.T) {
 					}
 				}
 				if !slices.Equal(byOrder, byRule) {
-					t.Errorf("subtree of %q read from the order = %v, but IsAreaWithin gives %v",
+					t.Errorf("subtree of %q read from the order = %v, but Areas.IsWithin gives %v",
 						node.Path, byOrder, byRule)
 				}
 			}

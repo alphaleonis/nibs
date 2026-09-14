@@ -20,8 +20,7 @@ type AreaEditRefusal struct {
 	File string
 
 	msg    string
-	format string
-	args   []any
+	render func(file string) string
 }
 
 func (e *AreaEditRefusal) Error() string { return e.msg }
@@ -29,10 +28,10 @@ func (e *AreaEditRefusal) Error() string { return e.msg }
 // Naming returns Error()'s message with file named in it. A refusal with no File
 // renders the same either way.
 func (e *AreaEditRefusal) Naming(file string) string {
-	if e.format == "" {
+	if e.render == nil {
 		return e.msg
 	}
-	return fmt.Sprintf(e.format, append([]any{file}, e.args...)...)
+	return e.render(file)
 }
 
 func refuseAreaEdit(format string, a ...any) error {
@@ -42,14 +41,11 @@ func refuseAreaEdit(format string, a ...any) error {
 const storedAreasNoun = "this store's areas.yml"
 
 // refuseAreaEditAbout keeps the path out of Error(), which reaches an
-// unauthenticated HTTP client, and in File for Naming to render.
-func refuseAreaEditAbout(file, format string, a ...any) error {
-	return &AreaEditRefusal{
-		File:   file,
-		msg:    fmt.Sprintf(format, append([]any{storedAreasNoun}, a...)...),
-		format: format,
-		args:   a,
-	}
+// unauthenticated HTTP client, and in File for Naming to render. render receives
+// the file as a parameter rather than a format position, so the sentence is an
+// ordinary fmt.Sprintf that vet checks.
+func refuseAreaEditAbout(file string, render func(file string) string) error {
+	return &AreaEditRefusal{File: file, msg: render(storedAreasNoun), render: render}
 }
 
 // StoredAreaEdit is a store's areas.yml rendered with one edit applied, not yet
@@ -80,10 +76,7 @@ func PlanRenameStoredArea(storeDir, path, newName string) (*StoredAreaEdit, erro
 		if err != nil {
 			return err
 		}
-		name := mappingValueNode(found.node, "name")
-		if name == nil {
-			return refuseAreaEdit("the declared area %q has no `name:` key to rename", RenderAreaPath(path))
-		}
+		name := found.name
 		name.Kind = yaml.ScalarNode
 		name.Tag = "!!str"
 		name.Value = newName
@@ -131,6 +124,7 @@ func RemoveStoredArea(storeDir, path string) (staleLinkTarget string, err error)
 // storedArea is one declared node found in the vocabulary's node tree.
 type storedArea struct {
 	node  *yaml.Node
+	name  *yaml.Node // the `name:` value node matched to find node; never nil
 	seq   *yaml.Node // the sequence holding node; the `areas:` block at top level
 	index int        // node's position in seq
 	owner *yaml.Node // the mapping whose `children:` key seq is; nil at top level
@@ -215,17 +209,21 @@ func planStoredAreaEdit(storeDir string, missing missingVocabulary, edit func(ar
 		parsed, err := soleConfigDocument(data)
 		if err != nil {
 			if errors.Is(err, errMultipleConfigDocuments) {
-				return nil, refuseAreaEditAbout(path,
-					"%s holds more than one YAML document, and editing its areas would rewrite the file from the first one alone — move anything after the `---` into its own file, or delete the marker if nothing follows it, then rerun",
-				)
+				return nil, refuseAreaEditAbout(path, func(file string) string {
+					return fmt.Sprintf("%s holds more than one YAML document, and editing its areas would rewrite the file from the first one alone — move anything after the `---` into its own file, or delete the marker if nothing follows it, then rerun", file)
+				})
 			}
-			return nil, refuseAreaEditAbout(path, "parsing %s: %v", err)
+			return nil, refuseAreaEditAbout(path, func(file string) string {
+				return fmt.Sprintf("parsing %s: %v", file, err)
+			})
 		}
 		doc = parsed
 	case errors.Is(readErr, fs.ErrNotExist) && missing == synthesizeMissingVocabulary:
 		// Nothing to read; the synthesized empty document stands in.
 	case errors.Is(readErr, fs.ErrNotExist):
-		return nil, refuseAreaEditAbout(path, "no areas vocabulary at %s to edit; a store declares its areas there, beside its config.yml")
+		return nil, refuseAreaEditAbout(path, func(file string) string {
+			return fmt.Sprintf("no areas vocabulary at %s to edit; a store declares its areas there, beside its config.yml", file)
+		})
 	default:
 		return nil, readErr
 	}
@@ -233,20 +231,25 @@ func planStoredAreaEdit(storeDir string, missing missingVocabulary, edit func(ar
 	// The loader resolves inheritance and this tree does not, so a key written on
 	// this tree's "absent" answer would override a merged one it could not see.
 	if found := inheritsContent(&doc); found != nil {
-		return nil, refuseAreaEditAbout(path,
-			"%s uses %s at line %d, and these edits cannot safely change a file that inherits any of its content — rewrite it without anchors, aliases or merge keys, writing out in place whatever they stand for, then rerun",
-			found.construct, found.line)
+		return nil, refuseAreaEditAbout(path, func(file string) string {
+			return fmt.Sprintf("%s uses %s at line %d, and these edits cannot safely change a file that inherits any of its content — rewrite it without anchors, aliases or merge keys, writing out in place whatever they stand for, then rerun",
+				file, found.construct, found.line)
+		})
 	}
 	if err := yaml.Unmarshal(data, new(Areas)); err != nil {
 		// On the file as read, so an already-broken file is not reported as the
 		// edit breaking it; the re-read below answers for the output.
-		return nil, refuseAreaEditAbout(path, "%s cannot be read as an areas vocabulary (%v) — repair it, then rerun", err)
+		return nil, refuseAreaEditAbout(path, func(file string) string {
+			return fmt.Sprintf("%s cannot be read as an areas vocabulary (%v) — repair it, then rerun", file, err)
+		})
 	}
 
 	bootstrap := missing == synthesizeMissingVocabulary
 	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
 		if !bootstrap {
-			return nil, refuseAreaEditAbout(path, "%s declares no areas to edit")
+			return nil, refuseAreaEditAbout(path, func(file string) string {
+				return fmt.Sprintf("%s declares no areas to edit", file)
+			})
 		}
 		// Nothing parsed, so these bytes are all anybody wrote; yaml.v3 re-emits
 		// them as a comment block.
@@ -274,7 +277,9 @@ func planStoredAreaEdit(storeDir string, missing missingVocabulary, edit func(ar
 		}
 	}
 	if areas == nil || areas.Kind != yaml.SequenceNode {
-		return nil, refuseAreaEditAbout(path, "%s declares no `areas:` block")
+		return nil, refuseAreaEditAbout(path, func(file string) string {
+			return fmt.Sprintf("%s declares no `areas:` block", file)
+		})
 	}
 	if err := edit(areas); err != nil {
 		return nil, err
@@ -287,19 +292,24 @@ func planStoredAreaEdit(storeDir string, missing missingVocabulary, edit func(ar
 	// The re-marshal normalizes indentation, so a vocabulary near the cap crosses
 	// it on an edit that adds nothing.
 	if len(out) > MaxConfigBytes {
-		return nil, refuseAreaEditAbout(path,
-			"the edit would leave %s at %d bytes, past the %d-byte configuration limit, and a store whose areas.yml is over that limit cannot be opened by any command — declare fewer areas, or shorter names, then rerun",
-			len(out), MaxConfigBytes)
+		return nil, refuseAreaEditAbout(path, func(file string) string {
+			return fmt.Sprintf("the edit would leave %s at %d bytes, past the %d-byte configuration limit, and a store whose areas.yml is over that limit cannot be opened by any command — declare fewer areas, or shorter names, then rerun",
+				file, len(out), MaxConfigBytes)
+		})
 	}
 	// Catches a key the loader binds but this tree cannot match: `!!binary
 	// "YXJlYXM="` carries no anchor or merge for the gate above, and the literal
 	// `areas:` appended beside it binds the field twice, which fails here.
 	var edited Areas
 	if err := yaml.Unmarshal(out, &edited); err != nil {
-		return nil, refuseAreaEditAbout(path, "the edit would leave %s unreadable: %v", err)
+		return nil, refuseAreaEditAbout(path, func(file string) string {
+			return fmt.Sprintf("the edit would leave %s unreadable: %v", file, err)
+		})
 	}
 	if err := edited.Validate(); err != nil {
-		return nil, refuseAreaEditAbout(path, "the edit would leave %s declaring an unusable vocabulary: %v", err)
+		return nil, refuseAreaEditAbout(path, func(file string) string {
+			return fmt.Sprintf("the edit would leave %s declaring an unusable vocabulary: %v", file, err)
+		})
 	}
 	return &StoredAreaEdit{path: path, out: out}, nil
 }
@@ -313,10 +323,10 @@ func findStoredArea(areas *yaml.Node, path string) (storedArea, error) {
 	rest := path
 	for rest != "" {
 		name, tail, nested := strings.Cut(rest, AreaPathSeparator)
-		index := -1
+		index, nameNode := -1, (*yaml.Node)(nil)
 		for i, item := range seq.Content {
 			if n := mappingValueNode(item, "name"); n != nil && n.Value == name {
-				index = i
+				index, nameNode = i, n
 				break
 			}
 		}
@@ -325,7 +335,7 @@ func findStoredArea(areas *yaml.Node, path string) (storedArea, error) {
 		}
 		node := seq.Content[index]
 		if !nested {
-			return storedArea{node: node, seq: seq, index: index, owner: owner}, nil
+			return storedArea{node: node, name: nameNode, seq: seq, index: index, owner: owner}, nil
 		}
 		children := mappingValueNode(node, "children")
 		if children == nil || children.Kind != yaml.SequenceNode {

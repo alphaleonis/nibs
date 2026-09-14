@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/alphaleonis/nibs/internal/safetext"
 )
 
 // prefixPattern matches lowercase alphanumerics and dashes that start with an
@@ -92,10 +94,38 @@ func (fp FilePlan) HasReferenceUpdates() bool {
 		!slices.Equal(fp.OldBlocking, fp.NewBlocking)
 }
 
+// PrefixesOverlap reports whether one prefix starts with the other, the case in
+// which BuildPlan cannot resume a partly re-prefixed snapshot.
+func PrefixesOverlap(a, b string) bool {
+	return strings.HasPrefix(a, b) || strings.HasPrefix(b, a)
+}
+
+// OverlappingPrefixResumeError is BuildPlan's refusal to resume a partly
+// re-prefixed snapshot when one prefix starts with the other: an id carrying
+// the longer prefix also carries the shorter, so whether a run already renamed
+// it cannot be told from the id.
+type OverlappingPrefixResumeError struct {
+	OldPrefix string
+	NewPrefix string
+	ID        string // the first snapshot id carrying the new prefix
+}
+
+func (e *OverlappingPrefixResumeError) Error() string {
+	return fmt.Sprintf("cannot resume from prefix %q to %q: nib %q carries the new prefix, and because one prefix starts with the other its id does not show whether it was already renamed",
+		safetext.Strip(e.OldPrefix), e.NewPrefix, safetext.Strip(e.ID))
+}
+
 // BuildPlan computes a RenamePlan from a snapshot of nibs plus old/new prefix.
 // It performs no disk I/O. The returned plan preserves the input order of the
 // snapshot. The targetExists callback must be non-nil; pass a stub that always
 // returns false if collision detection is not relevant to the caller.
+//
+// A row whose id carries newPrefix is one a failed run already renamed, so a
+// rerun over a partly re-prefixed store resumes: the row plans no rename, is
+// still rewritten, and its own path is not a collision. Each id is classified
+// by the longer of the two prefixes it carries, and when one prefix starts with
+// the other a snapshot holding any already-renamed row is refused with an
+// OverlappingPrefixResumeError.
 func BuildPlan(snapshot []NibSnapshot, oldPrefix, newPrefix string, targetExists TargetExistsFunc) (*RenamePlan, error) {
 	// Accept any existing prefix except "": CutPrefix succeeds with it on every id.
 	if oldPrefix == "" {
@@ -125,23 +155,35 @@ func BuildPlan(snapshot []NibSnapshot, oldPrefix, newPrefix string, targetExists
 		plan.Collisions = append(plan.Collisions, path)
 	}
 	seenNewPath := make(map[string]bool)
+	overlapping := PrefixesOverlap(oldPrefix, newPrefix)
 
 	for _, n := range snapshot {
-		if !strings.HasPrefix(n.ID, oldPrefix) {
-			return nil, fmt.Errorf("snapshot contains nib %q which does not have the expected prefix %q", n.ID, oldPrefix)
+		hasOld := strings.HasPrefix(n.ID, oldPrefix)
+		hasNew := strings.HasPrefix(n.ID, newPrefix)
+		renamed := hasNew && (!hasOld || len(newPrefix) > len(oldPrefix))
+		if !hasOld && !hasNew {
+			return nil, fmt.Errorf("snapshot contains nib %q which does not have the expected prefix %q", safetext.Strip(n.ID), safetext.Strip(oldPrefix))
+		}
+		if renamed && overlapping {
+			return nil, &OverlappingPrefixResumeError{OldPrefix: oldPrefix, NewPrefix: newPrefix, ID: n.ID}
 		}
 		basename := n.Path
 		if idx := strings.LastIndex(n.Path, "/"); idx >= 0 {
 			basename = n.Path[idx+1:]
 		}
 		if !strings.HasPrefix(basename, n.ID) {
-			return nil, fmt.Errorf("nib %q: path basename %q does not start with id %q", n.ID, basename, n.ID)
+			id := safetext.Strip(n.ID)
+			return nil, fmt.Errorf("nib %q: path basename %q does not start with id %q", id, safetext.Strip(basename), id)
+		}
+		oldID, newID, newPath := n.ID, rewriteID(n.ID, oldPrefix, newPrefix), rewritePath(n.Path, oldPrefix, newPrefix)
+		if renamed {
+			oldID, newID, newPath = oldPrefix+strings.TrimPrefix(n.ID, newPrefix), n.ID, n.Path
 		}
 		fp := FilePlan{
 			OldPath:      n.Path,
-			NewPath:      rewritePath(n.Path, oldPrefix, newPrefix),
-			OldID:        n.ID,
-			NewID:        rewriteID(n.ID, oldPrefix, newPrefix),
+			NewPath:      newPath,
+			OldID:        oldID,
+			NewID:        newID,
 			OldParent:    n.Parent,
 			NewParent:    rewriteRef(n.Parent, oldPrefix, newPrefix),
 			OldMilestone: n.Milestone,
@@ -152,7 +194,7 @@ func BuildPlan(snapshot []NibSnapshot, oldPrefix, newPrefix string, targetExists
 			NewBlocking:  rewriteRefs(n.Blocking, oldPrefix, newPrefix),
 		}
 		plan.Files = append(plan.Files, fp)
-		if targetExists(fp.NewPath) {
+		if !renamed && targetExists(fp.NewPath) {
 			addCollision(fp.NewPath)
 		}
 		if seenNewPath[fp.NewPath] {

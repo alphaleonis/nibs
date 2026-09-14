@@ -142,16 +142,20 @@ func TestLoadAcceptsAbsentOrEmptyAreas(t *testing.T) {
 				t.Fatalf("LoadFromStore: %v", err)
 			}
 			if got := cfg.Paths(); len(got) != 0 {
-				t.Errorf("AreaPaths() = %v, want none", got)
+				t.Errorf("Paths() = %v, want none", got)
 			}
-			if cfg.IsValid("web") {
-				t.Error("IsValidArea(\"web\") = true with no declared vocabulary")
+			if cfg.Exists("web") {
+				t.Error("Exists(\"web\") = true with no declared vocabulary")
 			}
 		})
 	}
 }
 
-func TestAreaPathsEnumeratesInDeclarationOrder(t *testing.T) {
+// TestAreaPathsEnumerateSiblingsByName pins the order every surface renders a
+// vocabulary in: siblings by name, each parent immediately before the subtree it
+// heads. The file declares its roots and one set of children out of that order,
+// so an enumeration in file order fails here.
+func TestAreaPathsEnumerateSiblingsByName(t *testing.T) {
 	dir := writeStoreAreas(t, sampleAreasConfig)
 	cfg, err := LoadAreasFromStore(dir)
 	if err != nil {
@@ -159,17 +163,29 @@ func TestAreaPathsEnumeratesInDeclarationOrder(t *testing.T) {
 	}
 
 	want := []string{
+		"api", "api/v2",
+		"auth",
 		"web", "web/dashboard", "web/settings",
 		"webhooks",
-		"auth",
-		"api", "api/v2",
 	}
 	if got := cfg.Paths(); !slices.Equal(got, want) {
-		t.Errorf("AreaPaths() = %v, want %v", got, want)
+		t.Errorf("Paths() = %v, want %v", got, want)
 	}
 	if got, want := cfg.List(), strings.Join(want, ", "); got != want {
-		t.Errorf("AreaList() = %q, want %q", got, want)
+		t.Errorf("List() = %q, want %q", got, want)
 	}
+
+	t.Run("children and letter case", func(t *testing.T) {
+		dir := writeStoreAreas(t, "areas:\n    - name: web\n      children:\n        - name: settings\n        - name: Dashboard\n    - name: Infra\n    - name: api\n")
+		cfg, err := LoadAreasFromStore(dir)
+		if err != nil {
+			t.Fatalf("LoadFromStore: %v", err)
+		}
+		want := []string{"api", "Infra", "web", "web/Dashboard", "web/settings"}
+		if got := cfg.Paths(); !slices.Equal(got, want) {
+			t.Errorf("Paths() = %v, want %v", got, want)
+		}
+	})
 }
 
 func TestGetAreaResolvesDeclaredPaths(t *testing.T) {
@@ -200,23 +216,23 @@ func TestGetAreaResolvesDeclaredPaths(t *testing.T) {
 		t.Run("path="+tt.path, func(t *testing.T) {
 			node := cfg.Get(tt.path)
 			if (node != nil) != tt.wantFound {
-				t.Fatalf("GetArea(%q) found = %v, want %v", tt.path, node != nil, tt.wantFound)
+				t.Fatalf("Get(%q) found = %v, want %v", tt.path, node != nil, tt.wantFound)
 			}
-			if got := cfg.IsValid(tt.path); got != tt.wantFound {
-				t.Errorf("IsValidArea(%q) = %v, want %v", tt.path, got, tt.wantFound)
+			if got := cfg.Exists(tt.path); got != tt.wantFound {
+				t.Errorf("Exists(%q) = %v, want %v", tt.path, got, tt.wantFound)
 			}
 			if tt.wantFound && node.Description != tt.wantDescription {
-				t.Errorf("GetArea(%q).Description = %q, want %q", tt.path, node.Description, tt.wantDescription)
+				t.Errorf("Get(%q).Description = %q, want %q", tt.path, node.Description, tt.wantDescription)
 			}
 		})
 	}
 
 	if got := cfg.Get("web").Color; got != "blue" {
-		t.Errorf("GetArea(\"web\").Color = %q, want \"blue\"", got)
+		t.Errorf("Get(\"web\").Color = %q, want \"blue\"", got)
 	}
 }
 
-func TestIsAreaWithin(t *testing.T) {
+func TestAreasIsWithin(t *testing.T) {
 	dir := writeStoreAreas(t, sampleAreasConfig)
 	cfg, err := LoadAreasFromStore(dir)
 	if err != nil {
@@ -246,7 +262,7 @@ func TestIsAreaWithin(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := cfg.IsWithin(tt.path, tt.ancestor); got != tt.want {
-				t.Errorf("IsAreaWithin(%q, %q) = %v, want %v", tt.path, tt.ancestor, got, tt.want)
+				t.Errorf("IsWithin(%q, %q) = %v, want %v", tt.path, tt.ancestor, got, tt.want)
 			}
 		})
 	}
@@ -260,9 +276,8 @@ func TestAreasSaveRoundTrips(t *testing.T) {
 			Name:        "web",
 			Description: "The browser client",
 			Color:       "blue",
-			Order:       "a",
 			Children: []AreaConfig{
-				{Name: "dashboard", Description: "The landing dashboard", Order: "a0"},
+				{Name: "dashboard", Description: "The landing dashboard"},
 			},
 		},
 		{Name: "auth", Description: "Sign-in and sessions"},
@@ -285,13 +300,13 @@ func TestAreasSaveRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadAreasFromStore: %v", err)
 	}
-	wantPaths := []string{"web", "web/dashboard", "auth"}
+	wantPaths := []string{"auth", "web", "web/dashboard"}
 	if paths := got.Paths(); !slices.Equal(paths, wantPaths) {
 		t.Fatalf("Paths() = %v, want %v", paths, wantPaths)
 	}
 	dashboard := got.Get("web/dashboard")
-	if dashboard.Description != "The landing dashboard" || dashboard.Order != "a0" {
-		t.Errorf("web/dashboard = %+v, want the description and order that were saved", *dashboard)
+	if dashboard.Description != "The landing dashboard" {
+		t.Errorf("web/dashboard = %+v, want the description that was saved", *dashboard)
 	}
 }
 
@@ -309,10 +324,10 @@ func TestAreasSaveRemovesTheFileWhenNothingIsDeclared(t *testing.T) {
 	}
 }
 
-// TestSetStoredPrefixLeavesTheVocabularyAlone pins the independence the split
+// TestStoredPrefixEditLeavesTheVocabularyAlone pins the independence the split
 // bought: the prefix editor rewrites config.yml, and areas.yml is not its file
 // to touch.
-func TestSetStoredPrefixLeavesTheVocabularyAlone(t *testing.T) {
+func TestStoredPrefixEditLeavesTheVocabularyAlone(t *testing.T) {
 	dir := writeStoreAreas(t, sampleAreasConfig)
 	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte("nibs:\n    prefix: t-\n"), 0o644); err != nil {
 		t.Fatalf("writing config: %v", err)
@@ -322,16 +337,14 @@ func TestSetStoredPrefixLeavesTheVocabularyAlone(t *testing.T) {
 		t.Fatalf("reading areas: %v", err)
 	}
 
-	if _, err := SetStoredPrefix(dir, "new-"); err != nil {
-		t.Fatalf("SetStoredPrefix: %v", err)
-	}
+	setStoredPrefix(t, dir, "new-")
 
 	after, err := os.ReadFile(filepath.Join(dir, "areas.yml"))
 	if err != nil {
 		t.Fatalf("reading areas after the edit: %v", err)
 	}
 	if string(before) != string(after) {
-		t.Errorf("SetStoredPrefix rewrote areas.yml:\n--- before ---\n%s\n--- after ---\n%s", before, after)
+		t.Errorf("the prefix edit rewrote areas.yml:\n--- before ---\n%s\n--- after ---\n%s", before, after)
 	}
 
 	cfg, err := LoadFromStore(dir)
@@ -365,13 +378,13 @@ func TestAreaListRendersFileSourcedNames(t *testing.T) {
 	}
 
 	if got, want := areas.List(), "a b, c d, e f"; got != want {
-		t.Errorf("AreaList() = %q, want %q", got, want)
+		t.Errorf("List() = %q, want %q", got, want)
 	}
-	// AreaPaths is the data accessor and must stay verbatim: resolution compares
+	// Paths is the data accessor and must stay verbatim: resolution compares
 	// a nib's `area:` value against it byte for byte.
 	wantPaths := []string{"a\x1bb", "c`d", "e\nf"}
 	if got := areas.Paths(); !slices.Equal(got, wantPaths) {
-		t.Errorf("AreaPaths() = %q, want %q", got, wantPaths)
+		t.Errorf("Paths() = %q, want %q", got, wantPaths)
 	}
 }
 
@@ -389,13 +402,13 @@ func TestAreaListBoundsWhatItRepeats(t *testing.T) {
 
 		got := vocab.List()
 		if !strings.HasSuffix(got, "…and 5 more") {
-			t.Errorf("AreaList() = %q, want it to end by stating the elided count", got)
+			t.Errorf("List() = %q, want it to end by stating the elided count", got)
 		}
 		if !strings.Contains(got, fmt.Sprintf("a%03d", maxListedAreas-1)) {
-			t.Errorf("AreaList() = %q, want the first %d paths listed", got, maxListedAreas)
+			t.Errorf("List() = %q, want the first %d paths listed", got, maxListedAreas)
 		}
 		if first := fmt.Sprintf("a%03d", maxListedAreas); strings.Contains(got, first) {
-			t.Errorf("AreaList() = %q, want %q elided", got, first)
+			t.Errorf("List() = %q, want %q elided", got, first)
 		}
 	})
 
@@ -411,10 +424,10 @@ func TestAreaListBoundsWhatItRepeats(t *testing.T) {
 
 		got := vocab.List()
 		if strings.Contains(got, "more") {
-			t.Errorf("AreaList() = %q, want no elision claim when every path fits", got)
+			t.Errorf("List() = %q, want no elision claim when every path fits", got)
 		}
 		if last := fmt.Sprintf("a%03d", maxListedAreas-1); !strings.Contains(got, last) {
-			t.Errorf("AreaList() = %q, want the last path %q listed", got, last)
+			t.Errorf("List() = %q, want the last path %q listed", got, last)
 		}
 	})
 
@@ -424,7 +437,7 @@ func TestAreaListBoundsWhatItRepeats(t *testing.T) {
 
 		got := vocab.List()
 		if got != name {
-			t.Errorf("AreaList() = %q, want %q returned whole and unmarked", got, name)
+			t.Errorf("List() = %q, want %q returned whole and unmarked", got, name)
 		}
 	})
 
@@ -433,10 +446,10 @@ func TestAreaListBoundsWhatItRepeats(t *testing.T) {
 
 		got := vocab.List()
 		if n := utf8.RuneCountInString(got); n != maxListedAreaRunes+1 {
-			t.Errorf("AreaList() is %d runes, want %d plus the truncation marker", n, maxListedAreaRunes)
+			t.Errorf("List() is %d runes, want %d plus the truncation marker", n, maxListedAreaRunes)
 		}
 		if !strings.HasSuffix(got, "…") {
-			t.Errorf("AreaList() = %q, want the truncation marked", got)
+			t.Errorf("List() = %q, want the truncation marked", got)
 		}
 	})
 }
@@ -634,8 +647,7 @@ func TestValidateAreaAssignmentRendersTheRefusedValue(t *testing.T) {
 	// The backtick is the rune the %q around the value does NOT answer: it is
 	// printable, so strconv.Quote passes it through, and it closes the code span
 	// an agent transcript renders the message inside. safetext.Strip is what
-	// substitutes it (non-printables are already covered by %q — see
-	// internal/safetext).
+	// substitutes it.
 	t.Run("a backtick cannot close the message's code span", func(t *testing.T) {
 		err := areas.ValidateAssignment("we`b")
 		if err == nil {

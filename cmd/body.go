@@ -189,13 +189,11 @@ func runBody(cmd *cobra.Command, args []string) error {
 // exclusion; the caller rejects the none-set case). --section combines with
 // --set to target one heading's content; create makes that pairing an upsert.
 //
-// The returned bool is sectionAppended: it is the SetAtLevel write's own record
-// of whether the `--section --set --create` upsert appended a NEW section heading
-// (true) or replaced an existing section in place (false). It names the specific
-// `--section --create` append the shadow-warning cares about, NOT any append: the
-// plain `--append` flag path (and every other operation) returns false, because
-// only a section-create append can leave a written-but-shadowed heading. It is the
-// authoritative append-vs-replace signal that drives sectionShadowWarning.
+// The returned bool is sectionAppended, mdsection.SetAtLevel's append-vs-replace
+// result, and only `--section --set --create` produces a true: the plain
+// `--append` path and every other operation return false, because only a
+// section-create append can leave the written-but-shadowed heading that
+// sectionShadowWarning reports.
 func buildBodyInput(b *nib.Nib, setChanged, appendChanged, sectionChanged, replaceChanged, create bool) (model.UpdateNibInput, bool, error) {
 	var input model.UpdateNibInput
 
@@ -218,8 +216,6 @@ func buildBodyInput(b *nib.Nib, setChanged, appendChanged, sectionChanged, repla
 			// a new heading at the level the flag spells (bare defaults to level 2).
 			// SetAtLevel (not Set) because a spelled "### H" must gate the match to
 			// its exact level; the two clearly-named level vars can't be transposed.
-			// The returned bool is the write's authoritative record of whether it
-			// appended a new section (shadowable) or replaced one in place.
 			newBody, sectionAppended := mdsection.SetAtLevel(b.Body, matchLevel, sectionHeadingLevel(bodySection), heading, strings.TrimRight(content, "\n"))
 			input.Body = &newBody
 			return input, sectionAppended, nil

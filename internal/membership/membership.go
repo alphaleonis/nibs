@@ -105,10 +105,14 @@ func (v *View) DirectMembers(containerID string) []*nib.Nib {
 
 // Members returns the container's full-depth membership, each nib once,
 // breadth-first: DirectMembers applied transitively, so it never descends into a
-// milestone.
+// milestone. For a milestone it is exactly the reachable nibs MilestoneOf places
+// in it: a descendant assigned to a different milestone, and the subtree that
+// inherits from it, is left out rather than counted in both.
 func (v *View) Members(containerID string) []*nib.Nib {
 	var result []*nib.Nib
 	visited := make(map[string]bool)
+	c := v.byID[containerID]
+	isMilestone := c != nil && c.EffectiveType() == "milestone"
 	queue := v.DirectMembers(containerID)
 	for len(queue) > 0 {
 		b := queue[0]
@@ -117,6 +121,9 @@ func (v *View) Members(containerID string) []*nib.Nib {
 			continue
 		}
 		visited[b.ID] = true
+		if isMilestone && v.MilestoneOf(b.ID) != containerID {
+			continue
+		}
 		result = append(result, b)
 		queue = append(queue, v.DirectMembers(b.ID)...)
 	}
@@ -149,7 +156,7 @@ func (v *View) MilestoneOf(id string) string {
 	return ""
 }
 
-// EpicGroup is one epic and its DirectMembers.
+// EpicGroup is one epic and the Items grouped under it.
 type EpicGroup struct {
 	Epic  *nib.Nib
 	Items []*nib.Nib
@@ -157,7 +164,9 @@ type EpicGroup struct {
 
 // Backlog is the work outside every milestone: the epics MilestoneOf places in
 // none, and the unscheduled root nibs of other non-milestone types, in input
-// order. An epic's Items are its DirectMembers, scheduled or not.
+// order. An epic's Items are its DirectMembers that MilestoneOf also places in
+// none — a child assigned to a milestone of its own is scheduled work, legal
+// under an unassigned epic.
 type Backlog struct {
 	Epics []EpicGroup
 	Other []*nib.Nib
@@ -171,7 +180,13 @@ func (v *View) Backlog() Backlog {
 		case "milestone":
 		case "epic":
 			if v.MilestoneOf(b.ID) == "" {
-				rem.Epics = append(rem.Epics, EpicGroup{Epic: b, Items: v.DirectMembers(b.ID)})
+				var items []*nib.Nib
+				for _, child := range v.DirectMembers(b.ID) {
+					if v.MilestoneOf(child.ID) == "" {
+						items = append(items, child)
+					}
+				}
+				rem.Epics = append(rem.Epics, EpicGroup{Epic: b, Items: items})
 			}
 		default:
 			if v.isRoot(b) && v.MilestoneOf(b.ID) == "" {

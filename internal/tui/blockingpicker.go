@@ -153,8 +153,8 @@ func newBlockingPickerModel(nibID, nibTitle string, currentBlocking []string, ba
 		})
 	}
 
-	modalWidth := max(40, min(80, width*60/100))
-	modalHeight := max(10, min(20, height*60/100))
+	modalWidth := pickerModalWidth(width, 60, 80)
+	modalHeight := pickerModalHeight(height, 60, 20)
 	listWidth := modalWidth - 6
 	// header(1) + subtitle(1) + blank(1) + blank(1) + description(1) + blank(1) + help(1) + border(2) = 9
 	listHeight := modalHeight - 9
@@ -194,8 +194,8 @@ func (m blockingPickerModel) Update(msg tea.Msg) (blockingPickerModel, tea.Cmd) 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		modalWidth := max(40, min(80, msg.Width*60/100))
-		modalHeight := max(10, min(20, msg.Height*60/100))
+		modalWidth := pickerModalWidth(msg.Width, 60, 80)
+		modalHeight := pickerModalHeight(msg.Height, 60, 20)
 		listWidth := modalWidth - 6
 		listHeight := modalHeight - 9
 		m.list.SetSize(listWidth, listHeight)

@@ -714,6 +714,29 @@ func TestQueryNibsWithParentAndBlocks(t *testing.T) {
 	})
 }
 
+func TestIsBlockedFilterExcludesReleasedNibs(t *testing.T) {
+	resolver, core := setupTestResolver(t)
+	ctx := context.Background()
+
+	mustCreate(t, core, &nib.Nib{ID: "open-blocker", Title: "Open Blocker", Status: "todo"})
+	mustCreate(t, core, &nib.Nib{
+		ID: "released-dependent", Title: "Released Dependent", Status: "completed",
+		BlockedBy: []string{"open-blocker"},
+	})
+
+	for _, want := range []bool{true, false} {
+		isBlocked := want
+		got, err := resolver.Query().Nibs(ctx, &model.NibFilter{IsBlocked: &isBlocked}, nil)
+		if err != nil {
+			t.Fatalf("Nibs(isBlocked: %v) error = %v", want, err)
+		}
+		listed := slices.ContainsFunc(got, func(n *nib.Nib) bool { return n.ID == "released-dependent" })
+		if listed == want {
+			t.Errorf("Nibs(isBlocked: %v) listed the completed nib = %v, want %v", want, listed, !want)
+		}
+	}
+}
+
 func TestIsBlockedFilterWithResolvedBlockers(t *testing.T) {
 	resolver, core := setupTestResolver(t)
 	ctx := context.Background()

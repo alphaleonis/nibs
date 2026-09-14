@@ -79,15 +79,11 @@ func reservePickerDescription(selected string, all []string, modalWidth int) str
 func renderPickerModal(cfg pickerModalConfig) string {
 	modalWidth := pickerModalWidth(cfg.Width, cfg.WidthPct, cfg.MaxWidth)
 
-	titleWidth := modalWidth - 4
 	nibTitle := cfg.NibTitle
 	if nibTitle == "" {
 		nibTitle = cfg.Title
 	}
-	if len(nibTitle) > titleWidth {
-		nibTitle = nibTitle[:titleWidth-3] + "..."
-	}
-	header := lipgloss.NewStyle().Bold(true).Render(nibTitle)
+	header := lipgloss.NewStyle().Bold(true).Render(truncateTitle(nibTitle, modalWidth-4))
 
 	subtitle := ui.Muted.Render(cfg.NibID)
 

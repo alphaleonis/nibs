@@ -7,23 +7,6 @@ import (
 	"strings"
 )
 
-// PositionMap returns each nib's 1-based position, by Order, among the nibs with
-// the same raw Parent string.
-func PositionMap(nibs []*Nib) map[string]int {
-	byParent := make(map[string][]*Nib)
-	for _, b := range nibs {
-		byParent[b.Parent] = append(byParent[b.Parent], b)
-	}
-	positions := make(map[string]int, len(nibs))
-	for _, group := range byParent {
-		SortByOrder(group)
-		for i, b := range group {
-			positions[b.ID] = i + 1
-		}
-	}
-	return positions
-}
-
 // SortByOrder sorts nibs by their Order field lexicographically.
 // Nibs with an order key come first; nibs without one are appended sorted by title.
 func SortByOrder(nibs []*Nib) {
@@ -82,6 +65,14 @@ type PriorityRanker interface {
 // order (EffectiveType), then case-insensitive title. Statuses and types missing
 // from statusNames or typeNames sort last.
 func SortByStatusPriorityAndType(nibs []*Nib, statusNames, typeNames []string, ranker PriorityRanker) {
+	less := LessByStatusPriorityAndType(statusNames, typeNames, ranker)
+	sort.Slice(nibs, func(i, j int) bool { return less(nibs[i], nibs[j]) })
+}
+
+// LessByStatusPriorityAndType returns the comparison SortByStatusPriorityAndType
+// sorts by, for slices that wrap nibs. It builds the order lookups once, so call
+// it outside the sort.
+func LessByStatusPriorityAndType(statusNames, typeNames []string, ranker PriorityRanker) func(a, b *Nib) bool {
 	statusOrder := make(map[string]int)
 	for i, s := range statusNames {
 		statusOrder[s] = i
@@ -104,23 +95,20 @@ func SortByStatusPriorityAndType(nibs []*Nib, statusNames, typeNames []string, r
 		return len(typeNames) // Unrecognized types come last
 	}
 
-	sort.Slice(nibs, func(i, j int) bool {
-		// Primary: status order
-		oi, oj := getStatusOrder(nibs[i].Status), getStatusOrder(nibs[j].Status)
+	return func(a, b *Nib) bool {
+		oi, oj := getStatusOrder(a.Status), getStatusOrder(b.Status)
 		if oi != oj {
 			return oi < oj
 		}
-		// Secondary: priority order
-		pi, pj := ranker.PriorityRank(nibs[i].Priority), ranker.PriorityRank(nibs[j].Priority)
+		pi, pj := ranker.PriorityRank(a.Priority), ranker.PriorityRank(b.Priority)
 		if pi != pj {
 			return pi < pj
 		}
-		// Tertiary: type order (EffectiveType so a type-less nib sorts as "task")
-		ti, tj := getTypeOrder(nibs[i].EffectiveType()), getTypeOrder(nibs[j].EffectiveType())
+		// EffectiveType so a type-less nib sorts as "task".
+		ti, tj := getTypeOrder(a.EffectiveType()), getTypeOrder(b.EffectiveType())
 		if ti != tj {
 			return ti < tj
 		}
-		// Quaternary: title (case-insensitive) for stable, user-friendly ordering
-		return strings.ToLower(nibs[i].Title) < strings.ToLower(nibs[j].Title)
-	})
+		return strings.ToLower(a.Title) < strings.ToLower(b.Title)
+	}
 }

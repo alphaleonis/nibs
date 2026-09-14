@@ -104,6 +104,14 @@ func TestIsBlockedInMap(t *testing.T) {
 			ID: "all-resolved", Status: "todo",
 			BlockedBy: []string{"completed-blocker", "scrapped-blocker"},
 		},
+		"completed-dependent": {
+			ID: "completed-dependent", Status: "completed",
+			BlockedBy: []string{"active-blocker"},
+		},
+		"deferred-dependent": {
+			ID: "deferred-dependent", Status: "deferred",
+			BlockedBy: []string{"active-blocker"},
+		},
 	}
 
 	tests := []struct {
@@ -123,6 +131,10 @@ func TestIsBlockedInMap(t *testing.T) {
 		{"mixed blockers (one active)", "mixed-blockers", true},
 		{"all resolved blockers", "all-resolved", false},
 		{"nonexistent nib", "nonexistent", false},
+		// A released nib is never blocked, whatever its blockers are doing.
+		{"completed dependent of active blocker", "completed-dependent", false},
+		// deferred does not release, so a deferred dependent stays blocked.
+		{"deferred dependent of active blocker", "deferred-dependent", true},
 	}
 
 	for _, tt := range tests {
@@ -230,6 +242,12 @@ func TestFindActiveBlockersInMapBlockerIDSpelling(t *testing.T) {
 				t.Errorf("isBlockedInMap = %v, want %v (blocked_by: [%s], prefix %q)",
 					got, tt.want, tt.spelling, tt.prefix)
 			}
+			// The blocker's side of the same edge must resolve the spelling the same
+			// way, or the dependent is blocked by a nib that blocks nothing.
+			if got := isBlockingInMap(nibs, "nibs-blk", tt.prefix, releasesDependentsForTest); got != tt.want {
+				t.Errorf("isBlockingInMap(nibs-blk) = %v, want %v (blocked_by: [%s], prefix %q)",
+					got, tt.want, tt.spelling, tt.prefix)
+			}
 		})
 	}
 }
@@ -265,7 +283,7 @@ func TestIsBlockingInMap(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isBlockingInMap(nibs, tt.nibID, releasesDependentsForTest)
+			got := isBlockingInMap(nibs, tt.nibID, "", releasesDependentsForTest)
 			if got != tt.want {
 				t.Errorf("isBlockingInMap(%q) = %v, want %v", tt.nibID, got, tt.want)
 			}

@@ -115,7 +115,8 @@ func (m previewModel) renderBody() string {
 		return lipgloss.NewStyle().Foreground(ui.ColorMuted).Render("No description")
 	}
 
-	renderer := getGlamourRenderer()
+	// The border and its one-cell padding take four columns.
+	renderer := getGlamourRenderer(m.width - 4)
 	if renderer == nil {
 		return m.nib.Body
 	}

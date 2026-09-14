@@ -345,3 +345,53 @@ func assertOnlyEntries(t *testing.T, dir string) {
 		t.Errorf("a refused update left %s behind", e.Name())
 	}
 }
+
+// TestWritersRefuseModeBitsBeyondPermissions: perm reaches Chmod, and os.Chmod
+// translates setuid, setgid and sticky into the syscall mode, so a caller passing
+// info.Mode() instead of info.Mode().Perm() would otherwise publish a setuid file.
+func TestWritersRefuseModeBitsBeyondPermissions(t *testing.T) {
+	writers := map[string]func(path string, data []byte, perm os.FileMode) error{
+		"AtomicWriteFile": AtomicWriteFile,
+		"AtomicWriteFileDeferDirSync": func(path string, data []byte, perm os.FileMode) error {
+			_, err := AtomicWriteFileDeferDirSync(path, data, perm)
+			return err
+		},
+		"AtomicUpdateFileDeferDirSync": func(path string, data []byte, perm os.FileMode) error {
+			_, err := AtomicUpdateFileDeferDirSync(path, data, perm)
+			return err
+		},
+	}
+	modes := map[string]os.FileMode{
+		"setuid": 0o644 | os.ModeSetuid,
+		"setgid": 0o644 | os.ModeSetgid,
+		"sticky": 0o644 | os.ModeSticky,
+		"dir":    0o755 | os.ModeDir,
+	}
+	for writerName, write := range writers {
+		for modeName, mode := range modes {
+			t.Run(writerName+"/"+modeName, func(t *testing.T) {
+				dir := t.TempDir()
+				path := filepath.Join(dir, "nib.md")
+				if err := os.WriteFile(path, []byte("OLD"), 0o644); err != nil {
+					t.Fatalf("seed old file: %v", err)
+				}
+
+				err := write(path, []byte("NEW"), mode)
+				if err == nil {
+					t.Fatalf("writing with mode %v succeeded, want a refusal", mode)
+				}
+				if !strings.Contains(err.Error(), "permission bits") {
+					t.Errorf("error = %q, want it to say only permission bits are accepted", err)
+				}
+				got, readErr := os.ReadFile(path)
+				if readErr != nil {
+					t.Fatalf("old file should still exist: %v", readErr)
+				}
+				if string(got) != "OLD" {
+					t.Errorf("content = %q, want the refused write to leave %q", got, "OLD")
+				}
+				assertNoTempFiles(t, dir)
+			})
+		}
+	}
+}

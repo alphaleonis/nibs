@@ -14,9 +14,9 @@ import (
 //
 // A nib file may name its parent, milestone or a blocker by SHORT id
 // (`parent: par` rather than `parent: nibs-par`). The forward resolvers
-// normalize such an id when they follow it; the reverse traversals
-// (findIncomingLinksInMap, isBlockingInMap) and the cycle passes
-// (FindCyclesInMap, findPathToTargetInMap) walk exact map keys and do not. The
+// normalize such an id when they follow it, as isBlockingInMap does; the reverse
+// traversal findIncomingLinksInMap and the cycle passes (FindCyclesInMap,
+// findPathToTargetInMap) walk exact map keys and do not. The
 // sweeps here resolve stored link ids to their full form, so those exact lookups
 // find the link.
 //
@@ -35,9 +35,8 @@ import (
 // Skipping it leaves the stored spelling naming one nib while Get answers with
 // another, invisibly.
 //
-// Core.Update changes no key set and runs no sweep — it installs the caller's
-// nib as given, so resolving a link id before calling it is what keeps the rule
-// true on that path.
+// Core.Update changes no key set and runs no sweep, but it resolves the link ids
+// of the nib it installs, so a caller may hand it a short id.
 //
 // A sweep re-points links that already resolved, so it resolves from the FILE's
 // spelling (nib.RawLinks) and never from the value the store now holds — see

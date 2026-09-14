@@ -151,12 +151,59 @@ func resetCheckFlags() {
 	})
 }
 
+// TestCheckExitsThroughTheBoundary drives `nibs check` through rootCmd.Execute:
+// a report with issues reaches reportExitError as exit 1 with nothing on stderr,
+// since the report itself is already on stdout, and a clean store exits 0.
+func TestCheckExitsThroughTheBoundary(t *testing.T) {
+	tests := []struct {
+		name     string
+		files    map[string]string
+		args     []string
+		wantExit int
+	}{
+		{
+			name:     "issues found, text",
+			files:    map[string]string{"chk-link1--broken.md": chkBrokenLinkNib},
+			wantExit: output.ExitError,
+		},
+		{
+			name:     "issues found, json",
+			files:    map[string]string{"chk-link1--broken.md": chkBrokenLinkNib},
+			args:     []string{"--json"},
+			wantExit: output.ExitError,
+		},
+		{
+			name:     "clean store",
+			files:    map[string]string{"chk-aaa1--one.md": chkValidNib},
+			wantExit: output.ExitOK,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, nibsDir := setupCheckTest(t, tt.files)
+			t.Cleanup(resetRootPersistentFlags)
+			t.Cleanup(func() { rootCmd.SetArgs(nil) })
+
+			rootCmd.SetArgs(append([]string{"--nibs-path", nibsDir, "check"}, tt.args...))
+			var execErr error
+			out := captureStdout(t, func() { execErr = rootCmd.Execute() })
+
+			var stderr bytes.Buffer
+			if got := reportExitError(&stderr, execErr); got != tt.wantExit {
+				t.Errorf("exit status = %d, want %d (error %v)\noutput:\n%s", got, tt.wantExit, execErr, out)
+			}
+			if stderr.Len() != 0 {
+				t.Errorf("the boundary wrote %q to stderr; the report is on stdout", stderr.String())
+			}
+			if tt.wantExit != output.ExitOK && !strings.Contains(out, "chk-nope9") {
+				t.Errorf("stdout does not carry the report\noutput:\n%s", out)
+			}
+		})
+	}
+}
+
 // setupCheckTest writes nib files into a fresh .nibs dir, loads a Core over it
 // and returns the App plus the .nibs path.
-//
-// The tests drive runCheck directly rather than rootCmd.Execute: checkCmd's
-// RunE calls os.Exit(1) whenever the report is non-empty, which would take the
-// test binary down with it — and every case here is deliberately non-empty.
 func setupCheckTest(t *testing.T, files map[string]string) (*App, string) {
 	t.Helper()
 	return setupCheckTestWithAreas(t, files, "")
@@ -1074,7 +1121,7 @@ func TestCheckReportsUndeclaredArea(t *testing.T) {
 		}
 		for _, want := range []string{
 			"chk-arst1", "data/chk-arst1--stranded.md", `"retired/thing"`,
-			"web, web/ui, auth",
+			"auth, web, web/ui",
 		} {
 			if !strings.Contains(out, want) {
 				t.Errorf("report should contain %q, got:\n%s", want, out)
@@ -1112,7 +1159,7 @@ func TestCheckReportsUndeclaredArea(t *testing.T) {
 			NibID:    "chk-arst1",
 			Path:     "data/chk-arst1--stranded.md",
 			Area:     "retired/thing",
-			Declared: "web, web/ui, auth",
+			Declared: "auth, web, web/ui",
 		}
 		if !reflect.DeepEqual(got.NibIssues.UndeclaredAreas[0], want) {
 			t.Errorf("undeclared_areas[0] = %+v, want %+v", got.NibIssues.UndeclaredAreas[0], want)

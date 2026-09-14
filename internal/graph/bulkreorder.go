@@ -9,6 +9,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
+	"github.com/alphaleonis/nibs/internal/safetext"
 )
 
 // reorderChildrenImpl validates the inputs, optionally pre-checks per-child
@@ -172,7 +173,7 @@ func (r *mutationResolver) validateBulkSiblings(siblingIDs []string, afterID *st
 			parentID = bParentID
 		} else if bParentID != parentID {
 			return nil, Position{}, nil, "", fmt.Errorf("siblings span multiple parents: %s has parent %s, expected %q",
-				id, describeParent(b, bParentID), parentID)
+				id, describeParent(b, bParentID), safetext.Strip(parentID))
 		}
 		block = append(block, b)
 	}
@@ -187,7 +188,7 @@ func (r *mutationResolver) validateBulkSiblings(siblingIDs []string, afterID *st
 		}
 		if aParentID := resolvedParentID(a, r.Reader); aParentID != parentID {
 			return nil, Position{}, nil, "", fmt.Errorf("anchor %s is not a sibling (parent=%s, expected %q)",
-				anchorID, describeParent(a, aParentID), parentID)
+				anchorID, describeParent(a, aParentID), safetext.Strip(parentID))
 		}
 		for _, b := range block {
 			if b.ID == a.ID {
@@ -260,9 +261,9 @@ func notFoundDetail(raw, canonical string) string {
 // makes the two differ.
 func describeParent(b *nib.Nib, resolved string) string {
 	if b.Parent == resolved {
-		return fmt.Sprintf("%q", b.Parent)
+		return fmt.Sprintf("%q", safetext.Strip(b.Parent))
 	}
-	return fmt.Sprintf("%q (resolves to %q)", b.Parent, resolved)
+	return fmt.Sprintf("%q (resolves to %q)", safetext.Strip(b.Parent), safetext.Strip(resolved))
 }
 
 // requireIfMatch reports whether the project config requires ifMatch on every

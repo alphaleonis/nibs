@@ -91,7 +91,7 @@ func RenderTags(tags []string) string {
 }
 
 // RenderTagsCompact renders up to maxTags badges, then "+N" for the rest. A tag
-// over 12 bytes is cut to its first 10 bytes plus "..".
+// over 12 display cells is cut to at most 10 cells plus "..".
 func RenderTagsCompact(tags []string, maxTags int) string {
 	if len(tags) == 0 {
 		return ""
@@ -110,8 +110,8 @@ func RenderTagsCompact(tags []string, maxTags int) string {
 	rendered := make([]string, len(showTags))
 	for i, tag := range showTags {
 		displayTag := tag
-		if len(displayTag) > 12 {
-			displayTag = displayTag[:10] + ".."
+		if lipgloss.Width(displayTag) > 12 {
+			displayTag = truncateCells(displayTag, 10) + ".."
 		}
 		rendered[i] = RenderTag(displayTag)
 	}
@@ -138,13 +138,12 @@ func RenderDocuments(docs []string) string {
 }
 
 var (
-	Bold      = lipgloss.NewStyle().Bold(true)
-	Muted     = lipgloss.NewStyle().Foreground(ColorMuted)
-	Primary   = lipgloss.NewStyle().Foreground(ColorPrimary)
-	Success   = lipgloss.NewStyle().Foreground(ColorSuccess)
-	Warning   = lipgloss.NewStyle().Foreground(ColorWarning)
-	Danger    = lipgloss.NewStyle().Foreground(ColorDanger)
-	Secondary = lipgloss.NewStyle().Foreground(ColorSecondary)
+	Bold    = lipgloss.NewStyle().Bold(true)
+	Muted   = lipgloss.NewStyle().Foreground(ColorMuted)
+	Primary = lipgloss.NewStyle().Foreground(ColorPrimary)
+	Success = lipgloss.NewStyle().Foreground(ColorSuccess)
+	Warning = lipgloss.NewStyle().Foreground(ColorWarning)
+	Danger  = lipgloss.NewStyle().Foreground(ColorDanger)
 )
 
 var ID = lipgloss.NewStyle().
@@ -202,20 +201,6 @@ func RenderTypeText(typeName, color string) string {
 	return lipgloss.NewStyle().Foreground(c).Render(typeName)
 }
 
-// RenderTypeWithColor returns a styled type badge with colored background.
-func RenderTypeWithColor(typeName, color string) string {
-	if typeName == "" {
-		return ""
-	}
-	c := ResolveColor(color)
-	style := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#fff")).
-		Background(c).
-		Bold(true).
-		Padding(0, 1)
-	return style.Render(typeName)
-}
-
 // RenderEstimateWithColor returns a styled estimate badge using the specified color.
 func RenderEstimateWithColor(estimate, color string) string {
 	if estimate == "" {
@@ -225,31 +210,6 @@ func RenderEstimateWithColor(estimate, color string) string {
 	style := lipgloss.NewStyle().
 		Foreground(c)
 	return style.Render("[" + strings.ToUpper(estimate) + "]")
-}
-
-// RenderPriorityWithColor returns a styled priority badge using the specified color.
-func RenderPriorityWithColor(priority, color string) string {
-	if priority == "" {
-		return ""
-	}
-	c := ResolveColor(color)
-	style := lipgloss.NewStyle().
-		Foreground(c).
-		Bold(priority == "critical" || priority == "high")
-	return style.Render("[" + priority + "]")
-}
-
-// RenderPriorityText returns styled priority text.
-func RenderPriorityText(priority, color string) string {
-	if priority == "" {
-		return ""
-	}
-	c := ResolveColor(color)
-	style := lipgloss.NewStyle().Foreground(c)
-	if priority == "critical" || priority == "high" {
-		style = style.Bold(true)
-	}
-	return style.Render(priority)
 }
 
 // ShortType returns the uppercased first letter of a type in
@@ -344,6 +304,9 @@ const (
 	ColWidthStatus = 3
 	ColWidthType   = 3
 	ColWidthTags   = 24
+	// ColWidthFullName is the status and type column width when they show full
+	// names; "in-progress" is 11 cells.
+	ColWidthFullName = 12
 )
 
 // ResponsiveColumns holds calculated column widths based on available space
@@ -355,6 +318,15 @@ type ResponsiveColumns struct {
 	MaxTags           int // How many tags to show
 	ShowTags          bool
 	UseFullTypeStatus bool // Use full names instead of single-char abbreviations
+}
+
+// WithFullNames returns c showing full status and type names, at the width
+// RenderNibRow draws them.
+func (c ResponsiveColumns) WithFullNames() ResponsiveColumns {
+	c.UseFullTypeStatus = true
+	c.Status = ColWidthFullName
+	c.Type = ColWidthFullName
+	return c
 }
 
 // CalculateResponsiveColumns determines column widths based on available width.
@@ -371,9 +343,7 @@ func CalculateResponsiveColumns(totalWidth int, hasTags bool) ResponsiveColumns 
 
 	const minWidthForFullNames = 120
 	if totalWidth >= minWidthForFullNames {
-		cols.UseFullTypeStatus = true
-		cols.Status = 12 // "in-progress" needs 11 chars
-		cols.Type = 10   // "milestone" needs 9 chars
+		cols = cols.WithFullNames()
 	}
 
 	const minWidthForTags = 140
@@ -463,7 +433,7 @@ func RenderNibRow(id, status, typeName, title string, cfg NibRowConfig) string {
 	var typeStr string
 	if cfg.UseFullNames {
 		typeStr = typeName
-		typeStyle = typeStyle.Width(12)
+		typeStyle = typeStyle.Width(ColWidthFullName)
 	} else {
 		typeStr = ShortType(typeName)
 	}
@@ -477,7 +447,7 @@ func RenderNibRow(id, status, typeName, title string, cfg NibRowConfig) string {
 	var statusStr string
 	if cfg.UseFullNames {
 		statusStr = status
-		statusStyle = statusStyle.Width(12)
+		statusStyle = statusStyle.Width(ColWidthFullName)
 	} else {
 		statusStr = ShortStatus(status)
 	}

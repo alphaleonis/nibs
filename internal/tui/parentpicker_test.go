@@ -115,6 +115,32 @@ func TestParentPicker_ToggleShowsCompleted(t *testing.T) {
 	}
 }
 
+func TestParentPicker_ToggleKeepsAnAppliedFilter(t *testing.T) {
+	backend := &StubBackend{
+		AllNibs: []*nib.Nib{
+			makeNib("nib-1", "Alpha Epic", "epic", "todo", ""),
+			makeNib("nib-2", "Alpha Done", "epic", "completed", ""),
+		},
+	}
+	m := newParentPickerModel(
+		[]string{"nib-child"}, "Child Task", []string{"task"}, "",
+		backend, makeTestConfig(), 80, 24,
+	)
+	m.list.SetFilterText("Alpha")
+	if got := len(m.list.VisibleItems()); got != 1 {
+		t.Fatalf("before H: %d visible items, want 1", got)
+	}
+
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'H', Text: "H"})
+	if cmd != nil {
+		m, _ = m.Update(cmd())
+	}
+
+	if got := len(m.list.VisibleItems()); got != 2 {
+		t.Errorf("after H with filter %q applied: %d visible items, want 2", m.list.FilterValue(), got)
+	}
+}
+
 func TestParentPicker_ClearParentAlwaysPresent(t *testing.T) {
 	backend := &StubBackend{
 		AllNibs: []*nib.Nib{

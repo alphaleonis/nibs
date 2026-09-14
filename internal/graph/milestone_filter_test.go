@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/executor"
@@ -104,6 +106,56 @@ func TestApplyFilterMilestoneNonMilestoneTargetIsRefused(t *testing.T) {
 	}
 	if errors.Is(err, nib.ErrNotFound) {
 		t.Error("a wrong-typed target carries nib.ErrNotFound, so it classifies as NOT_FOUND — the id names a nib")
+	}
+}
+
+// TestApplyFilterMilestoneTypeRefusalBoundsTheStoredType pins that the target's
+// type — read from its file, so as long and as hostile as whoever wrote that file
+// chose — reaches the refusal under the same byte cap as the id beside it, and
+// cannot carry a control sequence into a terminal or a JSON consumer's log.
+func TestApplyFilterMilestoneTypeRefusalBoundsTheStoredType(t *testing.T) {
+	const limit = 4*maxEchoedIDBytes + 200
+
+	for _, tc := range []struct {
+		name     string
+		typ      string
+		wantGot  string
+		absentIn string
+	}{
+		{name: "an ordinary type is echoed whole", typ: "task", wantGot: "task"},
+		{name: "an oversized type is truncated", typ: strings.Repeat("x", 100_000)},
+		{name: "an oversized invalid-UTF-8 type is truncated", typ: strings.Repeat("\xff", 1<<20)},
+		{name: "a control sequence is neutralized", typ: "task\x1b[31m\nred", wantGot: "task [31m red", absentIn: "\x1b"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := milestoneFixture()
+			reader.nibs["nibs-t3"].Type = tc.typ
+
+			_, err := ApplyFilter(context.Background(), reader.allNibs, &model.NibFilter{Milestone: strPtr("t3")}, reader, &stubBlockingChecker{})
+			var wrongType *FilterTargetTypeError
+			if !errors.As(err, &wrongType) {
+				t.Fatalf("error = %T (%v), want *FilterTargetTypeError", err, err)
+			}
+			msg := err.Error()
+			if len(msg) > limit {
+				t.Errorf("message is %d bytes for a type of %d bytes, over the %d-byte bound", len(msg), len(tc.typ), limit)
+			}
+			if len(wrongType.Got) > limit {
+				t.Errorf("Got is %d bytes, over the %d-byte bound; the field is rendered into every copy of the message", len(wrongType.Got), limit)
+			}
+			if tc.wantGot != "" && wrongType.Got != tc.wantGot {
+				t.Errorf("Got = %q, want %q", wrongType.Got, tc.wantGot)
+			}
+			if !utf8.ValidString(msg) {
+				t.Errorf("message is not valid UTF-8: %q", msg)
+			}
+			if len(tc.typ) > maxEchoedIDBytes && !strings.Contains(msg, "truncated from "+strconv.Itoa(len(tc.typ))+" bytes") {
+				t.Errorf("message %q abbreviates the type without saying so", msg)
+			}
+			if tc.absentIn != "" && strings.Contains(msg, tc.absentIn) {
+				t.Errorf("message %q carries %q from the stored type", msg, tc.absentIn)
+			}
+		})
 	}
 }
 

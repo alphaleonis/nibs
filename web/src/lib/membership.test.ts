@@ -118,24 +118,6 @@ describe("milestoneOf", () => {
   });
 });
 
-/**
- * The parity replay. Every row of the committed contract is fed to both TS rules
- * and must produce the answers Go produced for it at generation time.
- *
- * It reddens whenever a regenerated answer and a mirror disagree — Go changed
- * and was regenerated while resolvedMilestoneId or milestoneOf was not, or a
- * mirror changed and Go did not. It is BOUNDED BY THE FIXTURE in both
- * directions: a change on either side that moves no fixture row's answer passes
- * silently here. internal/membershipcontract carries the Go-side backstops for
- * that bound and says what they do and do not close.
- *
- * Do not delete this replay. It is the only consumer of the generated contract:
- * nothing else in web/ imports MEMBERSHIP_CONTRACT, and the Go-side tests
- * compare Go to Go. Without it the Go and TypeScript copies of the
- * milestone-membership rule are free to drift apart with nothing going red.
- * If the replay needs restructuring, restructure it — keep the contract driven
- * through both mirrors.
- */
 describe("milestoneAcceptsAssignment", () => {
   // The pairs the Go door decides, named by what each stands for rather than by
   // status alone: the rule is about the ROLES behind these names, and reading
@@ -168,6 +150,24 @@ describe("milestoneAcceptsAssignment", () => {
   });
 });
 
+/**
+ * The parity replay. Every row of the committed contract is fed to both TS rules
+ * and must produce the answers Go produced for it at generation time.
+ *
+ * It reddens whenever a regenerated answer and a mirror disagree — Go changed
+ * and was regenerated while resolvedMilestoneId or milestoneOf was not, or a
+ * mirror changed and Go did not. It is BOUNDED BY THE FIXTURE in both
+ * directions: a change on either side that moves no fixture row's answer passes
+ * silently here. internal/membershipcontract carries the Go-side backstops for
+ * that bound and says what they do and do not close.
+ *
+ * Do not delete this replay. It is the only consumer of the generated contract:
+ * nothing else in web/ imports MEMBERSHIP_CONTRACT, and the Go-side tests
+ * compare Go to Go. Without it the Go and TypeScript copies of the
+ * milestone-membership rule are free to drift apart with nothing going red.
+ * If the replay needs restructuring, restructure it — keep the contract driven
+ * through both mirrors.
+ */
 describe("Go↔TS parity for the milestone-membership rules", () => {
   // Rows are projected to the wire fields the rules read, so the replay cannot
   // reach an expected answer riding along on the same object.

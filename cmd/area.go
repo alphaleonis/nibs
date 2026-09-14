@@ -143,7 +143,6 @@ type areaListNode struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
 	Color       string         `json:"color,omitempty"`
-	Order       string         `json:"order,omitempty"`
 	Children    []areaListNode `json:"children,omitempty"`
 }
 
@@ -157,7 +156,7 @@ func runAreaList(cmd *cobra.Command, _ []string) error {
 		}{Areas: areaListNodes(areas.Roots(), "")})
 	}
 
-	if !areas.Declared() {
+	if areas.IsEmpty() {
 		ui.Printf("This store declares no areas. Declare an `areas:` block in %s to place work by area.\n",
 			sanitizeFilePath(store.NewLayout(app.Core.Root()).AreasPath()))
 		return nil
@@ -212,7 +211,6 @@ func areaListNodes(areas []config.AreaConfig, parent string) []areaListNode {
 			Name:        area.Name,
 			Description: area.Description,
 			Color:       area.Color,
-			Order:       area.Order,
 			Children:    areaListNodes(area.Children, path),
 		})
 	}
@@ -220,7 +218,7 @@ func areaListNodes(areas []config.AreaConfig, parent string) []areaListNode {
 }
 
 // joinAreaPathForDisplay rebuilds a node's path from the tree it was walked in.
-// config.AreaPaths already enumerates the same paths, but the walk here has to
+// Areas.Paths already enumerates the same paths, but the walk here has to
 // carry each node's own fields alongside its path, which a flat list of strings
 // cannot give back.
 func joinAreaPathForDisplay(parent, name string) string {
@@ -616,7 +614,7 @@ func areaRetireConfirmFailure(e *nibcore.AreaEditIOError) error {
 func areaEditRefusal(jsonMode bool, err error, verb string) error {
 	var undeclared *nibcore.AreaUndeclaredError
 	if errors.As(err, &undeclared) {
-		if !undeclared.Areas.Declared() {
+		if undeclared.Areas.IsEmpty() {
 			return cmdError(jsonMode, output.ErrValidation,
 				"this store declares no areas, so there is none to %s — declare an `areas:` block in %s first",
 				areaPathVerb(undeclared.Role, verb), sanitizeFilePath(undeclared.Areas.Path()))
@@ -717,12 +715,12 @@ func areaPathVerb(role nibcore.AreaPathRole, verb string) string {
 // A Core holding no vocabulary answers false, leaving the ordinary refusal to
 // speak: with nothing loaded there is no earlier state to have diverged from.
 func areaDeclaredAtStartup(app *App, path string) bool {
-	return path != "" && app.StartupAreas().IsValid(path)
+	return path != "" && app.StartupAreas().Exists(path)
 }
 
-// reportAreaEdit prints what an area edit did, adding the stale-symlink note
-// Areas.Save and SetStoredPrefix both owe: the atomic write replaced a link, so
-// whatever manages the target still holds the old vocabulary and will restore it.
+// reportAreaEdit prints what an area edit did, adding a note when
+// config.StoredAreaEdit.Write replaced a symlink at areas.yml: the link's target
+// still holds the old vocabulary, and whatever manages it may restore that.
 //
 // It names no live `nibs serve`, unlike `nibs config set-prefix` beside it. A
 // server watches the store's areas.yml and reloads it, so this edit reaches one

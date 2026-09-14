@@ -61,7 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`nibs prime` no longer primes an agent for a project it cannot use** — a pre-layout project now gets the same migration refusal as every other command, in place of instructions whose every command refuses there.
 - **A store refusal no longer denies that any config names the directory** when one names it under a different spelling, which sent the reader to `nibs init` over the project's real nibs.
 - **`nibs config set-prefix` renames each nib through an atomic write**, instead of a shared temp name with no fsync.
-- **A backtick in a config value can no longer break out of the code span a refusal renders it in**, where the rest of the value became prose addressed to the reader carrying a command of its own choosing.
+- **A backtick or invisible filler character in text read from a file can no longer break out of, or hide inside, a message quoting it**, where the rest of a code span's value became prose addressed to the reader carrying a command of its own choosing.
 - **A config file that is not a regular file is refused**, instead of a named pipe or socket at that path blocking the command indefinitely.
 - **A served GraphQL error no longer names the store's path** — a broken store disclosed its absolute location, and the operating-system username in it, to any client `nibs serve` answers; the CLI still names the file an operator needs to repair it.
 - **The web UI now notices a live connection that dies without closing**, such as going offline or waking from sleep, instead of holding an apparently-healthy socket and serving a stale view indefinitely.
@@ -95,6 +95,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **A nib file keeps its permissions across an edit**, where every write reset them to `0644` — so a nib you had made private became world-readable again on the next change.
 - **A newly created nib respects your umask**, instead of always being `0644` — so a `umask 077` shell produces a private nib, and no umask can make one group- or world-writable.
 - **A nib's file name is no longer cut mid-character**, which left it invalid UTF-8 when an accented character straddled the slug's length cap.
+- **A completed or scrapped nib no longer counts as blocked.**
+- **A nib file whose name yields no id is reported by `nibs check`** instead of being loaded under an empty id.
+- **A running `nibs serve` or `nibs tui` follows a slug rename of a nib kept in a subdirectory**, where it kept the file's old path.
+- **A nib created over GraphQL without a status gets the store's default status**, as `nibs new` does, instead of an empty one.
+- **A GraphQL filter pairing `ancestorId` with `hasParent: false` is refused as a contradiction** instead of answering with nothing.
+- **A `nibs config set-prefix` that fails partway can be finished by re-running it with `--force`**, unless one prefix starts with the other.
+- **`nibs body --section` no longer treats a `#` line inside a fenced code block as a heading.**
+- **The TUI keeps an applied filter's matches after a reload, a collapse or the parent picker's completed toggle**, where the list went blank.
+- **Typing `q` or `?` into a TUI filter adds it to the filter**, instead of quitting nibs or toggling help.
+- **TUI markdown wraps to the pane's width** instead of a fixed 80 columns.
+- **The TUI cuts non-ASCII titles and tags by display width**, where they were cut too early and could end mid-character.
+- **A long title in the TUI detail view's link list ends in "..."** instead of being clipped at the box edge.
+- **A failed copy in the TUI detail view is shown as a warning**, not in the success color.
+- **The TUI no longer stalls collapsing or navigating a large, deep tree.**
 
 ### Security
 - **`nibs serve` now bounds how deep and how wide a query may recurse, and refuses a disallowed origin instead of answering it** — a page at any origin could otherwise make it resolve a tree that multiplied at every level.

@@ -91,7 +91,7 @@ describe("createAreaVocabulary", () => {
     }
 
     // The guard the whole flat-list contract rests on: closure runs over the
-    // DECLARED TREE, not over the strings (config.IsAreaWithin says the same on
+    // DECLARED TREE, not over the strings (config.Areas.IsWithin says the same on
     // the Go side), and here it runs over the ORDER — so a sibling root that
     // happens to start with the same characters is outside it, and a list
     // shuffled out of declaration order fails rather than quietly answering
@@ -178,7 +178,7 @@ describe("validity", () => {
     expect(createAreaVocabulary(DECLARED).validity("web/dashboard")).toBe("declared");
   });
 
-  it("answers \"undeclared\" for the unset value, matching config.IsValidArea", () => {
+  it("answers \"undeclared\" for the unset value, matching config.Areas.Exists", () => {
     expect(createAreaVocabulary(DECLARED).validity("")).toBe("undeclared");
     expect(EMPTY_AREAS.validity("")).toBe("undeclared");
   });

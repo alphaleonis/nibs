@@ -47,6 +47,37 @@ func mustStatus(t *testing.T, resolver *Resolver, id string) string {
 	return b.Status
 }
 
+// TestMilestoneRefusalsStripFilenameDerivedIDs pins that both milestone
+// refusals render the ids they quote through safetext.Strip. Ids come from
+// filenames, so whoever can write a file into the store chooses them, and these
+// messages reach a terminal through the CLI and the TUI and an HTTP client
+// through `nibs serve`.
+func TestMilestoneRefusalsStripFilenameDerivedIDs(t *testing.T) {
+	const hostile = "q\x1b[2J\a`x"
+	held := []string{hostile, "b", "c", "d", "e", "f"}
+
+	for name, msg := range map[string]string{
+		"MilestoneRetypeError": (&MilestoneRetypeError{MilestoneID: hostile, NewType: "epic", Held: held}).Error(),
+		"MilestoneQueueOpenError": (&MilestoneQueueOpenError{
+			MilestoneID: hostile, Status: "completed", Open: held, Holding: []string{"deferred"},
+		}).Error(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			for _, bad := range []string{"\x1b", "\a", "`"} {
+				if strings.Contains(msg, bad) {
+					t.Errorf("message carries %q from a filename-derived id: %q", bad, msg)
+				}
+			}
+			if !strings.Contains(msg, "q [2J  x") {
+				t.Errorf("message %q does not carry the stripped id", msg)
+			}
+			if !strings.Contains(msg, ", and 1 more") || strings.Contains(msg, ", f") {
+				t.Errorf("message %q does not cap the enumeration at QueueNameLimit", msg)
+			}
+		})
+	}
+}
+
 // TestUpdateNibMilestoneCloseGate pins decision 1.5 as a MODEL invariant rather
 // than a `nibs close` rule: every client reaching updateNib — the web status
 // dropdown, the TUI status picker, `nibs graphql` — is refused the same close

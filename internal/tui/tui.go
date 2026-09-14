@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/99designs/gqlgen/graphql"
@@ -87,6 +88,10 @@ type clearFilterMsg struct{}
 type copyNibIDMsg struct {
 	ids []string
 }
+
+// clipboardWriteAll is a variable so tests can make the copy fail on every
+// platform; clipboard.Unsupported only takes effect on Unix.
+var clipboardWriteAll = clipboard.WriteAll
 
 type reorderNibMsg struct {
 	nibID    string
@@ -188,6 +193,36 @@ func (a *App) isTwoColumnMode() bool {
 	return a.width >= TwoColumnMinWidth && !a.list.wideMode
 }
 
+// activeListFiltering reports whether the active view's list is taking filter
+// input, in which case every printable key belongs to that filter.
+func (a *App) activeListFiltering() bool {
+	var l *list.Model
+	switch a.state {
+	case viewList:
+		l = &a.list.list
+	case viewDetail:
+		if !a.detail.linksActive {
+			return false
+		}
+		l = &a.detail.linkList
+	case viewTagPicker:
+		l = &a.tagPicker.list
+	case viewParentPicker:
+		l = &a.parentPicker.list
+	case viewStatusPicker:
+		l = &a.statusPicker.list
+	case viewPriorityPicker:
+		l = &a.priorityPicker.list
+	case viewEstimatePicker:
+		l = &a.estimatePicker.list
+	case viewBlockingPicker:
+		l = &a.blockingPicker.list
+	default:
+		return false
+	}
+	return l.FilterState() == list.Filtering
+}
+
 // Update handles messages
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
@@ -252,8 +287,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, tea.Quit
 		case "?":
 			// Toggle non-modal help panel (skip if user is typing in a filter)
-			if a.state == viewList && a.list.list.FilterState() == 1 {
-				break // let list handle the keystroke
+			if a.activeListFiltering() {
+				break // let the view's list take the keystroke
 			}
 			if a.state == viewList || a.state == viewDetail {
 				a.helpExpanded = !a.helpExpanded
@@ -274,11 +309,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return a, nil
 			}
 		case "q":
-			if a.state == viewDetail || a.state == viewTagPicker || a.state == viewParentPicker || a.state == viewStatusPicker || a.state == viewTypePicker || a.state == viewCreateTypePicker || a.state == viewBlockingPicker || a.state == viewPriorityPicker || a.state == viewEstimatePicker {
-				return a, tea.Quit
+			if a.activeListFiltering() {
+				break
 			}
-			// For list, only quit if not filtering
-			if a.state == viewList && a.list.list.FilterState() != 1 {
+			if a.state == viewList || a.state == viewDetail || a.state == viewTagPicker || a.state == viewParentPicker || a.state == viewStatusPicker || a.state == viewTypePicker || a.state == viewCreateTypePicker || a.state == viewBlockingPicker || a.state == viewPriorityPicker || a.state == viewEstimatePicker {
 				return a, tea.Quit
 			}
 		}
@@ -396,13 +430,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case openCreateTypePickerMsg:
 		a.previousState = a.state
 		// For creation: no nibIDs, and every type is valid.
-		a.typePicker = newTypePickerModel(nil, "", msg.defaultType, nil, a.config, a.width, a.height)
+		a.typePicker = newTypePickerModel(nil, "", msg.defaultType, nil, a.width, a.height)
 		a.state = viewCreateTypePicker
 		return a, a.typePicker.Init()
 
 	case openTypePickerMsg:
 		a.previousState = a.state
-		a.typePicker = newTypePickerModel(msg.nibIDs, msg.nibTitle, msg.currentType, msg.validTypes, a.config, a.width, a.height)
+		a.typePicker = newTypePickerModel(msg.nibIDs, msg.nibTitle, msg.currentType, msg.validTypes, a.width, a.height)
 		a.state = viewTypePicker
 		return a, a.typePicker.Init()
 
@@ -444,7 +478,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case openPriorityPickerMsg:
 		a.previousState = a.state
-		a.priorityPicker = newPriorityPickerModel(msg.nibIDs, msg.nibTitle, msg.currentPriority, a.config, a.width, a.height)
+		a.priorityPicker = newPriorityPickerModel(msg.nibIDs, msg.nibTitle, msg.currentPriority, a.width, a.height)
 		a.state = viewPriorityPicker
 		return a, a.priorityPicker.Init()
 
@@ -476,7 +510,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case openEstimatePickerMsg:
 		a.previousState = a.state
-		a.estimatePicker = newEstimatePickerModel(msg.nibIDs, msg.nibTitle, msg.currentEstimate, a.config, a.width, a.height)
+		a.estimatePicker = newEstimatePickerModel(msg.nibIDs, msg.nibTitle, msg.currentEstimate, a.width, a.height)
 		a.state = viewEstimatePicker
 		return a, a.estimatePicker.Init()
 
@@ -710,7 +744,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var statusMsg string
 		statusMsgKind := statusOK
 		text := strings.Join(msg.ids, ", ")
-		if err := clipboard.WriteAll(text); err != nil {
+		if err := clipboardWriteAll(text); err != nil {
 			statusMsg = fmt.Sprintf("Failed to copy: %v", err)
 			statusMsgKind = statusWarn
 		} else if len(msg.ids) == 1 {
@@ -725,6 +759,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.list.statusKind = statusMsgKind
 		case viewDetail:
 			a.detail.statusMessage = statusMsg
+			a.detail.statusKind = statusMsgKind
 		}
 
 		return a, nil

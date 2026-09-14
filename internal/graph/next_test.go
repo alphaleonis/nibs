@@ -332,6 +332,77 @@ func TestNextDegradesHonestly(t *testing.T) {
 	})
 }
 
+// TestNextTalliesEachNibOnce pins that the tally counts NIBS: `nibs next` prints
+// these numbers as "N closed", which a reader takes as N distinct nibs. The
+// shapes that could count one nib twice all reach a nib on both axes — a direct
+// milestone assignment plus a parent inside the same milestone's decomposition —
+// which mutations refuse, so they are built from nib values directly.
+func TestNextTalliesEachNibOnce(t *testing.T) {
+	ms := func() *nib.Nib {
+		return &nib.Nib{ID: "ms1", Title: "Wave 1", Type: "milestone", Status: "in-progress", Order: "a"}
+	}
+	for _, tc := range []struct {
+		name       string
+		nibs       []*nib.Nib
+		wantAction string
+		wantTally  NextTally
+	}{
+		{
+			name: "a closed nib reached as a child and as a queue entry",
+			nibs: []*nib.Nib{
+				ms(),
+				{ID: "b1", Title: "Epic", Type: "epic", Status: "draft", Milestone: "ms1", MilestoneOrder: "a"},
+				{ID: "a1", Title: "Done", Status: "completed", Parent: "b1", Milestone: "ms1", MilestoneOrder: "b"},
+			},
+			wantTally: NextTally{Closed: 1, Open: 1},
+		},
+		{
+			name: "a closed nib reached as a queue entry first and as a child second",
+			nibs: []*nib.Nib{
+				ms(),
+				{ID: "a1", Title: "Done", Status: "completed", Parent: "b1", Milestone: "ms1", MilestoneOrder: "a"},
+				{ID: "b1", Title: "Epic", Type: "epic", Status: "draft", Milestone: "ms1", MilestoneOrder: "b"},
+			},
+			wantTally: NextTally{Closed: 1, Open: 1},
+		},
+		{
+			name: "a blocked child is not counted again as an inverted queue entry",
+			nibs: []*nib.Nib{
+				ms(),
+				{ID: "e0", Title: "Epic", Type: "epic", Status: "draft", Milestone: "ms1", MilestoneOrder: "a"},
+				{ID: "x", Title: "Blocked", Status: "todo", Parent: "e0", Milestone: "ms1", MilestoneOrder: "b", BlockedBy: []string{"e2"}},
+				{ID: "e2", Title: "Blocker", Type: "epic", Status: "todo", Milestone: "ms1", MilestoneOrder: "c"},
+			},
+			wantAction: "e2",
+			wantTally:  NextTally{Blocked: 1},
+		},
+		{
+			name: "a container with only closed children is counted where the walk stopped at it",
+			nibs: []*nib.Nib{
+				ms(),
+				{ID: "blk", Title: "Blocker", Status: "todo"},
+				{ID: "c1", Title: "Epic", Type: "epic", Status: "todo", Milestone: "ms1", MilestoneOrder: "a", BlockedBy: []string{"blk"}},
+				{ID: "k1", Title: "Done", Status: "completed", Parent: "c1"},
+			},
+			wantTally: NextTally{Closed: 1, Blocked: 1},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reader, blocking := nextFixture(tc.nibs...)
+			res := Next(reader, blocking)
+			switch {
+			case tc.wantAction == "" && res.Action != nil:
+				t.Fatalf("action = %s, want none", res.Action.ID)
+			case tc.wantAction != "" && (res.Action == nil || res.Action.ID != tc.wantAction):
+				t.Fatalf("action = %v, want %s", res.Action, tc.wantAction)
+			}
+			if res.Tally != tc.wantTally {
+				t.Errorf("tally = %+v, want %+v", res.Tally, tc.wantTally)
+			}
+		})
+	}
+}
+
 // TestNextTerminatesOnACyclicParentChain pins that illegal data cannot hang the
 // walk: membership resolves a parent cycle into an adjacency the descent would
 // otherwise follow forever.

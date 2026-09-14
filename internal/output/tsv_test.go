@@ -1,7 +1,6 @@
 package output
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -140,16 +139,5 @@ func TestFormatListTSV_HiddenAnnotation(t *testing.T) {
 					tt.header, tt.hiddenClosed, got, tt.want)
 			}
 		})
-	}
-}
-
-// TestFormatColumns_DelegatesToFormatTSV is a belt-and-braces check that the
-// refactor of FormatColumns onto the shared FormatTSV primitive keeps its
-// column output byte-identical to a hand-built TSV grid.
-func TestFormatColumns_DelegatesToFormatTSV(t *testing.T) {
-	// A row grid equivalent to the columns projection below.
-	grid := [][]string{{"a1", "todo"}, {"b2", "in-progress"}}
-	if !strings.HasSuffix(FormatTSV(grid), "\n") {
-		t.Fatal("FormatTSV should end with a trailing newline")
 	}
 }

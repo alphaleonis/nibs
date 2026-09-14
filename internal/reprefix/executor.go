@@ -14,7 +14,10 @@ import (
 // then re-renders each with its new id, link fields and full-form body mentions.
 // It refuses a plan with collisions. Update the config only after it succeeds,
 // and run it with no watcher on the store. A failure is not rolled back: the
-// error names the file, and earlier renames and rewrites stay on disk.
+// error names the file, and earlier renames and rewrites stay on disk. A plan
+// BuildPlan derives from the store that failure left resumes it: a row it
+// already renamed has OldPath == NewPath and is only rewritten, and rewriting
+// an already-rewritten file changes nothing.
 func Execute(plan *RenamePlan, root string) error {
 	if plan == nil {
 		return fmt.Errorf("reprefix.Execute: plan is nil")
@@ -42,6 +45,9 @@ func Execute(plan *RenamePlan, root string) error {
 // No MkdirAll: rewritePath keeps the directory, so it already exists.
 func renameAll(files []FilePlan, root string, pending *fsutil.DirSyncBatch) error {
 	for _, fp := range files {
+		if fp.OldPath == fp.NewPath {
+			continue
+		}
 		oldAbs := filepath.Join(root, filepath.FromSlash(fp.OldPath))
 		newAbs := filepath.Join(root, filepath.FromSlash(fp.NewPath))
 		if err := os.Rename(oldAbs, newAbs); err != nil {

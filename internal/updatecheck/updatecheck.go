@@ -10,9 +10,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	"golang.org/x/mod/semver"
+
+	"github.com/alphaleonis/nibs/internal/fsutil"
 )
 
 // defaultCooldown is how long a cached result is trusted before the next
@@ -169,23 +172,7 @@ func (c *Checker) writeCache(s cacheState) {
 	if err != nil {
 		return
 	}
-	tmp, err := os.CreateTemp(c.cacheDir, "update-check-*.tmp")
-	if err != nil {
-		return
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-		return
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return
-	}
-	if err := os.Rename(tmpName, c.cachePath()); err != nil {
-		_ = os.Remove(tmpName)
-	}
+	_ = fsutil.AtomicWriteFile(c.cachePath(), data, 0o644)
 }
 
 // isNewer reports whether latest is a strictly newer semantic version than
@@ -196,8 +183,16 @@ func isNewer(current, latest string) (newer, comparable bool) {
 	if !semver.IsValid(cv) || !semver.IsValid(lv) {
 		return false, false
 	}
+	// semver reads a `git describe` suffix as a prerelease, which sorts before
+	// its base tag, so a build past v0.8.3 would be offered v0.8.3. Such a build
+	// is at or past its base, so compare the base itself.
+	cv = describeSuffix.ReplaceAllString(cv, "")
 	return semver.Compare(cv, lv) < 0, true
 }
+
+// describeSuffix matches what `git describe --tags --dirty` appends to a tag:
+// "-<commits>-g<hash>" when HEAD is past the tag, and "-dirty" for local changes.
+var describeSuffix = regexp.MustCompile(`(-[0-9]+-g[0-9a-f]+)?(-dirty)?$`)
 
 // ensureV normalizes a version to the leading-"v" form semver expects.
 func ensureV(v string) string {

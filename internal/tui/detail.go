@@ -19,22 +19,28 @@ import (
 	"github.com/alphaleonis/nibs/internal/ui"
 )
 
-// glamourRenderer is built once and wraps at glamour's default width, not the
-// terminal's.
+// glamourRenderers caches one renderer per wrap width: a renderer's width is
+// fixed at construction, and the preview pane renders on every frame.
 var (
-	glamourRenderer     *glamour.TermRenderer
-	glamourRendererOnce sync.Once
+	glamourRenderers   = map[int]*glamour.TermRenderer{}
+	glamourRenderersMu sync.Mutex
 )
 
-func getGlamourRenderer() *glamour.TermRenderer {
-	glamourRendererOnce.Do(func() {
-		var err error
-		glamourRenderer, err = glamour.NewTermRenderer(glamour.WithStylePath("dark"))
-		if err != nil {
-			glamourRenderer = nil
-		}
-	})
-	return glamourRenderer
+// getGlamourRenderer returns a renderer that wraps at width cells, margins
+// included, or nil when one cannot be built.
+func getGlamourRenderer(width int) *glamour.TermRenderer {
+	width = max(1, width)
+	glamourRenderersMu.Lock()
+	defer glamourRenderersMu.Unlock()
+	if r, ok := glamourRenderers[width]; ok {
+		return r
+	}
+	r, err := glamour.NewTermRenderer(glamour.WithStylePath("dark"), glamour.WithWordWrap(width))
+	if err != nil {
+		r = nil
+	}
+	glamourRenderers[width] = r
+	return r
 }
 
 // backToListMsg returns to the previous detail view, or to the list when there
@@ -49,9 +55,6 @@ type resolvedLink struct {
 
 type linkItem struct {
 	link  resolvedLink
-	cfg   *config.Config
-	width int
-	cols  ui.ResponsiveColumns
 	label string // from formatLinkLabel
 }
 
@@ -89,9 +92,11 @@ func (d linkDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	// differs between them is never drawn.
 	colors := d.cfg.GetNibColors(link.nib.Status, link.nib.EffectiveType(), link.nib.Priority)
 
-	baseWidth := d.cols.ID + d.cols.Status + d.cols.Type + 12 + 4 // label + cursor + padding
+	// The cursor (2), the label (12) and RenderNibRow's three column separators.
+	// MaxTitleWidth covers the indicator column as well as the title.
+	baseWidth := 2 + 12 + d.cols.ID + d.cols.Status + d.cols.Type + 3
 	if d.cols.ShowTags {
-		baseWidth += d.cols.Tags
+		baseWidth += 1 + d.cols.Tags // its separator and the column
 	}
 	maxTitleWidth := max(10, d.width-baseWidth-8) // 8 for border padding
 
@@ -113,7 +118,7 @@ func (d linkDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 			ShowTags:      d.cols.ShowTags,
 			TagsColWidth:  d.cols.Tags,
 			MaxTags:       d.cols.MaxTags,
-			UseFullNames:  true,
+			UseFullNames:  d.cols.UseFullTypeStatus,
 		},
 	)
 
@@ -164,7 +169,7 @@ func newDetailModel(b *nib.Nib, backend Backend, cfg *config.Config, width, heig
 
 	// The label column (12), cursor (2) and border padding (8).
 	linkAreaWidth := width - 12 - 2 - 8
-	m.cols = ui.CalculateResponsiveColumns(linkAreaWidth, hasTags)
+	m.cols = ui.CalculateResponsiveColumns(linkAreaWidth, hasTags).WithFullNames()
 
 	m.linkList = m.createLinkList()
 
@@ -253,9 +258,6 @@ func (m detailModel) createLinkList() list.Model {
 	for i, link := range m.links {
 		items[i] = linkItem{
 			link:  link,
-			cfg:   m.config,
-			width: m.width,
-			cols:  m.cols,
 			label: m.formatLinkLabel(link.linkType, link.incoming),
 		}
 	}
@@ -321,7 +323,7 @@ func (m detailModel) route(msg tea.Msg) (detailModel, tea.Cmd) {
 			}
 		}
 		linkAreaWidth := msg.Width - 12 - 2 - 8
-		m.cols = ui.CalculateResponsiveColumns(linkAreaWidth, hasTags)
+		m.cols = ui.CalculateResponsiveColumns(linkAreaWidth, hasTags).WithFullNames()
 
 		m.updateLinkListDelegate()
 
@@ -718,62 +720,20 @@ func (m detailModel) resolveAllLinks() []resolvedLink {
 	}
 
 	// Group by label, then order each group as nib.SortByStatusPriorityAndType does.
-	statusNames := m.config.StatusNames()
-	typeNames := m.config.TypeNames()
+	less := nib.LessByStatusPriorityAndType(m.config.StatusNames(), m.config.TypeNames(), m.config)
 	sort.Slice(links, func(i, j int) bool {
 		labelI := m.formatLinkLabel(links[i].linkType, links[i].incoming)
 		labelJ := m.formatLinkLabel(links[j].linkType, links[j].incoming)
 		if labelI != labelJ {
 			return labelI < labelJ
 		}
-		return compareNibsByStatusPriorityAndType(links[i].nib, links[j].nib, statusNames, typeNames, m.config)
+		return less(links[i].nib, links[j].nib)
 	})
 
 	return links
 }
 
-// compareNibsByStatusPriorityAndType reports whether a sorts before b in the
-// order nib.SortByStatusPriorityAndType uses.
-func compareNibsByStatusPriorityAndType(a, b *nib.Nib, statusNames, typeNames []string, ranker nib.PriorityRanker) bool {
-	statusOrder := make(map[string]int)
-	for i, s := range statusNames {
-		statusOrder[s] = i
-	}
-	typeOrder := make(map[string]int)
-	for i, t := range typeNames {
-		typeOrder[t] = i
-	}
-
-	// Unrecognized values sort last.
-	getStatusOrder := func(status string) int {
-		if order, ok := statusOrder[status]; ok {
-			return order
-		}
-		return len(statusNames)
-	}
-	getTypeOrder := func(typ string) int {
-		if order, ok := typeOrder[typ]; ok {
-			return order
-		}
-		return len(typeNames)
-	}
-
-	oi, oj := getStatusOrder(a.Status), getStatusOrder(b.Status)
-	if oi != oj {
-		return oi < oj
-	}
-	pi, pj := ranker.PriorityRank(a.Priority), ranker.PriorityRank(b.Priority)
-	if pi != pj {
-		return pi < pj
-	}
-	ti, tj := getTypeOrder(a.EffectiveType()), getTypeOrder(b.EffectiveType())
-	if ti != tj {
-		return ti < tj
-	}
-	return strings.ToLower(a.Title) < strings.ToLower(b.Title)
-}
-
-func (m detailModel) renderBody(_ int) string {
+func (m detailModel) renderBody(width int) string {
 	// TrimSpace, not == "": Parse keeps a body of only blank lines as-is, and
 	// glamour renders it to nothing.
 	if strings.TrimSpace(m.nib.Body) == "" {
@@ -783,7 +743,7 @@ func (m detailModel) renderBody(_ int) string {
 			Render("No description")
 	}
 
-	renderer := getGlamourRenderer()
+	renderer := getGlamourRenderer(width)
 	if renderer == nil {
 		return m.nib.Body
 	}

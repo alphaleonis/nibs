@@ -90,9 +90,8 @@ export const REL_TOKEN_ORDER = [
   // backlog.
   //
   // Backlog is one `is:` token, not a `has:`/`no:milestone` pair: on a field named
-  // `noMilestone` a pair would write true for `no:`, while
-  // `NEGATIVE_EXISTENCE_TOKENS` and the `_PairsKeep*` guards read an entry's value
-  // as its polarity.
+  // `noMilestone` a pair would write true for `no:`, while the `_PairsKeep*`
+  // guards read an entry's value as its polarity.
   { kind: "id", field: "milestone", name: "milestone", description: "Nibs assigned to this milestone" },
   { kind: "bool", field: "noMilestone", token: "is:backlog", value: true, description: "Nibs in no milestone's plan, their own or an inherited one" },
 ] as const satisfies readonly RelTokenSpec[];
@@ -160,19 +159,22 @@ export function hierarchyTokens(filter: QueryFilter): string[] {
 // --- Contradictory pairs -------------------------------------------------------
 
 /**
- * The id-field / `no:` pairs the server refuses as contradictory
- * (`refuseContradiction`, internal/graph/filters.go). The server decides; this
- * table only lets the UI name the refusal in the box's spelling, so a missing
- * entry loses the explanation, not the result.
+ * The id-field / existence-field pairs the server refuses as contradictory
+ * (`refuseContradiction`, internal/graph/filters.go). `value` is the refused
+ * existence value: false for `no:parent`, true for `is:backlog`. The server
+ * decides; this table only lets the UI name the refusal in the box's spelling,
+ * so a missing entry loses the explanation, not the result.
  *
  * Do not add `blockingId` + `hasBlocking`: `has:blocking` asks whether a nib is
  * ACTIVELY blocking, while `blocking:<id>` reads the target's stored blocked_by,
  * so the server answers that pair.
  */
 const CONTRADICTORY_PAIRS = [
-  { idField: "parentId", existenceField: "hasParent" },
-  { idField: "blockedById", existenceField: "hasBlockedBy" },
-] as const satisfies readonly { idField: RelIdKey; existenceField: PairedExistenceKey }[];
+  { idField: "parentId", existenceField: "hasParent", value: false },
+  { idField: "ancestorId", existenceField: "hasParent", value: false },
+  { idField: "blockedById", existenceField: "hasBlockedBy", value: false },
+  { idField: "milestone", existenceField: "noMilestone", value: true },
+] as const satisfies readonly { idField: RelIdKey; existenceField: ExistenceKey; value: boolean }[];
 
 /** Scalar-id NibFilter key → token field-name; the reverse of `REL_ID_FIELDS`. */
 const REL_ID_NAMES: ReadonlyMap<string, string> = new Map(
@@ -181,26 +183,26 @@ const REL_ID_NAMES: ReadonlyMap<string, string> = new Map(
   ),
 );
 
-/** Existence field → its `no:` spelling, for fields that have one. */
-const NEGATIVE_EXISTENCE_TOKENS: ReadonlyMap<string, string> = new Map(
+/** `field:value` → the existence token that writes it, for values with a spelling. */
+const EXISTENCE_TOKEN_BY_VALUE: ReadonlyMap<string, string> = new Map(
   REL_TOKEN_ORDER.flatMap((spec): [string, string][] =>
-    spec.kind === "bool" && !spec.value ? [[spec.field, spec.token]] : [],
+    spec.kind === "bool" ? [[`${spec.field}:${spec.value}`, spec.token]] : [],
   ),
 );
 
 /**
- * The contradictory pairs `filter` holds, as `[idToken, noToken]` —
+ * The contradictory pairs `filter` holds, as `[idToken, existenceToken]` —
  * `[["parent:tnib-1", "no:parent"]]`. Empty means the refusal cannot be named
  * from this filter, which may have changed since the server refused.
  */
 export function contradictionTokens(filter: QueryFilter): string[][] {
   const pairs: string[][] = [];
-  for (const { idField, existenceField } of CONTRADICTORY_PAIRS) {
+  for (const { idField, existenceField, value } of CONTRADICTORY_PAIRS) {
     const id = filter[idField];
     const name = REL_ID_NAMES.get(idField);
-    const noToken = NEGATIVE_EXISTENCE_TOKENS.get(existenceField);
-    if (!id || filter[existenceField] !== false || !name || !noToken) continue;
-    pairs.push([`${name}:${id}`, noToken]);
+    const existenceToken = EXISTENCE_TOKEN_BY_VALUE.get(`${existenceField}:${value}`);
+    if (!id || filter[existenceField] !== value || !name || !existenceToken) continue;
+    pairs.push([`${name}:${id}`, existenceToken]);
   }
   return pairs;
 }

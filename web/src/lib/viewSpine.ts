@@ -222,8 +222,8 @@ const NO_AREA_KEY: LeftoverKey = "/__no_area__";
 
 /**
  * The declared forest of an areas vocabulary, read off the depth runs of
- * `sections()` — the declaration-order contract `subtreeOf` also reads. Do not
- * re-split `path`.
+ * `sections()` — the same ordering contract `subtreeOf` reads. Do not re-split
+ * `path`.
  *
  * A node whose depth names no open ancestor becomes a root rather than being
  * dropped.

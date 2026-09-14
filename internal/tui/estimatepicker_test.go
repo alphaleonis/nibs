@@ -11,12 +11,10 @@ import (
 )
 
 func TestEstimatePickerModel(t *testing.T) {
-	cfg := config.Default()
-
 	t.Run("pre-selects current estimate", func(t *testing.T) {
 		m := newEstimatePickerModel(
 			[]string{"nib-1"}, "Test Nib", "l",
-			cfg, 80, 24,
+			80, 24,
 		)
 
 		selected, ok := m.list.SelectedItem().(estimateItem)
@@ -34,7 +32,7 @@ func TestEstimatePickerModel(t *testing.T) {
 	t.Run("shows all estimate options", func(t *testing.T) {
 		m := newEstimatePickerModel(
 			[]string{"nib-1"}, "Test Nib", "",
-			cfg, 80, 24,
+			80, 24,
 		)
 
 		items := m.list.Items()
@@ -67,7 +65,7 @@ func TestEstimatePickerModel(t *testing.T) {
 		for _, e := range config.DefaultEstimates {
 			m := newEstimatePickerModel(
 				[]string{"nib-1"}, "Test Nib", e.Name,
-				cfg, w, h,
+				w, h,
 			)
 			view := m.View()
 			if view == "Loading..." {
@@ -87,7 +85,7 @@ func TestEstimatePickerModel(t *testing.T) {
 	t.Run("enter sends estimateSelectedMsg", func(t *testing.T) {
 		m := newEstimatePickerModel(
 			[]string{"nib-1"}, "Test Nib", "m",
-			cfg, 80, 24,
+			80, 24,
 		)
 
 		// Press enter on the pre-selected item ("m")
@@ -112,7 +110,7 @@ func TestEstimatePickerModel(t *testing.T) {
 	t.Run("esc sends closeEstimatePickerMsg", func(t *testing.T) {
 		m := newEstimatePickerModel(
 			[]string{"nib-1"}, "Test Nib", "",
-			cfg, 80, 24,
+			80, 24,
 		)
 
 		_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})

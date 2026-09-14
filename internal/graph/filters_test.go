@@ -1999,15 +1999,23 @@ func contradictionFixture() *stubReader {
 	return &stubReader{nibs: byID, allNibs: all, prefix: "nibs-"}
 }
 
-// TestApplyFilterRefusesContradictoryPairs pins the two combinations that no
-// store state can satisfy. Each pairs an id-valued field with the presence field
-// covering the same relationship, set to false:
+// TestApplyFilterRefusesContradictoryPairs pins the refusal's shape for the
+// combinations that no store state can satisfy. Each pairs an id-valued field
+// with a tri-state field set to the value no nib it matches can have:
 //
 //   - parentId + hasParent: false. parentId matches the stored b.Parent against
 //     a target that already resolved, so a nib it matches has a parent link that
 //     reader.Get answers for — which is what hasParent asks (resolvedParentID).
+//   - ancestorId + hasParent: false. A descendant is reached through resolved
+//     parents.
 //   - blockedById + hasBlockedBy: false. blockedById requires the target in
 //     b.BlockedBy, which forces len(b.BlockedBy) > 0, which is hasBlockedBy.
+//   - milestone + noMilestone: true. A resolved direct assignment is the first
+//     thing derived membership reads.
+//
+// Which pairs qualify is decided at runtime by
+// TestEveryIDAndPresencePairIsRefusedExactlyWhenUnsatisfiable; these rows pin the
+// error's fields and its ordering against the other refusals.
 //
 // Answering either with an empty list is the failure the refusal classes exist
 // to remove: it is a factual claim about the store ("that parent has no
@@ -2032,7 +2040,7 @@ func contradictionFixture() *stubReader {
 func TestApplyFilterRefusesContradictoryPairs(t *testing.T) {
 	reader := contradictionFixture()
 	blocking := &stubBlockingChecker{}
-	no := false
+	yes, no := true, false
 
 	tests := []struct {
 		name          string
@@ -2043,6 +2051,14 @@ func TestApplyFilterRefusesContradictoryPairs(t *testing.T) {
 	}{
 		{"parentId with hasParent false",
 			&model.NibFilter{ParentID: strPtr("par"), HasParent: &no}, "parentId", "hasParent", false},
+		{"ancestorId with hasParent false",
+			&model.NibFilter{AncestorID: strPtr("par"), HasParent: &no}, "ancestorId", "hasParent", false},
+		{"milestone with noMilestone true",
+			&model.NibFilter{Milestone: strPtr("par"), NoMilestone: &yes}, "milestone", "noMilestone", false},
+		{"milestone naming no nib with noMilestone true",
+			&model.NibFilter{Milestone: strPtr("nonexistent"), NoMilestone: &yes}, "milestone", "noMilestone", false},
+		{"an empty milestone with noMilestone true keeps the empty-id refusal",
+			&model.NibFilter{Milestone: strPtr(""), NoMilestone: &yes}, "milestone", "", true},
 		{"blockedById with hasBlockedBy false",
 			&model.NibFilter{BlockedByID: strPtr("par"), HasBlockedBy: &no}, "blockedById", "hasBlockedBy", false},
 		{"parentId naming no nib with hasParent false",
@@ -2094,6 +2110,13 @@ func TestApplyFilterRefusesContradictoryPairs(t *testing.T) {
 			}
 			if contradiction.PresenceField != tt.wantPresence {
 				t.Errorf("PresenceField = %q, want the schema spelling %q", contradiction.PresenceField, tt.wantPresence)
+			}
+			sent := map[string]*bool{"hasParent": tt.filter.HasParent, "hasBlockedBy": tt.filter.HasBlockedBy, "noMilestone": tt.filter.NoMilestone}[tt.wantPresence]
+			if sent == nil || contradiction.PresenceValue != *sent {
+				t.Errorf("PresenceValue = %t, want the value the filter sent", contradiction.PresenceValue)
+			}
+			if want := "contradicts " + tt.wantPresence + ": " + map[bool]string{true: "true", false: "false"}[contradiction.PresenceValue]; !strings.Contains(err.Error(), want) {
+				t.Errorf("message %q does not name the refused value (%q)", err.Error(), want)
 			}
 			var notFound *FilterTargetNotFoundError
 			if errors.As(err, &notFound) {
@@ -2205,6 +2228,144 @@ func TestBlockingIDWithHasBlockingFalseSelectsReleasedBlockers(t *testing.T) {
 			got := applyFilterOK(t, ctx, core.All(), tt.filter, core, resolver.Blocking)
 			assertNibIDs(t, got, tt.wantIDs)
 		})
+	}
+}
+
+// presenceFilterField is one tri-state (*bool) field of model.NibFilter.
+type presenceFilterField struct {
+	name  string
+	index int
+}
+
+// setOn sets the field to v on an existing filter.
+func (f presenceFilterField) setOn(filter *model.NibFilter, v bool) {
+	reflect.ValueOf(filter).Elem().Field(f.index).Set(reflect.ValueOf(&v))
+}
+
+// presenceFilterFields selects every *bool field of model.NibFilter, so a new
+// tri-state filter joins the pair walk below without being listed.
+func presenceFilterFields(t *testing.T) []presenceFilterField {
+	t.Helper()
+	filterType := reflect.TypeOf(model.NibFilter{})
+	var fields []presenceFilterField
+	for i := range filterType.NumField() {
+		field := filterType.Field(i)
+		if field.Type.Kind() != reflect.Pointer || field.Type.Elem().Kind() != reflect.Bool {
+			continue
+		}
+		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		fields = append(fields, presenceFilterField{name: name, index: i})
+	}
+	if len(fields) == 0 {
+		t.Fatal("no *bool field of model.NibFilter matched, so the pair walk guards nothing")
+	}
+	return fields
+}
+
+// TestEveryIDAndPresencePairIsRefusedExactlyWhenUnsatisfiable drives every
+// id-valued filter field against every tri-state field, at both values and for
+// every nib as the target, and requires the refusal and the answer to agree: a
+// pair is refused as a contradiction exactly when no target in the store gives
+// its two halves a nib in common.
+//
+// The halves are asked separately and intersected, which is the pair's answer
+// because every ApplyFilter branch only narrows. That makes the oracle
+// independent of any list of which pairs qualify, so a new field — or a
+// combination nobody reasoned about — is checked without being named here.
+//
+// The fixture has to hold a witness for every SATISFIABLE pair, or that pair
+// fails as "answered empty for every target". That failure names the pair, and
+// the fix is either a refusal or a nib that satisfies it, never an exemption. It
+// is built through Core so blocking, mentions and membership are the real ones.
+func TestEveryIDAndPresencePairIsRefusedExactlyWhenUnsatisfiable(t *testing.T) {
+	resolver, core := setupTestResolver(t)
+	for _, b := range []*nib.Nib{
+		{ID: "ms", Title: "Milestone", Type: "milestone", Status: "in-progress"},
+		{ID: "r1", Title: "Assigned root epic", Type: "epic", Status: "todo", Milestone: "ms", MilestoneOrder: "a0"},
+		{ID: "r2", Title: "Backlog root epic", Type: "epic", Status: "todo"},
+		{ID: "b1", Title: "Open root blocker", Type: "task", Status: "todo", Body: "See #r2."},
+		{ID: "b2", Title: "Released root blocker", Type: "task", Status: "completed"},
+		{ID: "c3", Title: "Child of the assigned epic", Type: "task", Status: "todo", Parent: "r1"},
+		{ID: "c2", Title: "Blocked backlog feature", Type: "feature", Status: "todo", Parent: "r2", BlockedBy: []string{"b1"}, Body: "See #r1."},
+		{ID: "h", Title: "Root blocked by a child", Type: "task", Status: "todo", BlockedBy: []string{"c2"}},
+		{ID: "c1", Title: "Assigned blocked child", Type: "task", Status: "todo", Parent: "r2", Milestone: "ms", MilestoneOrder: "b0",
+			BlockedBy: []string{"b1", "b2", "r1", "c3"}, Body: "See #b1, #r1 and #c2."},
+		{ID: "g", Title: "Grandchild with a released blocker", Type: "task", Status: "todo", Parent: "c2", BlockedBy: []string{"b2"}, Body: "See #c1."},
+	} {
+		mustCreate(t, core, b)
+	}
+	ctx := context.Background()
+	all := core.All()
+	ids := func(nibs []*nib.Nib) []string {
+		out := make([]string, len(nibs))
+		for i, b := range nibs {
+			out[i] = b.ID
+		}
+		sort.Strings(out)
+		return out
+	}
+
+	for _, idField := range idValuedFilterFields(t) {
+		for _, presence := range presenceFilterFields(t) {
+			for _, value := range []bool{true, false} {
+				t.Run(idField.name+"+"+presence.name+"="+map[bool]string{true: "true", false: "false"}[value], func(t *testing.T) {
+					presenceOnly := &model.NibFilter{}
+					presence.setOn(presenceOnly, value)
+					presenceSet, err := ApplyFilter(ctx, all, presenceOnly, core, resolver.Blocking)
+					if err != nil {
+						t.Fatalf("%s alone: %v", presence.name, err)
+					}
+					inPresence := make(map[string]bool, len(presenceSet))
+					for _, b := range presenceSet {
+						inPresence[b.ID] = true
+					}
+
+					var refused, answered, witnesses []string
+					for _, target := range all {
+						idSet, err := ApplyFilter(ctx, all, idField.filterWith(target.ID), core, resolver.Blocking)
+						if err != nil {
+							// A target this field refuses on its own, such as a
+							// non-milestone for milestone, says nothing about the pair.
+							continue
+						}
+						var both []*nib.Nib
+						for _, b := range idSet {
+							if inPresence[b.ID] {
+								both = append(both, b)
+							}
+						}
+						if len(both) > 0 {
+							witnesses = append(witnesses, target.ID)
+						}
+
+						pair := idField.filterWith(target.ID)
+						presence.setOn(pair, value)
+						got, err := ApplyFilter(ctx, all, pair, core, resolver.Blocking)
+						var contradiction *FilterTargetContradictionError
+						switch {
+						case errors.As(err, &contradiction):
+							refused = append(refused, target.ID)
+						case err != nil:
+							t.Fatalf("target %s: unexpected error %v", target.ID, err)
+						default:
+							answered = append(answered, target.ID)
+							if g, w := ids(got), ids(both); !slices.Equal(g, w) {
+								t.Errorf("target %s: pair answered %v, but its halves share %v", target.ID, g, w)
+							}
+						}
+					}
+
+					switch {
+					case len(refused) > 0 && len(answered) > 0:
+						t.Errorf("refused for %v but answered for %v; a contradiction does not depend on the target", refused, answered)
+					case len(refused) > 0 && len(witnesses) > 0:
+						t.Errorf("refused, but targets %v give both halves a nib in common", witnesses)
+					case len(answered) > 0 && len(witnesses) == 0:
+						t.Errorf("answered empty for every target %v: refuse the pair if no store can satisfy it, or add a nib that does", answered)
+					}
+				})
+			}
+		}
 	}
 }
 

@@ -922,8 +922,8 @@ func shellArg(path string) string {
 // reportExitError is the single, testable error boundary for the CLI: it maps
 // each error's structured CODE to a stable exit status via output.ExitCode
 // (NOT_FOUND→3, VALIDATION→2, CONFLICT→4, IO/file→5, anything else→1,
-// success→0). Every error-carrying path exits through here — `nibs check` is the
-// one command that also calls os.Exit directly, for its issues-found status.
+// success→0). Every non-zero exit goes through here, `nibs check`'s issues-found
+// status included.
 //
 // A Reported *output.CodedError prints nothing to stderr: the command already
 // wrote the user-visible report to stdout, and duplicating it would corrupt

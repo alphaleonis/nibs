@@ -1268,7 +1268,7 @@ func loadStoreForMigration(env migrateEnv) (*nibcore.Core, error) {
 			problems = append(problems, fmt.Sprintf("unparseable nib file %s: %s", stripControlChars(uf.Path), stripControlChars(uf.Reason)))
 		}
 		for _, d := range duplicates {
-			problems = append(problems, fmt.Sprintf("duplicate id %q: %s shadows %s", d.NibID, stripControlChars(d.Loaded), stripControlChars(d.Shadowed)))
+			problems = append(problems, fmt.Sprintf("duplicate id %q: %s shadows %s", stripControlChars(d.NibID), stripControlChars(d.Loaded), stripControlChars(d.Shadowed)))
 		}
 		return nil, fmt.Errorf("refusing to migrate a store that does not load cleanly (repair the files below by hand, `nibs check` reports them too, then re-run `nibs migrate`):\n  %s",
 			echoedList(problems, echoedListRemedyCheck))

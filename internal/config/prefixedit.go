@@ -95,18 +95,9 @@ func PlanSetStoredPrefix(storeDir, prefix string) (*StoredPrefixEdit, error) {
 	if edited.Nibs.Prefix != prefix {
 		return nil, refusePrefixEdit(
 			"%s would still read its prefix as %q after the edit, because this edit can only address a literal `nibs:` mapping — write `prefix: %s` out under `nibs:`, then rerun",
-			path, edited.Nibs.Prefix, prefix)
+			path, echoedYAMLName(edited.Nibs.Prefix), prefix)
 	}
 	return &StoredPrefixEdit{path: path, out: out}, nil
-}
-
-// SetStoredPrefix plans and writes a prefix change in one step.
-func SetStoredPrefix(storeDir, prefix string) (staleLinkTarget string, err error) {
-	edit, err := PlanSetStoredPrefix(storeDir, prefix)
-	if err != nil {
-		return "", err
-	}
-	return edit.Write()
 }
 
 // setNestedScalar sets doc's section.key to value, creating the document, the

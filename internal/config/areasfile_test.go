@@ -38,12 +38,34 @@ func TestLoadAreasFromStoreReadsTheAreasFile(t *testing.T) {
 		t.Fatalf("LoadAreasFromStore: %v", err)
 	}
 
-	want := []string{"web", "web/dashboard", "auth"}
+	want := []string{"auth", "web", "web/dashboard"}
 	if got := areas.Paths(); !slices.Equal(got, want) {
 		t.Errorf("Paths() = %v, want %v", got, want)
 	}
-	if !areas.Declared() {
-		t.Error("Declared() = false, want true")
+	if areas.IsEmpty() {
+		t.Error("IsEmpty() = true, want false")
+	}
+}
+
+// A reordered areas.yml declares the same vocabulary, so a reload of it must not
+// count as a change — the watcher would otherwise wake every browser over a
+// rendering that comes out identical.
+func TestAreasEqualIgnoresFileOrder(t *testing.T) {
+	load := func(body string) *Areas {
+		t.Helper()
+		areas, err := LoadAreasFromStore(writeStoreAreas(t, body))
+		if err != nil {
+			t.Fatalf("LoadAreasFromStore: %v", err)
+		}
+		return areas
+	}
+	declared := load("areas:\n    - name: web\n      children:\n        - name: settings\n        - name: dashboard\n    - name: api\n")
+
+	if reordered := load("areas:\n    - name: api\n    - name: web\n      children:\n        - name: dashboard\n        - name: settings\n"); !declared.Equal(reordered) {
+		t.Errorf("Equal = false for vocabularies that differ only in file order: %v vs %v", declared.Paths(), reordered.Paths())
+	}
+	if changed := load("areas:\n    - name: api\n    - name: web\n      children:\n        - name: dashboard\n"); declared.Equal(changed) {
+		t.Errorf("Equal = true for a vocabulary that dropped web/settings: %v", changed.Paths())
 	}
 }
 
@@ -52,8 +74,8 @@ func TestLoadAreasFromStoreWithNoFileDeclaresNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadAreasFromStore: %v", err)
 	}
-	if areas.Declared() {
-		t.Error("Declared() = true for a store with no areas.yml, want false")
+	if !areas.IsEmpty() {
+		t.Error("IsEmpty() = false for a store with no areas.yml, want true")
 	}
 	if got := areas.Paths(); len(got) != 0 {
 		t.Errorf("Paths() = %v, want empty", got)
@@ -79,14 +101,14 @@ func TestLoadAreasFromStoreRefusesAMalformedVocabulary(t *testing.T) {
 func TestNilAreasAnswersEveryQuery(t *testing.T) {
 	var areas *Areas
 
-	if areas.Declared() {
-		t.Error("Declared() = true on nil, want false")
+	if !areas.IsEmpty() {
+		t.Error("IsEmpty() = false on nil, want true")
 	}
 	if got := areas.Paths(); len(got) != 0 {
 		t.Errorf("Paths() = %v on nil, want empty", got)
 	}
-	if areas.IsValid("web") {
-		t.Error("IsValid(web) = true on nil, want false")
+	if areas.Exists("web") {
+		t.Error("Exists(web) = true on nil, want false")
 	}
 	if areas.Get("web") != nil {
 		t.Error("Get(web) != nil on nil")
@@ -145,7 +167,7 @@ func TestConfigAndAreasLoadIndependently(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadAreasFromStore: %v", err)
 	}
-	if !areas.IsValid("web") {
-		t.Error("IsValid(web) = false, want true")
+	if !areas.Exists("web") {
+		t.Error("Exists(web) = false, want true")
 	}
 }

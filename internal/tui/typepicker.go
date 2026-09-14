@@ -70,7 +70,7 @@ type typePickerModel struct {
 	height      int
 }
 
-func newTypePickerModel(nibIDs []string, nibTitle, currentType string, validTypes []string, cfg *config.Config, width, height int) typePickerModel {
+func newTypePickerModel(nibIDs []string, nibTitle, currentType string, validTypes []string, width, height int) typePickerModel {
 	types := config.DefaultTypes
 
 	var validSet map[string]bool

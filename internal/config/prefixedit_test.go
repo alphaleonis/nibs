@@ -144,6 +144,19 @@ func TestPlanSetStoredPrefixWritesNothingUntilWrite(t *testing.T) {
 	}
 }
 
+// setStoredPrefix plans and writes a prefix change, the two steps
+// `nibs config set-prefix` takes.
+func setStoredPrefix(t *testing.T, storeDir, prefix string) {
+	t.Helper()
+	edit, err := PlanSetStoredPrefix(storeDir, prefix)
+	if err != nil {
+		t.Fatalf("PlanSetStoredPrefix: %v", err)
+	}
+	if _, err := edit.Write(); err != nil {
+		t.Fatalf("StoredPrefixEdit.Write: %v", err)
+	}
+}
+
 // TestPlanSetStoredPrefixMakesTheFileSayThePrefix covers the shapes where there
 // is no key to edit. set-prefix's job is to make the file say the new prefix, so
 // a missing `nibs:` mapping — or a missing file — is created rather than refused.
@@ -198,9 +211,7 @@ func TestPlanSetStoredPrefixMakesTheFileSayThePrefix(t *testing.T) {
 				storeDir = writePrefixEditStore(t, tt.config)
 			}
 
-			if _, err := SetStoredPrefix(storeDir, "zz-"); err != nil {
-				t.Fatalf("SetStoredPrefix: %v", err)
-			}
+			setStoredPrefix(t, storeDir, "zz-")
 			cfg, err := LoadFromStore(storeDir)
 			if err != nil {
 				t.Fatalf("LoadFromStore: %v", err)
@@ -247,9 +258,7 @@ future_key:
 # The last word.
 `
 	storeDir := writePrefixEditStore(t, authored)
-	if _, err := SetStoredPrefix(storeDir, "zz-"); err != nil {
-		t.Fatalf("SetStoredPrefix: %v", err)
-	}
+	setStoredPrefix(t, storeDir, "zz-")
 	got := readPrefixEditStore(t, storeDir)
 
 	if !strings.Contains(got, "prefix: zz-") {
@@ -325,9 +334,7 @@ func TestStoredPrefixEditPreservesTheConfigsMode(t *testing.T) {
 	if err := os.Chmod(path, 0o640); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := SetStoredPrefix(storeDir, "zz-"); err != nil {
-		t.Fatalf("SetStoredPrefix: %v", err)
-	}
+	setStoredPrefix(t, storeDir, "zz-")
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
@@ -383,9 +390,7 @@ func TestStoredPrefixEditLosesWhatTheDocSaysItLoses(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storeDir := writePrefixEditStore(t, tt.config)
-			if _, err := SetStoredPrefix(storeDir, "zz-"); err != nil {
-				t.Fatalf("SetStoredPrefix: %v", err)
-			}
+			setStoredPrefix(t, storeDir, "zz-")
 			if got := readPrefixEditStore(t, storeDir); got != tt.want {
 				t.Errorf("config.yml = %q, want %q", got, tt.want)
 			}

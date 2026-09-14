@@ -326,6 +326,7 @@ func TestCloseMilestoneMoveTargetIsValidated(t *testing.T) {
 	}{
 		{name: "unknown", target: "ms-ghost", wantErr: "milestone nib not found"},
 		{name: "not a milestone", target: "mem-open", wantErr: "not milestone"},
+		{name: "not a milestone, with a hostile stored type", target: "ms-hostile", wantErr: "has type task [31m, not milestone"},
 		{name: "the milestone being closed", target: "ms-1", wantErr: "is the milestone being closed"},
 		{name: "a released target", target: "ms-done", wantErr: "already closed as"},
 		{name: "a parked target", target: "ms-parked", wantErr: ""},
@@ -335,6 +336,7 @@ func TestCloseMilestoneMoveTargetIsValidated(t *testing.T) {
 			files := milestoneStoreFiles(map[string]string{"open": "todo"})
 			files["ms-done--finished.md"] = "---\nversion: 2\ntitle: Finished\nstatus: completed\ntype: milestone\norder: c\n---\n\nBody.\n"
 			files["ms-parked--parked.md"] = "---\nversion: 2\ntitle: Parked\nstatus: " + holding + "\ntype: milestone\norder: d\n---\n\nBody.\n"
+			files["ms-hostile--hostile.md"] = "---\nversion: 2\ntitle: Hostile\nstatus: todo\ntype: \"task\\e[31m\"\n---\n\nBody.\n"
 			nibsPath := setupMilestoneCloseTest(t, files)
 
 			withStdin(t, "Wave over.\n")
@@ -355,6 +357,9 @@ func TestCloseMilestoneMoveTargetIsValidated(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tc.wantErr) {
 				t.Errorf("error = %q, want it to contain %q", err, tc.wantErr)
+			}
+			if strings.Contains(err.Error(), "\x1b") {
+				t.Errorf("error = %q carries an escape byte from a stored field", err)
 			}
 			if ms, key := milestoneOf(t, nibsPath, "mem-open"); ms != "ms-1" || key == "" {
 				t.Errorf("refused move still touched the queue: mem-open = (%q, %q)", ms, key)
@@ -392,6 +397,21 @@ func TestCloseQueueEscapesApplyToMilestonesOnly(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("a hostile stored type is stripped from the refusal", func(t *testing.T) {
+		files := milestoneStoreFiles(map[string]string{"open": "todo"})
+		files["hostile--hostile.md"] = "---\nversion: 2\ntitle: Hostile\nstatus: todo\ntype: \"task\\e[31m\"\n---\n\nBody.\n"
+		nibsPath := setupMilestoneCloseTest(t, files)
+
+		withStdin(t, "Done.\n")
+		_, err := runRootWith(t, "--nibs-path", nibsPath, "close", "hostile", "--summary", "-", "--unassign-open")
+		if code := closeErrCode(t, err); output.ExitCode(code) != output.ExitValidation {
+			t.Errorf("exit = %d, want %d (validation)", output.ExitCode(code), output.ExitValidation)
+		}
+		if !strings.Contains(err.Error(), "is a task [31m") || strings.Contains(err.Error(), "\x1b") {
+			t.Errorf("refusal should name the stripped type, got: %q", err)
+		}
+	})
 }
 
 // TestCloseMilestoneEscapesAreMutuallyExclusive: two dispositions for one set

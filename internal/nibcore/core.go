@@ -38,7 +38,7 @@ type IDExistsError struct {
 }
 
 func (e *IDExistsError) Error() string {
-	return fmt.Sprintf("nib id %q is already claimed by a file in the store — creating it again would leave two files wearing one id", e.ID)
+	return fmt.Sprintf("nib id %q is already claimed by a file in the store — creating it again would leave two files wearing one id", safetext.Strip(e.ID))
 }
 
 // StoreRePrefixedError reports a Create refused because the store's config
@@ -65,7 +65,7 @@ func (e *StoreRePrefixedError) Error() string {
 		remedy = "restart the nibs process holding this store — it read the prefix once at startup and nothing reloads it, so every later create refuses the same way"
 	}
 	return fmt.Sprintf("nothing was created: this store's prefix changed from %q to %q while this create waited for the store's write lock, so every id this process loaded is retired — %s",
-		e.Loaded, e.Declared, remedy)
+		safetext.Strip(e.Loaded), safetext.Strip(e.Declared), remedy)
 }
 
 // ETagMismatchError is returned when an ETag validation fails.
@@ -193,12 +193,15 @@ type Core struct {
 	// Warning sink for non-fatal notes, defaulting to stderr through
 	// safetext.Writer: these warnings interpolate FILENAMES, which on Linux are
 	// arbitrary bytes. Keep the boundary on the writer, not at the call sites.
-	warnWriter *safetext.Writer
+	//
+	// An atomic pointer for the same reason as c.areas: the watcher reads it
+	// off any lock SetWarnWriter could take, and a swap publishes a new Writer.
+	warnWriter atomic.Pointer[safetext.Writer]
 }
 
 // New creates a new Core with the given root path and configuration.
 func New(root string, cfg *config.Config) *Core {
-	return &Core{
+	c := &Core{
 		root:              root,
 		layout:            store.NewLayout(root),
 		config:            cfg,
@@ -208,8 +211,9 @@ func New(root string, cfg *config.Config) *Core {
 		subscribers:       make(map[uint64]*subscription),
 		signalSubscribers: make(map[uint64]chan struct{}),
 		areasSubscribers:  make(map[uint64]chan struct{}),
-		warnWriter:        safetext.NewWriter(os.Stderr),
 	}
+	c.warnWriter.Store(safetext.NewWriter(os.Stderr))
+	return c
 }
 
 // acquireWriteLock takes the cross-process advisory write lock for the whole
@@ -240,12 +244,13 @@ func (c *Core) acquireWriteLockContext(ctx context.Context) (func() error, error
 
 // SetWarnWriter sets the writer for warning messages; nil disables warnings.
 // The replacement is wrapped in the same safetext boundary the default carries.
+// Safe to call while the store is being watched.
 func (c *Core) SetWarnWriter(w io.Writer) {
 	if w == nil {
-		c.warnWriter = nil
+		c.warnWriter.Store(nil)
 		return
 	}
-	c.warnWriter = safetext.NewWriter(w)
+	c.warnWriter.Store(safetext.NewWriter(w))
 }
 
 // Warn reports a non-fatal note about this store to the same sink, through the
@@ -319,9 +324,9 @@ func (w *warnBudget) close() {
 // any incomplete rune the safetext boundary holds, so no warning ends one byte
 // short of what Fprintf reported written.
 func (c *Core) logWarn(format string, args ...any) {
-	if c.warnWriter != nil {
-		_, _ = fmt.Fprintf(c.warnWriter, "warning: "+format+"\n", args...)
-		_ = c.warnWriter.Flush()
+	if w := c.warnWriter.Load(); w != nil {
+		_, _ = fmt.Fprintf(w, "warning: "+format+"\n", args...)
+		_ = w.Flush()
 	}
 }
 
@@ -445,7 +450,7 @@ func (c *Core) loadFromDisk() error {
 		// the retained diagnostic in nib.Path form.
 		if existing, ok := nibs[b.ID]; ok {
 			warns.warn("duplicate nib id %q on disk: %s shadows %s (last file loaded wins; resolve the duplicate)",
-				b.ID, path, filepath.Join(c.root, existing.Path))
+				safetext.Strip(b.ID), path, filepath.Join(c.root, existing.Path))
 			duplicates = append(duplicates, DuplicateID{
 				NibID:    b.ID,
 				Loaded:   b.Path,
@@ -548,6 +553,11 @@ func readRegularFile(path string) ([]byte, error) {
 	return io.ReadAll(f)
 }
 
+// errFilenameNamesNoID refuses a file whose name parses to an empty id: every
+// lookup is by id, so a nib loaded under "" could be neither addressed nor
+// reported.
+var errFilenameNamesNoID = errors.New("its file name yields no nib id")
+
 // loadNib reads and parses a single nib file.
 func (c *Core) loadNib(path string) (*nib.Nib, error) {
 	// OpenRegularFile, not os.Open: this is reached from the fsnotify watcher
@@ -572,6 +582,9 @@ func (c *Core) loadNib(path string) (*nib.Nib, error) {
 
 	filename := filepath.Base(path)
 	b.ID, b.Slug = nib.ParseFilename(filename, c.configPrefix())
+	if b.ID == "" {
+		return nil, errFilenameNamesNoID
+	}
 
 	// Type and Priority are deliberately not defaulted here: synthesizing them in
 	// memory while computeStoredETag bare-parses the file would diverge the
@@ -917,16 +930,16 @@ func (c *Core) ValidateEnums(b *nib.Nib) error {
 		return nil
 	}
 	if b.Type != "" && !c.config.IsValidType(b.Type) {
-		return fmt.Errorf("invalid type %q: must be one of %s", b.Type, c.config.TypeList())
+		return fmt.Errorf("invalid type %q: must be one of %s", safetext.Strip(b.Type), c.config.TypeList())
 	}
 	if b.Status != "" && !c.config.IsValidStatus(b.Status) {
-		return fmt.Errorf("invalid status %q: must be one of %s", b.Status, c.config.StatusList())
+		return fmt.Errorf("invalid status %q: must be one of %s", safetext.Strip(b.Status), c.config.StatusList())
 	}
 	if b.Priority != "" && !c.config.IsValidPriority(b.Priority) {
-		return fmt.Errorf("invalid priority %q: must be one of %s", b.Priority, c.config.PriorityList())
+		return fmt.Errorf("invalid priority %q: must be one of %s", safetext.Strip(b.Priority), c.config.PriorityList())
 	}
 	if b.Estimate != "" && !c.config.IsValidEstimate(b.Estimate) {
-		return fmt.Errorf("invalid estimate %q: must be one of %s", b.Estimate, c.config.EstimateList())
+		return fmt.Errorf("invalid estimate %q: must be one of %s", safetext.Strip(b.Estimate), c.config.EstimateList())
 	}
 	return nil
 }
@@ -1190,7 +1203,7 @@ func (c *Core) mintingVocabulary() (string, int, error) {
 	if err != nil {
 		// A failed read is evidence of nothing, least of all that the prefix
 		// changed; a silent fallback would look like the misnaming this catches.
-		c.logWarn("could not re-read %s while minting a nib id (%v); using the prefix %q and id length %d this process loaded", configPath, err, prefix, length)
+		c.logWarn("could not re-read %s while minting a nib id (%v); using the prefix %q and id length %d this process loaded", configPath, err, safetext.Strip(prefix), length)
 		return prefix, length, nil
 	}
 	if !stored.LoadedFromFile() {
@@ -1463,6 +1476,15 @@ func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 	}
 
 	c.nibs[b.ID] = b
+
+	// The caller may name a link by short id. Resolve it in the store, copy-on-
+	// write and leaving the caller's pointer alone, as Create does. No sweep: an
+	// update changes no key set, so no other nib's link can re-point.
+	if set := canonicalizeLinksInMap(c.nibs, b, c.configPrefix()); set.changed {
+		resolved := b.Clone()
+		set.applyTo(resolved)
+		c.nibs[b.ID] = resolved
+	}
 
 	c.mentionIdx.Replace(b.ID, b.Body)
 

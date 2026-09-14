@@ -22,7 +22,7 @@ func pkcs8PEM(t *testing.T, key ed25519.PrivateKey) string {
 // TestCheckKeyRejectsAKeyNoBinaryTrusts is the whole point of this command: a
 // signing key whose public half is not embedded must fail the release BEFORE
 // anything is published, rather than producing a valid-looking signature that
-// strands every install once verification is required.
+// every `nibs upgrade` refuses.
 func TestCheckKeyRejectsAKeyNoBinaryTrusts(t *testing.T) {
 	_, stranger, err := ed25519.GenerateKey(nil)
 	if err != nil {
@@ -36,10 +36,15 @@ func TestCheckKeyRejectsAKeyNoBinaryTrusts(t *testing.T) {
 	}
 	// The message has to name the consequence, or an operator hitting this at
 	// release time cannot tell it apart from a transient failure.
-	for _, want := range []string{"does not correspond", "reinstall"} {
+	for _, want := range []string{"does not correspond", "nibs upgrade"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not mention %q", err, want)
 		}
+	}
+	// `nibs upgrade` already requires a signature, so the consequence is not a
+	// future one.
+	if strings.Contains(err.Error(), "once signature verification is required") {
+		t.Errorf("error %q describes signature verification as not yet required", err)
 	}
 }
 

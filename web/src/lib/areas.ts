@@ -3,8 +3,8 @@
  * generated into `generated/vocabulary.ts`, areas are per-store, so this arrives
  * at runtime over `Config.areas`.
  *
- * The methods mirror `config.Areas`'s `Get`, `IsValid`, `IsWithin` and
- * `Declared`; ask them rather than re-deriving. Pure: no Svelte, no urql.
+ * The methods mirror `config.Areas`'s `Get`, `Exists`, `IsWithin` and
+ * `IsEmpty`; ask them rather than re-deriving. Pure: no Svelte, no urql.
  */
 
 /** One declared area. Mirrors the `Area` type on the wire. */
@@ -29,21 +29,21 @@ export type AreaValidity = "declared" | "undeclared" | "unknown";
 
 export interface AreaVocabulary {
   /**
-   * "none": the project declares no areas (`Areas.Declared`), a permanent state
+   * "none": the project declares no areas (`Areas.IsEmpty`), a permanent state
    * distinct from "loading". "unavailable": the config query failed, so neither
    * an answer nor "none" is coming.
    */
   readonly status: "loading" | "none" | "ready" | "unavailable";
-  /** Every declared area in DECLARATION order. */
+  /** Every declared area in the server's order: siblings by name, parents first. */
   sections(): readonly AreaNode[];
   /** The declared area a stored `area:` names, or null (`Areas.Get`). */
   resolve(stored: string): AreaNode | null;
-  /** `Areas.IsValid`, plus "unknown" before the vocabulary loads. */
+  /** `Areas.Exists`, plus "unknown" before the vocabulary loads. */
   validity(path: string): AreaValidity;
   /** `path` and every area declared beneath it (`Areas.IsWithin`). Empty when
    *  `path` names no declared area. */
   subtreeOf(path: string): readonly AreaNode[];
-  /** What completes `area:<partial>` — declaration order, case-insensitive substring. */
+  /** What completes `area:<partial>` — `sections()` order, case-insensitive substring. */
   completions(partial: string): readonly string[];
 }
 
@@ -61,9 +61,9 @@ const EMPTY_NODES: readonly AreaNode[] = Object.freeze([]);
 const EMPTY_PATHS: readonly string[] = Object.freeze([]);
 
 /**
- * Build a vocabulary from the server's flat list, which is in declaration order
- * with each parent immediately before its subtree. `subtreeOf` relies on that: a
- * subtree is the run of following entries with a greater `depth`.
+ * Build a vocabulary from the server's flat list, which has siblings sorted by
+ * name and each parent immediately before its subtree. `subtreeOf` relies on
+ * that: a subtree is the run of following entries with a greater `depth`.
  */
 export function createAreaVocabulary(flat: readonly AreaNode[]): AreaVocabulary {
   const nodes: readonly AreaNode[] = Object.freeze([...flat]);

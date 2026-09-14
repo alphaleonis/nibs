@@ -68,6 +68,9 @@ func WithQueueInversions(ctx context.Context, c *QueueInversionCollector) contex
 // tests and direct resolver calls attach none, and the lint then costs them
 // nothing.
 func QueueInversionsFrom(ctx context.Context) *QueueInversionCollector {
+	if ctx == nil {
+		return nil
+	}
 	c, _ := ctx.Value(queueInversionCtxKey{}).(*QueueInversionCollector)
 	return c
 }

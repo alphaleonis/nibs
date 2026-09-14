@@ -80,7 +80,7 @@ type estimatePickerModel struct {
 	height          int
 }
 
-func newEstimatePickerModel(nibIDs []string, nibTitle, currentEstimate string, cfg *config.Config, width, height int) estimatePickerModel {
+func newEstimatePickerModel(nibIDs []string, nibTitle, currentEstimate string, width, height int) estimatePickerModel {
 	estimates := config.DefaultEstimates
 
 	delegate := estimateItemDelegate{}

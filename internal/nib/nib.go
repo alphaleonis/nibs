@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/adrg/frontmatter"
+	"github.com/alphaleonis/nibs/internal/safetext"
 	"gopkg.in/yaml.v3"
 )
 
@@ -399,7 +400,7 @@ func Parse(r io.Reader) (*Nib, error) {
 		v := fm.Extra[k]
 		resolved, err := resolveExtraAliases(&v, &aliasBudget)
 		if err != nil {
-			return nil, fmt.Errorf("parsing front matter: unknown key %q: %w", k, err)
+			return nil, fmt.Errorf("parsing front matter: unknown key %q: %w", safetext.Strip(k), err)
 		}
 		if resolved != nil {
 			fm.Extra[k] = *resolved

@@ -601,24 +601,17 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 	return result
 }
 
-// resolvedMilestoneInMap returns b's `milestone:` target when it resolves (exact
-// id, then the prefix prepended) to a milestone-typed nib, "" otherwise.
-//
-// It does NOT apply membership.ResolvedMilestoneID's subject test, which answers
-// "" for a milestone-typed b as well.
+// resolvedMilestoneInMap is membership.ResolvedMilestoneID over the map, with
+// the target resolved exact id first, then the prefix prepended. It calls that
+// function rather than restating its clauses, so the subject test — a
+// milestone-typed b is in no milestone — cannot drift out of this copy.
 func resolvedMilestoneInMap(nibs map[string]*nib.Nib, b *nib.Nib, configPrefix string) string {
-	if b.Milestone == "" {
-		return ""
-	}
-	targetID, ok := normalizeIDInMap(nibs, b.Milestone, configPrefix)
-	if !ok {
-		return ""
-	}
-	target := nibs[targetID]
-	if target == nil || target.EffectiveType() != "milestone" {
-		return ""
-	}
-	return targetID
+	return membership.ResolvedMilestoneID(b, func(id string) *nib.Nib {
+		if fullID, ok := normalizeIDInMap(nibs, id, configPrefix); ok {
+			return nibs[fullID]
+		}
+		return nil
+	})
 }
 
 // closedMilestoneQueuesInMap derives every ClosedMilestoneQueue finding over the
@@ -707,7 +700,7 @@ func (c *Core) CheckAllLinks() *LinkCheckResult {
 	// or not a vocabulary exists), and the answer for such a store is one config
 	// edit, not N findings. The cost: no read surface names those nibs, so the
 	// dead end shows up only on an attempted write.
-	if c.config != nil && c.Areas().Declared() {
+	if c.config != nil && !c.Areas().IsEmpty() {
 		for _, id := range ids {
 			b := c.nibs[id]
 			// A type that refuses `area:` outright is already an InvalidAxis

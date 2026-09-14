@@ -18,7 +18,6 @@ import (
 // nibItem is a list.Item for one row of the nib tree.
 type nibItem struct {
 	nib         *nib.Nib
-	cfg         *config.Config
 	treePrefix  string
 	matched     bool // false for an ancestor shown only as context
 	hasChildren bool
@@ -34,8 +33,6 @@ func (i nibItem) FilterValue() string { return i.nib.Title + " " + i.nib.ID }
 // itemDelegate renders a nibItem as one list row.
 type itemDelegate struct {
 	cfg          *config.Config
-	hasTags      bool
-	width        int
 	cols         ui.ResponsiveColumns
 	idColWidth   int              // includes the tree prefix
 	selectedNibs *map[string]bool // IDs marked for multi-select
@@ -288,7 +285,6 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 		for i, flatItem := range msg.items {
 			items[i] = nibItem{
 				nib:         flatItem.Nib,
-				cfg:         m.config,
 				treePrefix:  flatItem.TreePrefix,
 				matched:     flatItem.Matched,
 				hasChildren: flatItem.HasChildren,
@@ -300,7 +296,9 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 				m.hasTags = true
 			}
 		}
-		m.list.SetItems(items)
+		// Under an applied filter SetItems clears the visible set and returns
+		// the command that re-matches it.
+		cmd = m.list.SetItems(items)
 		m.idColWidth = msg.idColWidth
 
 		if m.selectByID != "" {
@@ -316,7 +314,7 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 		m.cols = ui.CalculateResponsiveColumns(m.width, m.hasTags)
 		m.applyWideMode()
 		m.updateDelegate()
-		return m, nil
+		return m, cmd
 
 	case errMsg:
 		m.err = msg.err
@@ -514,15 +512,15 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 					} else {
 						m.collapsedIDs[item.nib.ID] = true
 					}
-					m.reflattenTree()
+					cmd = m.reflattenTree()
 				}
-				return m, nil
+				return m, cmd
 			case "left":
 				// Collapse an expanded node; otherwise select its parent.
 				if item, ok := m.list.SelectedItem().(nibItem); ok {
 					if item.hasChildren && !item.collapsed {
 						m.collapsedIDs[item.nib.ID] = true
-						m.reflattenTree()
+						cmd = m.reflattenTree()
 					} else {
 						parentMap := make(map[string]string)
 						buildParentMap(m.tree, parentMap)
@@ -536,22 +534,22 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 						}
 					}
 				}
-				return m, nil
+				return m, cmd
 			case "right":
 				if item, ok := m.list.SelectedItem().(nibItem); ok && item.hasChildren && item.collapsed {
 					delete(m.collapsedIDs, item.nib.ID)
-					m.reflattenTree()
+					cmd = m.reflattenTree()
 				}
-				return m, nil
+				return m, cmd
 			case "ctrl+left":
 				// Collapse every descendant, not the node itself.
 				if item, ok := m.list.SelectedItem().(nibItem); ok && item.hasChildren {
 					if node := ui.FindNode(m.tree, item.nib.ID); node != nil {
 						ui.CollectParentIDs(node.Children, m.collapsedIDs)
-						m.reflattenTree()
+						cmd = m.reflattenTree()
 					}
 				}
-				return m, nil
+				return m, cmd
 			case "ctrl+right":
 				if item, ok := m.list.SelectedItem().(nibItem); ok && item.hasChildren {
 					if node := ui.FindNode(m.tree, item.nib.ID); node != nil {
@@ -563,10 +561,10 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 							}
 						}
 						removeCollapsed(node.Children)
-						m.reflattenTree()
+						cmd = m.reflattenTree()
 					}
 				}
-				return m, nil
+				return m, cmd
 			case "ctrl+up":
 				return m, m.dispatchBlockMove(true)
 			case "ctrl+down":
@@ -574,13 +572,13 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 			case "shift+tab":
 				if m.tree != nil {
 					ui.CollectParentIDs(m.tree, m.collapsedIDs)
-					m.reflattenTree()
+					cmd = m.reflattenTree()
 				}
-				return m, nil
+				return m, cmd
 			case "]":
 				clear(m.collapsedIDs)
-				m.reflattenTree()
-				return m, nil
+				cmd = m.reflattenTree()
+				return m, cmd
 			case "y":
 				if len(m.selectedNibs) > 0 {
 					ids := make([]string, 0, len(m.selectedNibs))
@@ -680,8 +678,6 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 func (m *listModel) updateDelegate() {
 	delegate := itemDelegate{
 		cfg:          m.config,
-		hasTags:      m.hasTags,
-		width:        m.width,
 		cols:         m.cols,
 		idColWidth:   m.idColWidth,
 		selectedNibs: &m.selectedNibs,
@@ -692,17 +688,16 @@ func (m *listModel) updateDelegate() {
 // applyWideMode forces full type/status column widths when wide mode is active
 func (m *listModel) applyWideMode() {
 	if m.wideMode {
-		m.cols.UseFullTypeStatus = true
-		m.cols.Status = 12
-		m.cols.Type = 12
+		m.cols = m.cols.WithFullNames()
 	}
 }
 
 // reflattenTree rebuilds the items from the cached tree after a collapse
 // change, keeping the cursor on the same nib or its nearest visible ancestor.
-func (m *listModel) reflattenTree() {
+// It returns the command SetItems returns, which re-matches an applied filter.
+func (m *listModel) reflattenTree() tea.Cmd {
 	if m.tree == nil {
-		return
+		return nil
 	}
 
 	var currentNibID string
@@ -717,7 +712,6 @@ func (m *listModel) reflattenTree() {
 	for i, flatItem := range flatItems {
 		items[i] = nibItem{
 			nib:         flatItem.Nib,
-			cfg:         m.config,
 			treePrefix:  flatItem.TreePrefix,
 			matched:     flatItem.Matched,
 			hasChildren: flatItem.HasChildren,
@@ -729,7 +723,7 @@ func (m *listModel) reflattenTree() {
 			m.hasTags = true
 		}
 	}
-	m.list.SetItems(items)
+	cmd := m.list.SetItems(items)
 
 	if currentNibID != "" {
 		m.restoreCursor(currentNibID, items)
@@ -753,6 +747,7 @@ func (m *listModel) reflattenTree() {
 	m.cols = ui.CalculateResponsiveColumns(m.width, m.hasTags)
 	m.applyWideMode()
 	m.updateDelegate()
+	return cmd
 }
 
 // restoreCursor selects nibID, or else its nearest ancestor present in items.
@@ -785,11 +780,18 @@ func (m *listModel) restoreCursor(nibID string, items []list.Item) {
 
 // buildParentMap maps each child ID in the tree to its parent's ID.
 func buildParentMap(nodes []*ui.TreeNode, m map[string]string) {
+	walkTreeEdges(nodes, func(parent, child *ui.TreeNode) {
+		m[child.Nib.ID] = parent.Nib.ID
+	})
+}
+
+// walkTreeEdges calls visit once for every parent-child edge in the tree.
+func walkTreeEdges(nodes []*ui.TreeNode, visit func(parent, child *ui.TreeNode)) {
 	for _, node := range nodes {
 		for _, child := range node.Children {
-			m[child.Nib.ID] = node.Nib.ID
-			buildParentMap(node.Children, m)
+			visit(node, child)
 		}
+		walkTreeEdges(node.Children, visit)
 	}
 }
 
@@ -1067,28 +1069,6 @@ func (m listModel) ViewConstrained(width, height int) string {
 	m.updateDelegate()
 
 	return m.viewContent(innerHeight)
-}
-
-// findPreviousSibling returns the sibling immediately before n in the tree, or nil.
-func (m *listModel) findPreviousSibling(n *nib.Nib) *nib.Nib {
-	siblings := m.findSiblings(n)
-	for i, s := range siblings {
-		if s.ID == n.ID && i > 0 {
-			return siblings[i-1]
-		}
-	}
-	return nil
-}
-
-// findNextSibling returns the sibling immediately after n in the tree, or nil.
-func (m *listModel) findNextSibling(n *nib.Nib) *nib.Nib {
-	siblings := m.findSiblings(n)
-	for i, s := range siblings {
-		if s.ID == n.ID && i < len(siblings)-1 {
-			return siblings[i+1]
-		}
-	}
-	return nil
 }
 
 // findSiblings returns the children of n's parent in tree order, or the roots

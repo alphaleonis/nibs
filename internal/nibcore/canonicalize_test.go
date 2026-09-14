@@ -32,7 +32,7 @@ func linkTargets(t *testing.T, core *Core, targetID, linkType string) []string {
 // TestLoadCanonicalizesShortFormLinks is the primary guard for nibs-lzch: a
 // hand-written short-form `parent`/`blocked_by` used to resolve when followed
 // FORWARD from the nib holding it and be invisible from the other end, because
-// every reverse traversal walks exact map keys. Canonicalizing at the disk-read
+// the reverse traversals walked exact map keys. Canonicalizing at the disk-read
 // boundary makes both directions agree.
 //
 // It asserts the reverse direction (which was broken) AND the forward direction
@@ -849,6 +849,51 @@ func TestCanonicalizationKeepsAnUpdatedLinkThroughALaterSweep(t *testing.T) {
 	}
 	if fresh.Parent != got.Parent {
 		t.Errorf("fresh load parent = %q, live store parent = %q; they must agree", fresh.Parent, got.Parent)
+	}
+}
+
+// TestUpdateCanonicalizesShortFormLinks holds Update to the same rule as Create:
+// a caller handing it a short link id must not leave that spelling in the store,
+// where FindIncomingLinks, which walks exact map keys, stops seeing the edge.
+func TestUpdateCanonicalizesShortFormLinks(t *testing.T) {
+	core, nibsDir := mustLoadPrefixedCore(t)
+
+	writeLinkNibFile(t, nibsDir, "nibs-par", "todo", "")
+	writeLinkNibFile(t, nibsDir, "nibs-blk", "in-progress", "")
+	writeLinkNibFile(t, nibsDir, "nibs-dep", "todo", "")
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	dep, err := core.Get("nibs-dep")
+	if err != nil {
+		t.Fatalf(`Get("nibs-dep"): %v`, err)
+	}
+	edited := dep.Clone()
+	edited.Parent = "par"
+	edited.BlockedBy = []string{"blk"}
+	if err := core.Update(edited, nil); err != nil {
+		t.Fatalf("Update with short link ids: %v", err)
+	}
+
+	got, err := core.Get("nibs-dep")
+	if err != nil {
+		t.Fatalf(`Get("nibs-dep") after Update: %v`, err)
+	}
+	if got.Parent != "nibs-par" {
+		t.Errorf("stored parent = %q, want %q", got.Parent, "nibs-par")
+	}
+	if !slices.Equal(got.BlockedBy, []string{"nibs-blk"}) {
+		t.Errorf("stored blocked_by = %v, want [nibs-blk]", got.BlockedBy)
+	}
+	if got := linkTargets(t, core, "nibs-par", "parent"); !slices.Equal(got, []string{"nibs-dep"}) {
+		t.Errorf("FindIncomingLinks(nibs-par) parent sources = %v, want [nibs-dep]", got)
+	}
+	if !core.IsBlocking("nibs-blk") {
+		t.Error(`IsBlocking("nibs-blk") = false, want true — nibs-dep names it as a blocker`)
+	}
+	if edited.Parent != "par" {
+		t.Errorf("caller's nib parent = %q, want the spelling it passed in; Update rewrites the store, not the caller's object", edited.Parent)
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/output"
+	"github.com/alphaleonis/nibs/internal/reprefix"
 	"github.com/alphaleonis/nibs/internal/testskip"
 )
 
@@ -53,12 +54,15 @@ func setupSetPrefixTest(t *testing.T, prefix string, nibs ...testNibSpec) (strin
 		setPrefixForce = false
 		setPrefixJSON = false
 		gitIsDirtyFn = realGitIsDirty
+		reprefixExecuteFn = reprefix.Execute
+		storeGitStateFn = realStoreGitState
 	})
 	setPrefixDryRun = false
 	setPrefixForce = false
 	setPrefixJSON = false
 	// Stub git as clean by default so tests don't shell out unexpectedly.
 	gitIsDirtyFn = func(string, ...string) (bool, error) { return false, nil }
+	storeGitStateFn = func(string) (bool, bool, error) { return false, false, nil }
 
 	tmpDir := t.TempDir()
 	nibsDir := filepath.Join(tmpDir, ".nibs")

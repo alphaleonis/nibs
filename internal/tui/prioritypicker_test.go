@@ -10,12 +10,10 @@ import (
 )
 
 func TestPriorityPickerModel(t *testing.T) {
-	cfg := config.Default()
-
 	t.Run("pre-selects current priority", func(t *testing.T) {
 		m := newPriorityPickerModel(
 			[]string{"nib-1"}, "Test Nib", "high",
-			cfg, 80, 24,
+			80, 24,
 		)
 
 		selected, ok := m.list.SelectedItem().(priorityItem)
@@ -33,7 +31,7 @@ func TestPriorityPickerModel(t *testing.T) {
 	t.Run("shows all priority options", func(t *testing.T) {
 		m := newPriorityPickerModel(
 			[]string{"nib-1"}, "Test Nib", "",
-			cfg, 80, 24,
+			80, 24,
 		)
 
 		items := m.list.Items()
@@ -67,7 +65,7 @@ func TestPriorityPickerModel(t *testing.T) {
 		for _, p := range config.DefaultPriorities {
 			m := newPriorityPickerModel(
 				[]string{"nib-1"}, "Test Nib", p.Name,
-				cfg, w, h,
+				w, h,
 			)
 			view := m.View()
 			if view == "Loading..." {
@@ -87,7 +85,7 @@ func TestPriorityPickerModel(t *testing.T) {
 	t.Run("enter sends prioritySelectedMsg", func(t *testing.T) {
 		m := newPriorityPickerModel(
 			[]string{"nib-1"}, "Test Nib", "high",
-			cfg, 80, 24,
+			80, 24,
 		)
 
 		// Press enter on the pre-selected item ("high").
@@ -112,7 +110,7 @@ func TestPriorityPickerModel(t *testing.T) {
 	t.Run("esc sends closePriorityPickerMsg", func(t *testing.T) {
 		m := newPriorityPickerModel(
 			[]string{"nib-1"}, "Test Nib", "",
-			cfg, 80, 24,
+			80, 24,
 		)
 
 		_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})

@@ -18,8 +18,8 @@ type Backend interface {
 	GetBlockedBy(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error)
 	GetBlocking(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error)
 
-	// IsBlocked and IsBlocking consider only active links; see
-	// nibcore.Core.IsBlocked.
+	// IsBlocked and IsBlocking consider only active links, and a completed or
+	// scrapped nib is neither blocked nor blocking; see nibcore.Core.IsBlocked.
 	IsBlocked(nibID string) bool
 	IsBlocking(nibID string) bool
 

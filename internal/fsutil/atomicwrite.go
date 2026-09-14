@@ -49,9 +49,9 @@ func SyncDir(dir string) {
 //     path must not key on "the file is present".
 //   - Durability of the directory ENTRY OF A DIRECTORY a caller created first. A
 //     new directory's name lives in its PARENT, which nothing here flushes.
-//   - Mode bits this function was not given. perm reaches Chmod unchanged, so pass
-//     info.Mode().Perm() (or a literal without setuid/setgid/sticky) — nothing
-//     here strips them for you.
+//   - Mode bits this function was not given. perm must be permission bits only —
+//     pass info.Mode().Perm(), not info.Mode(); setuid, setgid, sticky or a type
+//     bit is refused before anything is written.
 //   - Anything else the OLD file carried, lost the way every write-temp-and-rename
 //     loses it: OWNERSHIP (the temp belongs to the writing process), POSIX ACLs,
 //     extended attributes, and any HARD LINK to the old path.
@@ -128,6 +128,12 @@ func AtomicUpdateFileDeferDirSync(path string, data []byte, perm os.FileMode) (s
 // chmod, rename. It returns the directory whose entry the rename created, so the
 // caller can decide when — or whether — to flush it.
 func writeAndRename(path string, data []byte, perm os.FileMode) (_ string, err error) {
+	// os.Chmod passes setuid, setgid and sticky through to the syscall, so a
+	// caller handing over info.Mode() rather than info.Mode().Perm() would
+	// publish those bits.
+	if perm&^os.ModePerm != 0 {
+		return "", fmt.Errorf("writing %s: mode %v carries more than permission bits", path, perm)
+	}
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {

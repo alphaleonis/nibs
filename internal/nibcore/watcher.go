@@ -1,6 +1,7 @@
 package nibcore
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/safetext"
 	"github.com/alphaleonis/nibs/internal/store"
 	"github.com/fsnotify/fsnotify"
 )
@@ -688,7 +690,7 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 			existing, existed := c.nibs[newNib.ID]
 			if existed && c.arrivingShadowsStored(newNib.Path, existing.Path) {
 				warns.warn("duplicate nib id %q on disk: %s shadows %s (the arriving file wins; resolve the duplicate)",
-					newNib.ID, path, filepath.Join(c.root, existing.Path))
+					safetext.Strip(newNib.ID), path, filepath.Join(c.root, existing.Path))
 			}
 			c.nibs[newNib.ID] = newNib
 
@@ -822,35 +824,35 @@ func (c *Core) isArchivedAbsPath(absPath string) bool {
 	return c.isArchivedPath(filepath.ToSlash(rel))
 }
 
-// findRelPathByID scans data/ and archive/ — one flat os.ReadDir each, no
-// subdirectories — for a nib file whose parsed id equals id, returning its
+// findRelPathByID walks the store's content — WalkStoreContent, the enumeration
+// Load uses — for a nib file whose parsed id equals id, returning its
 // root-relative, forward-slash path. It recognizes a nib by id rather than by
 // exact basename, so it locates a file that a same-id slug rename moved to a new
 // name. Reached only on the removal branch's delete fall-through, so the two
 // basename checks there stay the cheap fast path.
+//
+// A path the walk cannot read is skipped rather than reported: the answer is
+// only ever "found here" or "not found".
 func (c *Core) findRelPathByID(id string) (string, bool) {
 	if id == "" {
 		return "", false
 	}
-	for _, dir := range []string{c.layout.DataDir(), c.layout.ArchiveDir()} {
-		entries, err := os.ReadDir(dir)
+	prefix := c.configPrefix()
+	errFound := errors.New("found")
+	var found string
+	_ = WalkStoreContent(c.layout, func(path string, err error) error {
 		if err != nil {
-			continue
+			return nil
 		}
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-				continue
-			}
-			fileID, _ := nib.ParseFilename(entry.Name(), c.configPrefix())
-			if fileID != id {
-				continue
-			}
-			rel, err := filepath.Rel(c.root, filepath.Join(dir, entry.Name()))
-			if err != nil {
-				continue
-			}
-			return filepath.ToSlash(rel), true
+		if fileID, _ := nib.ParseFilename(filepath.Base(path), prefix); fileID != id {
+			return nil
 		}
-	}
-	return "", false
+		rel, err := filepath.Rel(c.root, path)
+		if err != nil {
+			return nil
+		}
+		found = filepath.ToSlash(rel)
+		return errFound
+	})
+	return found, found != ""
 }

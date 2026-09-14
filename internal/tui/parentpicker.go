@@ -156,8 +156,8 @@ func newParentPickerModel(nibIDs []string, nibTitle string, nibTypes []string, c
 
 	// rebuildList populates the items.
 	delegate := parentItemDelegate{cfg: cfg}
-	modalWidth := max(40, min(80, width*60/100))
-	modalHeight := max(10, min(20, height*60/100))
+	modalWidth := pickerModalWidth(width, 60, 80)
+	modalHeight := pickerModalHeight(height, 60, 20)
 	listWidth := modalWidth - 6
 	listHeight := modalHeight - 7
 
@@ -188,9 +188,9 @@ func newParentPickerModel(nibIDs []string, nibTitle string, nibTypes []string, c
 }
 
 // toggleHideCompleted flips the closed-status filter and rebuilds the list.
-func (m *parentPickerModel) toggleHideCompleted() {
+func (m *parentPickerModel) toggleHideCompleted() tea.Cmd {
 	m.hideCompleted = !m.hideCompleted
-	m.rebuildList()
+	return m.rebuildList()
 }
 
 func hideCompletedHelpText(hiding bool) string {
@@ -201,7 +201,9 @@ func hideCompletedHelpText(hiding bool) string {
 }
 
 // rebuildList rebuilds the list items from allEligible, applying hideCompleted.
-func (m *parentPickerModel) rebuildList() {
+// While a filter is applied the list shows nothing until the returned command's
+// matches reach Update.
+func (m *parentPickerModel) rebuildList() tea.Cmd {
 	var filtered []*nib.Nib
 	for _, b := range m.allEligible {
 		if m.hideCompleted && m.cfg.IsClosedStatus(b.Status) {
@@ -221,7 +223,7 @@ func (m *parentPickerModel) rebuildList() {
 		}
 	}
 
-	m.list.SetItems(items)
+	cmd := m.list.SetItems(items)
 
 	if m.hideCompleted {
 		m.list.Title = "Select Parent [hiding completed]"
@@ -232,6 +234,7 @@ func (m *parentPickerModel) rebuildList() {
 	if selectedIndex > 0 && selectedIndex < len(items) {
 		m.list.Select(selectedIndex)
 	}
+	return cmd
 }
 
 // intersectStrings returns the intersection of two string slices
@@ -284,8 +287,8 @@ func (m parentPickerModel) Update(msg tea.Msg) (parentPickerModel, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		modalWidth := max(40, min(80, msg.Width*60/100))
-		modalHeight := max(10, min(20, msg.Height*60/100))
+		modalWidth := pickerModalWidth(msg.Width, 60, 80)
+		modalHeight := pickerModalHeight(msg.Height, 60, 20)
 		listWidth := modalWidth - 6
 		listHeight := modalHeight - 7
 		m.list.SetSize(listWidth, listHeight)
@@ -305,8 +308,7 @@ func (m parentPickerModel) Update(msg tea.Msg) (parentPickerModel, tea.Cmd) {
 					}
 				}
 			case "H":
-				m.toggleHideCompleted()
-				return m, nil
+				return m, m.toggleHideCompleted()
 			case "esc", "backspace":
 				return m, func() tea.Msg {
 					return closeParentPickerMsg{}

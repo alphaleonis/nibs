@@ -99,14 +99,6 @@ func glyphTreeSpace() string {
 	return "   "
 }
 
-// Horizontal divider used under the tree header.
-func glyphHRule() string {
-	if useASCIIGlyphs() {
-		return "-"
-	}
-	return "─"
-}
-
 // Collapse/expand indicators for the tree view.
 func glyphCollapseCollapsed() string {
 	if useASCIIGlyphs() {
