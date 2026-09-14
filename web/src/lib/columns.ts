@@ -49,9 +49,9 @@ export interface RowContext {
   depth: number;
   parentNib: TreeTableNib | null;
   /**
-   * The nib this row's `milestone` assignment resolves to, or null when it is
-   * unassigned or names a nib the table does not hold. Read `nib.milestone` to
-   * tell the two apart.
+   * The milestone this row's `milestone` assignment resolves to, or null when it
+   * is unassigned or names a nib the table does not hold or that is not a
+   * milestone. Read `nib.milestone` to tell unassigned apart.
    */
   milestoneNib: TreeTableNib | null;
   hasChildren: boolean;

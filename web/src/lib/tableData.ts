@@ -7,6 +7,7 @@ import { buildContainmentIndex } from "./containment";
 import type { ContainmentIndex } from "./containment";
 import { makeNibComparator } from "./tableSort";
 import { hasClientFilters, matchesFilter } from "./filter";
+import { MILESTONE_TYPE } from "./membership";
 
 /**
  * One rendered table row.
@@ -30,8 +31,8 @@ export interface RowData {
   dimmed: boolean;
   parentNib: TreeTableNib | null;
   /**
-   * The nib this row's `milestone` assignment names, or null when unassigned or
-   * when that id is not in this table.
+   * The milestone this row's `milestone` assignment names, or null when
+   * unassigned, when that id is not in this table, or when it is not a milestone.
    */
   milestoneNib: TreeTableNib | null;
   /**
@@ -268,9 +269,10 @@ export function buildShapedTableData(
         ? node.children.filter(c => visibleIds.has(c.nib.id))
         : node.children;
       const parentNib = node.nib.parentId ? nibMap.get(node.nib.parentId) ?? null : null;
-      // `milestone` is verbatim: an id missing from this response resolves to
-      // null, but a present nib of any type is returned as-is.
-      const milestoneNib = node.nib.milestone ? nibMap.get(node.nib.milestone) ?? null : null;
+      // `milestone` is verbatim; a target missing from this response or not a
+      // milestone resolves to null, as membership treats it as no assignment.
+      const assignedNib = node.nib.milestone ? nibMap.get(node.nib.milestone) : undefined;
+      const milestoneNib = assignedNib?.type === MILESTONE_TYPE ? assignedNib : null;
 
       const drawsSection: RowSection | null =
         node.section === undefined
