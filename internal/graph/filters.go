@@ -515,11 +515,11 @@ func refuseUndeclaredArea(areas *config.Areas, field, path string) error {
 	if path == "" {
 		return &FilterAreaError{Field: field}
 	}
-	if areas.IsValid(path) {
+	if areas.Exists(path) {
 		return nil
 	}
 	declared := ""
-	if areas.Declared() {
+	if !areas.IsEmpty() {
 		declared = areas.List()
 	}
 	return &FilterAreaError{Field: field, Path: config.RenderAreaPath(path), Declared: declared}

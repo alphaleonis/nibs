@@ -156,7 +156,7 @@ func runAreaList(cmd *cobra.Command, _ []string) error {
 		}{Areas: areaListNodes(areas.Roots(), "")})
 	}
 
-	if !areas.Declared() {
+	if areas.IsEmpty() {
 		ui.Printf("This store declares no areas. Declare an `areas:` block in %s to place work by area.\n",
 			sanitizeFilePath(store.NewLayout(app.Core.Root()).AreasPath()))
 		return nil
@@ -614,7 +614,7 @@ func areaRetireConfirmFailure(e *nibcore.AreaEditIOError) error {
 func areaEditRefusal(jsonMode bool, err error, verb string) error {
 	var undeclared *nibcore.AreaUndeclaredError
 	if errors.As(err, &undeclared) {
-		if !undeclared.Areas.Declared() {
+		if undeclared.Areas.IsEmpty() {
 			return cmdError(jsonMode, output.ErrValidation,
 				"this store declares no areas, so there is none to %s — declare an `areas:` block in %s first",
 				areaPathVerb(undeclared.Role, verb), sanitizeFilePath(undeclared.Areas.Path()))
@@ -715,7 +715,7 @@ func areaPathVerb(role nibcore.AreaPathRole, verb string) string {
 // A Core holding no vocabulary answers false, leaving the ordinary refusal to
 // speak: with nothing loaded there is no earlier state to have diverged from.
 func areaDeclaredAtStartup(app *App, path string) bool {
-	return path != "" && app.StartupAreas().IsValid(path)
+	return path != "" && app.StartupAreas().Exists(path)
 }
 
 // reportAreaEdit prints what an area edit did, adding a note when

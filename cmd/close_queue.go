@@ -578,7 +578,7 @@ func closeCheckPointer(namesEveryBlockedMember bool) string {
 func closeCheckNamesCause(areas *config.Areas, err error) bool {
 	var areaErr *config.AreaError
 	if errors.As(err, &areaErr) {
-		return areas.Declared()
+		return !areas.IsEmpty()
 	}
 	return true
 }

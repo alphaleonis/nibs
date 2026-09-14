@@ -44,8 +44,8 @@ func TestLoadReadsTheAreasVocabulary(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	if !core.Areas().IsValid("web/dashboard") {
-		t.Errorf("Areas().IsValid(web/dashboard) = false after Load, want true")
+	if !core.Areas().Exists("web/dashboard") {
+		t.Errorf("Areas().Exists(web/dashboard) = false after Load, want true")
 	}
 }
 
@@ -89,10 +89,10 @@ func TestWatcherReloadsTheAreasVocabulary(t *testing.T) {
 	writeStoreAreas(t, nibsDir, "areas:\n    - name: frontend\n")
 
 	waitFor(t, "the reloaded vocabulary to declare frontend", func() bool {
-		return core.Areas().IsValid("frontend")
+		return core.Areas().Exists("frontend")
 	})
 
-	if core.Areas().IsValid("web") {
+	if core.Areas().Exists("web") {
 		t.Error("Areas() still declares the retired path web")
 	}
 	// The symptom the reload exists to remove: a write to the renamed nib.
@@ -132,7 +132,7 @@ func TestWatcherKeepsTheLastGoodVocabularyOnAMalformedWrite(t *testing.T) {
 	waitFor(t, "the refusal of the malformed vocabulary", func() bool {
 		return strings.Contains(warnings.String(), "keeping the areas vocabulary already loaded")
 	})
-	if !core.Areas().IsValid("web") {
+	if !core.Areas().Exists("web") {
 		t.Error("web went missing, so the malformed write replaced the good vocabulary")
 	}
 }
@@ -204,7 +204,7 @@ func TestReloadAreasReportsAFileItCannotRead(t *testing.T) {
 	if err := reloadUnderLock(core); err == nil {
 		t.Fatal("the reload accepted a vocabulary the loader refuses")
 	}
-	if !core.Areas().IsValid("web") {
+	if !core.Areas().Exists("web") {
 		t.Error("the refused reload replaced the vocabulary already loaded")
 	}
 
@@ -214,7 +214,7 @@ func TestReloadAreasReportsAFileItCannotRead(t *testing.T) {
 	if err := reloadUnderLock(core); err != nil {
 		t.Fatalf("reloading over a good file: %v", err)
 	}
-	if !core.Areas().IsValid("platform") {
+	if !core.Areas().Exists("platform") {
 		t.Error("the vocabulary was not reloaded")
 	}
 }
@@ -255,13 +255,13 @@ func TestTheWatchersReloadDoesNotInstallOverAHeldStoreLock(t *testing.T) {
 		t.Error("the watcher's reload ran to completion while the store's lock was held")
 	case <-time.After(200 * time.Millisecond):
 	}
-	if core.Areas().IsValid("platform") {
+	if core.Areas().Exists("platform") {
 		t.Fatal("the watcher's reload installed a vocabulary while an edit held the store: an edit installing its own vocabulary next is then reverted by whichever of the two stores last")
 	}
 
 	core.mu.Unlock()
 	<-done
-	if !core.Areas().IsValid("platform") {
+	if !core.Areas().Exists("platform") {
 		t.Error("the watcher's reload installed nothing once the store's lock was free")
 	}
 }
@@ -289,7 +289,7 @@ func TestARefusedAreaEditTicksTheVocabularyItInstalled(t *testing.T) {
 	if _, err := core.RemoveArea(context.Background(), "web", AreaDisposition{}); err == nil {
 		t.Fatal("retiring an area this store no longer declares was accepted")
 	}
-	if !core.Areas().IsValid("ops") {
+	if !core.Areas().Exists("ops") {
 		t.Fatal("the refused verb did not install the vocabulary it re-read")
 	}
 

@@ -700,7 +700,7 @@ func (c *Core) CheckAllLinks() *LinkCheckResult {
 	// or not a vocabulary exists), and the answer for such a store is one config
 	// edit, not N findings. The cost: no read surface names those nibs, so the
 	// dead end shows up only on an attempted write.
-	if c.config != nil && c.Areas().Declared() {
+	if c.config != nil && !c.Areas().IsEmpty() {
 		for _, id := range ids {
 			b := c.nibs[id]
 			// A type that refuses `area:` outright is already an InvalidAxis

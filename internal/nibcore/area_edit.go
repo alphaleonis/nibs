@@ -102,7 +102,7 @@ type AreaUndeclaredError struct {
 }
 
 func (e *AreaUndeclaredError) Error() string {
-	if !e.Areas.Declared() {
+	if e.Areas.IsEmpty() {
 		return "this store declares no areas"
 	}
 	return fmt.Sprintf("this store declares no area %q: the declared areas are %s",
@@ -359,14 +359,14 @@ var reloadNibsBeforeAreaWrite = (*Core).loadFromDisk
 func (c *Core) AddArea(ctx context.Context, path, description, color string) (AreaEditResult, error) {
 	parent, _ := splitAreaPath(path)
 	return c.editArea(ctx, path, func(before, now *config.Areas) (areaPlan, error) {
-		if now.IsValid(path) {
+		if now.Exists(path) {
 			return areaPlan{}, &AreaAlreadyDeclaredError{Path: path}
 		}
 		if parent != "" {
-			if before.IsValid(parent) && !now.IsValid(parent) {
+			if before.Exists(parent) && !now.Exists(parent) {
 				return areaPlan{}, &AreaRetiredWhileWaitingError{Path: parent, Role: AreaPathParent}
 			}
-			if !now.IsValid(parent) {
+			if !now.Exists(parent) {
 				return areaPlan{}, &AreaParentUndeclaredError{Path: path, Parent: parent}
 			}
 		}
@@ -394,7 +394,7 @@ func (c *Core) RenameArea(ctx context.Context, path, newName string) (AreaEditRe
 		if newName == oldName {
 			return areaPlan{}, &AreaNameUnchangedError{Path: path, Name: newName}
 		}
-		if sibling := joinAreaPath(parent, newName); now.IsValid(sibling) {
+		if sibling := joinAreaPath(parent, newName); now.Exists(sibling) {
 			return areaPlan{}, &AreaNameTakenError{Path: path, NewName: newName, Sibling: sibling}
 		}
 
@@ -635,10 +635,10 @@ func (c *Core) editArea(ctx context.Context, path string, plan func(before, now 
 // telling apart one that WAS declared when this store was last read from one
 // that never existed.
 func requireDeclaredArea(before, now *config.Areas, path string, role AreaPathRole) error {
-	if path != "" && now.IsValid(path) {
+	if path != "" && now.Exists(path) {
 		return nil
 	}
-	if path != "" && before.IsValid(path) {
+	if path != "" && before.Exists(path) {
 		return &AreaRetiredWhileWaitingError{Path: path, Role: role}
 	}
 	return &AreaUndeclaredError{Path: path, Role: role, Areas: now}

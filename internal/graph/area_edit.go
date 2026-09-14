@@ -181,7 +181,7 @@ func wordAreaRetireFailure(err error) error {
 func wordAreaEditFailure(err error, verb string) error {
 	var undeclared *nibcore.AreaUndeclaredError
 	if errors.As(err, &undeclared) {
-		if !undeclared.Areas.Declared() {
+		if undeclared.Areas.IsEmpty() {
 			return wordAreaRefusal(err, "this store declares no areas, so there is none to %s — declare an `areas:` block in the store's areas.yml first",
 				areaPathVerb(undeclared.Role, verb))
 		}

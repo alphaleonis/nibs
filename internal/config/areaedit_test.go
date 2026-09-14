@@ -192,7 +192,7 @@ func TestRemoveStoredAreaKeepsTheEmptiedBlock(t *testing.T) {
 	if !strings.Contains(got, "# Where the work happens.") {
 		t.Errorf("deleting the key would have taken the comment with it:\n%s", got)
 	}
-	if cfg := loadAreaEditConfig(t, storeDir); cfg.Declared() {
+	if cfg := loadAreaEditConfig(t, storeDir); !cfg.IsEmpty() {
 		t.Errorf("an emptied block still reports a declared vocabulary: %v", cfg.Paths())
 	}
 }
@@ -512,7 +512,7 @@ func TestStoredAreaEditsRefuseAnInheritedVocabulary(t *testing.T) {
 			target := tt.target
 			if target == "" {
 				target = "web"
-			} else if !loadAreaEditConfig(t, storeDir).IsValid(target) {
+			} else if !loadAreaEditConfig(t, storeDir).Exists(target) {
 				t.Fatalf("the fixture does not declare %q for the loader: %v", target, before)
 			}
 
@@ -661,7 +661,7 @@ extra: true
 `
 	storeDir := writeAreaEditStore(t, twoDocs)
 	// The loader accepts it, which is why the editor has to say something.
-	if cfg := loadAreaEditConfig(t, storeDir); !cfg.IsValid("web") {
+	if cfg := loadAreaEditConfig(t, storeDir); !cfg.Exists("web") {
 		t.Fatalf("the fixture must be a config the loader accepts: %v", cfg.Paths())
 	}
 

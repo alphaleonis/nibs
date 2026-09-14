@@ -7,8 +7,8 @@
  * one arrives at runtime, over `Config.areas`.
  *
  * A PORT OF QUESTIONS, not a getter over a list. Each method mirrors a decision
- * the Go side already makes (`config.GetArea`, `config.IsValidArea`,
- * `config.IsAreaWithin`, `config.AreasDeclared`), so a consumer asks rather than
+ * the Go side already makes (`config.Areas.Get`, `config.Areas.Exists`,
+ * `config.Areas.IsWithin`, `config.Areas.IsEmpty`), so a consumer asks rather than
  * re-derives — which is what keeps the two sides from drifting.
  *
  * Pure: no Svelte, no urql. The production adapter builds one from the config
@@ -42,7 +42,7 @@ export type AreaValidity = "declared" | "undeclared" | "unknown";
 export interface AreaVocabulary {
   /**
    * "none" means the project declares no areas — a normal and permanent state
-   * (`config.AreasDeclared` is the same question), distinct from "loading".
+   * (`config.Areas.IsEmpty` is the same question), distinct from "loading".
    * Never conflated with `sections().length`, because those are different
    * answers to different questions.
    *
@@ -56,11 +56,11 @@ export interface AreaVocabulary {
   /** Every declared area in the server's order: siblings by name, parents first. */
   sections(): readonly AreaNode[];
   /** What a nib's stored `area:` resolves to, or null when it names no declared
-   *  area (`config.GetArea`). Stored values arrive verbatim. */
+   *  area (`config.Areas.Get`). Stored values arrive verbatim. */
   resolve(stored: string): AreaNode | null;
-  /** `config.IsValidArea`, plus the pre-load third answer. */
+  /** `config.Areas.Exists`, plus the pre-load third answer. */
   validity(path: string): AreaValidity;
-  /** The downward closure, `path` included — `config.IsAreaWithin` read forwards.
+  /** The downward closure, `path` included — `config.Areas.IsWithin` read forwards.
    *  Empty when `path` names no declared area. */
   subtreeOf(path: string): readonly AreaNode[];
   /** What completes `area:<partial>` — `sections()` order, case-insensitive substring. */
@@ -97,7 +97,7 @@ const EMPTY_PATHS: readonly string[] = Object.freeze([]);
  * The list has siblings sorted by name and a parent immediately before the subtree
  * it heads, and that ordering is the contract `subtreeOf` reads: a node's
  * subtree is the maximal run of following entries with a greater `depth`. The
- * client therefore never restates `IsAreaWithin`'s segment descent, and
+ * client therefore never restates `Areas.IsWithin`'s segment descent, and
  * `webhooks ⊄ web` falls out of the ordering rather than out of a string test
  * one side could tighten alone.
  */

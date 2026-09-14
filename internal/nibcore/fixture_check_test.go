@@ -72,7 +72,7 @@ func TestSampleProjectCheckFindingsArePinned(t *testing.T) {
 	// The fixture's OWN config, not config.Default(): its declared areas are
 	// what the fixture's `area:` values are checked against, and a config
 	// declaring none exempts the store from that check wholesale
-	// (CheckAllLinks gates the area pass on Config.AreasDeclared). That silences
+	// (CheckAllLinks gates the area pass on Areas.IsEmpty). That silences
 	// one of the fourteen categories TotalIssues sums — the area one — not half
 	// of them. The config also supplies the prefix that resolves short-form
 	// parent ids, but nothing in this fixture is short-form, so that half is

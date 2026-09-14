@@ -69,14 +69,14 @@ func TestAreaVerbsReportWhatTheyDid(t *testing.T) {
 		}
 		// The vocabulary answered with is the one the edit WROTE, re-read under
 		// the same lock — not the one it replaced.
-		if !res.Areas.IsValid("platform/ui") || res.Areas.IsValid("web") {
+		if !res.Areas.Exists("platform/ui") || res.Areas.Exists("web") {
 			t.Errorf("Areas = %v, want the post-edit vocabulary", res.Areas.Paths())
 		}
 		if stored := storedAreasOf(t, nibsDir); strings.Contains(stored, "name: web") {
 			t.Errorf("areas.yml still declares the old name:\n%s", stored)
 		}
 		// A member BELOW the renamed node keeps the remainder it carried.
-		if got := core.Areas(); !got.IsValid("platform/ui") {
+		if got := core.Areas(); !got.Exists("platform/ui") {
 			t.Errorf("the store's vocabulary was not reloaded: %v", got.Paths())
 		}
 		if b, _ := core.Get("nibs-ae02"); b.Area != "platform/ui" {
@@ -99,7 +99,7 @@ func TestAreaVerbsReportWhatTheyDid(t *testing.T) {
 		if res.DeclaredBelow != 2 {
 			t.Errorf("DeclaredBelow = %d, want 2", res.DeclaredBelow)
 		}
-		if res.Areas.IsValid("web") || !res.Areas.IsValid("auth") {
+		if res.Areas.Exists("web") || !res.Areas.Exists("auth") {
 			t.Errorf("Areas = %v, want web retired and auth kept", res.Areas.Paths())
 		}
 		for _, id := range res.Written {
@@ -116,7 +116,7 @@ func TestAreaVerbsReportWhatTheyDid(t *testing.T) {
 		if err != nil {
 			t.Fatalf("AddArea: %v", err)
 		}
-		if !res.Areas.IsValid("web/reports") {
+		if !res.Areas.Exists("web/reports") {
 			t.Errorf("Areas = %v, want it to declare web/reports", res.Areas.Paths())
 		}
 		// A declaration rewrites nothing: an area that is being declared has no
@@ -282,7 +282,7 @@ func TestAreaEditRefusalsCarryTheirFacts(t *testing.T) {
 				}
 				// The declared set travels with the refusal, because naming it is
 				// the repair and only the vocabulary read under the lock has it.
-				if !e.Areas.IsValid("web/dashboard") {
+				if !e.Areas.Exists("web/dashboard") {
 					t.Errorf("Areas = %v, want the vocabulary read under the lock", e.Areas.Paths())
 				}
 			},
@@ -548,8 +548,31 @@ func TestAreaEditRefusesAVanishedVocabulary(t *testing.T) {
 	if !errors.As(err, &undeclared) {
 		t.Fatalf("error = %v (%T), want *AreaUndeclaredError over a store that never declared one", err, err)
 	}
-	if undeclared.Areas.Declared() {
+	if !undeclared.Areas.IsEmpty() {
 		t.Errorf("Areas = %v, want a vocabulary declaring nothing", undeclared.Areas.Paths())
+	}
+}
+
+// TestAreaUndeclaredErrorWordsAnEmptyVocabularyApart: a store declaring nothing
+// has no list to offer, so its refusal says so instead of naming an empty one.
+func TestAreaUndeclaredErrorWordsAnEmptyVocabularyApart(t *testing.T) {
+	fresh, _ := setupTestCore(t)
+	_, err := fresh.RenameArea(context.Background(), "web", "platform")
+	var undeclared *AreaUndeclaredError
+	if !errors.As(err, &undeclared) {
+		t.Fatalf("error = %v (%T), want *AreaUndeclaredError", err, err)
+	}
+	if got, want := undeclared.Error(), "this store declares no areas"; got != want {
+		t.Errorf("empty vocabulary: Error() = %q, want %q", got, want)
+	}
+
+	core, _ := areaVerbCore(t)
+	_, err = core.RenameArea(context.Background(), "nosuch", "platform")
+	if !errors.As(err, &undeclared) {
+		t.Fatalf("error = %v (%T), want *AreaUndeclaredError", err, err)
+	}
+	if got := undeclared.Error(); !strings.Contains(got, `declares no area "nosuch": the declared areas are`) {
+		t.Errorf("declared vocabulary: Error() = %q, want it to name the path and list the declared areas", got)
 	}
 }
 

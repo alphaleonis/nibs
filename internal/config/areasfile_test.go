@@ -42,8 +42,8 @@ func TestLoadAreasFromStoreReadsTheAreasFile(t *testing.T) {
 	if got := areas.Paths(); !slices.Equal(got, want) {
 		t.Errorf("Paths() = %v, want %v", got, want)
 	}
-	if !areas.Declared() {
-		t.Error("Declared() = false, want true")
+	if areas.IsEmpty() {
+		t.Error("IsEmpty() = true, want false")
 	}
 }
 
@@ -74,8 +74,8 @@ func TestLoadAreasFromStoreWithNoFileDeclaresNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadAreasFromStore: %v", err)
 	}
-	if areas.Declared() {
-		t.Error("Declared() = true for a store with no areas.yml, want false")
+	if !areas.IsEmpty() {
+		t.Error("IsEmpty() = false for a store with no areas.yml, want true")
 	}
 	if got := areas.Paths(); len(got) != 0 {
 		t.Errorf("Paths() = %v, want empty", got)
@@ -101,14 +101,14 @@ func TestLoadAreasFromStoreRefusesAMalformedVocabulary(t *testing.T) {
 func TestNilAreasAnswersEveryQuery(t *testing.T) {
 	var areas *Areas
 
-	if areas.Declared() {
-		t.Error("Declared() = true on nil, want false")
+	if !areas.IsEmpty() {
+		t.Error("IsEmpty() = false on nil, want true")
 	}
 	if got := areas.Paths(); len(got) != 0 {
 		t.Errorf("Paths() = %v on nil, want empty", got)
 	}
-	if areas.IsValid("web") {
-		t.Error("IsValid(web) = true on nil, want false")
+	if areas.Exists("web") {
+		t.Error("Exists(web) = true on nil, want false")
 	}
 	if areas.Get("web") != nil {
 		t.Error("Get(web) != nil on nil")
@@ -167,7 +167,7 @@ func TestConfigAndAreasLoadIndependently(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadAreasFromStore: %v", err)
 	}
-	if !areas.IsValid("web") {
-		t.Error("IsValid(web) = false, want true")
+	if !areas.Exists("web") {
+		t.Error("Exists(web) = false, want true")
 	}
 }

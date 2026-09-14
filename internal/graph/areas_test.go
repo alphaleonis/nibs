@@ -160,7 +160,7 @@ func TestConfigResolverFlattensTheSampleProjectVocabulary(t *testing.T) {
 }
 
 // A store declaring no areas answers with an empty list. Declaring none is a
-// normal, permanent state (config.Areas.Declared), not a failure, so the
+// normal, permanent state (config.Areas.IsEmpty), not a failure, so the
 // resolver must not error and must not omit the field.
 //
 // It says nothing about null-vs-[] on the wire, because that is not this
@@ -233,7 +233,7 @@ func TestAreasOrderingCarriesSubtreeMembership(t *testing.T) {
 					}
 				}
 				if !slices.Equal(byOrder, byRule) {
-					t.Errorf("subtree of %q read from the order = %v, but IsAreaWithin gives %v",
+					t.Errorf("subtree of %q read from the order = %v, but Areas.IsWithin gives %v",
 						node.Path, byOrder, byRule)
 				}
 			}

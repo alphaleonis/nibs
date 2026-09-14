@@ -81,7 +81,7 @@ func TestSampleProjectDeclaresEveryAssignedArea(t *testing.T) {
 		t.Fatal("no fixture nib assigns an area; this guard would pass vacuously")
 	}
 	for area, files := range assigned {
-		if !areas.IsValid(area) {
+		if !areas.Exists(area) {
 			t.Errorf("nib(s) %v assign area %q, which the fixture config does not declare (declared: %s)",
 				files, area, areas.List())
 		}

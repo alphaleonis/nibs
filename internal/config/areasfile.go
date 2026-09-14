@@ -97,7 +97,7 @@ func LoadAreasFromStore(storeDir string) (*Areas, error) {
 func (a *Areas) Save(storeDir string) error {
 	path := store.NewLayout(storeDir).AreasPath()
 
-	if !a.Declared() {
+	if a.IsEmpty() {
 		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}

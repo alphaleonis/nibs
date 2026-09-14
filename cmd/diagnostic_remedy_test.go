@@ -454,7 +454,7 @@ func remedyStoreWithoutAreas(files map[string]string) func(t *testing.T) string 
 		if err != nil {
 			t.Fatal(err)
 		}
-		if vocab.Declared() {
+		if !vocab.IsEmpty() {
 			t.Fatalf("the vocabulary survived the removal: %v", vocab.Paths())
 		}
 		return nibsDir

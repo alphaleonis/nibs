@@ -144,8 +144,8 @@ func TestLoadAcceptsAbsentOrEmptyAreas(t *testing.T) {
 			if got := cfg.Paths(); len(got) != 0 {
 				t.Errorf("Paths() = %v, want none", got)
 			}
-			if cfg.IsValid("web") {
-				t.Error("IsValid(\"web\") = true with no declared vocabulary")
+			if cfg.Exists("web") {
+				t.Error("Exists(\"web\") = true with no declared vocabulary")
 			}
 		})
 	}
@@ -218,8 +218,8 @@ func TestGetAreaResolvesDeclaredPaths(t *testing.T) {
 			if (node != nil) != tt.wantFound {
 				t.Fatalf("Get(%q) found = %v, want %v", tt.path, node != nil, tt.wantFound)
 			}
-			if got := cfg.IsValid(tt.path); got != tt.wantFound {
-				t.Errorf("IsValid(%q) = %v, want %v", tt.path, got, tt.wantFound)
+			if got := cfg.Exists(tt.path); got != tt.wantFound {
+				t.Errorf("Exists(%q) = %v, want %v", tt.path, got, tt.wantFound)
 			}
 			if tt.wantFound && node.Description != tt.wantDescription {
 				t.Errorf("Get(%q).Description = %q, want %q", tt.path, node.Description, tt.wantDescription)
@@ -232,7 +232,7 @@ func TestGetAreaResolvesDeclaredPaths(t *testing.T) {
 	}
 }
 
-func TestIsAreaWithin(t *testing.T) {
+func TestAreasIsWithin(t *testing.T) {
 	dir := writeStoreAreas(t, sampleAreasConfig)
 	cfg, err := LoadAreasFromStore(dir)
 	if err != nil {
@@ -262,7 +262,7 @@ func TestIsAreaWithin(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := cfg.IsWithin(tt.path, tt.ancestor); got != tt.want {
-				t.Errorf("IsAreaWithin(%q, %q) = %v, want %v", tt.path, tt.ancestor, got, tt.want)
+				t.Errorf("IsWithin(%q, %q) = %v, want %v", tt.path, tt.ancestor, got, tt.want)
 			}
 		})
 	}

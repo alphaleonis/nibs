@@ -204,13 +204,11 @@ func (a *Areas) Get(path string) *AreaConfig {
 	return findArea(a.fileNodes(), path)
 }
 
-func (a *Areas) Declared() bool {
-	return len(a.fileNodes()) > 0
+func (a *Areas) IsEmpty() bool {
+	return len(a.fileNodes()) == 0
 }
 
-// IsValid reports whether path names a declared area. The empty string does not
-// — check for an unset `area:` separately.
-func (a *Areas) IsValid(path string) bool {
+func (a *Areas) Exists(path string) bool {
 	return a.Get(path) != nil
 }
 
@@ -245,7 +243,7 @@ func (e *AreaError) Error() string {
 // ValidateAssignment checks an `area:` value the caller SUPPLIED against the
 // declared vocabulary. The empty string passes.
 func (a *Areas) ValidateAssignment(path string) error {
-	if path == "" || a.IsValid(path) {
+	if path == "" || a.Exists(path) {
 		return nil
 	}
 	return &AreaError{Path: RenderAreaPath(path), Declared: a.declaredList()}
@@ -254,7 +252,7 @@ func (a *Areas) ValidateAssignment(path string) error {
 // declaredList renders the vocabulary for a refusal, or "" when the store
 // declares none. AreaError's no-areas wording keys on that empty string.
 func (a *Areas) declaredList() string {
-	if !a.Declared() {
+	if a.IsEmpty() {
 		return ""
 	}
 	return a.List()
@@ -263,7 +261,7 @@ func (a *Areas) declaredList() string {
 // ValidateStored re-checks the `area:` a nib ALREADY HOLDS, which need not have
 // come from the request. nibID lets the refusal name the nib to fix.
 func (a *Areas) ValidateStored(nibID, path string) error {
-	if path == "" || a.IsValid(path) {
+	if path == "" || a.Exists(path) {
 		return nil
 	}
 	return &AreaError{Path: RenderAreaPath(path), Declared: a.declaredList(), NibID: safetext.Strip(nibID)}

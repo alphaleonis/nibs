@@ -22,7 +22,7 @@ import type { AreaVocabulary } from "../areas";
 // names. Widening the token to the subtree client-side would put the same rule
 // in two places, over a vocabulary only one of them holds authoritatively.
 //
-// VALUES ARE NOT LOWERCASED, unlike every other token's. `config.GetArea`
+// VALUES ARE NOT LOWERCASED, unlike every other token's. `config.Areas.Get`
 // descends the declared tree comparing segment names byte-for-byte, so `Web` and
 // `web` are different paths on the server and folding case here would send a
 // value the store does not declare.

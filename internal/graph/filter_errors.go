@@ -206,8 +206,8 @@ func (e *FilterTargetUnreadableError) Error() string {
 //
 // Its message is worded for a FILTER rather than reusing config.AreaError, which
 // prescribes `nibs set` escapes for a nib whose stored value is refused. It
-// restates no rule: membership is Areas.IsValid's, whether the axis is in use at
-// all is Areas.Declared's, and the declared set is rendered by Areas.List.
+// restates no rule: membership is Areas.Exists's, whether the axis is in use at
+// all is Areas.IsEmpty's, and the declared set is rendered by Areas.List.
 type FilterAreaError struct {
 	// Field is the GraphQL filter field that carried the value — "area", the
 	// same spelling as in the schema.

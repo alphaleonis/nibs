@@ -150,7 +150,7 @@ func TestAreaFilterRefusesAnUndeclaredValue(t *testing.T) {
 func TestAreaFilterInAStoreDeclaringNoAreasSaysWhy(t *testing.T) {
 	reader := areaFilterFixture()
 	reader.areas = &config.Areas{} // no vocabulary at all
-	if reader.areas.Declared() {
+	if !reader.areas.IsEmpty() {
 		t.Fatal("the fixture still declares areas, so this row proves nothing")
 	}
 	web := "web"

@@ -710,7 +710,7 @@ func TestAreaRetireRefusesAMoveToTargetRetiredUnderTheLock(t *testing.T) {
 	}
 }
 
-// TestAreaEditsCascadeThroughAreasDeclaredUnderTheLock: the cascade's membership
+// TestAreaEditsCascadeThroughTheVocabularyDeclaredUnderTheLock: the cascade's membership
 // question is asked of the vocabulary the store declares NOW, not of the one
 // this process loaded.
 //
@@ -718,7 +718,7 @@ func TestAreaRetireRefusesAMoveToTargetRetiredUnderTheLock(t *testing.T) {
 // waiting process never loaded. Deciding membership from that snapshot skips it,
 // so the verb retires or renames its parent out from under a nib it never
 // rewrote — the same permanent write refusal, reached from the other direction.
-func TestAreaEditsCascadeThroughAreasDeclaredUnderTheLock(t *testing.T) {
+func TestAreaEditsCascadeThroughTheVocabularyDeclaredUnderTheLock(t *testing.T) {
 	tests := []struct {
 		name string
 		run  func(t *testing.T, app *App) error
