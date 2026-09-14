@@ -463,8 +463,9 @@ func mappingValueNode(node *yaml.Node, key string) *yaml.Node {
 }
 
 // writeConfigPreservingMode writes data over the config at path, keeping the
-// existing file's permissions and reporting a replaced symlink. Save holds the
-// same contract; keep the two in step.
+// existing file's permissions and reporting a replaced symlink. A config that has
+// never existed gets 0644; a stat failure other than absence is returned rather
+// than defaulted, since a default could only widen a narrower real mode.
 func writeConfigPreservingMode(path string, data []byte) (staleLinkTarget string, err error) {
 	if link, lstatErr := os.Lstat(path); lstatErr == nil && link.Mode()&os.ModeSymlink != 0 {
 		if target, readErr := os.Readlink(path); readErr == nil {
@@ -518,33 +519,7 @@ func (c *Config) Save(storeDir string) (staleLinkTarget string, err error) {
 	if err != nil {
 		return "", err
 	}
-
-	if link, lstatErr := os.Lstat(path); lstatErr == nil && link.Mode()&os.ModeSymlink != 0 {
-		if target, readErr := os.Readlink(path); readErr == nil {
-			if !filepath.IsAbs(target) {
-				target = filepath.Join(filepath.Dir(path), target)
-			}
-			staleLinkTarget = target
-		} else {
-			staleLinkTarget = path
-		}
-	}
-
-	// A config that has never existed gets the ordinary 0644. A stat failure that
-	// is not "absent" is reported rather than defaulted, which could only widen a
-	// config whose real mode was narrower.
-	perm := os.FileMode(0644)
-	info, statErr := os.Stat(path)
-	switch {
-	case statErr == nil:
-		perm = info.Mode().Perm()
-	case !errors.Is(statErr, fs.ErrNotExist):
-		return "", fmt.Errorf("reading the current mode of %s: %w", path, statErr)
-	}
-	if err := fsutil.AtomicWriteFile(path, data, perm); err != nil {
-		return "", err
-	}
-	return staleLinkTarget, nil
+	return writeConfigPreservingMode(path, data)
 }
 
 // IsValidStatus returns true if the status is a valid hardcoded status.
@@ -641,7 +616,7 @@ func (c *Config) GetStatus(name string) *StatusConfig {
 // GetDefaultStatus returns the default status name for new nibs.
 func (c *Config) GetDefaultStatus() string {
 	if c.Nibs.DefaultStatus == "" {
-		return "todo"
+		return defaultStatusName
 	}
 	return c.Nibs.DefaultStatus
 }

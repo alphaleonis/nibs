@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -66,6 +67,35 @@ func TestAreasEqualIgnoresFileOrder(t *testing.T) {
 	}
 	if changed := load("areas:\n    - name: api\n    - name: web\n      children:\n        - name: dashboard\n"); declared.Equal(changed) {
 		t.Errorf("Equal = true for a vocabulary that dropped web/settings: %v", changed.Paths())
+	}
+}
+
+// A field Equal does not compare makes an edited areas.yml read as unchanged, so
+// no configChanged fires and a running server keeps the old vocabulary. Vary each
+// AreaConfig field alone; a field kind this cannot vary fails until it is taught.
+func TestAreasEqualSeesEveryAreaConfigField(t *testing.T) {
+	base := AreaConfig{Name: "web", Description: "front end", Color: "red", Children: []AreaConfig{{Name: "dashboard"}}}
+	childrenType := reflect.TypeOf([]AreaConfig(nil))
+
+	typ := reflect.TypeOf(base)
+	for i := range typ.NumField() {
+		field := typ.Field(i)
+		changed := base
+		changed.Children = slices.Clone(base.Children)
+
+		value := reflect.ValueOf(&changed).Elem().Field(i)
+		switch {
+		case field.Type.Kind() == reflect.String:
+			value.SetString(value.String() + "-changed")
+		case field.Type == childrenType:
+			value.Set(reflect.Append(value, reflect.ValueOf(AreaConfig{Name: "settings"})))
+		default:
+			t.Fatalf("AreaConfig.%s is a %s, which this test cannot vary; teach it the field", field.Name, field.Type)
+		}
+
+		if (&Areas{Nodes: []AreaConfig{base}}).Equal(&Areas{Nodes: []AreaConfig{changed}}) {
+			t.Errorf("Equal = true for vocabularies that differ only in AreaConfig.%s", field.Name)
+		}
 	}
 }
 

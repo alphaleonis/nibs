@@ -77,14 +77,7 @@ func LoadFromExplicitPathWithUserConfig(configPath string) (*Config, error) {
 		userCfg = &UserConfig{}
 	}
 
-	cfg, err := loadRaw(configPath)
-	if err != nil {
-		return nil, err
-	}
-
-	applyUserDefaults(cfg, userCfg)
-	applySystemDefaults(cfg)
-	return cfg, nil
+	return loadWithUserLayer(configPath, userCfg)
 }
 
 // LoadStoreWithUserConfigPath loads an already-resolved store's config: the
@@ -95,15 +88,18 @@ func LoadStoreWithUserConfigPath(storeDir string, userConfigPath string) (*Confi
 	if err != nil {
 		userCfg = &UserConfig{}
 	}
+	return loadWithUserLayer(store.NewLayout(storeDir).ConfigPath(), userCfg)
+}
 
-	cfg, err := loadRaw(store.NewLayout(storeDir).ConfigPath())
+// loadWithUserLayer loads the project config at configPath over userCfg, over
+// system defaults.
+func loadWithUserLayer(configPath string, userCfg *UserConfig) (*Config, error) {
+	cfg, err := loadRaw(configPath)
 	if err != nil {
 		return nil, err
 	}
-
-	applyUserDefaults(cfg, userCfg)
+	overlayUserNibs(&cfg.Nibs, userCfg.Nibs, true)
 	applySystemDefaults(cfg)
-
 	return cfg, nil
 }
 
@@ -113,29 +109,22 @@ func DefaultWithPrefixFromUserConfig(prefix string, userCfg *UserConfig) *Config
 	cfg := Default()
 	cfg.Nibs.Prefix = prefix
 	if userCfg != nil {
-		if userCfg.Nibs.IDLength != 0 {
-			cfg.Nibs.IDLength = userCfg.Nibs.IDLength
-		}
-		if userCfg.Nibs.HideCompleted != nil {
-			cfg.Nibs.HideCompleted = boolPtr(*userCfg.Nibs.HideCompleted)
-		}
-		if userCfg.Nibs.WideMode != nil {
-			cfg.Nibs.WideMode = boolPtr(*userCfg.Nibs.WideMode)
-		}
+		overlayUserNibs(&cfg.Nibs, userCfg.Nibs, false)
 	}
 	return cfg
 }
 
-// applyUserDefaults fills project fields left unset — a nil *bool, an IDLength of
-// zero — from the user config.
-func applyUserDefaults(cfg *Config, userCfg *UserConfig) {
-	if userCfg.Nibs.IDLength != 0 && cfg.Nibs.IDLength == 0 {
-		cfg.Nibs.IDLength = userCfg.Nibs.IDLength
+// overlayUserNibs copies each field the user config sets into dst. With onlyUnset,
+// a field dst already holds (a non-nil *bool, a non-zero IDLength) is kept.
+// IDLength stays a plain int: 0 is not a legal length, so it can mean unset.
+func overlayUserNibs(dst *NibsConfig, user UserNibsConfig, onlyUnset bool) {
+	if user.IDLength != 0 && (!onlyUnset || dst.IDLength == 0) {
+		dst.IDLength = user.IDLength
 	}
-	if userCfg.Nibs.HideCompleted != nil && cfg.Nibs.HideCompleted == nil {
-		cfg.Nibs.HideCompleted = boolPtr(*userCfg.Nibs.HideCompleted)
+	if user.HideCompleted != nil && (!onlyUnset || dst.HideCompleted == nil) {
+		dst.HideCompleted = boolPtr(*user.HideCompleted)
 	}
-	if userCfg.Nibs.WideMode != nil && cfg.Nibs.WideMode == nil {
-		cfg.Nibs.WideMode = boolPtr(*userCfg.Nibs.WideMode)
+	if user.WideMode != nil && (!onlyUnset || dst.WideMode == nil) {
+		dst.WideMode = boolPtr(*user.WideMode)
 	}
 }
