@@ -32,6 +32,11 @@ var (
 // shelling out to real git.
 var gitIsDirtyFn = realGitIsDirty
 
+// reprefixExecuteFn applies a set-prefix rename plan. Tests override it to stop
+// partway through the renames or the rewrites, or to make the config write that
+// follows fail, none of which a real store produces on demand.
+var reprefixExecuteFn = reprefix.Execute
+
 var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Manage project configuration",
@@ -45,6 +50,10 @@ var configSetPrefixCmd = &cobra.Command{
 and updates the store's config.yml. This is a bulk filesystem operation — run
 on a clean git working tree (the check covers the whole .nibs store) unless
 --force is given.
+
+A run that fails partway is not rolled back. Rerunning the same command with
+--force finishes it unless one prefix starts with the other, and the error
+names how to finish or, in a git-tracked store, undo it.
 
 Use --dry-run to print the planned renames without mutating anything.
 Dry-run is read-only and does NOT consult git, so --force is ignored
@@ -111,6 +120,10 @@ func runSetPrefix(cmd *cobra.Command, args []string) error {
 
 	plan, code, err := buildPlan()
 	if err != nil {
+		var overlap *reprefix.OverlappingPrefixResumeError
+		if errors.As(err, &overlap) {
+			return cmdError(setPrefixJSON, code, "%v\n%s", err, setPrefixRecovery(root, oldPrefix, newPrefix, true))
+		}
 		return cmdError(setPrefixJSON, code, "%v", err)
 	}
 
@@ -167,9 +180,11 @@ func runSetPrefix(cmd *cobra.Command, args []string) error {
 	// rather than refused over.
 	//
 	// oldPrefix is still the one this process read at startup, and that is a
-	// refusal rather than a hole: another set-prefix completing in the window
-	// leaves every id under ITS new prefix, which BuildPlan rejects by name —
-	// over an untouched store, since nothing below has run yet.
+	// refusal rather than a hole: another set-prefix to a DIFFERENT prefix
+	// completing in the window leaves every id under a prefix BuildPlan rejects
+	// by name — over an untouched store, since nothing below has run yet. One to
+	// this run's own new prefix is what BuildPlan resumes, and finishing it is
+	// what this run was asked to do.
 	if err := app.Core.Load(); err != nil {
 		return cmdError(setPrefixJSON, output.ErrFileError,
 			"nothing was renamed: re-reading the store under its write lock failed: %v", err)
@@ -219,8 +234,8 @@ func runSetPrefix(cmd *cobra.Command, args []string) error {
 		return cmdError(setPrefixJSON, output.ErrFileError, "nothing was renamed: %v", err)
 	}
 
-	if err := reprefix.Execute(plan, root); err != nil {
-		return cmdError(setPrefixJSON, output.ErrFileError, "%v", err)
+	if err := reprefixExecuteFn(plan, root); err != nil {
+		return cmdError(setPrefixJSON, output.ErrFileError, "%v\n%s", err, setPrefixRecovery(root, oldPrefix, newPrefix, setPrefixForce))
 	}
 
 	// Only the prefix key, edited in place — see config.PlanSetStoredPrefix for
@@ -230,8 +245,8 @@ func runSetPrefix(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		configFile := cfg.Layout().ConfigPath()
 		return cmdError(setPrefixJSON, output.ErrFileError,
-			"files renamed to prefix %q but updating %s failed: %v\nto recover, edit %s manually and set nibs.prefix to %q",
-			newPrefix, configFile, err, configFile, newPrefix)
+			"files renamed to prefix %q but updating %s failed: %v\n%s",
+			newPrefix, configFile, err, setPrefixRecovery(root, oldPrefix, newPrefix, setPrefixForce))
 	}
 
 	msg := fmt.Sprintf("Changed prefix from %q to %q; renamed %d file(s)", stripControlChars(oldPrefix), newPrefix, len(plan.Files))
@@ -253,6 +268,36 @@ func runSetPrefix(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println(msg)
 	return nil
+}
+
+// setPrefixRecovery is the remedy for a store a set-prefix run left partly
+// re-prefixed. The rerun resumes it (reprefix.BuildPlan plans no rename for a
+// file already carrying newPrefix) and needs --force, because in a git-tracked
+// store the renames themselves trip the dirtiness guard. It is omitted when the
+// prefixes overlap, since BuildPlan refuses that resume.
+//
+// The undo is scoped to the store directory so it cannot touch the rest of the
+// project. It is exact only when the run was not forced: then the dirtiness
+// guard proved the store clean first, so everything restore and clean discard
+// is this run's.
+func setPrefixRecovery(root, oldPrefix, newPrefix string, forced bool) string {
+	var lines []string
+	if reprefix.PrefixesOverlap(oldPrefix, newPrefix) {
+		lines = append(lines, "the store cannot be resumed because one prefix starts with the other")
+	} else {
+		// newPrefix is safe inside a command: BuildPlan validated it.
+		lines = append(lines, fmt.Sprintf("to finish, rerun `nibs config set-prefix %s --force`", newPrefix))
+	}
+	if _, isRepo, err := storeGitStateFn(root); err == nil && isRepo {
+		undo := fmt.Sprintf("to undo it, run `git -C \"%s\" restore --source=HEAD --staged --worktree -- .` and then `git -C \"%s\" clean -fd -- .`", root, root)
+		if forced {
+			undo += "; this also discards any uncommitted changes the store held before the run"
+		}
+		lines = append(lines, undo)
+	} else if reprefix.PrefixesOverlap(oldPrefix, newPrefix) {
+		lines = append(lines, fmt.Sprintf("restore %s from a backup to undo it", root))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // buildSnapshot projects loaded nibs onto the minimal view the reprefix planner
