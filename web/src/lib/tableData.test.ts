@@ -62,6 +62,16 @@ describe("buildTableData — milestoneNib resolution", () => {
     expect(result.rows.find((r) => r.nib.id === "nibs-w001")!.milestoneNib).toBeNull();
     expect(result.rows.find((r) => r.nib.id === "nibs-w002")!.milestoneNib).toBeNull();
   });
+
+  it("resolves to null when the assignment names a nib that is not a milestone", () => {
+    // Membership treats such an assignment as none, so the row sits in the
+    // Backlog; the cell must not show the epic as its milestone.
+    const epic = makeTreeTableNib({ id: "nibs-e001", title: "An epic", type: "epic" });
+    const work = makeTreeTableNib({ id: "nibs-w001", type: "task", milestone: "nibs-e001" });
+    const result = buildTableData([epic, work], emptyFilter, "flat", noCollapsed);
+
+    expect(result.rows.find((r) => r.nib.id === "nibs-w001")!.milestoneNib).toBeNull();
+  });
 });
 
 describe("buildTableData", () => {

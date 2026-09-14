@@ -136,6 +136,23 @@ describe("createTableDataSource", () => {
     expect(clock.pending).toBe(0);
   });
 
+  it("holds a non-delete event's refetch while a delete's fade is pending", () => {
+    // A refetch drops the deleted row from the dataset, so refetching mid-fade
+    // cuts the fade short; the pending delete's refetch picks the update up too.
+    const { source, clock, requestRefetch, applyChange } = setup();
+
+    source.onChangeEvent(deleted("nibs-a"));
+    clock.advance(100);
+    source.onChangeEvent(updated("nibs-b", "e1"));
+
+    expect(applyChange).toHaveBeenCalledTimes(2);
+    expect(requestRefetch).not.toHaveBeenCalled();
+
+    clock.advance(FADE_MS - 100);
+    expect(requestRefetch).toHaveBeenCalledTimes(1);
+    expect(clock.pending).toBe(0);
+  });
+
   it("dedups a duplicate type:nibId:etag but refetches for a new etag", () => {
     const { source, requestRefetch, applyChange } = setup();
 

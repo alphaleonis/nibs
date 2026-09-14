@@ -213,6 +213,10 @@ export function planDrop(req: DropRequest): DropPlan {
       case "region":
       case "byRow":
         break;
+      default: {
+        const unhandled: never = drawn.onEnter;
+        throw new Error(`unhandled section entry: ${JSON.stringify(unhandled)}`);
+      }
     }
   }
 
@@ -307,36 +311,40 @@ export function planDrop(req: DropRequest): DropPlan {
   const homeKeys = new Set(dragged.map((r) => r.section?.key ?? null));
   const crossesSections = homeKeys.size > 1 || !homeKeys.has(crossedKey);
   if (crossesSections) {
-    // A `refuse` destination must not fall through to a position write. This
-    // switch is not exhaustive: a new `SectionEntry` kind falls through silently.
-    switch (crossed?.onEnter.kind) {
-      case "refuse":
-        return refuse("entry-refused", crossed.onEnter.message);
-      // No section, or one that does not assign: only the departure side below
-      // can refuse.
-      case undefined:
-      case "region":
-      case "byRow":
-        break;
-      case "assign": {
-        const joining = crossed.onEnter;
-        // Type first, so an unassignable subject is not offered an assignment.
-        if (!draggedTypes.every(takesAssignmentAxes)) {
-          return refuse("unassignable-type", `Cannot put ${listTypes(draggedTypes)} in ${nameSection(joining)}.`);
+    // A `refuse` destination must not fall through to a position write. With no
+    // section, only the departure side below can refuse.
+    if (crossed) {
+      switch (crossed.onEnter.kind) {
+        case "refuse":
+          return refuse("entry-refused", crossed.onEnter.message);
+        // A section that does not assign: only the departure side below can refuse.
+        case "region":
+        case "byRow":
+          break;
+        case "assign": {
+          const joining = crossed.onEnter;
+          // Type first, so an unassignable subject is not offered an assignment.
+          if (!draggedTypes.every(takesAssignmentAxes)) {
+            return refuse("unassignable-type", `Cannot put ${listTypes(draggedTypes)} in ${nameSection(joining)}.`);
+          }
+          // `assignmentFor` supplies subject and command together, so the sentence
+          // names exactly the rows written; some dragged rows may already be in the
+          // destination. Its null (every row already there) cannot reach this
+          // branch, since those rows would not cross sections.
+          const write = assignmentFor(joining, crossed.key, dragged);
+          if (write !== null) {
+            return refuse(
+              "crosses-section",
+              `${subjectIs(write.ids, nameOf)} not in ${nameSection(joining)}, and joining one is an assignment rather than a move.`,
+              { region: dest, action: { label: assignLabel(joining), command: write.command } },
+            );
+          }
+          break;
         }
-        // `assignmentFor` supplies subject and command together, so the sentence
-        // names exactly the rows written; some dragged rows may already be in the
-        // destination. Its null (every row already there) cannot reach this
-        // branch, since those rows would not cross sections.
-        const write = assignmentFor(joining, crossed.key, dragged);
-        if (write !== null) {
-          return refuse(
-            "crosses-section",
-            `${subjectIs(write.ids, nameOf)} not in ${nameSection(joining)}, and joining one is an assignment rather than a move.`,
-            { region: dest, action: { label: assignLabel(joining), command: write.command } },
-          );
+        default: {
+          const unhandled: never = crossed.onEnter;
+          throw new Error(`unhandled section entry: ${JSON.stringify(unhandled)}`);
         }
-        break;
       }
     }
     const leaving = leavingAssigned(dragged, crossedKey);

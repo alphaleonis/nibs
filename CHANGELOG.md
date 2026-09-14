@@ -109,6 +109,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **A long title in the TUI detail view's link list ends in "..."** instead of being clipped at the box edge.
 - **A failed copy in the TUI detail view is shown as a warning**, not in the success color.
 - **The TUI no longer stalls collapsing or navigating a large, deep tree.**
+- **A deleted row in the web table finishes fading out** when another change arrives during the fade, where the table refetched at once and dropped it mid-fade.
 
 ### Security
 - **`nibs serve` now bounds how deep and how wide a query may recurse, and refuses a disallowed origin instead of answering it** — a page at any origin could otherwise make it resolve a tree that multiplied at every level.

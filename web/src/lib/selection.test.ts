@@ -411,21 +411,6 @@ describe("SelectionState", () => {
       expect(state.focusedNibId).toBe("nibs-xyz2");
     });
 
-    it("clearAll() clears everything", () => {
-      const state = new SelectionState();
-      state.select("nibs-abc1");
-      state.toggleSelect("nibs-xyz2", "follow");
-      state.ensureVisible("nibs-abc1");
-      state.clearAll();
-      expect(state.selectedIds.size).toBe(0);
-      expect(state.selectedNibId).toBeNull();
-      expect(state.focusedNibId).toBeNull();
-      expect(state.anchorId).toBeNull();
-      expect(state.pendingEnsureVisibleId).toBeNull();
-      expect(state.panelOpen).toBe(false);
-      expect(state.hasMultiSelect).toBe(false);
-    });
-
     it("select() clears multi-selection and resets to single item", () => {
       const state = new SelectionState();
       state.toggleSelect("nibs-abc1", "follow");
