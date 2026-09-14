@@ -79,7 +79,9 @@ export function createTableDataSource(ports: SourcePorts): TableDataSource {
           pendingDelete = undefined;
           safeRefetch();
         }, ports.fadeDurationMs());
-      } else {
+      } else if (pendingDelete === undefined) {
+        // While a fade is pending, its deferred refetch covers this change too;
+        // refetching now would drop the fading row mid-fade.
         safeRefetch();
       }
     },
