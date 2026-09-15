@@ -12,7 +12,7 @@ import (
 // repeats. A message's job is to name the file and the key so the reader can
 // look; repeating an arbitrarily long value adds nothing and gives a hostile
 // file a canvas.
-const maxEchoedFileTextRunes = 200
+const maxEchoedFileTextRunes = safetext.MaxBoundedRunes
 
 // maxEchoedListEntries bounds how many entries a message ENUMERATES, the count
 // half of the same boundary maxEchoedFileTextRunes governs one scalar of. A
@@ -120,7 +120,7 @@ func sanitizeFileText(s string) string {
 // truncating either corrupts the one thing it is there for. Nothing is truncated
 // out of reach: the message names the config the value came from, so the full
 // spelling is one file away.
-func sanitizeFilePath(p string) string { return truncateEchoedText(stripControlChars(p)) }
+func sanitizeFilePath(p string) string { return safetext.StripBounded(p) }
 
 // truncateEchoedText bounds one echoed string, marking a truncation so the reader
 // can tell a shortened rendering from a complete one.
