@@ -14,10 +14,10 @@ import (
 	"github.com/alphaleonis/nibs/internal/store"
 )
 
-// setupAreasCore builds a store with a declared prefix — a file named
+// setupCoreWithoutAreasFile builds a store with a declared prefix — a file named
 // "tst-a001.md" reads its id back only under one, and a real store always
 // declares one.
-func setupAreasCore(t *testing.T) (*Core, string) {
+func setupCoreWithoutAreasFile(t *testing.T) (*Core, string) {
 	t.Helper()
 	nibsDir := filepath.Join(t.TempDir(), store.DirName)
 	if err := os.MkdirAll(store.NewLayout(nibsDir).DataDir(), 0o755); err != nil {
@@ -37,7 +37,7 @@ func writeStoreAreas(t *testing.T, nibsDir, body string) {
 }
 
 func TestLoadReadsTheAreasVocabulary(t *testing.T) {
-	core, nibsDir := setupAreasCore(t)
+	core, nibsDir := setupCoreWithoutAreasFile(t)
 	writeStoreAreas(t, nibsDir, "areas:\n    - name: web\n      children:\n        - name: dashboard\n")
 
 	if err := core.Load(); err != nil {
@@ -50,7 +50,7 @@ func TestLoadReadsTheAreasVocabulary(t *testing.T) {
 }
 
 func TestLoadRefusesAMalformedAreasVocabulary(t *testing.T) {
-	core, nibsDir := setupAreasCore(t)
+	core, nibsDir := setupCoreWithoutAreasFile(t)
 	writeStoreAreas(t, nibsDir, "areas:\n    - name: web\n    - name: web\n")
 
 	if err := core.Load(); err == nil {
@@ -63,7 +63,7 @@ func TestLoadRefusesAMalformedAreasVocabulary(t *testing.T) {
 // first half — so every later write to a renamed nib was refused against the
 // vocabulary it read at startup.
 func TestWatcherReloadsTheAreasVocabulary(t *testing.T) {
-	core, nibsDir := setupAreasCore(t)
+	core, nibsDir := setupCoreWithoutAreasFile(t)
 	writeStoreAreas(t, nibsDir, "areas:\n    - name: web\n")
 	if err := core.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
@@ -115,7 +115,7 @@ func TestWatcherReloadsTheAreasVocabulary(t *testing.T) {
 // the warning — which only the refusal path emits — and asserts on the
 // vocabulary at that moment, with no second write to launder the result.
 func TestWatcherKeepsTheLastGoodVocabularyOnAMalformedWrite(t *testing.T) {
-	core, nibsDir := setupAreasCore(t)
+	core, nibsDir := setupCoreWithoutAreasFile(t)
 	writeStoreAreas(t, nibsDir, "areas:\n    - name: web\n")
 	if err := core.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
@@ -194,7 +194,7 @@ func reloadUnderLock(core *Core) error {
 // waiting, and answering it from the vocabulary this call could not replace is
 // how an edit reports success while showing the state before it.
 func TestReloadAreasReportsAFileItCannotRead(t *testing.T) {
-	core, nibsDir := setupAreasCore(t)
+	core, nibsDir := setupCoreWithoutAreasFile(t)
 	writeStoreAreas(t, nibsDir, "areas:\n    - name: web\n")
 	if err := core.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
@@ -231,7 +231,7 @@ func TestReloadAreasReportsAFileItCannotRead(t *testing.T) {
 // installer, so that is what is asserted: while an edit's critical section is
 // open, the vocabulary in memory does not move, however far behind disk it is.
 func TestTheWatchersReloadDoesNotInstallOverAHeldStoreLock(t *testing.T) {
-	core, nibsDir := setupAreasCore(t)
+	core, nibsDir := setupCoreWithoutAreasFile(t)
 	writeStoreAreas(t, nibsDir, "areas:\n    - name: web\n")
 	if err := core.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
@@ -273,7 +273,7 @@ func TestTheWatchersReloadDoesNotInstallOverAHeldStoreLock(t *testing.T) {
 // installed, finds it equal and ticks nobody either — so the vocabulary moves in
 // memory while every open client keeps offering the retired one.
 func TestARefusedAreaEditTicksTheVocabularyItInstalled(t *testing.T) {
-	core, nibsDir := setupAreasCore(t)
+	core, nibsDir := setupCoreWithoutAreasFile(t)
 	writeStoreAreas(t, nibsDir, "areas:\n    - name: web\n")
 	if err := core.Load(); err != nil {
 		t.Fatalf("Load: %v", err)

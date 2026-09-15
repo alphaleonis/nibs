@@ -44,7 +44,7 @@ func TestAreaEditPreservesTheVocabularyFilesMode(t *testing.T) {
 // declared an area has no areas.yml, and Core has to hand the planner that
 // absence rather than refusing on the read.
 func TestAreaAddBootstrapsAStoreWithNoVocabularyFile(t *testing.T) {
-	core, nibsDir := setupAreaCore(t)
+	core, nibsDir := setupCoreWithDeclaredAreas(t)
 	path := store.NewLayout(nibsDir).AreasPath()
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)

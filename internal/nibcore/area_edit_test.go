@@ -17,11 +17,11 @@ import (
 	"github.com/alphaleonis/nibs/internal/testskip"
 )
 
-// areaVerbCore is setupAreaCore with members placed for the verbs to act on:
+// areaVerbCore is setupCoreWithDeclaredAreas with members placed for the verbs to act on:
 // one ON the node the tests rename and retire, one BELOW it, and one elsewhere.
 func areaVerbCore(t *testing.T) (*Core, string) {
 	t.Helper()
-	core, nibsDir := setupAreaCore(t)
+	core, nibsDir := setupCoreWithDeclaredAreas(t)
 	for id, area := range map[string]string{
 		"nibs-ae01": "web",
 		"nibs-ae02": "web/ui",
@@ -786,7 +786,7 @@ func TestAreaEditRefusesToStrandANibThatArrived(t *testing.T) {
 // the only event left in the window — and an edit that did not look would not
 // call it.
 func TestARetireWithNoMembersConfirmsBeforeItWrites(t *testing.T) {
-	core, nibsDir := setupAreaCore(t)
+	core, nibsDir := setupCoreWithDeclaredAreas(t)
 
 	restore := reloadNibsBeforeAreaWrite
 	landed := false

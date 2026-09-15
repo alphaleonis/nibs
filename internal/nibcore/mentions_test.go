@@ -22,7 +22,7 @@ import (
 // ValidateArea, which is how Core.Update's documented ordering stays pinned.
 // Adding an `areas:` block here would retire that guard silently — the test
 // keeps passing, because both orderings then produce the same message. A test
-// needing a vocabulary wants setupAreaCore instead.
+// needing a vocabulary wants setupCoreWithDeclaredAreas instead.
 func mustLoadPrefixedCore(t *testing.T) (*Core, string) {
 	t.Helper()
 	tmpDir := t.TempDir()

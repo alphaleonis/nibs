@@ -17,10 +17,10 @@ import (
 	"github.com/alphaleonis/nibs/internal/store"
 )
 
-// setupAreaCore is setupTestCore over a config that DECLARES a vocabulary —
+// setupCoreWithDeclaredAreas is setupTestCore over a config that DECLARES a vocabulary —
 // config.Default() declares none, and a store with no areas refuses every
 // assignment, so the accepting rows need their own fixture.
-func setupAreaCore(t *testing.T) (*Core, string) {
+func setupCoreWithDeclaredAreas(t *testing.T) (*Core, string) {
 	t.Helper()
 	tmpDir := t.TempDir()
 	nibsDir := filepath.Join(tmpDir, store.DirName)
@@ -64,7 +64,7 @@ func TestCreateChecksAreaAgainstVocabulary(t *testing.T) {
 
 	for i, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			core, _ := setupAreaCore(t)
+			core, _ := setupCoreWithDeclaredAreas(t)
 			b := &nib.Nib{ID: "nibs-ar" + string(rune('a'+i)), Title: "Work", Type: "task", Status: "todo", Area: tt.area}
 			err := core.Create(b)
 			if len(tt.errContains) == 0 {
@@ -112,7 +112,7 @@ func TestCreateRefusesAreaWhenNoneAreDeclared(t *testing.T) {
 // value it is and how to get out. A create has no such value: its argument is
 // the only candidate, so the same clause there would point at nothing.
 func TestCreateAreaRefusalNamesTheArgumentOnly(t *testing.T) {
-	core, _ := setupAreaCore(t)
+	core, _ := setupCoreWithDeclaredAreas(t)
 
 	err := core.Create(&nib.Nib{ID: "nibs-arc9", Title: "Work", Type: "task", Status: "todo", Area: "nosuch"})
 	if err == nil {
@@ -124,7 +124,7 @@ func TestCreateAreaRefusalNamesTheArgumentOnly(t *testing.T) {
 }
 
 func TestUpdateAreaRefusalNamesTheNibsOwnValue(t *testing.T) {
-	core, _ := setupAreaCore(t)
+	core, _ := setupCoreWithDeclaredAreas(t)
 	if err := core.Create(&nib.Nib{ID: "nibs-aru9", Title: "Work", Type: "task", Status: "todo", Area: "auth"}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestUpdateAreaRefusalNamesTheNibsOwnValue(t *testing.T) {
 // transitions that have to keep working: assigning a declared area, and clearing
 // one back to unset.
 func TestUpdateChecksAreaAgainstVocabulary(t *testing.T) {
-	core, _ := setupAreaCore(t)
+	core, _ := setupCoreWithDeclaredAreas(t)
 	if err := core.Create(&nib.Nib{ID: "nibs-aru1", Title: "Work", Type: "task", Status: "todo"}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestUpdateChecksAreaAgainstVocabulary(t *testing.T) {
 // TestCheckAllLinksReportsUndeclaredArea — which is the one surface that is
 // meant to.
 func TestLoadToleratesUndeclaredArea(t *testing.T) {
-	core, nibsDir := setupAreaCore(t)
+	core, nibsDir := setupCoreWithDeclaredAreas(t)
 
 	file := "---\n# nibs-arld\nversion: 2\ntitle: Legacy area\nstatus: todo\ntype: task\narea: retired/thing\ncreated_at: 2026-01-02T03:04:05Z\nupdated_at: 2026-01-02T03:04:05Z\n---\n\nBody.\n"
 	if err := os.WriteFile(dataPath(nibsDir, "nibs-arld--legacy.md"), []byte(file), 0644); err != nil {
@@ -263,7 +263,7 @@ func TestLoadToleratesUndeclaredArea(t *testing.T) {
 // into a warning — so the finding carries the value and the declared set as
 // data, not only a message.
 func TestCheckAllLinksReportsUndeclaredArea(t *testing.T) {
-	core, nibsDir := setupAreaCore(t)
+	core, nibsDir := setupCoreWithDeclaredAreas(t)
 
 	files := map[string]string{
 		// The subject: a work nib whose stored area the vocabulary retired.
@@ -350,7 +350,7 @@ func TestCheckIsSilentOnAreasWhenStoreDeclaresNone(t *testing.T) {
 // areaCoreWith creates nibs carrying the given areas and returns the core.
 func areaCoreWith(t *testing.T, areas map[string]string) (*Core, string) {
 	t.Helper()
-	core, nibsDir := setupAreaCore(t)
+	core, nibsDir := setupCoreWithDeclaredAreas(t)
 	ids := make([]string, 0, len(areas))
 	for id := range areas {
 		ids = append(ids, id)

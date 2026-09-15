@@ -320,7 +320,7 @@ func freezeGuardCases() []freezeGuardCase {
 			// The default core's config declares no areas, and a store that
 			// declares none refuses every assignment — so there would be no
 			// member to rewrite and the guard would be vacuous.
-			newCore: setupAreaCore,
+			newCore: setupCoreWithDeclaredAreas,
 			setup:   publishAreaMember,
 			mutate: func(t *testing.T, c *Core, _ string) {
 				if _, err := c.RenameArea(context.Background(), "web", "platform"); err != nil {
@@ -331,7 +331,7 @@ func freezeGuardCases() []freezeGuardCase {
 		{
 			name:    "RemoveArea",
 			covers:  []string{"RemoveArea"},
-			newCore: setupAreaCore,
+			newCore: setupCoreWithDeclaredAreas,
 			setup:   publishAreaMember,
 			mutate: func(t *testing.T, c *Core, _ string) {
 				if _, err := c.RemoveArea(context.Background(), "web", MoveAreaMembersTo("auth")); err != nil {
@@ -346,7 +346,7 @@ func freezeGuardCases() []freezeGuardCase {
 			// assert the positive of: declaring an area leaves every published
 			// pointer — including one already CARRYING the path being declared —
 			// exactly as it was.
-			newCore: setupAreaCore,
+			newCore: setupCoreWithDeclaredAreas,
 			setup:   publishAreaMember,
 			mutate: func(t *testing.T, c *Core, _ string) {
 				if _, err := c.AddArea(context.Background(), "platform", "", ""); err != nil {

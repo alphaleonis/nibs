@@ -33,7 +33,7 @@ func loadIOWithin(t *testing.T, core *Core) error {
 
 func TestLoadRecordsWhetherAnAreasFileWasRead(t *testing.T) {
 	t.Run("no file is the empty vocabulary, not an error", func(t *testing.T) {
-		core, _ := setupAreasCore(t)
+		core, _ := setupCoreWithoutAreasFile(t)
 		if err := core.Load(); err != nil {
 			t.Fatalf("Load over a store with no areas.yml: %v", err)
 		}
@@ -46,7 +46,7 @@ func TestLoadRecordsWhetherAnAreasFileWasRead(t *testing.T) {
 	})
 
 	t.Run("a file declaring nothing was still read", func(t *testing.T) {
-		core, nibsDir := setupAreasCore(t)
+		core, nibsDir := setupCoreWithoutAreasFile(t)
 		writeStoreAreas(t, nibsDir, "areas: []\n")
 		if err := core.Load(); err != nil {
 			t.Fatalf("Load: %v", err)
@@ -74,7 +74,7 @@ func TestLoadNamesTheAreasFileItRefuses(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			core, nibsDir := setupAreasCore(t)
+			core, nibsDir := setupCoreWithoutAreasFile(t)
 			writeStoreAreas(t, nibsDir, tt.body)
 
 			err := core.Load()
@@ -133,7 +133,7 @@ func TestLoadRefusesAnAreasFileItMustNotRead(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			core, nibsDir := setupAreasCore(t)
+			core, nibsDir := setupCoreWithoutAreasFile(t)
 			tt.create(t, store.NewLayout(nibsDir).AreasPath())
 
 			err := loadIOWithin(t, core)
