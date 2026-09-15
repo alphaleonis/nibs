@@ -940,9 +940,12 @@ func TestAreaEditStopsWaitingForTheStoreLockWhenItsContextEnds(t *testing.T) {
 		if !errors.Is(ended, context.Canceled) {
 			t.Errorf("Cause = %v, want it to unwrap to context.Canceled", ended)
 		}
-		if ended.Waited < waited {
+		// Waited is timed from inside the lock wait, which the goroutine reaches
+		// after this test's own timer has started, so it can fall short of
+		// `waited` by that startup. Half still rules out a report of no wait.
+		if ended.Waited < waited/2 {
 			t.Errorf("Waited = %s, want at least %s — the edit must have waited for the lock, not refused on sight",
-				ended.Waited, waited)
+				ended.Waited, waited/2)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("the edit was still waiting for the store's write lock after its context was canceled")
