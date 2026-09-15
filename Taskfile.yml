@@ -237,9 +237,12 @@ tasks:
       # package. `go test` also DISCARDS a passing package's stdout in
       # package-list mode, so this file is the only channel a green run has.
       NIBS_SKIP_REPORT: '{{.ROOT_DIR}}/.skipped-guards.txt'
+      # The Go lane's output, kept so the step after it can count the packages
+      # the test cache answered for.
+      GO_TEST_OUTPUT: '{{.ROOT_DIR}}/.go-test-output.txt'
     cmds:
       # Stale counts from a previous run would read as this run's.
-      - rm -f "$NIBS_SKIP_REPORT"
+      - rm -f "$NIBS_SKIP_REPORT" "$GO_TEST_OUTPUT"
       # Go tests run memory-capped so a runaway test is OOM-killed inside its own
       # cgroup instead of triggering a global OOM that takes down the WSL VM
       # (nibs-mv0i). Falls back to plain `go test` where systemd --user scopes
@@ -249,9 +252,20 @@ tasks:
       # lane from 1.2s to 13s on an unchanged tree, and CLAUDE.md asks for
       # `task test` before every commit. The order-dependence check runs where
       # -count=1 already pays that cost — CI and the race lane below.
-      - bash scripts/go-test-capped.sh --host-os {{OS}} ./...
+      - cmd: |
+          set -o pipefail
+          bash scripts/go-test-capped.sh --host-os {{OS}} ./... | tee "$GO_TEST_OUTPUT"
       # Silent when nothing was skipped, which is the normal case here.
       - cmd: 'if [ -s "$NIBS_SKIP_REPORT" ]; then cat "$NIBS_SKIP_REPORT"; fi'
+        silent: true
+      # A package the test cache answers for does not run, so it writes no tally,
+      # and a partial tally reads exactly like a complete one. Say so rather than
+      # give up the cache.
+      - cmd: |
+          cached=$(grep -c '(cached)' "$GO_TEST_OUTPUT" || true)
+          if [ "$cached" -gt 0 ]; then
+            echo "NOTE: $cached Go packages came from the test cache and did not run, so any guards they skip are not counted above. For a full count, run \`go clean -testcache\` and then \`task test\`."
+          fi
         silent: true
       # Run the concurrency-critical packages a second time under -race, so a
       # reintroduced data race fails the default gate rather than only when
