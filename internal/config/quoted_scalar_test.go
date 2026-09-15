@@ -25,39 +25,6 @@ func assertScalarStripped(t *testing.T, surface, msg string) {
 	}
 }
 
-func TestAreasYMLScalarsAreStrippedInMessages(t *testing.T) {
-	rows := []struct {
-		name  string
-		areas []AreaConfig
-	}{
-		{"name with surrounding whitespace", []AreaConfig{{Name: " " + spanBreakingScalar}}},
-		{"name holding the separator", []AreaConfig{{Name: spanBreakingScalar + "/b"}}},
-		{"duplicate sibling", []AreaConfig{{Name: spanBreakingScalar}, {Name: spanBreakingScalar}}},
-		{"unusable color", []AreaConfig{{Name: "web", Color: spanBreakingScalar}}},
-		{"fault under a parent", []AreaConfig{{Name: spanBreakingScalar, Children: []AreaConfig{{Name: " x"}}}}},
-	}
-	for _, row := range rows {
-		t.Run(row.name, func(t *testing.T) {
-			err := (&Areas{Nodes: row.areas}).Validate()
-			if err == nil {
-				t.Fatal("Validate() = nil, want a refusal")
-			}
-			assertScalarStripped(t, "Areas.Validate", err.Error())
-		})
-	}
-
-	for _, color := range []string{"#q`", "#" + spanBreakingScalar, spanBreakingScalar} {
-		err := ValidateAreaColor(color)
-		if err == nil {
-			t.Fatalf("ValidateAreaColor(%q) = nil, want a refusal", color)
-		}
-		msg := err.Error()
-		if strings.Contains(msg, "q`") || strings.ContainsRune(msg, 'ㅤ') {
-			t.Errorf("ValidateAreaColor(%q) echoed the value raw:\n%s", color, msg)
-		}
-	}
-}
-
 func TestLoadStripsTheRetiredNibsPathValue(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), store.ConfigFileName)
 	body := "nibs:\n  path: \"" + spanBreakingScalar + "\"\n  prefix: test-\n"

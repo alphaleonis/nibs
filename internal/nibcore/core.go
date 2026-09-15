@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/fsutil"
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -117,14 +118,14 @@ type Core struct {
 
 	// areas is the store's declared area vocabulary, the one piece of a store's
 	// configuration reloaded while the process runs (an external `nibs area
-	// rename` rewrites it; see config.Areas).
+	// rename` rewrites it; see area.Vocabulary).
 	//
 	// An atomic pointer, not a mutex, because the read that matters happens
 	// OFF-LOCK: the GraphQL updateNib pre-check reaches ValidateArea through
 	// NibValidator without holding c.mu. Every reload STORES A NEW VALUE rather
 	// than mutating the old, so a reader that has loaded the pointer holds one
 	// coherent vocabulary for the whole of its decision.
-	areas atomic.Pointer[config.Areas]
+	areas atomic.Pointer[loadedAreas]
 
 	// lockPath is the OS-temp-dir path of the cross-process advisory write lock
 	// guarding this .nibs directory. Every write mutator holds it for the duration
@@ -352,10 +353,28 @@ func (c *Core) Config() *config.Config {
 // it — so call this once per decision, or two questions in one refusal may
 // answer from two different vocabularies.
 //
-// A Core that has not been loaded answers with a nil *config.Areas; see
-// config.Areas for what a nil one does.
-func (c *Core) Areas() *config.Areas {
-	return c.areas.Load()
+// Never nil: a Core that has not been loaded answers with the empty vocabulary.
+func (c *Core) Areas() *area.Vocabulary {
+	return c.areasState().vocab
+}
+
+// loadedAreas is one installed vocabulary together with whether a file was read
+// to produce it. The two travel in one pointer so a reader never pairs a
+// vocabulary with the other reload's answer.
+type loadedAreas struct {
+	vocab *area.Vocabulary
+	// fromFile is false for the empty vocabulary a store without areas.yml gets.
+	// Compare it before and after a reload to catch a vanished file, which
+	// looks exactly like a store that never had one otherwise.
+	fromFile bool
+}
+
+// areasState returns the installed vocabulary state, never nil.
+func (c *Core) areasState() *loadedAreas {
+	if loaded := c.areas.Load(); loaded != nil {
+		return loaded
+	}
+	return &loadedAreas{vocab: &area.Vocabulary{}}
 }
 
 // AreasLoadError marks the half of Core.Load that failed on the VOCABULARY. It

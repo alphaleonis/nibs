@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
@@ -10,7 +12,9 @@ import (
 	"time"
 
 	"github.com/spf13/pflag"
+	"gopkg.in/yaml.v3"
 
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/store"
 )
@@ -252,4 +256,33 @@ func readFileT(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(data)
+}
+
+// readAreasVocabulary parses the store's areas.yml straight off disk, so an
+// assertion reads the FILE rather than anything a command held. A store without
+// the file declares nothing.
+func readAreasVocabulary(t *testing.T, storeDir string) *area.Vocabulary {
+	t.Helper()
+	data, err := os.ReadFile(store.NewLayout(storeDir).AreasPath())
+	if errors.Is(err, fs.ErrNotExist) {
+		return &area.Vocabulary{}
+	}
+	if err != nil {
+		t.Fatalf("reading the areas vocabulary: %v", err)
+	}
+	vocab, err := area.Parse(data)
+	if err != nil {
+		t.Fatalf("the areas vocabulary no longer parses: %v", err)
+	}
+	return vocab
+}
+
+// writeAreasVocabulary writes vocab as the store's areas.yml.
+func writeAreasVocabulary(t *testing.T, storeDir string, vocab *area.Vocabulary) {
+	t.Helper()
+	data, err := yaml.Marshal(vocab)
+	if err != nil {
+		t.Fatalf("marshaling the areas vocabulary: %v", err)
+	}
+	writeFileT(t, store.NewLayout(storeDir).AreasPath(), string(data))
 }

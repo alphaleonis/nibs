@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/store"
@@ -204,14 +205,12 @@ func TestFileSourcedTextNeverReachesAnEchoSurfaceRaw(t *testing.T) {
 				}
 				writeFileT(t, filepath.Join(storeDir, "config.yml"), string(data))
 
-				vocab := &config.Areas{Nodes: []config.AreaConfig{{
+				vocab := &area.Vocabulary{Nodes: []area.Node{{
 					Name:        deceptivePayload,
 					Description: deceptivePayload,
-					Children:    []config.AreaConfig{{Name: deceptivePayload + "-child"}},
+					Children:    []area.Node{{Name: deceptivePayload + "-child"}},
 				}}}
-				if err := vocab.Save(storeDir); err != nil {
-					t.Fatal(err)
-				}
+				writeAreasVocabulary(t, storeDir, vocab)
 
 				t.Cleanup(func() {
 					resetCommandTreeFlags(rootCmd)

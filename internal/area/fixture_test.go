@@ -1,4 +1,4 @@
-package config_test
+package area_test
 
 import (
 	"bufio"
@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/store"
 	"github.com/alphaleonis/nibs/testdata/fixtures"
 )
@@ -22,7 +22,7 @@ import (
 // `./...` does reach.
 //
 // They are an EXTERNAL test package for the direction of the import: the
-// fixtures helper is a store helper and may well come to need internal/config,
+// fixtures helper is a store helper and may well come to need internal/area,
 // which an in-package test importing fixtures would turn into a cycle.
 
 // TestSampleProjectDeclaresEveryAssignedArea keeps the fixture's declared
@@ -34,7 +34,11 @@ func TestSampleProjectDeclaresEveryAssignedArea(t *testing.T) {
 	dir := fixtures.SampleProjectDir(t)
 	storeDir := filepath.Join(dir, ".nibs")
 
-	areas, err := config.LoadAreasFromStore(storeDir)
+	data, err := os.ReadFile(store.NewLayout(storeDir).AreasPath())
+	if err != nil {
+		t.Fatalf("reading the fixture vocabulary: %v", err)
+	}
+	areas, err := area.Parse(data)
 	if err != nil {
 		t.Fatalf("loading the fixture vocabulary: %v", err)
 	}
@@ -59,16 +63,16 @@ func TestSampleProjectDeclaresEveryAssignedArea(t *testing.T) {
 			if d.IsDir() || filepath.Ext(d.Name()) != ".md" {
 				return nil
 			}
-			area, err := frontMatterArea(path)
+			assignment, err := frontMatterArea(path)
 			if err != nil {
 				return err
 			}
-			if area != "" {
+			if assignment != "" {
 				rel, relErr := filepath.Rel(storeDir, path)
 				if relErr != nil {
 					return relErr
 				}
-				assigned[area] = append(assigned[area], filepath.ToSlash(rel))
+				assigned[assignment] = append(assigned[assignment], filepath.ToSlash(rel))
 			}
 			return nil
 		})
@@ -80,10 +84,10 @@ func TestSampleProjectDeclaresEveryAssignedArea(t *testing.T) {
 	if len(assigned) == 0 {
 		t.Fatal("no fixture nib assigns an area; this guard would pass vacuously")
 	}
-	for area, files := range assigned {
-		if !areas.Exists(area) {
+	for path, files := range assigned {
+		if !areas.Exists(path) {
 			t.Errorf("nib(s) %v assign area %q, which the fixture config does not declare (declared: %s)",
-				files, area, areas.List())
+				files, path, areas.List())
 		}
 	}
 }

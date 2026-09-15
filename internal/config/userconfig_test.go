@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/store"
+	"github.com/alphaleonis/nibs/internal/yamlfile"
 )
 
 // storeDirFor creates the store directory under projectDir and returns it.
@@ -484,14 +485,14 @@ func TestDefaultWithPrefixFromUserConfig(t *testing.T) {
 	})
 }
 
-// TestLoadUserConfigFromIsBounded pins that the ceiling MaxConfigBytes documents
+// TestLoadUserConfigFromIsBounded pins that the ceiling yamlfile.MaxBytes documents
 // covers the user config too. That read sits on the same always-successful path as
 // the project config — every command that resolves a store reaches it — so an
 // unbounded os.ReadFile there is exactly the cost the ceiling exists to prevent,
 // and the comment declaring the hazard closed is what stops anyone re-deriving it.
 func TestLoadUserConfigFromIsBounded(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nibs.yml")
-	body := "nibs:\n  id_length: 4\n# " + strings.Repeat("x", MaxConfigBytes) + "\n"
+	body := "nibs:\n  id_length: 4\n# " + strings.Repeat("x", yamlfile.MaxBytes) + "\n"
 	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
 		t.Fatal(err)
 	}

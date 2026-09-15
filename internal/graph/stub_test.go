@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -16,7 +17,7 @@ type stubReader struct {
 	nibs    map[string]*nib.Nib
 	allNibs []*nib.Nib
 	cfg     *config.Config
-	areas   *config.Areas
+	areas   *area.Vocabulary
 	// prefix, when set, makes NormalizeID resolve short IDs by prepending the
 	// prefix — mirroring nibcore.Core.NormalizeID's exact-first, then
 	// prefix-prepended behavior.
@@ -147,7 +148,7 @@ func (s *stubReader) Config() *config.Config {
 	return config.Default()
 }
 
-func (s *stubReader) Areas() *config.Areas {
+func (s *stubReader) Areas() *area.Vocabulary {
 	return s.areas
 }
 

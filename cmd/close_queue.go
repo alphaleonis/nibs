@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/99designs/gqlgen/graphql"
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/graph/model"
@@ -502,7 +503,7 @@ func closePartialQueueWriteError(cfg *config.Config, resolver *graph.Resolver, s
 // exclusivity conflict all stay with the loop: the first two cannot be
 // pre-empted by a read, and the third is not a dead end — --unassign-open
 // clears it.
-func closePreValidateMembers(cfg *config.Config, areas *config.Areas, resolver *graph.Resolver, subject *nib.Nib, open []string) error {
+func closePreValidateMembers(cfg *config.Config, areas *area.Vocabulary, resolver *graph.Resolver, subject *nib.Nib, open []string) error {
 	var blocked, reasons []string
 	checkNamesAll := true
 	for _, id := range open {
@@ -575,8 +576,8 @@ func closeCheckPointer(namesEveryBlockedMember bool) string {
 // ValidateAxes with the assignment cleared, which is a strict subset of the
 // reading CheckAllLinks reports on, so a member this refuses is one check
 // reports.
-func closeCheckNamesCause(areas *config.Areas, err error) bool {
-	var areaErr *config.AreaError
+func closeCheckNamesCause(areas *area.Vocabulary, err error) bool {
+	var areaErr *area.Error
 	if errors.As(err, &areaErr) {
 		return !areas.IsEmpty()
 	}

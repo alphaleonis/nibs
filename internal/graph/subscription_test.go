@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
@@ -273,7 +273,7 @@ func TestNibChangedSubscription(t *testing.T) {
 // from the same shape the initial `config` query gave it.
 func TestConfigChangedSubscriptionDeliversTheReloadedVocabulary(t *testing.T) {
 	sub := newStubSubscriber()
-	reader := &stubReader{nibs: map[string]*nib.Nib{}, areas: areaCfg(config.AreaConfig{Name: "web"})}
+	reader := &stubReader{nibs: map[string]*nib.Nib{}, areas: areaCfg(area.Node{Name: "web"})}
 	resolver := &Resolver{Reader: reader, Subscriber: sub}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -286,7 +286,7 @@ func TestConfigChangedSubscriptionDeliversTheReloadedVocabulary(t *testing.T) {
 
 	// The reload: the store now declares `frontend`, and the tick follows it —
 	// the order the watcher publishes in.
-	reader.areas = areaCfg(config.AreaConfig{Name: "frontend"})
+	reader.areas = areaCfg(area.Node{Name: "frontend"})
 	sub.areasCh <- struct{}{}
 
 	select {

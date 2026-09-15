@@ -22,6 +22,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/store"
 	"github.com/alphaleonis/nibs/internal/ui"
+	"github.com/alphaleonis/nibs/internal/yamlfile"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -631,7 +632,7 @@ func planStoreConfigRewrite(env migrateEnv, finalRoot string) (*configRewrite, e
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
-	data, err := config.ReadConfigFile(path)
+	data, err := yamlfile.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
@@ -932,7 +933,7 @@ func planConfigRelocation(env migrateEnv, finalRoot string) (*configRelocation, 
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", legacy, err)
 	}
-	data, err := config.ReadConfigFile(legacy)
+	data, err := yamlfile.ReadFile(legacy)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", legacy, err)
 	}
@@ -946,7 +947,7 @@ func planConfigRelocation(env migrateEnv, finalRoot string) (*configRelocation, 
 
 	rewritten, note, stripErr := stripRetiredNibsPath(data, env, legacy)
 	if destErr == nil {
-		existing, readErr := config.ReadConfigFile(dest)
+		existing, readErr := yamlfile.ReadFile(dest)
 		if readErr == nil && stripErr == nil && bytes.Equal(existing, rewritten) {
 			cr.resume = true
 			cr.note = note

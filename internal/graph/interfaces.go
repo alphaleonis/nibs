@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
@@ -74,7 +75,7 @@ type NibReader interface {
 	// running server reloads it when the store's areas.yml changes, where
 	// everything on Config is fixed at startup, so take one snapshot per decision —
 	// two calls may answer from two vocabularies.
-	Areas() *config.Areas
+	Areas() *area.Vocabulary
 	// CurrentETag returns the canonical ETag of the nib's ON-DISK content — a hash
 	// of the parsed file's canonical render, so it agrees with the in-memory
 	// nib.ETag() across benign formatting drift, including a file that omits

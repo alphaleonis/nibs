@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/fsutil"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/store"
@@ -416,9 +416,9 @@ func TestAreaEditRefusalsCarryTheirFacts(t *testing.T) {
 				// The planner's own refusal, passed through unwrapped: it is about
 				// the file's CONTENT, which is the class every surface reports it
 				// as, and wrapping it would hide the type they classify on.
-				var e *config.AreaEditRefusal
+				var e *area.EditRefusal
 				if !errors.As(err, &e) {
-					t.Fatalf("error = %v (%T), want *config.AreaEditRefusal", err, err)
+					t.Fatalf("error = %v (%T), want *area.EditRefusal", err, err)
 				}
 			},
 		},

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/fsutil"
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -152,9 +153,9 @@ func TestUpdateAreaRefusalNamesTheNibsOwnValue(t *testing.T) {
 	}
 	// Typed so Orderer.backfillKeys can recognize a permanently stable refusal
 	// on the read path without matching on the message.
-	var areaErr *config.AreaError
+	var areaErr *area.Error
 	if !errors.As(err, &areaErr) {
-		t.Errorf("error = %T, want *config.AreaError", err)
+		t.Errorf("error = %T, want *area.Error", err)
 	}
 }
 
@@ -377,8 +378,8 @@ func storedAreaOf(t *testing.T, core *Core, nibsDir, id string) string {
 		t.Fatalf("reading %s: %v", b.Path, err)
 	}
 	for _, line := range strings.Split(string(raw), "\n") {
-		if area, ok := strings.CutPrefix(line, "area: "); ok {
-			return area
+		if path, ok := strings.CutPrefix(line, "area: "); ok {
+			return path
 		}
 	}
 	return ""
@@ -386,12 +387,12 @@ func storedAreaOf(t *testing.T, core *Core, nibsDir, id string) string {
 
 // renameRewrite is the mapping `nibs area rename` supplies: everything at or
 // below from moves, keeping whatever it carried below from.
-func renameRewrite(areas *config.Areas, from, to string) func(string) (string, bool) {
-	return func(area string) (string, bool) {
-		if !areas.IsWithin(area, from) {
+func renameRewrite(areas *area.Vocabulary, from, to string) func(string) (string, bool) {
+	return func(path string) (string, bool) {
+		if !areas.IsWithin(path, from) {
 			return "", false
 		}
-		return to + strings.TrimPrefix(area, from), true
+		return to + strings.TrimPrefix(path, from), true
 	}
 }
 
@@ -441,8 +442,8 @@ func TestRewriteAreaAssignmentsCollapsesOntoOneTarget(t *testing.T) {
 		"nibs-aw12": "web/dashboard",
 		"nibs-aw13": "auth",
 	})
-	if _, err := rewriteAreasLocked(t, core, func(area string) (string, bool) {
-		if !core.Areas().IsWithin(area, "web") {
+	if _, err := rewriteAreasLocked(t, core, func(path string) (string, bool) {
+		if !core.Areas().IsWithin(path, "web") {
 			return "", false
 		}
 		return "auth", true
@@ -461,8 +462,8 @@ func TestRewriteAreaAssignmentsCollapsesOntoOneTarget(t *testing.T) {
 // as an empty key.
 func TestRewriteAreaAssignmentsClears(t *testing.T) {
 	core, nibsDir := areaCoreWith(t, map[string]string{"nibs-aw21": "web/dashboard"})
-	if _, err := rewriteAreasLocked(t, core, func(area string) (string, bool) {
-		return "", core.Areas().IsWithin(area, "web")
+	if _, err := rewriteAreasLocked(t, core, func(path string) (string, bool) {
+		return "", core.Areas().IsWithin(path, "web")
 	}); err != nil {
 		t.Fatalf("RewriteAreaAssignments: %v", err)
 	}
@@ -477,7 +478,7 @@ func TestRewriteAreaAssignmentsClears(t *testing.T) {
 
 // TestRewriteAreaAssignmentsLeavesTheVocabularyAlone is hazard #2 as a test.
 //
-// Core.ValidateArea reads c.config.Areas OFF-LOCK, and rests that on nothing
+// Core.ValidateArea reads the areas vocabulary OFF-LOCK, and rests that on nothing
 // mutating it after construction. A cascade that assigned the new vocabulary
 // into the live config — the way `nibs config set-prefix` assigns the prefix —
 // would make that read a race. The verbs write the vocabulary to the FILE and

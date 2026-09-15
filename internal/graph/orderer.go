@@ -7,7 +7,7 @@ import (
 	"os"
 	"sync/atomic"
 
-	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/membership"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
@@ -338,7 +338,7 @@ func (o *Orderer) backfillKeys(scope Scope, members []*nib.Nib) {
 		if err := o.writer.Update(clone, &etag); err != nil {
 			var etagMismatch *nibcore.ETagMismatchError
 			var unparseable *nibcore.OnDiskUnparseableError
-			var undeclaredArea *config.AreaError
+			var undeclaredArea *area.Error
 			switch {
 			case errors.As(err, &etagMismatch), errors.As(err, &unparseable), errors.As(err, &undeclaredArea):
 			case errors.Is(err, fs.ErrNotExist):

@@ -2,6 +2,7 @@ package nibcore
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,10 +10,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/safetext"
 	"github.com/alphaleonis/nibs/internal/store"
+	"github.com/alphaleonis/nibs/internal/yamlfile"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -216,15 +218,31 @@ func (c *Core) watchReloadAreas() {
 // An unchanged file ticks nobody, so an editor that rewrites areas.yml byte for
 // byte does not wake every browser holding the view. That decides the TICK, not
 // the install, which is unconditional: Equal compares the declared tree alone, so
-// a vocabulary equal in content can still differ in where it was read from, and
-// Areas.StoreDir is what the verbs plan against.
+// a vocabulary equal in content can still differ in whether a file was read,
+// which editArea's vanished-file check compares.
+//
+// An absent areas.yml is the empty vocabulary, not an error. A file that exists
+// and cannot be honored is refused, naming the file.
 func (c *Core) loadAreasLocked() error {
-	areas, err := config.LoadAreasFromStore(c.root)
-	if err != nil {
+	path := c.layout.AreasPath()
+	loaded := &loadedAreas{vocab: &area.Vocabulary{}}
+	data, err := yamlfile.ReadFile(path)
+	switch {
+	case err == nil:
+		vocab, parseErr := area.Parse(data)
+		if parseErr != nil {
+			var pe *area.ParseError
+			if errors.As(parseErr, &pe) {
+				pe.File = path
+			}
+			return parseErr
+		}
+		loaded = &loadedAreas{vocab: vocab, fromFile: true}
+	case !errors.Is(err, fs.ErrNotExist):
 		return err
 	}
-	changed := !areas.Equal(c.areas.Load())
-	c.areas.Store(areas)
+	changed := !loaded.vocab.Equal(c.Areas())
+	c.areas.Store(loaded)
 	if !changed {
 		return nil
 	}

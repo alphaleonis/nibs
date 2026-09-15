@@ -450,10 +450,7 @@ func remedyStoreWithoutAreas(files map[string]string) func(t *testing.T) string 
 		if err := os.Remove(store.NewLayout(nibsDir).AreasPath()); err != nil {
 			t.Fatal(err)
 		}
-		vocab, err := config.LoadAreasFromStore(nibsDir)
-		if err != nil {
-			t.Fatal(err)
-		}
+		vocab := readAreasVocabulary(t, nibsDir)
 		if !vocab.IsEmpty() {
 			t.Fatalf("the vocabulary survived the removal: %v", vocab.Paths())
 		}
@@ -982,8 +979,8 @@ func remedyAreaRetireRefusal(args []string) func(t *testing.T, nibsDir string) s
 	}
 }
 
-// remedyAreaConfigWriteFailure returns the error one `nibs area …` invocation
-// raises when the store is fine and only the config write fails. The seam is
+// remedyAreaVocabularyWriteFailure returns the error one `nibs area …` invocation
+// raises when the store is fine and only the areas.yml write fails. The seam is
 // lifted before this returns, so the remedy the gate runs afterwards faces a
 // working filesystem — which is the state the message tells the caller to rerun
 // in.

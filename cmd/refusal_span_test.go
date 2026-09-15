@@ -324,7 +324,7 @@ func TestNoConfigValueCanPutADelimiterIntoARefusal(t *testing.T) {
 // echoes carry.
 //
 // The path a refusal names is the declared value joined onto the project
-// directory, and a config file is read up to config.MaxConfigBytes — so before the
+// directory, and a config file is read up to yamlfile.MaxBytes — so before the
 // bound, a 1 MiB `nibs.path` produced a 1 MiB refusal, with the QUOTED value beside
 // it bounded at 200 runes and the path next to it unbounded. The value need not
 // name anything real to get there: a path that long is rejected by the filesystem

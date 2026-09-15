@@ -179,3 +179,24 @@ func TestStripBlanksCodePointsThatRenderAsWhitespace(t *testing.T) {
 		t.Errorf("Strip(%q) = %q, want it untouched", "한글", got)
 	}
 }
+
+func TestStripBoundedStripsAndCuts(t *testing.T) {
+	atBound := strings.Repeat("é", MaxBoundedRunes)
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"a short scalar is only stripped", "a\x1bb", "a b"},
+		{"a scalar at the bound is kept whole", atBound, atBound},
+		{"a scalar past the bound is cut and marked", atBound + "x", atBound + "…"},
+		{"the bound counts runes after stripping", strings.Repeat("\n", MaxBoundedRunes+1), strings.Repeat(" ", MaxBoundedRunes) + "…"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := StripBounded(tt.in); got != tt.want {
+				t.Errorf("StripBounded(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}

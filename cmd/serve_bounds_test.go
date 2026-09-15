@@ -17,6 +17,7 @@ import (
 	"github.com/vektah/gqlparser/v2/ast"
 	"github.com/vektah/gqlparser/v2/validator/rules"
 
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -644,17 +645,15 @@ func areaDepthApp(t *testing.T, depth int) *App {
 	}
 
 	// Built from the leaf up, since a node owns its children.
-	node := config.AreaConfig{Name: fmt.Sprintf("level%d", depth-1)}
+	node := area.Node{Name: fmt.Sprintf("level%d", depth-1)}
 	for i := depth - 2; i >= 0; i-- {
-		node = config.AreaConfig{Name: fmt.Sprintf("level%d", i), Children: []config.AreaConfig{node}}
+		node = area.Node{Name: fmt.Sprintf("level%d", i), Children: []area.Node{node}}
 	}
-	vocab := &config.Areas{Nodes: []config.AreaConfig{node}}
+	vocab := &area.Vocabulary{Nodes: []area.Node{node}}
 	if err := vocab.Validate(); err != nil {
 		t.Fatalf("the chain fixture is not a valid vocabulary: %v", err)
 	}
-	if err := vocab.Save(nibsDir); err != nil {
-		t.Fatalf("writing the chain fixture: %v", err)
-	}
+	writeAreasVocabulary(t, nibsDir, vocab)
 
 	testCore := nibcore.New(nibsDir, config.Default())
 	if err := testCore.Load(); err != nil {

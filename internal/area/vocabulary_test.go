@@ -1,14 +1,14 @@
-package config
+package area
 
 import (
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/alphaleonis/nibs/internal/safetext"
 )
 
 // sampleAreasConfig declares a vocabulary with two roots whose names share a
@@ -32,7 +32,17 @@ const sampleAreasConfig = `areas:
         - name: v2
 `
 
-func TestLoadRejectsMalformedAreas(t *testing.T) {
+// parseVocab parses body as an areas.yml, failing the test on a refusal.
+func parseVocab(t *testing.T, body string) *Vocabulary {
+	t.Helper()
+	vocab, err := Parse([]byte(body))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	return vocab
+}
+
+func TestParseRejectsMalformedAreas(t *testing.T) {
 	tests := []struct {
 		name string
 		body string
@@ -97,23 +107,19 @@ func TestLoadRejectsMalformedAreas(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := writeStoreAreas(t, tt.body)
-			areas, err := LoadAreasFromStore(dir)
+			vocab, err := Parse([]byte(tt.body))
 			if err == nil {
-				t.Fatalf("LoadAreasFromStore succeeded, want an error; areas = %v", areas.Paths())
+				t.Fatalf("Parse succeeded, want an error; areas = %v", vocab.Paths())
 			}
-			msg := err.Error()
-			if !strings.Contains(msg, "areas.yml") {
-				t.Errorf("error %q does not name the areas file", msg)
+			var parseErr *ParseError
+			if !errors.As(err, &parseErr) || !parseErr.Malformed {
+				t.Fatalf("error = %v (%T), want a *ParseError marked Malformed", err, err)
 			}
-			// The fault is asserted on the UNWRAPPED error. The wrapper
-			// interpolates the file's path, and t.TempDir() derives that path from
-			// the subtest name — so a want entry that also occurs in the name (the
-			// word "name", say) would be satisfied by the path rather than by the
-			// message, and the row would pass however the message read.
+			// The fault is asserted on the UNWRAPPED error, so a want entry that
+			// also occurs in the wrapper's own sentence cannot satisfy the row.
 			detail := errors.Unwrap(err)
 			if detail == nil {
-				t.Fatalf("error %q does not wrap the validation fault", msg)
+				t.Fatalf("error %q does not wrap the validation fault", err)
 			}
 			for _, want := range tt.want {
 				if !strings.Contains(detail.Error(), want) {
@@ -124,11 +130,12 @@ func TestLoadRejectsMalformedAreas(t *testing.T) {
 	}
 }
 
-func TestLoadAcceptsAbsentOrEmptyAreas(t *testing.T) {
+func TestParseAcceptsAbsentOrEmptyAreas(t *testing.T) {
 	tests := []struct {
 		name string
 		body string
 	}{
+		{name: "empty input", body: ""},
 		{name: "no areas key", body: "nibs:\n    prefix: t-\n"},
 		{name: "empty sequence", body: "nibs:\n    prefix: t-\nareas: []\n"},
 		{name: "null value", body: "nibs:\n    prefix: t-\nareas:\n"},
@@ -136,15 +143,11 @@ func TestLoadAcceptsAbsentOrEmptyAreas(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := writeStoreAreas(t, tt.body)
-			cfg, err := LoadAreasFromStore(dir)
-			if err != nil {
-				t.Fatalf("LoadFromStore: %v", err)
-			}
-			if got := cfg.Paths(); len(got) != 0 {
+			vocab := parseVocab(t, tt.body)
+			if got := vocab.Paths(); len(got) != 0 {
 				t.Errorf("Paths() = %v, want none", got)
 			}
-			if cfg.Exists("web") {
+			if vocab.Exists("web") {
 				t.Error("Exists(\"web\") = true with no declared vocabulary")
 			}
 		})
@@ -156,11 +159,7 @@ func TestLoadAcceptsAbsentOrEmptyAreas(t *testing.T) {
 // heads. The file declares its roots and one set of children out of that order,
 // so an enumeration in file order fails here.
 func TestAreaPathsEnumerateSiblingsByName(t *testing.T) {
-	dir := writeStoreAreas(t, sampleAreasConfig)
-	cfg, err := LoadAreasFromStore(dir)
-	if err != nil {
-		t.Fatalf("LoadFromStore: %v", err)
-	}
+	vocab := parseVocab(t, sampleAreasConfig)
 
 	want := []string{
 		"api", "api/v2",
@@ -168,32 +167,24 @@ func TestAreaPathsEnumerateSiblingsByName(t *testing.T) {
 		"web", "web/dashboard", "web/settings",
 		"webhooks",
 	}
-	if got := cfg.Paths(); !slices.Equal(got, want) {
+	if got := vocab.Paths(); !slices.Equal(got, want) {
 		t.Errorf("Paths() = %v, want %v", got, want)
 	}
-	if got, want := cfg.List(), strings.Join(want, ", "); got != want {
+	if got, want := vocab.List(), strings.Join(want, ", "); got != want {
 		t.Errorf("List() = %q, want %q", got, want)
 	}
 
 	t.Run("children and letter case", func(t *testing.T) {
-		dir := writeStoreAreas(t, "areas:\n    - name: web\n      children:\n        - name: settings\n        - name: Dashboard\n    - name: Infra\n    - name: api\n")
-		cfg, err := LoadAreasFromStore(dir)
-		if err != nil {
-			t.Fatalf("LoadFromStore: %v", err)
-		}
+		vocab := parseVocab(t, "areas:\n    - name: web\n      children:\n        - name: settings\n        - name: Dashboard\n    - name: Infra\n    - name: api\n")
 		want := []string{"api", "Infra", "web", "web/Dashboard", "web/settings"}
-		if got := cfg.Paths(); !slices.Equal(got, want) {
+		if got := vocab.Paths(); !slices.Equal(got, want) {
 			t.Errorf("Paths() = %v, want %v", got, want)
 		}
 	})
 }
 
 func TestGetAreaResolvesDeclaredPaths(t *testing.T) {
-	dir := writeStoreAreas(t, sampleAreasConfig)
-	cfg, err := LoadAreasFromStore(dir)
-	if err != nil {
-		t.Fatalf("LoadFromStore: %v", err)
-	}
+	vocab := parseVocab(t, sampleAreasConfig)
 
 	tests := []struct {
 		path            string
@@ -214,11 +205,11 @@ func TestGetAreaResolvesDeclaredPaths(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run("path="+tt.path, func(t *testing.T) {
-			node := cfg.Get(tt.path)
+			node := vocab.Get(tt.path)
 			if (node != nil) != tt.wantFound {
 				t.Fatalf("Get(%q) found = %v, want %v", tt.path, node != nil, tt.wantFound)
 			}
-			if got := cfg.Exists(tt.path); got != tt.wantFound {
+			if got := vocab.Exists(tt.path); got != tt.wantFound {
 				t.Errorf("Exists(%q) = %v, want %v", tt.path, got, tt.wantFound)
 			}
 			if tt.wantFound && node.Description != tt.wantDescription {
@@ -227,17 +218,13 @@ func TestGetAreaResolvesDeclaredPaths(t *testing.T) {
 		})
 	}
 
-	if got := cfg.Get("web").Color; got != "blue" {
+	if got := vocab.Get("web").Color; got != "blue" {
 		t.Errorf("Get(\"web\").Color = %q, want \"blue\"", got)
 	}
 }
 
-func TestAreasIsWithin(t *testing.T) {
-	dir := writeStoreAreas(t, sampleAreasConfig)
-	cfg, err := LoadAreasFromStore(dir)
-	if err != nil {
-		t.Fatalf("LoadFromStore: %v", err)
-	}
+func TestVocabularyIsWithin(t *testing.T) {
+	vocab := parseVocab(t, sampleAreasConfig)
 
 	tests := []struct {
 		name     string
@@ -261,144 +248,73 @@ func TestAreasIsWithin(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := cfg.IsWithin(tt.path, tt.ancestor); got != tt.want {
+			if got := vocab.IsWithin(tt.path, tt.ancestor); got != tt.want {
 				t.Errorf("IsWithin(%q, %q) = %v, want %v", tt.path, tt.ancestor, got, tt.want)
 			}
 		})
 	}
 }
 
-// TestAreasSaveRoundTrips pins the vocabulary through its own writer: what
-// Save emits, LoadAreasFromStore must read back node for node.
-func TestAreasSaveRoundTrips(t *testing.T) {
-	areas := &Areas{Nodes: []AreaConfig{
-		{
-			Name:        "web",
-			Description: "The browser client",
-			Color:       "blue",
-			Children: []AreaConfig{
-				{Name: "dashboard", Description: "The landing dashboard"},
-			},
-		},
-		{Name: "auth", Description: "Sign-in and sessions"},
-	}}
-
-	dir := t.TempDir()
-	if err := areas.Save(dir); err != nil {
-		t.Fatalf("Save: %v", err)
+func TestJoinAndSplitPathAreInverses(t *testing.T) {
+	tests := []struct {
+		parent, name, path string
+	}{
+		{parent: "", name: "web", path: "web"},
+		{parent: "web", name: "dashboard", path: "web/dashboard"},
+		{parent: "web/dashboard", name: "charts", path: "web/dashboard/charts"},
 	}
-
-	raw, err := os.ReadFile(filepath.Join(dir, "areas.yml"))
-	if err != nil {
-		t.Fatalf("reading saved areas: %v", err)
-	}
-	if !strings.Contains(string(raw), "areas:\n") {
-		t.Errorf("saved areas file has no top-level areas block:\n%s", raw)
-	}
-
-	got, err := LoadAreasFromStore(dir)
-	if err != nil {
-		t.Fatalf("LoadAreasFromStore: %v", err)
-	}
-	wantPaths := []string{"auth", "web", "web/dashboard"}
-	if paths := got.Paths(); !slices.Equal(paths, wantPaths) {
-		t.Fatalf("Paths() = %v, want %v", paths, wantPaths)
-	}
-	dashboard := got.Get("web/dashboard")
-	if dashboard.Description != "The landing dashboard" {
-		t.Errorf("web/dashboard = %+v, want the description that was saved", *dashboard)
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			if got := JoinPath(tt.parent, tt.name); got != tt.path {
+				t.Errorf("JoinPath(%q, %q) = %q, want %q", tt.parent, tt.name, got, tt.path)
+			}
+			parent, name := SplitPath(tt.path)
+			if parent != tt.parent || name != tt.name {
+				t.Errorf("SplitPath(%q) = (%q, %q), want (%q, %q)", tt.path, parent, name, tt.parent, tt.name)
+			}
+		})
 	}
 }
 
-// A vocabulary that declares nothing REMOVES the file rather than writing an
-// empty `areas:` key, so "declares nothing" has one shape on disk.
-func TestAreasSaveRemovesTheFileWhenNothingIsDeclared(t *testing.T) {
-	dir := writeStoreAreas(t, "areas:\n    - name: web\n")
-
-	if err := (&Areas{}).Save(dir); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	if _, err := os.Stat(filepath.Join(dir, "areas.yml")); !os.IsNotExist(err) {
-		t.Errorf("areas.yml still present after saving an empty vocabulary (stat err = %v)", err)
-	}
-}
-
-// TestStoredPrefixEditLeavesTheVocabularyAlone pins the independence the split
-// bought: the prefix editor rewrites config.yml, and areas.yml is not its file
-// to touch.
-func TestStoredPrefixEditLeavesTheVocabularyAlone(t *testing.T) {
-	dir := writeStoreAreas(t, sampleAreasConfig)
-	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte("nibs:\n    prefix: t-\n"), 0o644); err != nil {
-		t.Fatalf("writing config: %v", err)
-	}
-	before, err := os.ReadFile(filepath.Join(dir, "areas.yml"))
-	if err != nil {
-		t.Fatalf("reading areas: %v", err)
-	}
-
-	setStoredPrefix(t, dir, "new-")
-
-	after, err := os.ReadFile(filepath.Join(dir, "areas.yml"))
-	if err != nil {
-		t.Fatalf("reading areas after the edit: %v", err)
-	}
-	if string(before) != string(after) {
-		t.Errorf("the prefix edit rewrote areas.yml:\n--- before ---\n%s\n--- after ---\n%s", before, after)
-	}
-
-	cfg, err := LoadFromStore(dir)
-	if err != nil {
-		t.Fatalf("LoadFromStore: %v", err)
-	}
-	if cfg.Nibs.Prefix != "new-" {
-		t.Errorf("Prefix = %q, want \"new-\"", cfg.Nibs.Prefix)
-	}
-}
-
-func TestValidateAreasAcceptsWellFormedColors(t *testing.T) {
+func TestValidateAcceptsWellFormedColors(t *testing.T) {
 	for _, color := range []string{"", "blue", "lightgray", "#abc", "#AABBCC", "#aabbccdd", "#1234"} {
-		areas := &Areas{Nodes: []AreaConfig{{Name: "web", Color: color}}}
-		if err := areas.Validate(); err != nil {
-			t.Errorf("ValidateAreas with color %q: %v", color, err)
+		vocab := &Vocabulary{Nodes: []Node{{Name: "web", Color: color}}}
+		if err := vocab.Validate(); err != nil {
+			t.Errorf("Validate with color %q: %v", color, err)
 		}
 	}
 }
 
-// TestAreaListRendersFileSourcedNames keeps AreaList a rendering boundary rather
-// than a raw echo. Areas are the one vocabulary in this package a PROJECT
-// authors, so a declared name is file-sourced text of arbitrary length and
-// content — an escape sequence, a backtick that closes the code span a message
-// put around the list, a newline that turns one line into several.
+// TestAreaListRendersFileSourcedNames keeps List a rendering boundary rather
+// than a raw echo. Areas are the one vocabulary a PROJECT authors, so a declared
+// name is file-sourced text of arbitrary length and content — an escape
+// sequence, a backtick that closes the code span a message put around the list,
+// a newline that turns one line into several.
 func TestAreaListRendersFileSourcedNames(t *testing.T) {
-	dir := writeStoreAreas(t, "areas:\n    - name: \"a\\eb\"\n    - name: \"c`d\"\n    - name: \"e\\nf\"\n")
-	areas, err := LoadAreasFromStore(dir)
-	if err != nil {
-		t.Fatalf("LoadAreasFromStore: %v", err)
-	}
+	vocab := parseVocab(t, "areas:\n    - name: \"a\\eb\"\n    - name: \"c`d\"\n    - name: \"e\\nf\"\n")
 
-	if got, want := areas.List(), "a b, c d, e f"; got != want {
+	if got, want := vocab.List(), "a b, c d, e f"; got != want {
 		t.Errorf("List() = %q, want %q", got, want)
 	}
 	// Paths is the data accessor and must stay verbatim: resolution compares
 	// a nib's `area:` value against it byte for byte.
 	wantPaths := []string{"a\x1bb", "c`d", "e\nf"}
-	if got := areas.Paths(); !slices.Equal(got, wantPaths) {
+	if got := vocab.Paths(); !slices.Equal(got, wantPaths) {
 		t.Errorf("Paths() = %q, want %q", got, wantPaths)
 	}
 }
 
 // TestAreaListBoundsWhatItRepeats pins the two bounds on the same message: how
-// many paths it enumerates and how much of one it repeats. Without them a config
-// declaring a thousand areas, or one area named a megabyte of text, is repeated
-// in full by every message that names the vocabulary.
+// many paths it enumerates and how much of one it repeats. Without them a
+// vocabulary declaring a thousand areas, or one area named a megabyte of text,
+// is repeated in full by every message that names the vocabulary.
 func TestAreaListBoundsWhatItRepeats(t *testing.T) {
 	t.Run("entry count", func(t *testing.T) {
-		areas := make([]AreaConfig, maxListedAreas+5)
-		for i := range areas {
-			areas[i] = AreaConfig{Name: fmt.Sprintf("a%03d", i)}
+		nodes := make([]Node, maxListedAreas+5)
+		for i := range nodes {
+			nodes[i] = Node{Name: fmt.Sprintf("a%03d", i)}
 		}
-		vocab := &Areas{Nodes: areas}
+		vocab := &Vocabulary{Nodes: nodes}
 
 		got := vocab.List()
 		if !strings.HasSuffix(got, "…and 5 more") {
@@ -414,13 +330,13 @@ func TestAreaListBoundsWhatItRepeats(t *testing.T) {
 
 	// Exactly at each bound is where an off-by-one lives: a store declaring
 	// maxListedAreas areas must list them all and claim no remainder, and a name
-	// of exactly maxListedAreaRunes must survive unmarked.
+	// of exactly safetext.MaxBoundedRunes must survive unmarked.
 	t.Run("entry count exactly at the bound", func(t *testing.T) {
-		areas := make([]AreaConfig, maxListedAreas)
-		for i := range areas {
-			areas[i] = AreaConfig{Name: fmt.Sprintf("a%03d", i)}
+		nodes := make([]Node, maxListedAreas)
+		for i := range nodes {
+			nodes[i] = Node{Name: fmt.Sprintf("a%03d", i)}
 		}
-		vocab := &Areas{Nodes: areas}
+		vocab := &Vocabulary{Nodes: nodes}
 
 		got := vocab.List()
 		if strings.Contains(got, "more") {
@@ -432,8 +348,8 @@ func TestAreaListBoundsWhatItRepeats(t *testing.T) {
 	})
 
 	t.Run("one path's length exactly at the bound", func(t *testing.T) {
-		name := strings.Repeat("x", maxListedAreaRunes)
-		vocab := &Areas{Nodes: []AreaConfig{{Name: name}}}
+		name := strings.Repeat("x", safetext.MaxBoundedRunes)
+		vocab := &Vocabulary{Nodes: []Node{{Name: name}}}
 
 		got := vocab.List()
 		if got != name {
@@ -442,11 +358,11 @@ func TestAreaListBoundsWhatItRepeats(t *testing.T) {
 	})
 
 	t.Run("one path's length", func(t *testing.T) {
-		vocab := &Areas{Nodes: []AreaConfig{{Name: strings.Repeat("x", maxListedAreaRunes+50)}}}
+		vocab := &Vocabulary{Nodes: []Node{{Name: strings.Repeat("x", safetext.MaxBoundedRunes+50)}}}
 
 		got := vocab.List()
-		if n := utf8.RuneCountInString(got); n != maxListedAreaRunes+1 {
-			t.Errorf("List() is %d runes, want %d plus the truncation marker", n, maxListedAreaRunes)
+		if n := utf8.RuneCountInString(got); n != safetext.MaxBoundedRunes+1 {
+			t.Errorf("List() is %d runes, want %d plus the truncation marker", n, safetext.MaxBoundedRunes)
 		}
 		if !strings.HasSuffix(got, "…") {
 			t.Errorf("List() = %q, want the truncation marked", got)
@@ -454,45 +370,41 @@ func TestAreaListBoundsWhatItRepeats(t *testing.T) {
 	})
 }
 
-// TestValidateAreaAssignment pins the write-side membership rule: an unset
-// `area:` is legal, a declared path is legal, and anything else is refused with
-// the vocabulary in the message. The store that declares NOTHING is the case
-// worth its own row — an empty allowed set reads as a bug in nibs rather than
-// as an undeclared vocabulary, so the refusal has to say which it is.
-func TestValidateAreaAssignment(t *testing.T) {
-	dir := writeStoreAreas(t, sampleAreasConfig)
-	declared, err := LoadAreasFromStore(dir)
-	if err != nil {
-		t.Fatalf("LoadFromStore: %v", err)
-	}
-	none := &Areas{}
+// TestValidateAssignment pins the write-side membership rule: an unset `area:`
+// is legal, a declared path is legal, and anything else is refused with the
+// vocabulary in the message. The store that declares NOTHING is the case worth
+// its own row — an empty allowed set reads as a bug in nibs rather than as an
+// undeclared vocabulary, so the refusal has to say which it is.
+func TestValidateAssignment(t *testing.T) {
+	declared := parseVocab(t, sampleAreasConfig)
+	none := &Vocabulary{}
 
 	tests := []struct {
 		name     string
-		cfg      *Areas
+		vocab    *Vocabulary
 		path     string
 		wantErr  bool
 		contains []string
 		absent   []string
 	}{
-		{name: "unset is legal", cfg: declared, path: ""},
-		{name: "unset is legal with no vocabulary", cfg: none, path: ""},
-		{name: "a declared root", cfg: declared, path: "web"},
-		{name: "a declared child", cfg: declared, path: "web/dashboard"},
+		{name: "unset is legal", vocab: declared, path: ""},
+		{name: "unset is legal with no vocabulary", vocab: none, path: ""},
+		{name: "a declared root", vocab: declared, path: "web"},
+		{name: "a declared child", vocab: declared, path: "web/dashboard"},
 		{
-			name: "an undeclared path names the vocabulary", cfg: declared, path: "nosuch",
+			name: "an undeclared path names the vocabulary", vocab: declared, path: "nosuch",
 			wantErr:  true,
 			contains: []string{`"nosuch"`, "web/dashboard", "webhooks"},
 		},
 		{
 			// `web/legacy` descends a declared root, so a string-prefix test
 			// would admit it; only the tree says it is not declared.
-			name: "an undeclared child of a declared root", cfg: declared, path: "web/legacy",
+			name: "an undeclared child of a declared root", vocab: declared, path: "web/legacy",
 			wantErr:  true,
 			contains: []string{`"web/legacy"`},
 		},
 		{
-			name: "a store with no declared areas says so", cfg: none, path: "web",
+			name: "a store with no declared areas says so", vocab: none, path: "web",
 			wantErr:  true,
 			contains: []string{`"web"`, "declares no areas"},
 			// An empty allowed set must not be printed as though it were one.
@@ -502,15 +414,15 @@ func TestValidateAreaAssignment(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.cfg.ValidateAssignment(tt.path)
+			err := tt.vocab.ValidateAssignment(tt.path)
 			if !tt.wantErr {
 				if err != nil {
-					t.Fatalf("ValidateAreaAssignment(%q) = %v, want nil", tt.path, err)
+					t.Fatalf("ValidateAssignment(%q) = %v, want nil", tt.path, err)
 				}
 				return
 			}
 			if err == nil {
-				t.Fatalf("ValidateAreaAssignment(%q) = nil, want an error", tt.path)
+				t.Fatalf("ValidateAssignment(%q) = nil, want an error", tt.path)
 			}
 			for _, want := range tt.contains {
 				if !strings.Contains(err.Error(), want) {
@@ -526,26 +438,22 @@ func TestValidateAreaAssignment(t *testing.T) {
 	}
 }
 
-// TestValidateStoredArea pins the second entry point: the SAME rule, for a write
-// to a nib that already exists, where the value being judged need not have come
-// from the request. It must agree with ValidateAreaAssignment on every accept
-// and every refuse, and differ only in saying whose value it is and what to do
-// about it — a caller who passed no area is otherwise told to correct an
-// argument they never wrote.
-func TestValidateStoredArea(t *testing.T) {
-	dir := writeStoreAreas(t, sampleAreasConfig)
-	declared, err := LoadAreasFromStore(dir)
-	if err != nil {
-		t.Fatalf("LoadFromStore: %v", err)
-	}
-	none := &Areas{}
+// TestValidateStored pins the second entry point: the SAME rule, for a write to
+// a nib that already exists, where the value being judged need not have come
+// from the request. It must agree with ValidateAssignment on every accept and
+// every refuse, and differ only in saying whose value it is and what to do about
+// it — a caller who passed no area is otherwise told to correct an argument they
+// never wrote.
+func TestValidateStored(t *testing.T) {
+	declared := parseVocab(t, sampleAreasConfig)
+	none := &Vocabulary{}
 
 	// The verdicts must not diverge, so they are asserted against the sibling
 	// rather than restated: a rule that accepted here and refused there would
 	// make the message depend on which write path reached it.
 	for _, tc := range []struct {
-		vocab string
-		cfg   *Areas
+		name  string
+		vocab *Vocabulary
 		path  string
 	}{
 		{"a declared vocabulary", declared, ""}, {"no declared areas", none, ""},
@@ -553,25 +461,25 @@ func TestValidateStoredArea(t *testing.T) {
 		{"a declared vocabulary", declared, "nosuch"}, {"a declared vocabulary", declared, "web/legacy"},
 		{"no declared areas", none, "web"},
 	} {
-		t.Run(fmt.Sprintf("agrees with the supplied-value rule on %q under %s", tc.path, tc.vocab), func(t *testing.T) {
-			supplied := tc.cfg.ValidateAssignment(tc.path)
-			stored := tc.cfg.ValidateStored("cfg-n001", tc.path)
+		t.Run(fmt.Sprintf("agrees with the supplied-value rule on %q under %s", tc.path, tc.name), func(t *testing.T) {
+			supplied := tc.vocab.ValidateAssignment(tc.path)
+			stored := tc.vocab.ValidateStored("cfg-n001", tc.path)
 			if (supplied == nil) != (stored == nil) {
-				t.Fatalf("ValidateAreaAssignment(%q) = %v but ValidateStoredArea(%q) = %v", tc.path, supplied, tc.path, stored)
+				t.Fatalf("ValidateAssignment(%q) = %v but ValidateStored(%q) = %v", tc.path, supplied, tc.path, stored)
 			}
 		})
 	}
 
 	for _, tt := range []struct {
 		name     string
-		cfg      *Areas
+		vocab    *Vocabulary
 		path     string
 		contains []string
 		absent   []string
 	}{
 		{
-			name: "an undeclared path names the vocabulary and whose value it is",
-			cfg:  declared, path: "nosuch",
+			name:  "an undeclared path names the vocabulary and whose value it is",
+			vocab: declared, path: "nosuch",
 			contains: []string{`"nosuch"`, "web/dashboard", "already carries",
 				"`nibs set cfg-n001 --area <declared>`", "`nibs set cfg-n001 --clear area`"},
 			// The subject is known here, so it is interpolated: a literal <id>
@@ -579,8 +487,8 @@ func TestValidateStoredArea(t *testing.T) {
 			absent: []string{"nibs set <id>"},
 		},
 		{
-			name: "a store with no declared areas names only the escape it can satisfy",
-			cfg:  none, path: "web",
+			name:  "a store with no declared areas names only the escape it can satisfy",
+			vocab: none, path: "web",
 			contains: []string{`"web"`, "declares no areas", "already carries", "`nibs set cfg-n001 --clear area`"},
 			// An empty allowed set must not be printed as though it were one,
 			// and --area has no satisfiable argument in the state this branch
@@ -589,13 +497,13 @@ func TestValidateStoredArea(t *testing.T) {
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.cfg.ValidateStored("cfg-n001", tt.path)
+			err := tt.vocab.ValidateStored("cfg-n001", tt.path)
 			if err == nil {
-				t.Fatalf("ValidateStoredArea(%q) = nil, want an error", tt.path)
+				t.Fatalf("ValidateStored(%q) = nil, want an error", tt.path)
 			}
-			var areaErr *AreaError
+			var areaErr *Error
 			if !errors.As(err, &areaErr) {
-				t.Fatalf("error = %T, want *AreaError — the ordering backfill classifies this refusal by type", err)
+				t.Fatalf("error = %T, want *Error — the ordering backfill classifies this refusal by type", err)
 			}
 			for _, want := range tt.contains {
 				if !strings.Contains(err.Error(), want) {
@@ -613,10 +521,10 @@ func TestValidateStoredArea(t *testing.T) {
 	// The refused value is file-sourced on this path by definition, so it stays
 	// on the same rendering boundary the supplied-value refusal applies.
 	t.Run("the refused value is rendered, not echoed raw", func(t *testing.T) {
-		areas := &Areas{Nodes: []AreaConfig{{Name: "web"}}}
-		err := areas.ValidateStored("cfg-n001", "we`b")
+		vocab := &Vocabulary{Nodes: []Node{{Name: "web"}}}
+		err := vocab.ValidateStored("cfg-n001", "we`b")
 		if err == nil {
-			t.Fatal("ValidateStoredArea() = nil, want an error")
+			t.Fatal("ValidateStored() = nil, want an error")
 		}
 		if strings.Contains(err.Error(), "we`b") {
 			t.Errorf("error = %q, want the backtick substituted", err.Error())
@@ -626,10 +534,10 @@ func TestValidateStoredArea(t *testing.T) {
 	// The id is interpolated into a command the reader is invited to run, and
 	// it comes from a filename — so it crosses the same boundary the value does.
 	t.Run("the nib id is rendered, not echoed raw", func(t *testing.T) {
-		areas := &Areas{Nodes: []AreaConfig{{Name: "web"}}}
-		err := areas.ValidateStored("nib\x1b[31m1", "nosuch")
+		vocab := &Vocabulary{Nodes: []Node{{Name: "web"}}}
+		err := vocab.ValidateStored("nib\x1b[31m1", "nosuch")
 		if err == nil {
-			t.Fatal("ValidateStoredArea() = nil, want an error")
+			t.Fatal("ValidateStored() = nil, want an error")
 		}
 		if strings.Contains(err.Error(), "\x1b") {
 			t.Errorf("error = %q, want the escape sequence neutralized", err.Error())
@@ -637,21 +545,21 @@ func TestValidateStoredArea(t *testing.T) {
 	})
 }
 
-// TestValidateAreaAssignmentRendersTheRefusedValue keeps the refused value on
-// the same rendering boundary AreaList applies to the declared set. The value
-// reaching this rule is not always a flag: Core.Update re-checks the `area:` a
-// nib already carries, so a hostile FILE reaches the message too.
-func TestValidateAreaAssignmentRendersTheRefusedValue(t *testing.T) {
-	areas := &Areas{Nodes: []AreaConfig{{Name: "web"}}}
+// TestValidateAssignmentRendersTheRefusedValue keeps the refused value on the
+// same rendering boundary List applies to the declared set. The value reaching
+// this rule is not always a flag: Core.Update re-checks the `area:` a nib
+// already carries, so a hostile FILE reaches the message too.
+func TestValidateAssignmentRendersTheRefusedValue(t *testing.T) {
+	vocab := &Vocabulary{Nodes: []Node{{Name: "web"}}}
 
 	// The backtick is the rune the %q around the value does NOT answer: it is
 	// printable, so strconv.Quote passes it through, and it closes the code span
 	// an agent transcript renders the message inside. safetext.Strip is what
 	// substitutes it.
 	t.Run("a backtick cannot close the message's code span", func(t *testing.T) {
-		err := areas.ValidateAssignment("we`b")
+		err := vocab.ValidateAssignment("we`b")
 		if err == nil {
-			t.Fatal("ValidateAreaAssignment accepted an undeclared path")
+			t.Fatal("ValidateAssignment accepted an undeclared path")
 		}
 		if strings.Contains(err.Error(), "`") {
 			t.Errorf("error = %q, want the backtick neutralized", err.Error())
@@ -659,11 +567,11 @@ func TestValidateAreaAssignmentRendersTheRefusedValue(t *testing.T) {
 	})
 
 	t.Run("an oversized value is bounded", func(t *testing.T) {
-		err := areas.ValidateAssignment(strings.Repeat("x", maxListedAreaRunes*4))
+		err := vocab.ValidateAssignment(strings.Repeat("x", safetext.MaxBoundedRunes*4))
 		if err == nil {
-			t.Fatal("ValidateAreaAssignment accepted an undeclared path")
+			t.Fatal("ValidateAssignment accepted an undeclared path")
 		}
-		if utf8.RuneCountInString(err.Error()) > maxListedAreaRunes*2 {
+		if utf8.RuneCountInString(err.Error()) > safetext.MaxBoundedRunes*2 {
 			t.Errorf("error is %d runes; want the echoed value bounded", utf8.RuneCountInString(err.Error()))
 		}
 	})

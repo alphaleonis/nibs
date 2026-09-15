@@ -348,7 +348,7 @@ describe("getCompletion — area paths", () => {
     expect(complete("ar")?.items).toEqual(["area"]);
   });
 
-  // `validateAreaNodes` (internal/config/areas.go) rejects only an empty name, one
+  // `area.validateNodes` rejects only an empty name, one
   // with padding, and one containing "/" — so a declared path may carry interior
   // whitespace, and the grammar splits on it with no quoting to escape it.
   // Accepting `Web UI` would produce `area:Web` plus a bare `UI` in free text: the

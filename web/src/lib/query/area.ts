@@ -11,7 +11,7 @@ import type { AreaVocabulary } from "../areas";
 // internal/graph/filters.go); do not widen the value client-side.
 //
 // Values are NOT lowercased: the server compares path segments case-sensitively
-// (`Areas.Get`, internal/config/areas.go).
+// (`area.Vocabulary.Get`).
 
 export const AREA_FIELD = "area";
 

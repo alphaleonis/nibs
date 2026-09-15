@@ -463,8 +463,8 @@ describe("useKeyboardNav", () => {
   });
 
   // A section row's `data-nib-id` is `sectionRowId(key)`, and the areas lens
-  // keys each section on the area PATH — free-form config text. `ValidateAreas`
-  // (internal/config/areas.go) constrains an area name, but admits both
+  // keys each section on the area PATH — free-form areas.yml text.
+  // `area.Vocabulary.Validate` constrains an area name, but admits both
   // characters below, so each reaches the attribute selector this scroll
   // builds. A quote ends the selector's string early and throws; a backslash
   // parses as a CSS escape and silently addresses a different id.

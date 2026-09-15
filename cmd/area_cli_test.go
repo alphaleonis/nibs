@@ -848,7 +848,7 @@ func TestAreaRenameRefusesABadNameWithoutTakingTheStoreLock(t *testing.T) {
 }
 
 // A store whose areas.yml vanished while a verb waited for the write lock is
-// not a store whose areas were retired. config.LoadAreas answers a missing file
+// not a store whose areas were retired. Core's loader answers a missing file
 // with an empty vocabulary and a NIL error, so absence arrives at the verb looking
 // exactly like a concurrent `nibs area rm` — and the refusal then names a
 // process that never ran and prescribes `nibs area list`, which goes on to print
@@ -945,8 +945,8 @@ func TestAreaEditOnAStoreThatNeverHadAVocabularyRefusesAsUndeclaredAreas(t *test
 				t.Fatalf("removing the store vocabulary: %v", err)
 			}
 			app := staleAreaApp(t, nibsPath)
-			if app.StartupAreas().LoadedFromFile() {
-				t.Fatal("premise failed: the App loaded an areas file from a store that has none")
+			if !app.StartupAreas().IsEmpty() {
+				t.Fatal("premise failed: the App holds a vocabulary from a store whose areas file was removed")
 			}
 
 			err := tt.run(t, app)
@@ -1022,7 +1022,7 @@ func TestAreaRenameReportsAnUndeclaredPathBeforeTheNameShape(t *testing.T) {
 // TestAreaEditRefusesAPathRetiredUnderTheLock: the node a verb was told to
 // rename or retire can itself be gone by the time the lock is granted.
 //
-// config.PlanRenameStoredArea and PlanRemoveStoredArea already refuse it — they
+// area.PlanRename and area.PlanRemove already refuse it — they
 // read the file — but as "this store's config.yml declares no area", which reads
 // as a typo the caller did not make and is classified as bad input. Deciding
 // from the re-read vocabulary lets the refusal say what actually happened, and

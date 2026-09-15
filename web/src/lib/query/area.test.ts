@@ -34,7 +34,7 @@ describe("recognizeArea — the token shape, before any vocabulary", () => {
       token: "AREA:web",
       expected: { kind: "area", value: "web" },
     },
-    // Area names are only forbidden a `/` and outer whitespace (config.validateAreaNodes),
+    // Area names are only forbidden a `/` and outer whitespace (area.validateNodes),
     // so these characters are part of a path rather than grammar. The value is the
     // whole post-colon run: scalar, never comma-split.
     {

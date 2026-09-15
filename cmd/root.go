@@ -16,6 +16,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/safetext"
 	"github.com/alphaleonis/nibs/internal/store"
+	"github.com/alphaleonis/nibs/internal/yamlfile"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -384,7 +385,7 @@ func bindNamedStore(dir string) (string, error) {
 		// denial becomes the false claim that answer exists to prevent.
 		//
 		// It also rests on the two reads of that file AGREEING, a property of the
-		// file and not of this code, which is why config.ReadConfigFile refuses
+		// file and not of this code, which is why yamlfile.ReadFile refuses
 		// anything but a regular file.
 		return "", fmt.Errorf("%s is not a nibs store: it holds no %s that parses as one, and no %s beside it names it; name the store directory itself (e.g. --nibs-path %s), or run `nibs init` there",
 			dir, store.ConfigFileName, store.LegacyProjectConfigFileName,
@@ -643,7 +644,7 @@ func preLayoutRemedy(legacy string) error {
 // nothing.
 //
 // THREE-WAY: an error means evidence EXISTS but could not be established (a
-// config.yml over config.MaxConfigBytes, an unreadable `.nibs.yml`). Reporting
+// config.yml over yamlfile.MaxBytes, an unreadable `.nibs.yml`). Reporting
 // that as "no evidence" sends the user to run `nibs init` over real data.
 func looksLikeStore(dir string) (bool, error) {
 	if filepath.Base(dir) == store.DirName {
@@ -669,11 +670,11 @@ func looksLikeStore(dir string) (bool, error) {
 // top-level `nibs:` MAPPING — the shape of every config `nibs init` writes. A
 // directory, a dangling symlink, unparseable YAML, or a scalar `nibs` key are
 // each a DETERMINATE no; bytes that could not be obtained (permissions, or over
-// config.MaxConfigBytes) return the error, since a size refusal reported as
+// yamlfile.MaxBytes) return the error, since a size refusal reported as
 // absence made a real store answer "is not a nibs store … run `nibs init`".
 //
 // The IsRegular check is NOT what keeps a FIFO from hanging the process —
-// config.ReadConfigFile refuses an irregular file for every reader. It picks
+// yamlfile.ReadFile refuses an irregular file for every reader. It picks
 // WHICH answer one gets: without it a pipe named config.yml returns the reader's
 // error, and "cannot tell" is wrong about a path that plainly holds no config.
 // Deleting it costs determinacy, not liveness.
@@ -688,7 +689,7 @@ func parsesAsNibsConfig(path string) (bool, error) {
 	if !info.Mode().IsRegular() {
 		return false, nil
 	}
-	data, err := config.ReadConfigFile(path)
+	data, err := yamlfile.ReadFile(path)
 	if err != nil {
 		return false, err
 	}

@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/store"
 	"github.com/alphaleonis/nibs/internal/testskip"
+	"github.com/alphaleonis/nibs/internal/yamlfile"
 )
 
 // hugoPost is front-mattered markdown that is NOT a nib: it carries a title and
@@ -151,7 +151,7 @@ func TestResolveStoreDirSeparatesNoEvidenceFromUnreadableEvidence(t *testing.T) 
 				dir := filepath.Join(tmp, "proj", "nibdata")
 				mkdirAllT(t, dir)
 				writeFileT(t, filepath.Join(dir, store.ConfigFileName),
-					"nibs:\n  prefix: nd-\n# "+strings.Repeat("x", config.MaxConfigBytes)+"\n")
+					"nibs:\n  prefix: nd-\n# "+strings.Repeat("x", yamlfile.MaxBytes)+"\n")
 				return dir
 			},
 			want:    []string{"cannot tell whether", "configuration limit"},
@@ -183,7 +183,7 @@ func TestResolveStoreDirSeparatesNoEvidenceFromUnreadableEvidence(t *testing.T) 
 				mkdirAllT(t, dir)
 				writeFileT(t, filepath.Join(dir, "leg-a1--one.md"), layoutNib)
 				writeFileT(t, filepath.Join(proj, store.LegacyProjectConfigFileName),
-					"nibs:\n  path: nibdata\n# "+strings.Repeat("x", config.MaxConfigBytes)+"\n")
+					"nibs:\n  path: nibdata\n# "+strings.Repeat("x", yamlfile.MaxBytes)+"\n")
 				return dir
 			},
 			want:    []string{"cannot tell whether", "configuration limit"},

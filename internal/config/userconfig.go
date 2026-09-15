@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/alphaleonis/nibs/internal/store"
+	"github.com/alphaleonis/nibs/internal/yamlfile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -42,7 +43,7 @@ func LoadUserConfig() (*UserConfig, error) {
 // LoadUserConfigFrom returns a zero-value UserConfig and no error when path does
 // not exist.
 func LoadUserConfigFrom(path string) (*UserConfig, error) {
-	data, err := ReadConfigFile(path)
+	data, err := yamlfile.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return &UserConfig{}, nil

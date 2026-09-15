@@ -1512,7 +1512,7 @@ describe("TreeTableRow section metadata", () => {
     expect(container.querySelector("[data-testid='section-color']")).toBeNull();
   });
 
-  it("takes a bare color name as readily as a hex code — AreaConfig.Color admits either", () => {
+  it("takes a bare color name as readily as a hex code — area.Node.Color admits either", () => {
     const { container } = sectionRow({ label: "Docs", description: "", color: "slateblue" });
 
     const dot = container.querySelector("[data-testid='section-color']") as HTMLElement;

@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/nibcore"
+	"github.com/alphaleonis/nibs/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -31,7 +33,7 @@ type App struct {
 	// because Core's own copy is REPLACED by a later reload — the areas edits
 	// re-read the store under its write lock, and the refusal wording needs to
 	// tell an argument that was true when it was typed from one that never was.
-	startupAreas *config.Areas
+	startupAreas *area.Vocabulary
 }
 
 type appContextKey struct{}
@@ -78,8 +80,15 @@ func (a *App) Config() *config.Config {
 // Areas returns the store's declared area vocabulary from Core. It is separate
 // from Config because it is reloaded while the process runs; for a CLI verb that
 // prints and exits, one snapshot is the whole story.
-func (a *App) Areas() *config.Areas {
+func (a *App) Areas() *area.Vocabulary {
 	return a.Core.Areas()
+}
+
+// AreasPath returns the store's areas.yml, whether or not that file exists. The
+// vocabulary carries no provenance, so a message naming the file derives it
+// from the store layout.
+func (a *App) AreasPath() string {
+	return store.NewLayout(a.Core.Root()).AreasPath()
 }
 
 // StartupAreas returns the vocabulary this process read when it OPENED the
@@ -87,7 +96,7 @@ func (a *App) Areas() *config.Areas {
 // consulted for one purpose — wording a refusal about what moved while this
 // command waited — and never as grounds for a write: a snapshot cannot say what
 // the store declares now.
-func (a *App) StartupAreas() *config.Areas {
+func (a *App) StartupAreas() *area.Vocabulary {
 	return a.startupAreas
 }
 

@@ -582,7 +582,7 @@ describe("parseQuery — the area token", () => {
 
   it("takes the value whole — no comma split, unlike a metadata facet", () => {
     // `type:a,b` is two values; an area path is a scalar, and a comma is a legal
-    // character in an area NAME (config.validateAreaNodes forbids only `/`).
+    // character in an area NAME (area.validateNodes forbids only `/`).
     expect(parseQuery("area:a,b").filter.area).toBe("a,b");
   });
 
