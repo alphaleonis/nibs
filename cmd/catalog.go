@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibtypes"
@@ -368,7 +369,7 @@ func catalogAreas() error {
 	if catalogJSON {
 		return output.JSONRaw(map[string]any{
 			"commands":           commands,
-			"path_separator":     config.AreaPathSeparator,
+			"path_separator":     area.PathSeparator,
 			"declared_in":        store.AreasFileName,
 			"downward_closed":    true,
 			"vocabulary_command": areaVocabularyCommand,
@@ -379,7 +380,7 @@ func catalogAreas() error {
 	b.WriteString("Areas are the one vocabulary a project authors itself — statuses, types,\n")
 	b.WriteString("priorities and estimates are fixed. A store declares them as a nested\n")
 	b.WriteString("`areas:` block in its " + store.AreasFileName + ", and a nib is placed in one by the node's\n")
-	b.WriteString("FULL path: `web" + config.AreaPathSeparator + "dashboard` is the `dashboard` node declared under `web`.\n")
+	b.WriteString("FULL path: `web" + area.PathSeparator + "dashboard` is the `dashboard` node declared under `web`.\n")
 	b.WriteString("\nThe declared set is per project, so it is not printed here — this command\n")
 	b.WriteString("resolves no store. Run '" + areaVocabularyCommand + "' for this project's tree, each node\n")
 	b.WriteString("with the description that says what belongs in it (--json for the same tree\n")

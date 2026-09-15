@@ -44,7 +44,7 @@ function swatch(row: HTMLElement): HTMLElement {
 
 describe("AreaSelect", () => {
   it("offers None plus every declared path, parents included", async () => {
-    // A non-leaf is a legal assignment (`Areas.ValidateStored` accepts any
+    // A non-leaf is a legal assignment (`area.Vocabulary.ValidateStored` accepts any
     // declared node), so listing only the leaves would hide `web` and `cli`.
     renderSelect({ value: "" });
     await user.click(screen.getByTestId("area-select"));

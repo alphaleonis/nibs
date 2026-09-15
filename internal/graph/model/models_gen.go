@@ -14,7 +14,7 @@ import (
 
 // One node of the per-project areas vocabulary declared in the store's areas.yml.
 //
-// Deliberately NOT self-recursive: area nesting is unbounded (validateAreaNodes
+// Deliberately NOT self-recursive: area nesting is unbounded (area.validateNodes
 // recurses with no depth limit), while the served endpoint refuses an operation
 // nesting a self-recursive schema type past maxRecursiveSelectionDepth. A
 // `children` field here would enroll Area in that bound and make a deeply nested
@@ -72,7 +72,7 @@ type Config struct {
 	// Configured nib ID prefix (e.g., 'nibs-', 'myproj-'). Empty if unset.
 	Prefix string `json:"prefix"`
 	// The declared areas, FLATTENED with siblings sorted by name — a parent immediately
-	// before the subtree it heads (config.Areas.Paths' order). That ordering is the
+	// before the subtree it heads (area.Vocabulary.Paths' order). That ordering is the
 	// CONTRACT, not an incidental: a node's subtree is the maximal run of following
 	// entries with a greater `depth`, which is how a client answers the
 	// downward-closed `area:` filter's membership without restating the rule.

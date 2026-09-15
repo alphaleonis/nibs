@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"sort"
 	"strings"
 
-	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/area"
+	"github.com/alphaleonis/nibs/internal/yamlfile"
 )
 
 // The area-vocabulary verbs: declaring an area, renaming one, and retiring one
@@ -64,7 +66,7 @@ func UnassignAreaMembers() AreaDisposition {
 type AreaEditResult struct {
 	// Areas is the vocabulary the edit WROTE, re-read from disk under the same
 	// lock.
-	Areas *config.Areas
+	Areas *area.Vocabulary
 	// Members is the set the verb acted on, read BEFORE the cascade: after a
 	// partial failure the set has already shrunk.
 	Members []string
@@ -98,7 +100,7 @@ const (
 type AreaUndeclaredError struct {
 	Path  string
 	Role  AreaPathRole
-	Areas *config.Areas
+	Areas *area.Vocabulary
 }
 
 func (e *AreaUndeclaredError) Error() string {
@@ -106,7 +108,7 @@ func (e *AreaUndeclaredError) Error() string {
 		return "this store declares no areas"
 	}
 	return fmt.Sprintf("this store declares no area %q: the declared areas are %s",
-		config.RenderAreaPath(e.Path), e.Areas.List())
+		area.RenderPath(e.Path), e.Areas.List())
 }
 
 // AreaRetiredWhileWaitingError reports that path was declared in the vocabulary
@@ -125,14 +127,14 @@ type AreaRetiredWhileWaitingError struct {
 
 func (e *AreaRetiredWhileWaitingError) Error() string {
 	return fmt.Sprintf("this store declared area %q when this edit began and does not declare it now",
-		config.RenderAreaPath(e.Path))
+		area.RenderPath(e.Path))
 }
 
 // AreaVocabularyVanishedError reports an areas.yml that existed when this store
 // was last read and does not exist now.
 //
 // Both halves of the check are needed — loaded from a file before, not loaded
-// from one now — because config.LoadAreas answers a MISSING file with an empty
+// from one now — because a MISSING areas.yml loads as an empty
 // vocabulary and a nil error: a store that never had one looks the same.
 type AreaVocabularyVanishedError struct {
 	// File is the areas.yml that is gone. Error() never renders it.
@@ -153,7 +155,7 @@ type AreaNameUnchangedError struct {
 }
 
 func (e *AreaNameUnchangedError) Error() string {
-	return fmt.Sprintf("area %q is already named %q", config.RenderAreaPath(e.Path), config.RenderAreaPath(e.Name))
+	return fmt.Sprintf("area %q is already named %q", area.RenderPath(e.Path), area.RenderPath(e.Name))
 }
 
 // AreaNameTakenError refuses a rename onto a name a sibling already holds.
@@ -169,7 +171,7 @@ type AreaNameTakenError struct {
 }
 
 func (e *AreaNameTakenError) Error() string {
-	return fmt.Sprintf("this store already declares area %q", config.RenderAreaPath(e.Sibling))
+	return fmt.Sprintf("this store already declares area %q", area.RenderPath(e.Sibling))
 }
 
 // AreaAlreadyDeclaredError refuses declaring an area at a path the store already
@@ -177,7 +179,7 @@ func (e *AreaNameTakenError) Error() string {
 type AreaAlreadyDeclaredError struct{ Path string }
 
 func (e *AreaAlreadyDeclaredError) Error() string {
-	return fmt.Sprintf("this store already declares area %q", config.RenderAreaPath(e.Path))
+	return fmt.Sprintf("this store already declares area %q", area.RenderPath(e.Path))
 }
 
 // AreaParentUndeclaredError refuses a nested declaration whose parent the store
@@ -189,7 +191,7 @@ type AreaParentUndeclaredError struct {
 
 func (e *AreaParentUndeclaredError) Error() string {
 	return fmt.Sprintf("this store declares no area %q to nest %q under",
-		config.RenderAreaPath(e.Parent), config.RenderAreaPath(e.Path))
+		area.RenderPath(e.Parent), area.RenderPath(e.Path))
 }
 
 // AreaMembersPresentError refuses retiring an area work is still assigned to
@@ -203,7 +205,7 @@ type AreaMembersPresentError struct {
 
 func (e *AreaMembersPresentError) Error() string {
 	return fmt.Sprintf("cannot retire area %q: %d nib(s) are assigned at or below it",
-		config.RenderAreaPath(e.Path), len(e.Members))
+		area.RenderPath(e.Path), len(e.Members))
 }
 
 // AreaDispositionEmptyError refuses a disposition that has nothing to act on.
@@ -218,7 +220,7 @@ type AreaDispositionEmptyError struct {
 
 func (e *AreaDispositionEmptyError) Error() string {
 	return fmt.Sprintf("no nib is assigned at or below area %q, so there is nothing to dispose of",
-		config.RenderAreaPath(e.Path))
+		area.RenderPath(e.Path))
 }
 
 // AreaMoveTargetWithinError refuses reassigning members INTO the subtree being
@@ -230,7 +232,7 @@ type AreaMoveTargetWithinError struct {
 
 func (e *AreaMoveTargetWithinError) Error() string {
 	return fmt.Sprintf("cannot move members to %q: it is declared at or below %q, which is being retired",
-		config.RenderAreaPath(e.Target), config.RenderAreaPath(e.Path))
+		area.RenderPath(e.Target), area.RenderPath(e.Path))
 }
 
 // AreaMembersArrivedError refuses the vocabulary write of an edit that would
@@ -257,7 +259,7 @@ type AreaMembersArrivedError struct {
 
 func (e *AreaMembersArrivedError) Error() string {
 	return fmt.Sprintf("%d nib(s) are assigned at or below area %q and this edit did not see them when it read the store",
-		len(e.Members), config.RenderAreaPath(e.Path))
+		len(e.Members), area.RenderPath(e.Path))
 }
 
 // AreaEditPhase is where in one area edit a filesystem failure landed. The
@@ -277,7 +279,7 @@ const (
 )
 
 // AreaEditIOError reports that an area vocabulary edit failed on the
-// FILESYSTEM, as opposed to config.AreaEditRefusal, which is about the file's
+// FILESYSTEM, as opposed to area.EditRefusal, which is about the file's
 // CONTENT: a rerun often repairs this one and never repairs a refusal. That is
 // the exit 5 versus exit 2 split `nibs area rename` and `nibs area rm` report,
 // and cmd/set.go's mutationErrCode maps this type so `nibs query` agrees.
@@ -353,12 +355,12 @@ var reloadNibsBeforeAreaWrite = (*Core).loadFromDisk
 // by a retire or a hand edit, with every write to that nib refused until the
 // vocabulary declares the path again. Declaring it is that repair.
 //
-// Judge the path's SHAPE before calling: config.ValidateNewAreaPath and
-// config.ValidateAreaColor answer from the arguments alone, so a typo need not
+// Judge the path's SHAPE before calling: area.ValidateNewPath and
+// area.ValidateColor answer from the arguments alone, so a typo need not
 // wait behind another writer's lock. The planner asks them again regardless.
 func (c *Core) AddArea(ctx context.Context, path, description, color string) (AreaEditResult, error) {
-	parent, _ := splitAreaPath(path)
-	return c.editArea(ctx, path, func(before, now *config.Areas) (areaPlan, error) {
+	parent, _ := area.SplitPath(path)
+	return c.editArea(ctx, path, func(before, now *area.Vocabulary) (areaPlan, error) {
 		if now.Exists(path) {
 			return areaPlan{}, &AreaAlreadyDeclaredError{Path: path}
 		}
@@ -370,7 +372,9 @@ func (c *Core) AddArea(ctx context.Context, path, description, color string) (Ar
 				return areaPlan{}, &AreaParentUndeclaredError{Path: path, Parent: parent}
 			}
 		}
-		edit, err := config.PlanCreateStoredArea(now.StoreDir(), path, description, color)
+		edit, err := c.planAreasFileLocked(func(current []byte, exists bool) ([]byte, error) {
+			return area.PlanCreate(current, exists, path, description, color)
+		})
 		if err != nil {
 			return areaPlan{}, err
 		}
@@ -384,17 +388,17 @@ func (c *Core) AddArea(ctx context.Context, path, description, color string) (Ar
 // newName is a bare name: the parent segments carry over verbatim, and a member
 // assigned BELOW the renamed node keeps the remainder it carried.
 func (c *Core) RenameArea(ctx context.Context, path, newName string) (AreaEditResult, error) {
-	return c.editArea(ctx, path, func(before, now *config.Areas) (areaPlan, error) {
+	return c.editArea(ctx, path, func(before, now *area.Vocabulary) (areaPlan, error) {
 		if err := requireDeclaredArea(before, now, path, AreaPathRenamed); err != nil {
 			return areaPlan{}, err
 		}
-		parent, oldName := splitAreaPath(path)
+		parent, oldName := area.SplitPath(path)
 		// Asked after the path is known to be declared: over an undeclared one,
 		// "already named" would describe a node that is not there.
 		if newName == oldName {
 			return areaPlan{}, &AreaNameUnchangedError{Path: path, Name: newName}
 		}
-		if sibling := joinAreaPath(parent, newName); now.Exists(sibling) {
+		if sibling := area.JoinPath(parent, newName); now.Exists(sibling) {
 			return areaPlan{}, &AreaNameTakenError{Path: path, NewName: newName, Sibling: sibling}
 		}
 
@@ -402,12 +406,14 @@ func (c *Core) RenameArea(ctx context.Context, path, newName string) (AreaEditRe
 		// rewrite is durable the moment it lands, so a refusal that could only
 		// fire after the cascade would strand every member. Planning first moves
 		// every refusal the editor can make to before that point.
-		edit, err := config.PlanRenameStoredArea(now.StoreDir(), path, newName)
+		edit, err := c.planAreasFileLocked(func(current []byte, exists bool) ([]byte, error) {
+			return area.PlanRename(current, exists, path, newName)
+		})
 		if err != nil {
 			return areaPlan{}, err
 		}
 
-		newPath := joinAreaPath(parent, newName)
+		newPath := area.JoinPath(parent, newName)
 		return areaPlan{
 			path:    path,
 			newPath: newPath,
@@ -430,7 +436,7 @@ func (c *Core) RenameArea(ctx context.Context, path, newName string) (AreaEditRe
 // Every member lands ON the move target; the remainder it carried below the
 // retiring node is dropped.
 func (c *Core) RemoveArea(ctx context.Context, path string, disposition AreaDisposition) (AreaEditResult, error) {
-	return c.editArea(ctx, path, func(before, now *config.Areas) (areaPlan, error) {
+	return c.editArea(ctx, path, func(before, now *area.Vocabulary) (areaPlan, error) {
 		if err := requireDeclaredArea(before, now, path, AreaPathRetired); err != nil {
 			return areaPlan{}, err
 		}
@@ -458,7 +464,9 @@ func (c *Core) RemoveArea(ctx context.Context, path string, disposition AreaDisp
 
 		// Resolved before the first nib is touched, for the reason RenameArea
 		// plans first.
-		edit, err := config.PlanRemoveStoredArea(now.StoreDir(), path)
+		edit, err := c.planAreasFileLocked(func(current []byte, exists bool) ([]byte, error) {
+			return area.PlanRemove(current, exists, path)
+		})
 		if err != nil {
 			return areaPlan{}, err
 		}
@@ -486,8 +494,9 @@ type areaPlan struct {
 	// emptied is the area path this edit stops declaring — a retired node, or a
 	// rename's old path. Nothing may be assigned at or below it once the
 	// vocabulary write lands. Empty for a verb that declares without retiring.
-	emptied       string
-	edit          *config.StoredAreaEdit
+	emptied string
+	// edit is the whole areas.yml the verb planned, rendered and not yet written.
+	edit          []byte
 	members       []string
 	disposition   AreaDisposition
 	declaredBelow int
@@ -538,11 +547,12 @@ type areaPlan struct {
 //
 // A failure to re-read is a REFUSAL, never a fallback to the vocabulary already
 // loaded.
-func (c *Core) editArea(ctx context.Context, path string, plan func(before, now *config.Areas) (areaPlan, error)) (AreaEditResult, error) {
+func (c *Core) editArea(ctx context.Context, path string, plan func(before, now *area.Vocabulary) (areaPlan, error)) (AreaEditResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	before := c.Areas()
+	beforeState := c.areasState()
+	before := beforeState.vocab
 
 	release, err := c.acquireWriteLockContext(ctx)
 	if err != nil {
@@ -558,10 +568,11 @@ func (c *Core) editArea(ctx context.Context, path string, plan func(before, now 
 		}
 		return AreaEditResult{}, &AreaEditIOError{Phase: phase, Path: path, File: c.layout.AreasPath(), Cause: err}
 	}
-	now := c.Areas()
+	nowState := c.areasState()
+	now := nowState.vocab
 
-	if before.LoadedFromFile() && !now.LoadedFromFile() {
-		return AreaEditResult{}, &AreaVocabularyVanishedError{File: now.Path()}
+	if beforeState.fromFile && !nowState.fromFile {
+		return AreaEditResult{}, &AreaVocabularyVanishedError{File: c.layout.AreasPath()}
 	}
 
 	p, err := plan(before, now)
@@ -574,7 +585,7 @@ func (c *Core) editArea(ctx context.Context, path string, plan func(before, now 
 		written, err = c.rewriteAreaAssignmentsLocked(p.rewrite)
 		if err != nil {
 			return AreaEditResult{}, &AreaEditIOError{
-				Phase: AreaEditPhaseCascade, Path: p.path, NewPath: p.newPath, File: now.Path(),
+				Phase: AreaEditPhaseCascade, Path: p.path, NewPath: p.newPath, File: c.layout.AreasPath(),
 				Disposition: p.disposition, Written: written, Members: p.members, Cause: err,
 			}
 		}
@@ -589,7 +600,7 @@ func (c *Core) editArea(ctx context.Context, path string, plan func(before, now 
 	if p.emptied != "" {
 		if err := reloadNibsBeforeAreaWrite(c); err != nil {
 			return AreaEditResult{}, &AreaEditIOError{
-				Phase: AreaEditPhaseConfirm, Path: p.path, NewPath: p.newPath, File: now.Path(),
+				Phase: AreaEditPhaseConfirm, Path: p.path, NewPath: p.newPath, File: c.layout.AreasPath(),
 				Disposition: p.disposition, Written: written, Members: p.members, Cause: err,
 			}
 		}
@@ -600,10 +611,10 @@ func (c *Core) editArea(ctx context.Context, path string, plan func(before, now 
 		}
 	}
 
-	staleLink, err := p.edit.Write()
+	staleLink, err := yamlfile.WritePreservingMode(c.layout.AreasPath(), p.edit)
 	if err != nil {
 		return AreaEditResult{}, &AreaEditIOError{
-			Phase: AreaEditPhaseWrite, Path: p.path, NewPath: p.newPath, File: now.Path(),
+			Phase: AreaEditPhaseWrite, Path: p.path, NewPath: p.newPath, File: c.layout.AreasPath(),
 			Disposition: p.disposition, Written: written, Members: p.members, Cause: err,
 		}
 	}
@@ -616,7 +627,7 @@ func (c *Core) editArea(ctx context.Context, path string, plan func(before, now 
 	// c.mu, which is the established order.
 	if err := reloadAreasAfterEdit(c); err != nil {
 		return AreaEditResult{}, &AreaEditIOError{
-			Phase: AreaEditPhaseReload, Path: p.path, NewPath: p.newPath, File: now.Path(),
+			Phase: AreaEditPhaseReload, Path: p.path, NewPath: p.newPath, File: c.layout.AreasPath(),
 			Disposition: p.disposition, Written: written, Members: p.members, Cause: err,
 		}
 	}
@@ -634,7 +645,7 @@ func (c *Core) editArea(ctx context.Context, path string, plan func(before, now 
 // requireDeclaredArea refuses a path the store's vocabulary does not declare,
 // telling apart one that WAS declared when this store was last read from one
 // that never existed.
-func requireDeclaredArea(before, now *config.Areas, path string, role AreaPathRole) error {
+func requireDeclaredArea(before, now *area.Vocabulary, path string, role AreaPathRole) error {
 	if path != "" && now.Exists(path) {
 		return nil
 	}
@@ -649,7 +660,7 @@ func requireDeclaredArea(before, now *config.Areas, path string, role AreaPathRo
 //
 // The stored pointers are read into plain strings immediately, per the
 // live-pointer discipline: nothing here holds one across the writes that follow.
-func (c *Core) areaMembersLocked(areas *config.Areas, path string) []string {
+func (c *Core) areaMembersLocked(areas *area.Vocabulary, path string) []string {
 	var ids []string
 	for id, b := range c.nibs {
 		if areas.IsWithin(b.Area, path) {
@@ -662,7 +673,7 @@ func (c *Core) areaMembersLocked(areas *config.Areas, path string) []string {
 
 // countDeclaredBelow counts the areas declared beneath path, which a retire
 // takes with it.
-func countDeclaredBelow(areas *config.Areas, path string) int {
+func countDeclaredBelow(areas *area.Vocabulary, path string) int {
 	n := 0
 	for _, declared := range areas.Paths() {
 		if declared != path && areas.IsWithin(declared, path) {
@@ -672,19 +683,23 @@ func countDeclaredBelow(areas *config.Areas, path string) int {
 	return n
 }
 
-// splitAreaPath separates a path into its parent's path (empty at the top level)
-// and the node's own name. joinAreaPath is its inverse.
-func splitAreaPath(path string) (parent, name string) {
-	i := strings.LastIndex(path, config.AreaPathSeparator)
-	if i < 0 {
-		return "", path
+// planAreasFileLocked reads the store's areas.yml as it stands under the write
+// lock and hands its bytes to plan, one of the area planners. An absent file is
+// the planner's to decide on; any other read failure is returned as it came.
+//
+// A refusal is given the file's path here, because the planner works on bytes
+// and cannot know it: a surface whose reader owns the store names it through
+// EditRefusal.Naming.
+func (c *Core) planAreasFileLocked(plan func(current []byte, exists bool) ([]byte, error)) ([]byte, error) {
+	path := c.layout.AreasPath()
+	current, err := yamlfile.ReadFile(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
 	}
-	return path[:i], path[i+len(config.AreaPathSeparator):]
-}
-
-func joinAreaPath(parent, name string) string {
-	if parent == "" {
-		return name
+	out, err := plan(current, err == nil)
+	var refusal *area.EditRefusal
+	if errors.As(err, &refusal) {
+		refusal.File = path
 	}
-	return parent + config.AreaPathSeparator + name
+	return out, err
 }

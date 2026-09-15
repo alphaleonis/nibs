@@ -227,7 +227,7 @@ func TestServedMutationsDiscloseNoStorePath(t *testing.T) {
 		mustFail []string
 	}{
 		{
-			// No OS error is involved: config.LoadAreas interpolates the path
+			// No OS error is involved: the areas loader interpolates the path
 			// itself when yaml.Unmarshal refuses the content.
 			name: "the areas vocabulary is malformed",
 			damage: func(t *testing.T, f *disclosureFixture) {
@@ -236,7 +236,7 @@ func TestServedMutationsDiscloseNoStorePath(t *testing.T) {
 			mustFail: []string{"renameArea", "removeArea"},
 		},
 		{
-			// Also no OS error: config.ReadConfigFile stats the path, sees a
+			// Also no OS error: yamlfile.ReadFile stats the path, sees a
 			// directory, and words its own refusal around it.
 			name: "the areas vocabulary is a directory",
 			damage: func(t *testing.T, f *disclosureFixture) {

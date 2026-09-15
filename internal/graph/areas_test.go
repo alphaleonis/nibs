@@ -2,11 +2,13 @@ package graph
 
 import (
 	"context"
+	"os"
 	"slices"
 	"testing"
 
-	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/graph/model"
+	"github.com/alphaleonis/nibs/internal/store"
 	"github.com/alphaleonis/nibs/testdata/fixtures"
 )
 
@@ -19,23 +21,27 @@ type areaWire struct {
 
 // areaCfg builds a vocabulary declaring the given nodes and nothing else
 // unusual.
-func areaCfg(areas ...config.AreaConfig) *config.Areas {
-	return &config.Areas{Nodes: areas}
+func areaCfg(areas ...area.Node) *area.Vocabulary {
+	return &area.Vocabulary{Nodes: areas}
 }
 
 // sampleProjectAreas loads the committed fixture's own vocabulary, so the tests
 // that read it fail when the fixture's declared vocabulary changes shape rather
 // than silently asserting about a copy that has drifted.
-func sampleProjectAreas(t *testing.T) *config.Areas {
+func sampleProjectAreas(t *testing.T) *area.Vocabulary {
 	t.Helper()
-	areas, err := config.LoadAreasFromStore(fixtures.NibsPath(fixtures.SampleProjectDir(t)))
+	data, err := os.ReadFile(store.NewLayout(fixtures.NibsPath(fixtures.SampleProjectDir(t))).AreasPath())
+	if err != nil {
+		t.Fatalf("reading the sample-project vocabulary: %v", err)
+	}
+	areas, err := area.Parse(data)
 	if err != nil {
 		t.Fatalf("loading the sample-project vocabulary: %v", err)
 	}
 	return areas
 }
 
-func resolveAreaList(t *testing.T, areas *config.Areas) []*model.Area {
+func resolveAreaList(t *testing.T, areas *area.Vocabulary) []*model.Area {
 	t.Helper()
 	r := &queryResolver{&Resolver{Reader: &stubReader{areas: areas}}}
 	got, err := r.Config(context.Background())
@@ -67,7 +73,7 @@ func pathsOf(areas []*model.Area) []string {
 func TestConfigResolverFlattensAreasSortedByName(t *testing.T) {
 	tests := []struct {
 		name  string
-		areas []config.AreaConfig
+		areas []area.Node
 		want  []areaWire
 	}{
 		{
@@ -77,7 +83,7 @@ func TestConfigResolverFlattensAreasSortedByName(t *testing.T) {
 		},
 		{
 			name: "roots sort by name, not the file's order",
-			areas: []config.AreaConfig{
+			areas: []area.Node{
 				{Name: "infra"},
 				{Name: "auth"},
 				{Name: "api"},
@@ -86,8 +92,8 @@ func TestConfigResolverFlattensAreasSortedByName(t *testing.T) {
 		},
 		{
 			name: "a parent comes immediately before its subtree",
-			areas: []config.AreaConfig{
-				{Name: "web", Children: []config.AreaConfig{{Name: "settings"}, {Name: "dashboard"}}},
+			areas: []area.Node{
+				{Name: "web", Children: []area.Node{{Name: "settings"}, {Name: "dashboard"}}},
 				{Name: "api"},
 			},
 			want: []areaWire{
@@ -99,10 +105,10 @@ func TestConfigResolverFlattensAreasSortedByName(t *testing.T) {
 		},
 		{
 			name: "a deeper subtree is emitted before the parent's next sibling",
-			areas: []config.AreaConfig{
-				{Name: "auth", Children: []config.AreaConfig{
-					{Name: "settings", Children: []config.AreaConfig{
-						{Name: "billing", Children: []config.AreaConfig{{Name: "invoices"}}},
+			areas: []area.Node{
+				{Name: "auth", Children: []area.Node{
+					{Name: "settings", Children: []area.Node{
+						{Name: "billing", Children: []area.Node{{Name: "invoices"}}},
 					}},
 					{Name: "tokens"},
 				}},
@@ -122,8 +128,8 @@ func TestConfigResolverFlattensAreasSortedByName(t *testing.T) {
 			// the tree from the strings: a root named for a prefix of another
 			// root stays a root, at depth 0 and outside the other's run.
 			name: "a name-prefix sibling stays its own root",
-			areas: []config.AreaConfig{
-				{Name: "web", Children: []config.AreaConfig{{Name: "dashboard"}}},
+			areas: []area.Node{
+				{Name: "web", Children: []area.Node{{Name: "dashboard"}}},
 				{Name: "webhooks"},
 			},
 			want: []areaWire{{"web", 0}, {"web/dashboard", 1}, {"webhooks", 0}},
@@ -160,7 +166,7 @@ func TestConfigResolverFlattensTheSampleProjectVocabulary(t *testing.T) {
 }
 
 // A store declaring no areas answers with an empty list. Declaring none is a
-// normal, permanent state (config.Areas.IsEmpty), not a failure, so the
+// normal, permanent state (area.Vocabulary.IsEmpty), not a failure, so the
 // resolver must not error and must not omit the field.
 //
 // It says nothing about null-vs-[] on the wire, because that is not this
@@ -185,14 +191,14 @@ func TestConfigResolverEmitsNoAreasAsAnEmptyList(t *testing.T) {
 // order still type-checks and still carries every declared node — it just
 // describes a different tree, silently.
 //
-// The expected sets are computed with config.Areas.IsWithin, the same
+// The expected sets are computed with area.Vocabulary.IsWithin, the same
 // downward-closed rule the server's `area:` filter applies, rather than written
 // out: that is what makes this an agreement between the two sides instead of a
 // second transcription of one.
 func TestAreasOrderingCarriesSubtreeMembership(t *testing.T) {
 	tests := []struct {
 		name string
-		cfg  *config.Areas
+		cfg  *area.Vocabulary
 	}{
 		{
 			name: "the sample-project vocabulary",
@@ -203,12 +209,12 @@ func TestAreasOrderingCarriesSubtreeMembership(t *testing.T) {
 			// vocabulary tells a string-prefix test apart from genuine closure.
 			name: "a name-prefix sibling root",
 			cfg: areaCfg(
-				config.AreaConfig{Name: "web", Children: []config.AreaConfig{
+				area.Node{Name: "web", Children: []area.Node{
 					{Name: "dashboard"},
-					{Name: "settings", Children: []config.AreaConfig{{Name: "billing"}}},
+					{Name: "settings", Children: []area.Node{{Name: "billing"}}},
 				}},
-				config.AreaConfig{Name: "webhooks"},
-				config.AreaConfig{Name: "auth"},
+				area.Node{Name: "webhooks"},
+				area.Node{Name: "auth"},
 			),
 		},
 	}
@@ -221,7 +227,7 @@ func TestAreasOrderingCarriesSubtreeMembership(t *testing.T) {
 			// Reported rather than fatal, so a run that gets the paths wrong
 			// still shows which subtrees the order then names.
 			if !slices.Equal(pathsOf(got), declared) {
-				t.Errorf("paths = %v, want config.Areas.Paths' order %v", pathsOf(got), declared)
+				t.Errorf("paths = %v, want area.Vocabulary.Paths' order %v", pathsOf(got), declared)
 			}
 
 			for i, node := range got {
@@ -233,7 +239,7 @@ func TestAreasOrderingCarriesSubtreeMembership(t *testing.T) {
 					}
 				}
 				if !slices.Equal(byOrder, byRule) {
-					t.Errorf("subtree of %q read from the order = %v, but Areas.IsWithin gives %v",
+					t.Errorf("subtree of %q read from the order = %v, but Vocabulary.IsWithin gives %v",
 						node.Path, byOrder, byRule)
 				}
 			}
@@ -254,7 +260,7 @@ func subtreeByOrder(list []*model.Area, i int) []string {
 	return out
 }
 
-// Names, descriptions and colors cross verbatim. config.RenderAreaPath is a
+// Names, descriptions and colors cross verbatim. area.RenderPath is a
 // TERMINAL rendering boundary for CLI text; a JSON value decoded into a DOM text
 // node is a different one, and stripping here would also change the `path` a
 // client sends back as an `area:` filter argument, which the server matches
@@ -264,11 +270,11 @@ func subtreeByOrder(list []*model.Area, i int) []string {
 // that had gone through safetext.Strip on the way out is visible here: Strip
 // turns every non-printable rune into a space.
 func TestConfigResolverEmitsAreaFieldsVerbatim(t *testing.T) {
-	cfg := areaCfg(config.AreaConfig{
+	cfg := areaCfg(area.Node{
 		Name:        "web",
 		Description: "The <b>browser</b> client\a \u2014 \"quoted\"",
 		Color:       "#0a7cff",
-		Children:    []config.AreaConfig{{Name: "dashboard"}},
+		Children:    []area.Node{{Name: "dashboard"}},
 	})
 
 	got := resolveAreaList(t, cfg)

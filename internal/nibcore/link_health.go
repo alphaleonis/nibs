@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/fsutil"
 	"github.com/alphaleonis/nibs/internal/membership"
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -123,9 +123,9 @@ type UndeclaredArea struct {
 	// Path is relative to the nibs root with forward slashes, like nib.Path.
 	Path string `json:"path"`
 	// Area is the undeclared value as the file spells it, already rendered by
-	// config for a message (control characters neutralized, length bounded).
+	// internal/area for a message (control characters neutralized, length bounded).
 	Area string `json:"area"`
-	// Declared is the vocabulary the store DOES declare, as config.AreaError
+	// Declared is the vocabulary the store DOES declare, as area.Error
 	// carries it — bounded the same way.
 	Declared string `json:"declared"`
 }
@@ -711,7 +711,7 @@ func (c *Core) CheckAllLinks() *LinkCheckResult {
 			if nibtypes.ValidateAxes(b.EffectiveType(), "", b.Area) != nil {
 				continue
 			}
-			var areaErr *config.AreaError
+			var areaErr *area.Error
 			if errors.As(c.ValidateArea(b), &areaErr) {
 				result.UndeclaredAreas = append(result.UndeclaredAreas, UndeclaredArea{
 					NibID: id, Path: b.Path, Area: areaErr.Path, Declared: areaErr.Declared,

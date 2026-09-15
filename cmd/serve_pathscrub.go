@@ -49,8 +49,8 @@ func servedErrorPresenter(storeRoot, lockDir string) graphql.ErrorPresenterFunc 
 // It works on the rendered TEXT rather than by unwrapping to *fs.PathError,
 // because a path reaches a message two independent ways and only one of them is
 // an OS error: nibs' own wrappers interpolate the path with %s, sometimes with
-// no OS error involved at all (config.LoadAreas on unparseable YAML,
-// config.ReadConfigFile on a directory). A type-based fix closes one channel and
+// no OS error involved at all (an areas.yml that does not parse,
+// yamlfile.ReadFile on a directory). A type-based fix closes one channel and
 // ships green.
 //
 // CANONICAL SCOPE (which paths a served message can still carry). This doc is

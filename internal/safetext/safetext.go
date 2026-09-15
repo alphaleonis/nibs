@@ -2,12 +2,13 @@
 // and the errors quoting them, so it cannot drive the terminal or the markdown it
 // is shown in.
 //
-// Strip is for one scalar inside a message. Writer wraps a sink that carries only
-// messages, and keeps their newlines and backticks. Do not wrap a sink that also
-// carries styled (lipgloss) output; sanitize the field at the call site instead.
+// Strip is for one scalar inside a message, and StripBounded for one whose length
+// nothing else bounds. Writer wraps a sink that carries only messages, and keeps
+// their newlines and backticks. Do not wrap a sink that also carries styled
+// (lipgloss) output; sanitize the field at the call site instead.
 //
-// Not covered: combining marks (printable, and unbounded when stacked), length,
-// homoglyphs, and markdown emphasis (`*`, `_`, `#`).
+// Not covered: combining marks (printable, and unbounded when stacked), length
+// outside StripBounded, homoglyphs, and markdown emphasis (`*`, `_`, `#`).
 package safetext
 
 import (
@@ -36,6 +37,20 @@ func Strip(s string) string {
 		out = append(out, ' ')
 	}
 	return string(out)
+}
+
+// MaxBoundedRunes is how many runes StripBounded keeps.
+const MaxBoundedRunes = 200
+
+// StripBounded is Strip for a scalar whose length the source does not bound,
+// such as a name read from a config file: it also cuts the result to
+// MaxBoundedRunes, marking a cut with "…".
+func StripBounded(s string) string {
+	s = Strip(s)
+	if utf8.RuneCountInString(s) <= MaxBoundedRunes {
+		return s
+	}
+	return string([]rune(s)[:MaxBoundedRunes]) + "…"
 }
 
 func needsStripping(s string) bool {

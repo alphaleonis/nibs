@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/pflag"
 
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nibtypes"
 	"github.com/alphaleonis/nibs/internal/output"
@@ -787,8 +788,8 @@ func TestCatalogAreasNamesARunnableVocabularyCommand(t *testing.T) {
 func TestCatalogAreasStatesTheGrammar(t *testing.T) {
 	got := areasTopicPayload(t)
 
-	if got.PathSeparator != config.AreaPathSeparator {
-		t.Errorf("areas path_separator = %q, want %q", got.PathSeparator, config.AreaPathSeparator)
+	if got.PathSeparator != area.PathSeparator {
+		t.Errorf("areas path_separator = %q, want %q", got.PathSeparator, area.PathSeparator)
 	}
 	if got.DeclaredIn != store.AreasFileName {
 		t.Errorf("areas declared_in = %q, want %q", got.DeclaredIn, store.AreasFileName)

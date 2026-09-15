@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/fsutil"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
@@ -48,10 +47,7 @@ func runArea(t *testing.T, nibsPath string, args ...string) (string, error) {
 // so the assertions read the FILE rather than anything the command held.
 func areaVocabulary(t *testing.T, nibsPath string) []string {
 	t.Helper()
-	vocab, err := config.LoadAreasFromStore(nibsPath)
-	if err != nil {
-		t.Fatalf("the edited vocabulary no longer loads: %v", err)
-	}
+	vocab := readAreasVocabulary(t, nibsPath)
 	return vocab.Paths()
 }
 
@@ -220,14 +216,14 @@ func TestAreaRenameCascadesTheWholeSubtree(t *testing.T) {
 }
 
 // TestAreaRenameTouchesNothingElseInTheVocabulary is hazard #1 at the command
-// level: a rename must edit the `name:` scalar and nothing else. Areas.Save
-// would re-marshal the struct this build models — dropping every comment and
-// every key AreaConfig has no field for — and the diff is the only assertion
-// that catches all of that at once.
+// level: a rename must edit the `name:` scalar and nothing else. Marshaling a
+// Vocabulary would re-emit the struct this build models — dropping every
+// comment and every key area.Node has no field for — and the diff is the only
+// assertion that catches all of that at once.
 func TestAreaRenameTouchesNothingElseInTheVocabulary(t *testing.T) {
 	nibsPath := setupAreaVerbTest(t)
 	cfgPath := filepath.Join(nibsPath, "areas.yml")
-	// The shipped fixture's vocabulary is close enough to what Areas.Save
+	// The shipped fixture's vocabulary is close enough to what a Vocabulary
 	// marshals that a diff over it alone would not tell the two apart. A comment
 	// and a key this build does not model are what a real project's committed
 	// file carries and what a re-marshal destroys, so the row plants both.
@@ -335,8 +331,8 @@ func TestAreaRenameRefusals(t *testing.T) {
 		},
 		{
 			// A name past the bound an edit may write. The bound is not on what a
-			// store may HOLD — validateAreaNodes accepts any length on load — but
-			// on what a rename produces: an areas.yml over MaxConfigBytes is one
+			// store may HOLD — area.validateNodes accepts any length on load — but
+			// on what a rename produces: an areas.yml over yamlfile.MaxBytes is one
 			// Core.Load refuses before it walks the nibs, so no command can open
 			// the store afterwards.
 			name: "a name no store could read back",
@@ -1106,7 +1102,7 @@ func TestAreaRetireConfirmFailureWithNoDispositionSaysWhatHappened(t *testing.T)
 	resetCommandTreeFlags(rootCmd)
 	t.Cleanup(func() { resetCommandTreeFlags(rootCmd) })
 
-	err := areaRetireRefusal("infra", &nibcore.AreaEditIOError{
+	err := areaRetireRefusal("infra", "areas.yml", &nibcore.AreaEditIOError{
 		Phase: nibcore.AreaEditPhaseConfirm, Path: "infra", Cause: errors.New("disk on fire"),
 	})
 	if err == nil {
@@ -1185,10 +1181,7 @@ func TestAreaAddDeclaresANewArea(t *testing.T) {
 		t.Errorf("the summary does not name what it declared:\n%s", out)
 	}
 
-	vocab, err := config.LoadAreasFromStore(nibsPath)
-	if err != nil {
-		t.Fatalf("the edited vocabulary no longer loads: %v", err)
-	}
+	vocab := readAreasVocabulary(t, nibsPath)
 	node := vocab.Get("platform")
 	if node == nil {
 		t.Fatalf("platform is not declared after the add: %v", vocab.Paths())
@@ -1353,10 +1346,10 @@ func TestAreaAddBootstrapsAStoreDeclaringNoAreas(t *testing.T) {
 
 // TestAreaAddBootstrapsAnAreasFileDeclaringNothing holds `nibs area add --help`
 // to its own sentence for the shapes an areas.yml is hand-authored in. Nothing
-// in the product writes a file declaring nothing — Areas.Save deletes it instead
-// — so every one of these was typed by someone, and writing the file before the
-// verb that populates it is an ordinary way to arrive here. The alternative
-// remedy for a refusal would be the counter-intuitive "delete the file first".
+// in the product writes a file declaring nothing, so every one of these was
+// typed by someone, and writing the file before the verb that populates it is
+// an ordinary way to arrive here. The alternative remedy for a refusal would be
+// the counter-intuitive "delete the file first".
 func TestAreaAddBootstrapsAnAreasFileDeclaringNothing(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1444,7 +1437,7 @@ func TestAreaAddJSONReportsTheSameShapeAsItsNeighbours(t *testing.T) {
 //
 // "An area that does not exist has no members" is nearly right and not quite: a
 // nib can already CARRY the path, left there by a retire or a hand edit, and
-// every write to that nib is refused for it (Areas.ValidateStored). Declaring
+// every write to that nib is refused for it (area.Vocabulary.ValidateStored). Declaring
 // the path is what repairs it, and the repair needs no rewrite at all — the
 // value the nib already holds is simply declared from that moment.
 func TestAreaAddAdoptsANibStrandedOnThatPath(t *testing.T) {
@@ -1594,7 +1587,7 @@ func TestAreaRefusalsCarryTheStrandedClauseOnlyWhereItIsTrue(t *testing.T) {
 	for _, r := range refusals {
 		for _, e := range edits {
 			t.Run(r.name+", "+e.name, func(t *testing.T) {
-				err := areaEditRefusal(false, r.err(e.newPath, e.written), e.verb)
+				err := areaEditRefusal(false, "areas.yml", r.err(e.newPath, e.written), e.verb)
 				if err == nil {
 					t.Fatal("the ladder let a refused edit through")
 				}

@@ -4,7 +4,7 @@ import (
 	"context"
 	"slices"
 
-	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 )
@@ -246,7 +246,7 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 	}
 
 	// area is DOWNWARD-CLOSED over the declared tree, so `area: "web"` selects
-	// web/dashboard too; Areas.IsWithin owns that closure. It names no nib, so
+	// web/dashboard too; Vocabulary.IsWithin owns that closure. It names no nib, so
 	// there is no target to resolve and nothing here bounds a search (see
 	// hasBoundingFilter).
 	if filter.Area != nil {
@@ -511,7 +511,7 @@ func excludeByField(nibs []*nib.Nib, values []string, getter func(*nib.Nib) stri
 // value names a declared area. The empty string is refused and tested EXACTLY,
 // for the reason resolveFilterTarget's is; a whitespace-only value is an
 // ordinary undeclared path.
-func refuseUndeclaredArea(areas *config.Areas, field, path string) error {
+func refuseUndeclaredArea(areas *area.Vocabulary, field, path string) error {
 	if path == "" {
 		return &FilterAreaError{Field: field}
 	}
@@ -522,13 +522,13 @@ func refuseUndeclaredArea(areas *config.Areas, field, path string) error {
 	if !areas.IsEmpty() {
 		declared = areas.List()
 	}
-	return &FilterAreaError{Field: field, Path: config.RenderAreaPath(path), Declared: declared}
+	return &FilterAreaError{Field: field, Path: area.RenderPath(path), Declared: declared}
 }
 
 // filterByAreaWithin keeps the nibs whose stored area is ancestor or sits below
-// it in the DECLARED tree (Areas.IsWithin). A stored value the vocabulary no
+// it in the DECLARED tree (Vocabulary.IsWithin). A stored value the vocabulary no
 // longer declares is within nothing, so a retired area stays out of the answer.
-func filterByAreaWithin(nibs []*nib.Nib, areas *config.Areas, ancestor string) []*nib.Nib {
+func filterByAreaWithin(nibs []*nib.Nib, areas *area.Vocabulary, ancestor string) []*nib.Nib {
 	var result []*nib.Nib
 	for _, b := range nibs {
 		if areas.IsWithin(b.Area, ancestor) {

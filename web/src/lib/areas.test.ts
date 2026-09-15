@@ -91,7 +91,7 @@ describe("createAreaVocabulary", () => {
     }
 
     // The guard the whole flat-list contract rests on: closure runs over the
-    // DECLARED TREE, not over the strings (config.Areas.IsWithin says the same on
+    // DECLARED TREE, not over the strings (area.Vocabulary.IsWithin says the same on
     // the Go side), and here it runs over the ORDER — so a sibling root that
     // happens to start with the same characters is outside it, and a list
     // shuffled out of declaration order fails rather than quietly answering
@@ -178,7 +178,7 @@ describe("validity", () => {
     expect(createAreaVocabulary(DECLARED).validity("web/dashboard")).toBe("declared");
   });
 
-  it("answers \"undeclared\" for the unset value, matching config.Areas.Exists", () => {
+  it("answers \"undeclared\" for the unset value, matching area.Vocabulary.Exists", () => {
     expect(createAreaVocabulary(DECLARED).validity("")).toBe("undeclared");
     expect(EMPTY_AREAS.validity("")).toBe("undeclared");
   });
@@ -216,7 +216,7 @@ describe("the degenerate vocabularies", () => {
 });
 
 describe("cssColor", () => {
-  it("passes the two shapes AreaConfig.Color documents", () => {
+  it("passes the two shapes area.Node.Color documents", () => {
     for (const value of ["teal", "slateblue", "#abc", "#abcd", "#3366ff", "#3366ffcc", "#ABCDEF"]) {
       expect(cssColor(value)).toBe(value);
     }
@@ -250,7 +250,7 @@ describe("cssColor", () => {
 
 describe("the None select sentinel", () => {
   // Every path a declared vocabulary can produce, in miniature: names that may
-  // be neither empty nor contain "/" (config.validateAreaNodes refuses both),
+  // be neither empty nor contain "/" (area.validateNodes refuses both),
   // joined with "/". `__none__` is in the alphabet on purpose — it is a legal
   // area name, so a sentinel spelled that way would be one of these paths.
   const names = ["__none__", "__no_area__", "no_area", "none", "None", "web", "a b"];

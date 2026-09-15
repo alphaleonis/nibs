@@ -1634,14 +1634,6 @@ func TestConfigReadsRefuseAnIrregularFile(t *testing.T) {
 		read func(dir string) error
 	}{
 		{
-			name: "ReadConfigFile",
-			file: store.ConfigFileName,
-			read: func(dir string) error {
-				_, err := ReadConfigFile(filepath.Join(dir, store.ConfigFileName))
-				return err
-			},
-		},
-		{
 			name: "RetiredNibsPath",
 			file: store.LegacyProjectConfigFileName,
 			read: func(dir string) error {
@@ -1761,5 +1753,104 @@ func TestLoadedFromFileIsFalseForAnInMemoryConfig(t *testing.T) {
 	}
 	if DefaultWithPrefix("emb-").LoadedFromFile() {
 		t.Error("DefaultWithPrefix().LoadedFromFile() = true, want false")
+	}
+}
+
+// writeStoreConfig writes body as a store's config.yml and returns the store
+// directory.
+func writeStoreConfig(t *testing.T, body string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, store.ConfigFileName), []byte(body), 0o644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+	return dir
+}
+
+// A config.yml still carrying the block is refused rather than ignored: an
+// ignored block would keep reading like a declaration while authorizing
+// nothing, which is exactly the silent state the separate file exists to
+// prevent.
+func TestLoadRefusesAConfigThatStillDeclaresAreas(t *testing.T) {
+	tests := []struct {
+		name    string
+		areas   string
+		refused bool
+	}{
+		{name: "flat list", areas: "areas:\n    - name: web\n", refused: true},
+		{name: "nested with every node field", areas: "areas:\n    - name: web\n      description: front end\n      color: blue\n      children:\n        - name: dashboard\n", refused: true},
+		{name: "empty list", areas: "areas: []\n", refused: false},
+		{name: "absent", areas: "", refused: false},
+		// Not a declaration areas.yml would accept either, so there is nothing
+		// being silently undeclared.
+		{name: "scalar", areas: "areas: web\n", refused: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := writeStoreConfig(t, "nibs:\n    prefix: t-\n"+tt.areas)
+
+			_, err := LoadFromStore(dir)
+			if !tt.refused {
+				if err != nil {
+					t.Fatalf("LoadFromStore: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("LoadFromStore accepted an `areas:` block in config.yml, want a refusal")
+			}
+			for _, want := range []string{"areas:", filepath.Join(dir, store.AreasFileName), "config.yml"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not mention %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+// A config.yml with no areas block loads whatever areas.yml beside it holds:
+// the vocabulary is not config's to read.
+func TestConfigLoadsBesideAnAreasFile(t *testing.T) {
+	dir := writeStoreConfig(t, "nibs:\n    prefix: t-\n")
+	if err := os.WriteFile(filepath.Join(dir, store.AreasFileName), []byte("areas:\n    - name: web\n"), 0o644); err != nil {
+		t.Fatalf("writing areas: %v", err)
+	}
+
+	cfg, err := LoadFromStore(dir)
+	if err != nil {
+		t.Fatalf("LoadFromStore: %v", err)
+	}
+	if cfg.Nibs.Prefix != "t-" {
+		t.Errorf("prefix = %q, want t-", cfg.Nibs.Prefix)
+	}
+}
+
+// TestStoredPrefixEditLeavesTheVocabularyAlone pins the independence of the two
+// files: the prefix editor rewrites config.yml, and areas.yml is not its file
+// to touch.
+func TestStoredPrefixEditLeavesTheVocabularyAlone(t *testing.T) {
+	dir := writeStoreConfig(t, "nibs:\n    prefix: t-\n")
+	areasPath := filepath.Join(dir, store.AreasFileName)
+	before := []byte("areas:\n    - name: web\n      # a comment a re-marshal would drop\n      children:\n        - name: dashboard\n")
+	if err := os.WriteFile(areasPath, before, 0o644); err != nil {
+		t.Fatalf("writing areas: %v", err)
+	}
+
+	setStoredPrefix(t, dir, "new-")
+
+	after, err := os.ReadFile(areasPath)
+	if err != nil {
+		t.Fatalf("reading areas after the edit: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("the prefix edit rewrote areas.yml:\n--- before ---\n%s\n--- after ---\n%s", before, after)
+	}
+
+	cfg, err := LoadFromStore(dir)
+	if err != nil {
+		t.Fatalf("LoadFromStore: %v", err)
+	}
+	if cfg.Nibs.Prefix != "new-" {
+		t.Errorf("Prefix = %q, want \"new-\"", cfg.Nibs.Prefix)
 	}
 }

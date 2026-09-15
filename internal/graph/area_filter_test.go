@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 )
@@ -16,11 +16,11 @@ import (
 // roots — `web` and `webhooks` — share a name prefix, which is what separates a
 // tree descent from a string-prefix test: nothing else in the fixture can tell
 // `strings.HasPrefix(area, ancestor)` apart from genuine closure.
-func areaFilterAreas() *config.Areas {
-	return &config.Areas{Nodes: []config.AreaConfig{
-		{Name: "web", Children: []config.AreaConfig{
+func areaFilterAreas() *area.Vocabulary {
+	return &area.Vocabulary{Nodes: []area.Node{
+		{Name: "web", Children: []area.Node{
 			{Name: "dashboard"},
-			{Name: "settings", Children: []config.AreaConfig{{Name: "billing"}}},
+			{Name: "settings", Children: []area.Node{{Name: "billing"}}},
 		}},
 		{Name: "webhooks"},
 		{Name: "auth"},
@@ -149,7 +149,7 @@ func TestAreaFilterRefusesAnUndeclaredValue(t *testing.T) {
 // edit and not a different flag value.
 func TestAreaFilterInAStoreDeclaringNoAreasSaysWhy(t *testing.T) {
 	reader := areaFilterFixture()
-	reader.areas = &config.Areas{} // no vocabulary at all
+	reader.areas = &area.Vocabulary{} // no vocabulary at all
 	if !reader.areas.IsEmpty() {
 		t.Fatal("the fixture still declares areas, so this row proves nothing")
 	}

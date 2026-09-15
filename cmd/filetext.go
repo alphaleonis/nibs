@@ -110,7 +110,7 @@ func sanitizeFileText(s string) string {
 // them would name a directory that is not there.
 //
 // The bound is what separates it from stripControlChars. A `nibs.path` value is
-// read from a config file that may be up to config.MaxConfigBytes, and the
+// read from a config file that may be up to yamlfile.MaxBytes, and the
 // resolved path a refusal echoes is that value joined onto the project directory —
 // so the message repeated a megabyte of attacker-chosen text per interpolation,
 // with only the QUOTED value bounded beside it.

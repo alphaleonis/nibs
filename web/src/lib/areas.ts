@@ -3,7 +3,7 @@
  * generated into `generated/vocabulary.ts`, areas are per-store, so this arrives
  * at runtime over `Config.areas`.
  *
- * The methods mirror `config.Areas`'s `Get`, `Exists`, `IsWithin` and
+ * The methods mirror `area.Vocabulary`'s `Get`, `Exists`, `IsWithin` and
  * `IsEmpty`; ask them rather than re-deriving. Pure: no Svelte, no urql.
  */
 
@@ -29,18 +29,18 @@ export type AreaValidity = "declared" | "undeclared" | "unknown";
 
 export interface AreaVocabulary {
   /**
-   * "none": the project declares no areas (`Areas.IsEmpty`), a permanent state
+   * "none": the project declares no areas (`Vocabulary.IsEmpty`), a permanent state
    * distinct from "loading". "unavailable": the config query failed, so neither
    * an answer nor "none" is coming.
    */
   readonly status: "loading" | "none" | "ready" | "unavailable";
   /** Every declared area in the server's order: siblings by name, parents first. */
   sections(): readonly AreaNode[];
-  /** The declared area a stored `area:` names, or null (`Areas.Get`). */
+  /** The declared area a stored `area:` names, or null (`Vocabulary.Get`). */
   resolve(stored: string): AreaNode | null;
-  /** `Areas.Exists`, plus "unknown" before the vocabulary loads. */
+  /** `Vocabulary.Exists`, plus "unknown" before the vocabulary loads. */
   validity(path: string): AreaValidity;
-  /** `path` and every area declared beneath it (`Areas.IsWithin`). Empty when
+  /** `path` and every area declared beneath it (`Vocabulary.IsWithin`). Empty when
    *  `path` names no declared area. */
   subtreeOf(path: string): readonly AreaNode[];
   /** What completes `area:<partial>` — `sections()` order, case-insensitive substring. */
@@ -51,7 +51,7 @@ export interface AreaVocabulary {
  * A declared color if it is a bare CSS color name or hex code, else null. The
  * value reaches an inline style, where a `;` would open another declaration, so
  * narrow it here even though the server validates the same shapes
- * (`config.ValidateAreaColor`).
+ * (`area.ValidateColor`).
  */
 export function cssColor(color: string): string | null {
   return /^[a-zA-Z]+$|^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(color) ? color : null;
@@ -127,7 +127,7 @@ export const UNAVAILABLE_AREAS: AreaVocabulary = Object.freeze({
  * The `Select` value for "no area", because a Select reads "" as nothing
  * selected; `fromSelectValue` translates back. The leading "/" keeps it distinct
  * from every declared path, since an area name may not be empty or contain "/"
- * (`validateAreaNodes`). Same value as viewSpine's `NO_AREA_KEY`.
+ * (`area.validateNodes`). Same value as viewSpine's `NO_AREA_KEY`.
  */
 export const NO_AREA = "/__no_area__";
 

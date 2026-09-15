@@ -204,18 +204,18 @@ func (e *FilterTargetUnreadableError) Error() string {
 //
 // Do not add Unwrap — see FilterTargetEmptyError.
 //
-// Its message is worded for a FILTER rather than reusing config.AreaError, which
+// Its message is worded for a FILTER rather than reusing area.Error, which
 // prescribes `nibs set` escapes for a nib whose stored value is refused. It
-// restates no rule: membership is Areas.Exists's, whether the axis is in use at
-// all is Areas.IsEmpty's, and the declared set is rendered by Areas.List.
+// restates no rule: membership is Vocabulary.Exists's, whether the axis is in use at
+// all is Vocabulary.IsEmpty's, and the declared set is rendered by Vocabulary.List.
 type FilterAreaError struct {
 	// Field is the GraphQL filter field that carried the value — "area", the
 	// same spelling as in the schema.
 	Field string
-	// Path is the refused value, already through config.RenderAreaPath. It is
+	// Path is the refused value, already through area.RenderPath. It is
 	// empty exactly when the caller supplied the empty string.
 	Path string
-	// Declared is the vocabulary as Areas.List renders it, empty when the store
+	// Declared is the vocabulary as Vocabulary.List renders it, empty when the store
 	// declares none.
 	Declared string
 }

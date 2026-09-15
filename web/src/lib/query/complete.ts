@@ -121,7 +121,7 @@ export function getCompletion(
   // paths are case-sensitive.
   if (!negated && name.toLowerCase() === AREA_FIELD) {
     const segment = body.slice(colon + 1);
-    // `validateAreaNodes` (internal/config/areas.go) allows interior whitespace in
+    // `area.validateNodes` allows interior whitespace in
     // a declared name, but the grammar splits on whitespace and has no quoting:
     // inserting `Web UI` would write `area:Web` plus free text `UI`.
     const items = (options.areas?.completions(segment) ?? []).filter((p) => !/\s/.test(p));

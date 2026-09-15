@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io/fs"
 
+	"github.com/alphaleonis/nibs/internal/safetext"
 	"github.com/alphaleonis/nibs/internal/store"
+	"github.com/alphaleonis/nibs/internal/yamlfile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -39,7 +41,7 @@ func (e *StoredPrefixEdit) Path() string { return e.path }
 // Write applies the planned edit, keeping the file's permission bits. A symlink
 // at the path is replaced by a regular file, reported as staleLinkTarget.
 func (e *StoredPrefixEdit) Write() (staleLinkTarget string, err error) {
-	return writeConfigPreservingMode(e.path, e.out)
+	return yamlfile.WritePreservingMode(e.path, e.out)
 }
 
 // PlanSetStoredPrefix resolves a change of the `nibs.prefix` key in the config
@@ -65,14 +67,14 @@ func (e *StoredPrefixEdit) Write() (staleLinkTarget string, err error) {
 // `!!merge` tag, and the rewritten key loses its quoting style.
 func PlanSetStoredPrefix(storeDir, prefix string) (*StoredPrefixEdit, error) {
 	path := store.NewLayout(storeDir).ConfigPath()
-	data, err := ReadConfigFile(path)
+	data, err := yamlfile.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
 	}
 
-	doc, err := soleConfigDocument(data)
+	doc, err := yamlfile.SoleDocument(data)
 	if err != nil {
-		if errors.Is(err, errMultipleConfigDocuments) {
+		if errors.Is(err, yamlfile.ErrMultipleDocuments) {
 			return nil, refusePrefixEdit(
 				"%s holds more than one YAML document, and rewriting its prefix would rewrite the file from the first one alone — move anything after the `---` into its own file, or delete the marker if nothing follows it, then rerun",
 				path)
@@ -95,7 +97,7 @@ func PlanSetStoredPrefix(storeDir, prefix string) (*StoredPrefixEdit, error) {
 	if edited.Nibs.Prefix != prefix {
 		return nil, refusePrefixEdit(
 			"%s would still read its prefix as %q after the edit, because this edit can only address a literal `nibs:` mapping — write `prefix: %s` out under `nibs:`, then rerun",
-			path, echoedYAMLName(edited.Nibs.Prefix), prefix)
+			path, safetext.StripBounded(edited.Nibs.Prefix), prefix)
 	}
 	return &StoredPrefixEdit{path: path, out: out}, nil
 }
@@ -112,7 +114,7 @@ func setNestedScalar(doc *yaml.Node, section, key, value string) {
 	}
 	root := doc.Content[0]
 	nullToEmptyMapping(root)
-	sectionNode := mappingValueNode(root, section)
+	sectionNode := yamlfile.MappingValue(root, section)
 	if sectionNode == nil {
 		sectionNode = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 		root.Content = append(root.Content,
@@ -121,7 +123,7 @@ func setNestedScalar(doc *yaml.Node, section, key, value string) {
 	} else {
 		nullToEmptyMapping(sectionNode)
 	}
-	if existing := mappingValueNode(sectionNode, key); existing != nil {
+	if existing := yamlfile.MappingValue(sectionNode, key); existing != nil {
 		existing.Kind = yaml.ScalarNode
 		existing.Tag = "!!str"
 		existing.Value = value

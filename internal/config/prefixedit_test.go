@@ -316,8 +316,7 @@ future_key:
 }
 
 // TestStoredPrefixEditPreservesTheConfigsMode holds set-prefix to the contract
-// TestStoredAreaEditsPreserveMode holds the area edits to, and Save to through
-// TestSavePreservesTheConfigsPermissions: a config kept private stays private
+// the area edits and Save are held to: a config kept private stays private
 // across a rewrite that reads the file and writes it back.
 //
 // It stands apart from the round trip above rather than being one more assertion

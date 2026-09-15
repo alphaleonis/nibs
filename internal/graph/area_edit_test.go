@@ -232,7 +232,7 @@ func TestRenameAreaRefusesASiblingNameBeforeTouchingAMember(t *testing.T) {
 //
 // The last row is the one this surface creates: the wire carries a name of any
 // length the request body holds, and a long enough one writes an areas.yml past
-// MaxConfigBytes — which Core.Load refuses before it walks the nibs, leaving a
+// yamlfile.MaxBytes — which Core.Load refuses before it walks the nibs, leaving a
 // store no command can open, this mutation included.
 func TestRenameAreaArgumentRefusals(t *testing.T) {
 	tests := []struct {
