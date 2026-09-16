@@ -266,6 +266,59 @@ func TestETagErrorPresenter_TagsBulkReorderPreValidationConflict(t *testing.T) {
 	}
 }
 
+// TestETagErrorPresenter_TagsAreaEditIOFailures pins the code a served area
+// mutation needs to be routable: a filesystem failure is tagged AREA_EDIT_FAILED,
+// while a refusal about what the caller SENT is left uncoded for the generic
+// error path. Uncoded, the two arrive differing only in prose, for a mutation
+// whose partial failure leaves nibs carrying an undeclared area.
+func TestETagErrorPresenter_TagsAreaEditIOFailures(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("tags the typed AreaEditIOError", func(t *testing.T) {
+		err := &nibcore.AreaEditIOError{
+			Phase: nibcore.AreaEditPhaseWrite,
+			Path:  "web",
+			Cause: errors.New("disk full"),
+		}
+
+		gqlErr := etagErrorPresenter(ctx, err)
+
+		if gqlErr.Extensions["code"] != "AREA_EDIT_FAILED" {
+			t.Errorf("extensions.code = %v, want %q", gqlErr.Extensions["code"], "AREA_EDIT_FAILED")
+		}
+		if gqlErr.Message != err.Error() {
+			t.Errorf("message = %q, want it preserved verbatim: it is what says whether anything was written", gqlErr.Message)
+		}
+	})
+
+	t.Run("tags one wrapped in a surface's own sentence", func(t *testing.T) {
+		// What the resolver does: it words the refusal and wraps the typed error,
+		// which is why the arm uses errors.As rather than a type assertion.
+		wrapped := fmt.Errorf("rewrote 3 nibs, then the store's areas.yml could not be updated: %w",
+			&nibcore.AreaEditIOError{Phase: nibcore.AreaEditPhaseCascade, Cause: errors.New("permission denied")})
+
+		gqlErr := etagErrorPresenter(ctx, wrapped)
+
+		if gqlErr.Extensions["code"] != "AREA_EDIT_FAILED" {
+			t.Errorf("extensions.code = %v, want %q", gqlErr.Extensions["code"], "AREA_EDIT_FAILED")
+		}
+	})
+
+	t.Run("leaves a content refusal uncoded", func(t *testing.T) {
+		// The CONTENT counterpart of the error above: area.EditRefusal is about
+		// what the file or the argument says, and the caller fixes it rather than
+		// rerunning. It must not take the filesystem code.
+		err := fmt.Errorf("this store's areas.yml declares no area %q", "web")
+
+		gqlErr := etagErrorPresenter(ctx, err)
+
+		if _, coded := gqlErr.Extensions["code"]; coded {
+			t.Errorf("extensions.code = %v, want none: a refusal about what was sent is not a filesystem failure",
+				gqlErr.Extensions["code"])
+		}
+	})
+}
+
 // TestWireErrorCodeConstantsAreNamedInTheSchema requires the SDL to spell every
 // wire code the error presenter can mint. The SDL is the shipped contract — its
 // descriptions propagate verbatim into internal/graph/model/models_gen.go, into
@@ -290,7 +343,7 @@ func TestWireErrorCodeConstantsAreNamedInTheSchema(t *testing.T) {
 		t.Fatalf("read %s: %v", schemaPath, err)
 	}
 
-	for _, code := range []string{wireCodeETagMismatch, wireCodeFilterContradiction, wireCodeNotFound} {
+	for _, code := range []string{wireCodeETagMismatch, wireCodeFilterContradiction, wireCodeNotFound, wireCodeAreaEditFailed} {
 		// A whole-word match, not a parse: the claim is only that the contract
 		// SPELLS the code, which is what a client greps for and what survives any
 		// rewording of the sentence around it. RE2 counts _ as a word character,

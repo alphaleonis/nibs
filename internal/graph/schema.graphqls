@@ -258,6 +258,14 @@ type Mutation {
   after the cascade would leave the members undeclared and every later write to
   them refused for it.
 
+  A failure on the FILESYSTEM — the store's write lock, either re-read under it,
+  a member nib's rewrite, the areas.yml write, or the re-read of what it just
+  wrote — carries extensions.code = "AREA_EDIT_FAILED", which a rejected argument
+  does not. The two need different offers: this one is repaired by rerunning the
+  same mutation, a rejected argument by changing it. The code says the class and
+  the MESSAGE says what is on disk — whether anything was rewritten, and whether
+  a rerun is the repair — so show the message with it.
+
   Returns AreaEditPayload: the whole vocabulary for the reason that type gives,
   plus any note this edit owes its caller.
   """
@@ -283,6 +291,11 @@ type Mutation {
   is a `moveTo` this store does not declare, or one declared at or below the node
   being retired — that target is about to stop existing, so moving work into it
   produces the very state the member refusal exists to prevent.
+
+  A filesystem failure carries extensions.code = "AREA_EDIT_FAILED", for the
+  reason and with the caveat renameArea states: the code is the class, the
+  message says whether the members were already disposed of and whether a rerun
+  finishes the job.
 
   Returns AreaEditPayload, for the reason renameArea does.
   """

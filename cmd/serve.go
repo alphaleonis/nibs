@@ -528,6 +528,20 @@ func newGraphQLHandler(app *App, wsPingPong time.Duration) http.Handler {
 // refusal exists to replace. The CLI keys on the Go error chain instead and
 // gives it exit 2 (see filterTargetErrCode).
 //
+//   - "AREA_EDIT_FAILED" on the typed *nibcore.AreaEditIOError — an area
+//     vocabulary edit that failed on the FILESYSTEM, as opposed to a refusal
+//     about what was sent. Uncoded, the two are one destructive error box, and
+//     they need different offers: this one is repaired by rerunning the same
+//     mutation, a rejected argument by changing it.
+//
+//     The code says the class, NOT what is on disk. The type spans a failure
+//     that wrote nothing (the lock, either re-read under it) and one that
+//     rewrote members without updating the vocabulary, which leaves those nibs
+//     carrying an undeclared path and write-refused until a rerun finishes the
+//     job. The MESSAGE is what says which, and it is the one an operator acts
+//     on, so a client showing this code must show the message with it. The CLI
+//     collapses the same span to FILE_ERROR (exit 5) for the same reason.
+//
 // The web classifiers key on these codes first; the "etag mismatch" substring
 // match is kept only as a fallback (see web/src/lib/nibForm.svelte.ts,
 // isEtagConflict). The message text is preserved verbatim here so that fallback
@@ -537,11 +551,16 @@ func etagErrorPresenter(ctx context.Context, err error) *gqlerror.Error {
 
 	var etagErr *nibcore.ETagMismatchError
 	var contradiction *graph.FilterTargetContradictionError
+	var areaEditErr *nibcore.AreaEditIOError
 	switch {
 	case errors.As(err, &etagErr):
 		setErrorCode(gqlErr, wireCodeETagMismatch)
 	case errors.As(err, &contradiction):
 		setErrorCode(gqlErr, wireCodeFilterContradiction)
+	// Independent of the arms around it: AreaEditIOError implements no Unwrap, so
+	// no sentinel below can claim it and it can claim no sentinel.
+	case errors.As(err, &areaEditErr):
+		setErrorCode(gqlErr, wireCodeAreaEditFailed)
 	case errors.Is(err, nib.ErrNotFound):
 		setErrorCode(gqlErr, wireCodeNotFound)
 	}
@@ -559,21 +578,27 @@ func etagErrorPresenter(ctx context.Context, err error) *gqlerror.Error {
 //
 // Each of these is a shipped contract: it must be NAMED in
 // internal/graph/schema.graphqls wherever the refusal that carries it is
-// described, because those descriptions are what a client is given — the SDL
-// itself, the doc comments codegen copies into model/models_gen.go and
-// web/src/lib/gql/graphql.ts, and `nibs catalog schema`, which an agent reads.
-// A code the presenter mints but the SDL never names is one no client can
-// discover.
+// described, because that file is what a client is given — the SDL itself, and
+// `nibs catalog schema`, which an agent reads. A code the presenter mints but
+// the SDL never names is one no client can discover.
+//
+// The generated artifacts carry less than the SDL does, so naming a code in one
+// of them instead would reach nobody: gqlgen copies a TYPE's description into
+// model/models_gen.go but not a mutation FIELD's — and a refusal is described on
+// the field — while web/src/lib/gql/graphql.ts, which graphql-codegen writes
+// from the operations, carried neither. Measured by grepping both files for a
+// description of each kind.
 //
 // TestWireErrorCodeConstantsAreNamedInTheSchema requires the SDL to spell each
-// constant below. It reads its own copy of that list, so a fourth constant has
-// to be added there too — nothing enforces that. Neither does anything enforce
-// that a code is named at every site whose refusal really carries it, and at no
-// site whose refusal does not; that stays a review obligation.
+// constant below. It reads its own copy of that list, so a constant added here
+// has to be added there too — nothing enforces that. Neither does anything
+// enforce that a code is named at every site whose refusal really carries it,
+// and at no site whose refusal does not; that stays a review obligation.
 const (
 	wireCodeETagMismatch        = "ETAG_MISMATCH"
 	wireCodeFilterContradiction = "FILTER_CONTRADICTION"
 	wireCodeNotFound            = "NOT_FOUND"
+	wireCodeAreaEditFailed      = "AREA_EDIT_FAILED"
 )
 
 // setErrorCode attaches a stable extensions.code to a presented GraphQL error,
