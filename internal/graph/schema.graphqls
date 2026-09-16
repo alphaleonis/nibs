@@ -258,13 +258,10 @@ type Mutation {
   after the cascade would leave the members undeclared and every later write to
   them refused for it.
 
-  Returns the whole Config rather than the edited node. `Config.areas` is
-  flattened with siblings sorted by name and a subtree is the maximal following run at
-  greater `depth`, so a client cannot splice one node into its copy correctly.
-  It is also the shape `configChanged` delivers, so a client re-renders from one
-  shape whether the edit was its own or another process's.
+  Returns AreaEditPayload: the whole vocabulary for the reason that type gives,
+  plus any note this edit owes its caller.
   """
-  renameArea(input: RenameAreaInput!): Config!
+  renameArea(input: RenameAreaInput!): AreaEditPayload!
 
   """
   Retire the declared area at `path` together with every area declared beneath
@@ -287,9 +284,37 @@ type Mutation {
   being retired — that target is about to stop existing, so moving work into it
   produces the very state the member refusal exists to prevent.
 
-  Returns the whole Config, for the reason renameArea does.
+  Returns AreaEditPayload, for the reason renameArea does.
   """
-  removeArea(input: RemoveAreaInput!): Config!
+  removeArea(input: RemoveAreaInput!): AreaEditPayload!
+}
+
+"""
+What an area mutation answers with: the vocabulary as it now stands, and any
+notes the edit owes the caller.
+
+`config` is the whole Config rather than the edited node. `Config.areas` is
+flattened with siblings sorted by name and a subtree is the maximal following run
+at greater `depth`, so a client cannot splice one node into its copy correctly. It
+is also the shape `configChanged` delivers, so a client re-renders from one shape
+whether the edit was its own or another process's.
+
+`notes` is empty for an ordinary edit, and every entry is something the caller has
+to ACT on — the mutation succeeded, so a failure is an error rather than a note.
+Today there is one: the store's areas.yml was a symlink and this edit replaced it
+with a regular file. That matters because restoring the link brings back the
+pre-edit vocabulary while the nibs this edit rewrote stay as it left them, on
+paths that vocabulary does not declare.
+
+A NOTE NAMES NO FILESYSTEM PATH. It answers an unauthenticated HTTP client, where
+an absolute path discloses the operating-system username and the project layout,
+and `nibs serve` scrubs rendered ERROR messages rather than the data of a
+successful answer. The link target is named on the store's warning sink instead,
+which is where the operator running the server reads.
+"""
+type AreaEditPayload {
+  config: Config!
+  notes: [String!]!
 }
 
 """

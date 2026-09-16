@@ -28,7 +28,7 @@ import (
 
 // renameAreaImpl renames the declared node at input.Path, cascading to every nib
 // assigned at or below it.
-func (r *mutationResolver) renameAreaImpl(ctx context.Context, input model.RenameAreaInput) (*model.Config, error) {
+func (r *mutationResolver) renameAreaImpl(ctx context.Context, input model.RenameAreaInput) (*model.AreaEditPayload, error) {
 	// Answered before the call: the arguments alone decide it, and waiting for
 	// the store's write lock has no deadline but this request's own end. The
 	// store refuses these names again under the lock, in wording about the file.
@@ -40,14 +40,13 @@ func (r *mutationResolver) renameAreaImpl(ctx context.Context, input model.Renam
 	if err != nil {
 		return nil, wordAreaRenameFailure(err)
 	}
-	r.reportStaleAreaLink(res)
-	return configResultWithAreas(r.Reader, res.Areas), nil
+	return r.areaEditResult(res), nil
 }
 
 // removeAreaImpl retires the declared node at input.Path together with the
 // subtree it heads, disposing of every nib assigned at or below it as the input
 // says.
-func (r *mutationResolver) removeAreaImpl(ctx context.Context, input model.RemoveAreaInput) (*model.Config, error) {
+func (r *mutationResolver) removeAreaImpl(ctx context.Context, input model.RemoveAreaInput) (*model.AreaEditPayload, error) {
 	disposition, err := areaDisposition(input)
 	if err != nil {
 		return nil, err
@@ -57,8 +56,7 @@ func (r *mutationResolver) removeAreaImpl(ctx context.Context, input model.Remov
 	if err != nil {
 		return nil, wordAreaRetireFailure(err)
 	}
-	r.reportStaleAreaLink(res)
-	return configResultWithAreas(r.Reader, res.Areas), nil
+	return r.areaEditResult(res), nil
 }
 
 // validateAreaRenameArgument refuses a new name the argument alone rules out.
@@ -90,20 +88,36 @@ func areaDisposition(input model.RemoveAreaInput) (nibcore.AreaDisposition, erro
 	}
 }
 
-// reportStaleAreaLink passes on the note an edit owes when the areas.yml it
-// replaced was a SYMLINK: the atomic write leaves a regular file in its place, so
-// restoring the old target brings back the pre-edit vocabulary while the nibs
-// this edit rewrote stay as it left them — after a rename, on a path that
-// vocabulary does not declare.
+// areaEditResult is what both verbs answer with: the vocabulary this edit left
+// behind, and whatever notes it owes the caller.
+func (r *mutationResolver) areaEditResult(res nibcore.AreaEditResult) *model.AreaEditPayload {
+	return &model.AreaEditPayload{
+		Config: configResultWithAreas(r.Reader, res.Areas),
+		Notes:  r.areaEditNotes(res),
+	}
+}
+
+// areaEditNotes renders the notes an edit owes its caller, and sends each to the
+// store's warning sink as well. The two readers are different people: the payload
+// answers the API client, the sink is where the operator running `nibs serve`
+// reads.
 //
-// It goes to the store's warning sink; the answer is a Config, so carrying a
-// warning to the client would be a schema change.
-func (r *mutationResolver) reportStaleAreaLink(res nibcore.AreaEditResult) {
+// There is one note today — the areas.yml this edit replaced was a SYMLINK, and
+// the atomic write left a regular file in its place. Restoring that link brings
+// back the pre-edit vocabulary while the nibs this edit rewrote stay as it left
+// them, after a rename on a path that vocabulary does not declare.
+//
+// THE NOTE NAMES NO PATH AND THE WARNING DOES, per this file's rule: the note
+// travels to an HTTP client, and `nibs serve` scrubs rendered ERROR messages
+// rather than the data of a successful answer, so a path here would reach that
+// client unscrubbed.
+func (r *mutationResolver) areaEditNotes(res nibcore.AreaEditResult) []string {
 	if res.StaleLinkTarget == "" {
-		return
+		return nil
 	}
 	r.AreaWriter.Warn("this store's areas.yml was a symlink to %s and is now a regular file; %s still declares the old vocabulary, so update or remove it",
 		res.StaleLinkTarget, res.StaleLinkTarget)
+	return []string{"this store's areas.yml was a symlink and is now a regular file; the link's old target still declares the vocabulary as it was before this edit, so update or remove it — restoring that link would undo this edit while the nibs it rewrote stay as they are"}
 }
 
 func wordAreaRenameFailure(err error) error {

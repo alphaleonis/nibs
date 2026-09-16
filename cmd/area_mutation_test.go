@@ -46,7 +46,7 @@ func TestAreaMutationErrorClassesMatchTheAreaCommands(t *testing.T) {
 		app := setupAreaMutationApp(t)
 
 		_, _, err := executeQuery(app,
-			`mutation { renameArea(input: {path: "nosuch", newName: "platform"}) { prefix } }`, nil, "")
+			`mutation { renameArea(input: {path: "nosuch", newName: "platform"}) { config { prefix } } }`, nil, "")
 		if err == nil {
 			t.Fatal("renameArea over an undeclared path returned no error")
 		}
@@ -73,7 +73,7 @@ func TestAreaMutationErrorClassesMatchTheAreaCommands(t *testing.T) {
 		}
 
 		_, _, err := executeQuery(app,
-			`mutation { renameArea(input: {path: "web", newName: "platform"}) { prefix } }`, nil, "")
+			`mutation { renameArea(input: {path: "web", newName: "platform"}) { config { prefix } } }`, nil, "")
 		if err == nil {
 			t.Fatal("renameArea over an unreadable vocabulary returned no error")
 		}
@@ -107,7 +107,7 @@ func TestAreaMutationErrorClassesMatchTheAreaCommands(t *testing.T) {
 		}
 
 		_, _, err := executeQuery(app,
-			`mutation { renameArea(input: {path: "auth", newName: "identity"}) { prefix } }`, nil, "")
+			`mutation { renameArea(input: {path: "auth", newName: "identity"}) { config { prefix } } }`, nil, "")
 		if err == nil {
 			t.Fatal("renameArea over an area retired under the lock returned no error")
 		}
@@ -132,7 +132,7 @@ func TestAreaMutationErrorClassesMatchTheAreaCommands(t *testing.T) {
 		}
 
 		_, _, err := executeQuery(app,
-			`mutation { renameArea(input: {path: "web", newName: "platform"}) { prefix } }`, nil, "")
+			`mutation { renameArea(input: {path: "web", newName: "platform"}) { config { prefix } } }`, nil, "")
 		if err == nil {
 			t.Fatal("renameArea over a vanished vocabulary returned no error")
 		}

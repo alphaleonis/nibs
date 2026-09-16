@@ -49,6 +49,11 @@ type ComplexityRoot struct {
 		Path        func(childComplexity int) int
 	}
 
+	AreaEditPayload struct {
+		Config func(childComplexity int) int
+		Notes  func(childComplexity int) int
+	}
+
 	Config struct {
 		Areas       func(childComplexity int) int
 		Prefix      func(childComplexity int) int
@@ -148,8 +153,8 @@ type MutationResolver interface {
 	ReorderNib(ctx context.Context, id string, afterID *string, beforeID *string, first *bool, parentID *string, ifMatch *string, scope model.OrderScope) (*nib.Nib, error)
 	ReorderChildren(ctx context.Context, parentID string, childIds []string, ifMatch []*model.ChildEtag) ([]*nib.Nib, error)
 	ReorderSiblings(ctx context.Context, siblingIds []string, afterID *string, beforeID *string, first *bool, ifMatch []*model.ChildEtag) ([]*nib.Nib, error)
-	RenameArea(ctx context.Context, input model.RenameAreaInput) (*model.Config, error)
-	RemoveArea(ctx context.Context, input model.RemoveAreaInput) (*model.Config, error)
+	RenameArea(ctx context.Context, input model.RenameAreaInput) (*model.AreaEditPayload, error)
+	RemoveArea(ctx context.Context, input model.RemoveAreaInput) (*model.AreaEditPayload, error)
 }
 type NibResolver interface {
 	Type(ctx context.Context, obj *nib.Nib) (string, error)
@@ -227,6 +232,19 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Area.Path(childComplexity), true
+
+	case "AreaEditPayload.config":
+		if e.ComplexityRoot.AreaEditPayload.Config == nil {
+			break
+		}
+
+		return e.ComplexityRoot.AreaEditPayload.Config(childComplexity), true
+	case "AreaEditPayload.notes":
+		if e.ComplexityRoot.AreaEditPayload.Notes == nil {
+			break
+		}
+
+		return e.ComplexityRoot.AreaEditPayload.Notes(childComplexity), true
 
 	case "Config.areas":
 		if e.ComplexityRoot.Config.Areas == nil {
@@ -848,6 +866,16 @@ func (ec *executionContext) childFields_Area(ctx context.Context, field graphql.
 		return ec.fieldContext_Area_depth(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type Area", field.Name)
+}
+
+func (ec *executionContext) childFields_AreaEditPayload(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "config":
+		return ec.fieldContext_AreaEditPayload_config(ctx, field)
+	case "notes":
+		return ec.fieldContext_AreaEditPayload_notes(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type AreaEditPayload", field.Name)
 }
 
 func (ec *executionContext) childFields_Config(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
@@ -1751,6 +1779,61 @@ func (ec *executionContext) fieldContext_Area_depth(_ context.Context, field gra
 	return graphql.NewScalarFieldContext("Area", field, false, false, errors.New("field of type Int does not have child fields"))
 }
 
+func (ec *executionContext) _AreaEditPayload_config(ctx context.Context, field graphql.CollectedField, obj *model.AreaEditPayload) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_AreaEditPayload_config(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Config, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *model.Config) graphql.Marshaler {
+			return ec.marshalNConfig2ᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐConfig(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_AreaEditPayload_config(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "AreaEditPayload",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Config(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _AreaEditPayload_notes(ctx context.Context, field graphql.CollectedField, obj *model.AreaEditPayload) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_AreaEditPayload_notes(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Notes, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []string) graphql.Marshaler {
+			return ec.marshalNString2ᚕstringᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_AreaEditPayload_notes(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("AreaEditPayload", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
 func (ec *executionContext) _Config_projectName(ctx context.Context, field graphql.CollectedField, obj *model.Config) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -2370,8 +2453,8 @@ func (ec *executionContext) _Mutation_renameArea(ctx context.Context, field grap
 			return ec.Resolvers.Mutation().RenameArea(ctx, fc.Args["input"].(model.RenameAreaInput))
 		},
 		nil,
-		func(ctx context.Context, selections ast.SelectionSet, v *model.Config) graphql.Marshaler {
-			return ec.marshalNConfig2ᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐConfig(ctx, selections, v)
+		func(ctx context.Context, selections ast.SelectionSet, v *model.AreaEditPayload) graphql.Marshaler {
+			return ec.marshalNAreaEditPayload2ᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐAreaEditPayload(ctx, selections, v)
 		},
 		true,
 		true,
@@ -2384,7 +2467,7 @@ func (ec *executionContext) fieldContext_Mutation_renameArea(ctx context.Context
 		IsMethod:   true,
 		IsResolver: true,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return ec.childFields_Config(ctx, field)
+			return ec.childFields_AreaEditPayload(ctx, field)
 		},
 	}
 	defer func() {
@@ -2414,8 +2497,8 @@ func (ec *executionContext) _Mutation_removeArea(ctx context.Context, field grap
 			return ec.Resolvers.Mutation().RemoveArea(ctx, fc.Args["input"].(model.RemoveAreaInput))
 		},
 		nil,
-		func(ctx context.Context, selections ast.SelectionSet, v *model.Config) graphql.Marshaler {
-			return ec.marshalNConfig2ᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐConfig(ctx, selections, v)
+		func(ctx context.Context, selections ast.SelectionSet, v *model.AreaEditPayload) graphql.Marshaler {
+			return ec.marshalNAreaEditPayload2ᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐAreaEditPayload(ctx, selections, v)
 		},
 		true,
 		true,
@@ -2428,7 +2511,7 @@ func (ec *executionContext) fieldContext_Mutation_removeArea(ctx context.Context
 		IsMethod:   true,
 		IsResolver: true,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return ec.childFields_Config(ctx, field)
+			return ec.childFields_AreaEditPayload(ctx, field)
 		},
 	}
 	defer func() {
@@ -5591,6 +5674,49 @@ func (ec *executionContext) _Area(ctx context.Context, sel ast.SelectionSet, obj
 	return out
 }
 
+var areaEditPayloadImplementors = []string{"AreaEditPayload"}
+
+func (ec *executionContext) _AreaEditPayload(ctx context.Context, sel ast.SelectionSet, obj *model.AreaEditPayload) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, areaEditPayloadImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("AreaEditPayload")
+		case "config":
+			out.Values[i] = ec._AreaEditPayload_config(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "notes":
+			out.Values[i] = ec._AreaEditPayload_notes(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
 var configImplementors = []string{"Config"}
 
 func (ec *executionContext) _Config(ctx context.Context, sel ast.SelectionSet, obj *model.Config) graphql.Marshaler {
@@ -7105,6 +7231,20 @@ func (ec *executionContext) marshalNArea2ᚖgithubᚗcomᚋalphaleonisᚋnibsᚋ
 		return graphql.Null
 	}
 	return ec._Area(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNAreaEditPayload2githubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐAreaEditPayload(ctx context.Context, sel ast.SelectionSet, v model.AreaEditPayload) graphql.Marshaler {
+	return ec._AreaEditPayload(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNAreaEditPayload2ᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐAreaEditPayload(ctx context.Context, sel ast.SelectionSet, v *model.AreaEditPayload) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._AreaEditPayload(ctx, sel, v)
 }
 
 func (ec *executionContext) unmarshalNBoolean2bool(ctx context.Context, v any) (bool, error) {

@@ -40,7 +40,7 @@ func TestRenameAreaRenamesADeclaredArea(t *testing.T) {
 		t.Fatalf("RenameArea: %v", err)
 	}
 
-	got := pathsOf(cfg.Areas)
+	got := pathsOf(cfg.Config.Areas)
 	want := []string{"auth", "platform", "platform/dashboard", "platform/ui"}
 	if !slices.Equal(got, want) {
 		t.Errorf("areas = %v, want %v", got, want)
@@ -274,7 +274,7 @@ func TestRemoveAreaRetiresTheSubtree(t *testing.T) {
 		t.Fatalf("RemoveArea: %v", err)
 	}
 
-	if got, want := pathsOf(cfg.Areas), []string{"auth"}; !slices.Equal(got, want) {
+	if got, want := pathsOf(cfg.Config.Areas), []string{"auth"}; !slices.Equal(got, want) {
 		t.Errorf("areas = %v, want %v", got, want)
 	}
 	stored := storedAreasFile(t, core.Root())
@@ -334,7 +334,7 @@ func TestRemoveAreaMoveToLandsMembersOnTheTarget(t *testing.T) {
 		t.Fatalf("RemoveArea(moveTo): %v", err)
 	}
 
-	if got, want := pathsOf(cfg.Areas), []string{"auth"}; !slices.Equal(got, want) {
+	if got, want := pathsOf(cfg.Config.Areas), []string{"auth"}; !slices.Equal(got, want) {
 		t.Errorf("areas = %v, want %v", got, want)
 	}
 	for _, id := range []string{"mv1", "mv2", "mv3"} {
@@ -358,7 +358,7 @@ func TestRemoveAreaUnassignClearsMembers(t *testing.T) {
 		t.Fatalf("RemoveArea(unassign): %v", err)
 	}
 
-	if got, want := pathsOf(cfg.Areas), []string{"auth"}; !slices.Equal(got, want) {
+	if got, want := pathsOf(cfg.Config.Areas), []string{"auth"}; !slices.Equal(got, want) {
 		t.Errorf("areas = %v, want %v", got, want)
 	}
 	for _, id := range []string{"un1", "un2"} {
@@ -988,11 +988,15 @@ func TestAreaMutationsAnswerArgumentsWithoutTheStore(t *testing.T) {
 	}
 }
 
-// TestAreaMutationReportsAReplacedSymlink: the answer is a Config, so the note
-// an edit owes when it replaced a symlinked areas.yml has nowhere to go on the
-// wire — it goes to the store's warning sink, where a running `nibs serve`
-// operator reads. Dropped, the mutation reports success over an edit that
-// whatever manages the link target is about to undo.
+// TestAreaMutationReportsAReplacedSymlink: the note an edit owes when it
+// replaced a symlinked areas.yml reaches BOTH readers — the caller, in the
+// payload, and the operator running `nibs serve`, on the store's warning sink.
+// Dropped, the mutation reports success over an edit that whatever manages the
+// link target is about to undo.
+//
+// Only the warning names the target. The payload answers an HTTP client, where a
+// path discloses the operating-system username and the project layout, and the
+// served scrub covers rendered errors rather than the data of a success.
 func TestAreaMutationReportsAReplacedSymlink(t *testing.T) {
 	resolver, core := setupTestResolverWithAreas(t)
 	stub := &stubAreaWriter{res: nibcore.AreaEditResult{
@@ -1001,9 +1005,24 @@ func TestAreaMutationReportsAReplacedSymlink(t *testing.T) {
 	}}
 	resolver.AreaWriter = stub
 
-	if _, err := resolver.Mutation().RenameArea(context.Background(),
-		model.RenameAreaInput{Path: "web", NewName: "platform"}); err != nil {
+	payload, err := resolver.Mutation().RenameArea(context.Background(),
+		model.RenameAreaInput{Path: "web", NewName: "platform"})
+	if err != nil {
 		t.Fatalf("RenameArea: %v", err)
+	}
+	if len(payload.Notes) != 1 {
+		t.Fatalf("notes = %v, want the stale-link note", payload.Notes)
+	}
+	for _, want := range []string{"symlink", "regular file", "update or remove it"} {
+		if !strings.Contains(payload.Notes[0], want) {
+			t.Errorf("note = %q, want substring %q", payload.Notes[0], want)
+		}
+	}
+	if strings.Contains(payload.Notes[0], "/srv/vocab") {
+		t.Errorf("note = %q, want no filesystem path: it answers an HTTP client", payload.Notes[0])
+	}
+	if payload.Config == nil {
+		t.Error("Config = nil, want the vocabulary this edit left behind")
 	}
 	if len(stub.warnings) != 1 {
 		t.Fatalf("warnings = %v, want the stale-link note", stub.warnings)
@@ -1014,13 +1033,17 @@ func TestAreaMutationReportsAReplacedSymlink(t *testing.T) {
 		}
 	}
 
-	// And an ordinary edit warns about nothing, so the note above is the
-	// replacement being reported and not a line every edit prints.
+	// And an ordinary edit reports nothing on either channel, so the note above
+	// is the replacement being reported and not a line every edit carries.
 	stub.res.StaleLinkTarget = ""
 	stub.warnings = nil
-	if _, err := resolver.Mutation().RenameArea(context.Background(),
-		model.RenameAreaInput{Path: "web", NewName: "platform"}); err != nil {
+	plain, err := resolver.Mutation().RenameArea(context.Background(),
+		model.RenameAreaInput{Path: "web", NewName: "platform"})
+	if err != nil {
 		t.Fatalf("RenameArea: %v", err)
+	}
+	if len(plain.Notes) != 0 {
+		t.Errorf("notes = %v, want none", plain.Notes)
 	}
 	if len(stub.warnings) != 0 {
 		t.Errorf("warnings = %v, want none", stub.warnings)

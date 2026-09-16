@@ -60,8 +60,8 @@ var servedMutations = []servedMutation{
 	{"reorderNib", `mutation { reorderNib(id: "c2", first: true) { id } }`},
 	{"reorderChildren", `mutation { reorderChildren(parentId: "ep1", childIds: ["c2", "c1"]) { id } }`},
 	{"reorderSiblings", `mutation { reorderSiblings(siblingIds: ["c1", "c2"], first: true) { id } }`},
-	{"renameArea", `mutation { renameArea(input: {path: "web", newName: "frontend"}) { prefix } }`},
-	{"removeArea", `mutation { removeArea(input: {path: "web", unassign: true}) { prefix } }`},
+	{"renameArea", `mutation { renameArea(input: {path: "web", newName: "frontend"}) { config { prefix } notes } }`},
+	{"removeArea", `mutation { removeArea(input: {path: "web", unassign: true}) { config { prefix } notes } }`},
 	{"archiveNib", `mutation { archiveNib(id: "t3") }`},
 	{"deleteNib", `mutation { deleteNib(id: "t2") }`},
 }

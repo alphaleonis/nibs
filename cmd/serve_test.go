@@ -953,7 +953,7 @@ func TestServedAreaEditStopsWaitingWhenTheClientGoesAway(t *testing.T) {
 	srv := httptest.NewServer(newServeMux(app, nil))
 	defer srv.Close()
 
-	const mutation = `{"query":"mutation { renameArea(input: {path: \"web\", newName: \"platform\"}) { prefix } }"}`
+	const mutation = `{"query":"mutation { renameArea(input: {path: \"web\", newName: \"platform\"}) { config { prefix } } }"}`
 	post := func(ctx context.Context) error {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL+"/graphql", strings.NewReader(mutation))
 		if err != nil {
