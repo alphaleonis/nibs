@@ -3,6 +3,7 @@ package nibcore
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"strings"
 	"testing"
@@ -68,6 +69,80 @@ func TestAreaAddBootstrapsAStoreWithNoVocabularyFile(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "name: platform") {
 		t.Errorf("areas.yml = %q, want it to declare platform", raw)
+	}
+}
+
+// TestAreaEditRefusesAVocabularyFileDeletedMidEdit is the adversarial twin of the
+// bootstrap above: the SAME absent file, and the opposite answer, because this
+// store HAD one when the edit began.
+//
+// The deletion lands after editArea's locked re-read, which is the one place its
+// own vanished check cannot see it — that check compares the vocabulary across
+// the re-read, so it answers for a file already gone before it, not one that goes
+// after. An add reaching the planner from there would synthesize an empty
+// document and write an areas.yml declaring the new area ALONE, undeclaring web,
+// web/ui and auth with nothing reporting it; a rename or a retire would refuse,
+// but as a refusal about the file's CONTENT, which is exit 2 for a store the
+// filesystem moved out from under the command.
+func TestAreaEditRefusesAVocabularyFileDeletedMidEdit(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(c *Core) error
+	}{
+		{
+			name: "declare",
+			edit: func(c *Core) error { _, err := c.AddArea(context.Background(), "platform", "", ""); return err },
+		},
+		{
+			name: "rename",
+			edit: func(c *Core) error { _, err := c.RenameArea(context.Background(), "web", "platform"); return err },
+		},
+		{
+			name: "retire",
+			edit: func(c *Core) error {
+				_, err := c.RemoveArea(context.Background(), "web", UnassignAreaMembers())
+				return err
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			core, nibsDir := areaVerbCore(t)
+			path := store.NewLayout(nibsDir).AreasPath()
+
+			// The window itself: a writer that takes no store lock — a `git pull`
+			// in .nibs is the routine one — removing the file between the re-read
+			// and the read the plan is planned from.
+			restore := readAreasFileForPlan
+			readAreasFileForPlan = func(p string) ([]byte, error) {
+				if err := os.Remove(path); err != nil {
+					t.Errorf("removing the vocabulary inside the window: %v", err)
+				}
+				return yamlfile.ReadFile(p)
+			}
+			t.Cleanup(func() { readAreasFileForPlan = restore })
+
+			err := tt.edit(core)
+			var vanished *AreaVocabularyVanishedError
+			if !errors.As(err, &vanished) {
+				raw, _ := os.ReadFile(path)
+				t.Fatalf("error = %v (%T), want *AreaVocabularyVanishedError; areas.yml now holds:\n%s", err, err, raw)
+			}
+			if vanished.File != path {
+				t.Errorf("File = %q, want %q", vanished.File, path)
+			}
+			// The refusal's whole point: the vocabulary this store declared is
+			// not replaced by one naming whatever the edit was told to declare.
+			if _, statErr := os.Stat(path); !errors.Is(statErr, fs.ErrNotExist) {
+				raw, _ := os.ReadFile(path)
+				t.Errorf("a refused edit wrote an areas.yml over the deleted one:\n%s", raw)
+			}
+			// Nothing was installed either, so the store still answers with what
+			// it last read rather than with the refused edit's idea of the tree.
+			if got := core.Areas(); !got.Exists("web/ui") || got.Exists("platform") {
+				t.Errorf("Areas = %v, want the pre-edit vocabulary", got.Paths())
+			}
+		})
 	}
 }
 

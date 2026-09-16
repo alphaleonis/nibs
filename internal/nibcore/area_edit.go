@@ -136,6 +136,11 @@ func (e *AreaRetiredWhileWaitingError) Error() string {
 // Both halves of the check are needed — loaded from a file before, not loaded
 // from one now — because a MISSING areas.yml loads as an empty
 // vocabulary and a nil error: a store that never had one looks the same.
+//
+// Two places raise it, because the deletion has two windows to land in: editArea
+// compares the vocabulary across its locked re-read, and planAreasFileLocked
+// answers for a file that survived that re-read and was gone by the read the
+// plan is planned from.
 type AreaVocabularyVanishedError struct {
 	// File is the areas.yml that is gone. Error() never renders it.
 	File string
@@ -347,6 +352,12 @@ var reloadAreasAfterEdit = (*Core).loadAreasLocked
 // re-read ITSELF, so a test cannot demonstrate the refusal against an edit that
 // never looks.
 var reloadNibsBeforeAreaWrite = (*Core).loadFromDisk
+
+// readAreasFileForPlan is yamlfile.ReadFile, indirected so a test can delete
+// areas.yml between editArea's locked re-read and the read the plan plans from —
+// the window planAreasFileLocked's vanished refusal exists for, and one no real
+// fault can be injected into.
+var readAreasFileForPlan = yamlfile.ReadFile
 
 // AddArea declares a new area at path and returns the vocabulary as it then
 // stands.
@@ -685,14 +696,29 @@ func countDeclaredBelow(areas *area.Vocabulary, path string) int {
 
 // planAreasFileLocked reads the store's areas.yml as it stands under the write
 // lock and hands its bytes to plan, one of the area planners. An absent file is
-// the planner's to decide on; any other read failure is returned as it came.
+// the planner's to decide on only where absence is legitimate — a store that
+// never declared an area — and is refused here for one this store read and no
+// longer finds; any other read failure is returned as it came.
 //
 // A refusal is given the file's path here, because the planner works on bytes
 // and cannot know it: a surface whose reader owns the store names it through
 // EditRefusal.Naming.
 func (c *Core) planAreasFileLocked(plan func(current []byte, exists bool) ([]byte, error)) ([]byte, error) {
 	path := c.layout.AreasPath()
-	current, err := yamlfile.ReadFile(path)
+	current, err := readAreasFileForPlan(path)
+	// An absent file is a BOOTSTRAP only for a store whose vocabulary did not
+	// come from one. editArea's check compares the vocabulary ACROSS its locked
+	// re-read, so it answers for a file already gone before that read and not for
+	// one deleted after it — and area.PlanCreate answers a missing file by
+	// synthesizing an empty document, so an add landing in that window would
+	// write an areas.yml declaring its own path alone.
+	//
+	// c.areasState() is the state that re-read installed: c.mu is held from
+	// before it until after the write, and loadAreasLocked is the one writer of
+	// c.areas.
+	if errors.Is(err, fs.ErrNotExist) && c.areasState().fromFile {
+		return nil, &AreaVocabularyVanishedError{File: path}
+	}
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
 	}
