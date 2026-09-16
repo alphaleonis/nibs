@@ -355,28 +355,27 @@ func TestSearch_InjectedIndexReceivesCRUDCalls(t *testing.T) {
 	})
 }
 
-func TestSearch_LoadRebuildsInjectedIndex(t *testing.T) {
+// TestSearch_LoadPopulatesInjectedIndex: an index installed after the store was
+// loaded holds nothing, and the next load is what fills it. The nib is created
+// BEFORE the injection, so the index is empty at the point Load runs — a
+// reload's job is to index what the index does not already hold, which for an
+// unchanged nib already in it is nothing (see TestSearch_LoadIndexesOnlyChanges).
+func TestSearch_LoadPopulatesInjectedIndex(t *testing.T) {
 	core, _ := setupTestCore(t)
 	defer func() { _ = core.Close() }()
 
-	spy := &spySearchIndex{}
-	core.SetSearchIndex(spy)
-
-	// Create a nib so there's data to re-index on Load
 	b := &nib.Nib{ID: "rld1", Title: "Reload Test", Body: "content"}
 	if err := core.Create(b); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
 
-	// Reset spy counters
-	spy.indexed = nil
+	spy := &spySearchIndex{}
+	core.SetSearchIndex(spy)
 
-	// Reload from disk — should re-index existing nibs into the search index
 	if err := core.Load(); err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
 
-	// After reload, the nib should be re-indexed
 	if len(spy.indexed) != 1 || spy.indexed[0] != "rld1" {
 		t.Errorf("after Load: indexed = %v, want [rld1]", spy.indexed)
 	}

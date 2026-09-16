@@ -161,6 +161,12 @@ type Core struct {
 	// Search index (optional, lazy-initialized)
 	searchIndex SearchIndex
 
+	// What searchIndex holds, by nib id: the digest of the text this Core last
+	// wrote there (see search_sync.go). Guarded by c.mu alongside c.nibs. It is
+	// what makes a reload index only the nibs that changed, so every path that
+	// indexes, drops or replaces the index maintains it.
+	indexedDigests map[string]uint64
+
 	// File watching (optional)
 	watching bool
 	done     chan struct{}
@@ -268,6 +274,9 @@ func (c *Core) Warn(format string, args ...any) {
 // concurrent use.
 func (c *Core) SetSearchIndex(idx SearchIndex) {
 	c.searchIndex = idx
+	// The replacement holds nothing this Core put there, so the next load treats
+	// every nib as unindexed.
+	c.indexedDigests = nil
 }
 
 // maxWarningsPerBatch bounds how many per-file diagnostics one batch — a whole
@@ -514,18 +523,11 @@ func (c *Core) loadFromDisk() error {
 
 	c.mentionIdx.Rebuild(c.nibs)
 
-	// Best-effort; a failure does not fail the load. Upserting rather than
-	// recreating preserves an injected SearchIndex across reloads, and stale
-	// entries are filtered out by Search's read of c.nibs.
-	if c.searchIndex != nil {
-		allNibs := make([]*nib.Nib, 0, len(c.nibs))
-		for _, b := range c.nibs {
-			allNibs = append(allNibs, b)
-		}
-		if err := c.searchIndex.IndexNibs(allNibs); err != nil {
-			c.logWarn("failed to re-populate search index after reload: %v", err)
-		}
-	}
+	// Only the nibs whose indexed text changed, and the ids that are gone: the
+	// whole-store re-index this replaced was the largest part of a load wherever
+	// an index was live, and it is charged inside c.mu, where every reader waits
+	// for it (nibs-lx4w).
+	c.syncSearchIndexLocked()
 
 	return nil
 }
@@ -670,6 +672,7 @@ func (c *Core) ensureSearchIndexLocked() error {
 	if err := c.searchIndex.IndexNibs(allNibs); err != nil {
 		return fmt.Errorf("populating search index: %w", err)
 	}
+	c.recordAllIndexedLocked()
 
 	return nil
 }
@@ -1161,6 +1164,9 @@ func (c *Core) Create(b *nib.Nib) error {
 	if c.searchIndex != nil {
 		if err := c.searchIndex.IndexNib(b); err != nil {
 			c.logWarn("failed to index nib %s: %v", b.ID, err)
+			c.forgetIndexedLocked(b.ID)
+		} else {
+			c.recordIndexedLocked(b)
 		}
 	}
 
@@ -1511,6 +1517,9 @@ func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 	if c.searchIndex != nil {
 		if err := c.searchIndex.IndexNib(b); err != nil {
 			c.logWarn("failed to update nib %s in search index: %v", b.ID, err)
+			c.forgetIndexedLocked(b.ID)
+		} else {
+			c.recordIndexedLocked(b)
 		}
 	}
 
@@ -1689,6 +1698,10 @@ func (c *Core) Delete(id string) error {
 		if err := c.searchIndex.DeleteNib(targetID); err != nil {
 			c.logWarn("failed to remove nib %s from search index: %v", targetID, err)
 		}
+		// Dropped even when the delete failed: the id is gone from the store, and
+		// a nib later recreated under it must be indexed rather than taken for
+		// one this Core already indexed.
+		c.forgetIndexedLocked(targetID)
 	}
 
 	return nil
@@ -1931,6 +1944,7 @@ func (c *Core) Close() error {
 			return err
 		}
 		c.searchIndex = nil
+		c.indexedDigests = nil
 	}
 
 	return c.unwatchLocked()
