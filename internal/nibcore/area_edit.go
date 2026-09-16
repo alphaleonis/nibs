@@ -347,11 +347,15 @@ func (p AreaEditPhase) describe() string {
 // real fault to inject.
 var reloadAreasAfterEdit = (*Core).loadAreasLocked
 
-// reloadNibsBeforeAreaWrite is Core.loadFromDisk, indirected so a test can land
-// a nib file inside the window this re-read exists to close. The seam is the
-// re-read ITSELF, so a test cannot demonstrate the refusal against an edit that
-// never looks.
+// reloadNibsBeforeAreaWrite is Core.loadFromDisk, indirected so a test can fail
+// the load an edit falls back to once its confirmation has found something.
 var reloadNibsBeforeAreaWrite = (*Core).loadFromDisk
+
+// confirmAreaMembersOnDisk is Core.scanAreaMembersOnDiskLocked, indirected so a
+// test can land a nib file inside the window the confirmation exists to close.
+// The seam is the confirmation ITSELF, so a test cannot demonstrate the refusal
+// against an edit that never looks.
+var confirmAreaMembersOnDisk = (*Core).scanAreaMembersOnDiskLocked
 
 // readAreasFileForPlan is yamlfile.ReadFile, indirected so a test can delete
 // areas.yml between editArea's locked re-read and the read the plan plans from —
@@ -609,15 +613,30 @@ func (c *Core) editArea(ctx context.Context, path string, plan func(before, now 
 	// the cascade walked, so the write below would retire a declaration that file
 	// still carries.
 	if p.emptied != "" {
-		if err := reloadNibsBeforeAreaWrite(c); err != nil {
+		left, err := confirmAreaMembersOnDisk(c, now, p.emptied)
+		if err != nil {
 			return AreaEditResult{}, &AreaEditIOError{
 				Phase: AreaEditPhaseConfirm, Path: p.path, NewPath: p.newPath, File: c.layout.AreasPath(),
 				Disposition: p.disposition, Written: written, Members: p.members, Cause: err,
 			}
 		}
-		if left := c.areaMembersLocked(now, p.emptied); len(left) > 0 {
-			return AreaEditResult{}, &AreaMembersArrivedError{
-				Path: p.emptied, Members: left, Written: written, NewPath: p.newPath,
+		// The scan answers the question and installs nothing, which is the whole
+		// saving — so the store is loaded only once something HAS arrived, where
+		// the edit is about to fail anyway and the refusal must name nibs this
+		// process can then answer Get for. The reloaded store decides the
+		// refusal, not the scan: if the arrival went away again in between, there
+		// is nothing left to strand and the write proceeds.
+		if len(left) > 0 {
+			if err := reloadNibsBeforeAreaWrite(c); err != nil {
+				return AreaEditResult{}, &AreaEditIOError{
+					Phase: AreaEditPhaseConfirm, Path: p.path, NewPath: p.newPath, File: c.layout.AreasPath(),
+					Disposition: p.disposition, Written: written, Members: p.members, Cause: err,
+				}
+			}
+			if reloaded := c.areaMembersLocked(now, p.emptied); len(reloaded) > 0 {
+				return AreaEditResult{}, &AreaMembersArrivedError{
+					Path: p.emptied, Members: reloaded, Written: written, NewPath: p.newPath,
+				}
 			}
 		}
 	}

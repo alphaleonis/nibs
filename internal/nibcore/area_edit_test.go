@@ -788,20 +788,20 @@ func TestAreaEditRefusesToStrandANibThatArrived(t *testing.T) {
 func TestARetireWithNoMembersConfirmsBeforeItWrites(t *testing.T) {
 	core, nibsDir := setupCoreWithDeclaredAreas(t)
 
-	restore := reloadNibsBeforeAreaWrite
+	restore := confirmAreaMembersOnDisk
 	landed := false
-	reloadNibsBeforeAreaWrite = func(c *Core) error {
+	confirmAreaMembersOnDisk = func(c *Core, areas *area.Vocabulary, path string) ([]string, error) {
 		if !landed {
 			landed = true
 			landNibOnDisk(t, nibsDir, "nibs-ae04", "web")
 		}
-		return restore(c)
+		return restore(c, areas, path)
 	}
-	t.Cleanup(func() { reloadNibsBeforeAreaWrite = restore })
+	t.Cleanup(func() { confirmAreaMembersOnDisk = restore })
 
 	_, err := core.RemoveArea(context.Background(), "web", AreaDisposition{})
 	if !landed {
-		t.Fatal("the edit never re-read the store, so nothing arrived inside the window")
+		t.Fatal("the edit never confirmed against the store, so nothing arrived inside the window")
 	}
 	var arrived *AreaMembersArrivedError
 	if !errors.As(err, &arrived) {
@@ -860,9 +860,11 @@ func TestAreaEditReportsAFailedConfirmation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			core, nibsDir := areaVerbCore(t)
 
-			restore := reloadNibsBeforeAreaWrite
-			reloadNibsBeforeAreaWrite = func(*Core) error { return errors.New("the store went unreadable") }
-			t.Cleanup(func() { reloadNibsBeforeAreaWrite = restore })
+			restore := confirmAreaMembersOnDisk
+			confirmAreaMembersOnDisk = func(*Core, *area.Vocabulary, string) ([]string, error) {
+				return nil, errors.New("the store went unreadable")
+			}
+			t.Cleanup(func() { confirmAreaMembersOnDisk = restore })
 
 			_, err := tt.edit(core)
 			var ioErr *AreaEditIOError
@@ -885,6 +887,39 @@ func TestAreaEditReportsAFailedConfirmation(t *testing.T) {
 				t.Errorf("the vocabulary was rewritten by an edit that could not confirm it:\n%s", stored)
 			}
 		})
+	}
+}
+
+// TestAreaEditReportsAFailedFallbackLoad covers the second half of the
+// confirmation: the scan answers the membership question and installs nothing,
+// so the store is loaded only once that scan HAS found something — on the path
+// where the edit is about to refuse and the refusal must name nibs this process
+// can answer for. That load has its own way of failing, and it lands in the same
+// phase as the scan's, because from the caller's side the confirmation is one
+// step whichever half of it could not be completed.
+func TestAreaEditReportsAFailedFallbackLoad(t *testing.T) {
+	core, nibsDir := areaVerbCore(t)
+
+	restoreScan := confirmAreaMembersOnDisk
+	confirmAreaMembersOnDisk = func(*Core, *area.Vocabulary, string) ([]string, error) {
+		return []string{"nibs-ae99"}, nil
+	}
+	t.Cleanup(func() { confirmAreaMembersOnDisk = restoreScan })
+
+	restoreLoad := reloadNibsBeforeAreaWrite
+	reloadNibsBeforeAreaWrite = func(*Core) error { return errors.New("the store went unreadable") }
+	t.Cleanup(func() { reloadNibsBeforeAreaWrite = restoreLoad })
+
+	_, err := core.RenameArea(context.Background(), "web", "platform")
+	var ioErr *AreaEditIOError
+	if !errors.As(err, &ioErr) {
+		t.Fatalf("error = %v (%T), want an *AreaEditIOError", err, err)
+	}
+	if ioErr.Phase != AreaEditPhaseConfirm {
+		t.Errorf("Phase = %d, want AreaEditPhaseConfirm", ioErr.Phase)
+	}
+	if stored := storedAreasOf(t, nibsDir); !strings.Contains(stored, "name: web") {
+		t.Errorf("the vocabulary was rewritten by an edit that could not confirm it:\n%s", stored)
 	}
 }
 
