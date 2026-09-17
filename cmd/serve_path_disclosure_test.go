@@ -62,6 +62,7 @@ var servedMutations = []servedMutation{
 	{"reorderSiblings", `mutation { reorderSiblings(siblingIds: ["c1", "c2"], first: true) { id } }`},
 	{"renameArea", `mutation { renameArea(input: {path: "web", newName: "frontend"}) { config { prefix } notes } }`},
 	{"removeArea", `mutation { removeArea(input: {path: "web", unassign: true}) { config { prefix } notes } }`},
+	{"addArea", `mutation { addArea(input: {path: "platform"}) { config { prefix } notes } }`},
 	{"archiveNib", `mutation { archiveNib(id: "t3") }`},
 	{"deleteNib", `mutation { deleteNib(id: "t2") }`},
 }
@@ -233,7 +234,7 @@ func TestServedMutationsDiscloseNoStorePath(t *testing.T) {
 			damage: func(t *testing.T, f *disclosureFixture) {
 				writeFileT(t, filepath.Join(f.store, "areas.yml"), "areas:\n  - name: [unclosed\n")
 			},
-			mustFail: []string{"renameArea", "removeArea"},
+			mustFail: []string{"addArea", "renameArea", "removeArea"},
 		},
 		{
 			// Also no OS error: yamlfile.ReadFile stats the path, sees a
@@ -246,7 +247,7 @@ func TestServedMutationsDiscloseNoStorePath(t *testing.T) {
 				}
 				mkdirAllT(t, path)
 			},
-			mustFail: []string{"renameArea", "removeArea"},
+			mustFail: []string{"addArea", "renameArea", "removeArea"},
 		},
 		{
 			name: "the areas vocabulary is unreadable",

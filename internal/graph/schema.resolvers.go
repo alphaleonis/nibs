@@ -728,6 +728,11 @@ func (r *mutationResolver) ReorderSiblings(ctx context.Context, siblingIds []str
 	return r.reorderSiblingsImpl(siblingIds, afterID, beforeID, first, ifMatch)
 }
 
+// AddArea is the resolver for the addArea field.
+func (r *mutationResolver) AddArea(ctx context.Context, input model.AddAreaInput) (*model.AreaEditPayload, error) {
+	return r.addAreaImpl(ctx, input)
+}
+
 // RenameArea is the resolver for the renameArea field.
 func (r *mutationResolver) RenameArea(ctx context.Context, input model.RenameAreaInput) (*model.AreaEditPayload, error) {
 	return r.renameAreaImpl(ctx, input)

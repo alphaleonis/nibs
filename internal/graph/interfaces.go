@@ -151,6 +151,10 @@ type NibSubscriber interface {
 // than a re-ask, so a decorated or per-request Reader cannot silently disagree
 // with the edit about what the store now declares.
 type AreaWriter interface {
+	// AddArea declares a new area at path, the FULL path of the new node. It
+	// rewrites no nib: nothing can be assigned to an area the vocabulary does not
+	// declare yet. ctx ends the verb's wait for the store's file lock, as below.
+	AddArea(ctx context.Context, path, description, color string) (nibcore.AreaEditResult, error)
 	// RenameArea renames a declared node, cascading to every nib assigned at or
 	// below it. ctx ends the verb's wait for the store's file lock — the one step
 	// that waits on another process.

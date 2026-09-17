@@ -12,6 +12,26 @@ import (
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
+// Input for declaring one new area.
+//
+// There is no placement argument, and a client has nothing to ask for: areas render
+// with siblings sorted by name, so where a declaration lands in the store's
+// areas.yml carries no meaning.
+type AddAreaInput struct {
+	// FULL path of the new area, e.g. "web/dashboard": the last segment is the new
+	// node's name and everything before it names the already-declared parent to nest
+	// it under. A parent this store does not declare is refused rather than created
+	// along the way.
+	Path string `json:"path"`
+	// What belongs in this area, for whoever is choosing one for new work — an agent
+	// reading the vocabulary included. Omit or "" to declare none.
+	Description *string `json:"description,omitempty"`
+	// Color the surfaces that display areas render this one in: a color name written
+	// in letters alone, or a hex code as #RGB, #RGBA, #RRGGBB or #RRGGBBAA. Anything
+	// else is refused. Omit or "" to declare none.
+	Color *string `json:"color,omitempty"`
+}
+
 // One node of the per-project areas vocabulary declared in the store's areas.yml.
 //
 // Deliberately NOT self-recursive: area nesting is unbounded (area.validateNodes

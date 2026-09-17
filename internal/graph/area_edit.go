@@ -26,6 +26,42 @@ import (
 // (servedErrorPresenter in cmd/serve_pathscrub.go); `nibs query` keeps it for an
 // operator repairing a broken store.
 
+// addAreaImpl declares a new area at input.Path, the FULL path of the new node.
+//
+// It rewrites no nib, so unlike the two below there is no cascade to sequence
+// against the vocabulary write — the store's verb still owes the lock, since
+// areas.yml is rewritten whole and two concurrent declarations without one lose
+// a declaration each way.
+func (r *mutationResolver) addAreaImpl(ctx context.Context, input model.AddAreaInput) (*model.AreaEditPayload, error) {
+	// Answered before the call, for the reason renameAreaImpl gives. Unlike the
+	// rename's, neither of these speaks about a node the store declares — they
+	// judge the shape of the path and of the color — so no vocabulary could make
+	// one of them the wrong thing to say. The planner asks them again under the
+	// lock regardless.
+	if err := area.ValidateNewPath(input.Path); err != nil {
+		return nil, err
+	}
+	color := areaText(input.Color)
+	if err := area.ValidateColor(color); err != nil {
+		return nil, err
+	}
+
+	res, err := r.AreaWriter.AddArea(ctx, input.Path, areaText(input.Description), color)
+	if err != nil {
+		return nil, wordAreaAddFailure(err)
+	}
+	return r.areaEditResult(res), nil
+}
+
+// areaText reads an optional input field, where an omitted one and an empty one
+// both declare none.
+func areaText(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 // renameAreaImpl renames the declared node at input.Path, cascading to every nib
 // assigned at or below it.
 func (r *mutationResolver) renameAreaImpl(ctx context.Context, input model.RenameAreaInput) (*model.AreaEditPayload, error) {
@@ -118,6 +154,38 @@ func (r *mutationResolver) areaEditNotes(res nibcore.AreaEditResult) []string {
 	r.AreaWriter.Warn("this store's areas.yml was a symlink to %s and is now a regular file; %s still declares the old vocabulary, so update or remove it",
 		res.StaleLinkTarget, res.StaleLinkTarget)
 	return []string{"this store's areas.yml was a symlink and is now a regular file; the link's old target still declares the vocabulary as it was before this edit, so update or remove it — restoring that link would undo this edit while the nibs it rewrote stay as they are"}
+}
+
+// wordAreaAddFailure words what declaring an area refuses. What it does not word
+// falls through to the refusals every area verb shares.
+func wordAreaAddFailure(err error) error {
+	var declared *nibcore.AreaAlreadyDeclaredError
+	if errors.As(err, &declared) {
+		return wordAreaRefusal(err, "cannot declare area %q: this store already declares it, and two siblings with one name make one path mean two nodes",
+			area.RenderPath(declared.Path))
+	}
+	// wordAreaEditFailure's undeclared-path wording is not reused: its
+	// no-vocabulary branch sends the caller to write an `areas:` block by hand,
+	// where THIS mutation is the remedy, and its other branch speaks about a node
+	// to act on rather than one to nest under. The remedy names the mutation
+	// rather than `nibs area add` — a caller reaching this surface has no CLI.
+	var parent *nibcore.AreaParentUndeclaredError
+	if errors.As(err, &parent) {
+		return wordAreaRefusal(err, "cannot declare area %q: this store declares no area %q to nest it under, and a parent is never created on the way — declare it with addArea first, then send this one again",
+			area.RenderPath(parent.Path), area.RenderPath(parent.Parent))
+	}
+	var ioErr *nibcore.AreaEditIOError
+	if errors.As(err, &ioErr) && ioErr.Phase == nibcore.AreaEditPhaseWrite {
+		// The one write failure that strands nothing: no nib is rewritten ahead of
+		// it, so there is no cascade to report and no disposition to drop on the
+		// rerun. The other phases this verb reaches are worded by the shared arm,
+		// and its cascade and confirm phases are unreachable — the plan carries
+		// neither a rewrite nor an emptied path.
+		return wordAreaRefusal(ioErr,
+			"area %q could not be declared: the store's areas.yml could not be updated: %v — nothing else was written, so the store is as it was; rerun the same mutation once that is fixed",
+			area.RenderPath(ioErr.Path), ioErr.Cause)
+	}
+	return wordAreaEditFailure(err, "declare")
 }
 
 func wordAreaRenameFailure(err error) error {

@@ -620,6 +620,11 @@ type stubAreaWriter struct {
 	warnings []string
 }
 
+func (s *stubAreaWriter) AddArea(context.Context, string, string, string) (nibcore.AreaEditResult, error) {
+	s.calls++
+	return s.res, s.err
+}
+
 func (s *stubAreaWriter) RenameArea(context.Context, string, string) (nibcore.AreaEditResult, error) {
 	s.calls++
 	return s.res, s.err
@@ -1127,6 +1132,31 @@ func TestAreaMutationsNameNoPath(t *testing.T) {
 			},
 			call: func(r *Resolver) error {
 				_, err := r.Mutation().RemoveArea(context.Background(), model.RemoveAreaInput{Path: "web"})
+				return err
+			},
+		},
+		{
+			// addArea's own refusal, which has a second path to name: the parent it
+			// could not find, as well as the node it was asked to declare.
+			name: "a parent the store does not declare",
+			call: func(r *Resolver) error {
+				_, err := r.Mutation().AddArea(context.Background(), model.AddAreaInput{Path: "wbe/panel"})
+				return err
+			},
+		},
+		{
+			// A store declaring nothing is the one refusal addArea must NOT make,
+			// so what exercises the planner's wording for this verb is a vocabulary
+			// the edit cannot address.
+			name: "a declaration into a vocabulary these edits cannot address",
+			setup: func(t *testing.T, core *nibcore.Core) {
+				if err := os.WriteFile(store.NewLayout(core.Root()).AreasPath(), []byte(
+					"defaults: &d\n    description: shared\nareas:\n    - name: web\n      <<: *d\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			call: func(r *Resolver) error {
+				_, err := r.Mutation().AddArea(context.Background(), model.AddAreaInput{Path: "platform"})
 				return err
 			},
 		},

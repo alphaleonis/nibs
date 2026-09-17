@@ -92,6 +92,32 @@ func TestAreaMutationErrorClassesMatchTheAreaCommands(t *testing.T) {
 		}
 	})
 
+	// Declaring an area has two refusals of its own, and both are the caller's to
+	// fix rather than the store's: `nibs area add` gives each exit 2, so neither
+	// may arrive over GraphQL as anything else.
+	t.Run("an add refusal is a validation error", func(t *testing.T) {
+		for _, q := range []string{
+			`mutation { addArea(input: {path: "web"}) { config { prefix } } }`,
+			`mutation { addArea(input: {path: "wbe/panel"}) { config { prefix } } }`,
+		} {
+			app := setupAreaMutationApp(t)
+			_, _, err := executeQuery(app, q, nil, "")
+			if err == nil {
+				t.Fatalf("%s returned no error", q)
+			}
+			var ce *output.CodedError
+			if !errors.As(err, &ce) {
+				t.Fatalf("expected *output.CodedError, got %T: %v", err, err)
+			}
+			if ce.Code != output.ErrValidation {
+				t.Errorf("code = %q, want %q — the class `nibs area add` gives the same refusal", ce.Code, output.ErrValidation)
+			}
+			if got := output.ExitCode(ce.Code); got != output.ExitValidation {
+				t.Errorf("exit code = %d, want %d", got, output.ExitValidation)
+			}
+		}
+	})
+
 	// The divergence this closes: the CLI classified an area another process
 	// retired while this one waited for the store's write lock as a file error —
 	// the argument was true when it was given — and the resolver rode the

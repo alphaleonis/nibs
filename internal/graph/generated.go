@@ -61,6 +61,7 @@ type ComplexityRoot struct {
 	}
 
 	Mutation struct {
+		AddArea         func(childComplexity int, input model.AddAreaInput) int
 		AddBlockedBy    func(childComplexity int, id string, targetID string, ifMatch *string) int
 		AddBlocking     func(childComplexity int, id string, targetID string) int
 		ArchiveNib      func(childComplexity int, id string) int
@@ -153,6 +154,7 @@ type MutationResolver interface {
 	ReorderNib(ctx context.Context, id string, afterID *string, beforeID *string, first *bool, parentID *string, ifMatch *string, scope model.OrderScope) (*nib.Nib, error)
 	ReorderChildren(ctx context.Context, parentID string, childIds []string, ifMatch []*model.ChildEtag) ([]*nib.Nib, error)
 	ReorderSiblings(ctx context.Context, siblingIds []string, afterID *string, beforeID *string, first *bool, ifMatch []*model.ChildEtag) ([]*nib.Nib, error)
+	AddArea(ctx context.Context, input model.AddAreaInput) (*model.AreaEditPayload, error)
 	RenameArea(ctx context.Context, input model.RenameAreaInput) (*model.AreaEditPayload, error)
 	RemoveArea(ctx context.Context, input model.RemoveAreaInput) (*model.AreaEditPayload, error)
 }
@@ -265,6 +267,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.Config.ProjectName(childComplexity), true
 
+	case "Mutation.addArea":
+		if e.ComplexityRoot.Mutation.AddArea == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_addArea_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.AddArea(childComplexity, args["input"].(model.AddAreaInput)), true
 	case "Mutation.addBlockedBy":
 		if e.ComplexityRoot.Mutation.AddBlockedBy == nil {
 			break
@@ -732,6 +745,7 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 	opCtx := graphql.GetOperationContext(ctx)
 	ec := newExecutionContext(opCtx, e, make(chan graphql.DeferredResult))
 	inputUnmarshalMap := graphql.BuildUnmarshalerMap(
+		ec.unmarshalInputAddAreaInput,
 		ec.unmarshalInputBodyModification,
 		ec.unmarshalInputChildEtag,
 		ec.unmarshalInputCreateNibInput,
@@ -1097,6 +1111,20 @@ func (ec *executionContext) childFields___Type(ctx context.Context, field graphq
 // endregion ************************** internal!.gotpl ***************************
 
 // region    ***************************** args.gotpl *****************************
+
+func (ec *executionContext) field_Mutation_addArea_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.AddAreaInput, error) {
+			return ec.unmarshalNAddAreaInput2githubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐAddAreaInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
 
 func (ec *executionContext) field_Mutation_addBlockedBy_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
@@ -2434,6 +2462,50 @@ func (ec *executionContext) fieldContext_Mutation_reorderSiblings(ctx context.Co
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Mutation_reorderSiblings_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_addArea(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_addArea(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().AddArea(ctx, fc.Args["input"].(model.AddAreaInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *model.AreaEditPayload) graphql.Marshaler {
+			return ec.marshalNAreaEditPayload2ᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐAreaEditPayload(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_addArea(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_AreaEditPayload(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_addArea_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -4865,6 +4937,50 @@ func (ec *executionContext) fieldContext___Type_isOneOf(_ context.Context, field
 
 // region    **************************** input.gotpl *****************************
 
+func (ec *executionContext) unmarshalInputAddAreaInput(ctx context.Context, obj any) (model.AddAreaInput, error) {
+	var it model.AddAreaInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"path", "description", "color"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "path":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("path"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Path = data
+		case "description":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("description"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Description = data
+		case "color":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("color"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Color = data
+		}
+	}
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputBodyModification(ctx context.Context, obj any) (model.BodyModification, error) {
 	var it model.BodyModification
 	if obj == nil {
@@ -5865,6 +5981,13 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 		case "reorderSiblings":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_reorderSiblings(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "addArea":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_addArea(ctx, field)
 			})
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
@@ -7206,6 +7329,11 @@ func (ec *executionContext) ___Type(ctx context.Context, sel ast.SelectionSet, o
 // endregion **************************** object.gotpl ****************************
 
 // region    ***************************** type.gotpl *****************************
+
+func (ec *executionContext) unmarshalNAddAreaInput2githubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐAddAreaInput(ctx context.Context, v any) (model.AddAreaInput, error) {
+	res, err := ec.unmarshalInputAddAreaInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
 
 func (ec *executionContext) marshalNArea2ᚕᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐAreaᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.Area) graphql.Marshaler {
 	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {

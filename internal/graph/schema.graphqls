@@ -241,6 +241,40 @@ type Mutation {
   reorderSiblings(siblingIds: [ID!]!, afterId: ID, beforeId: ID, first: Boolean, ifMatch: [ChildEtag!]): [Nib!]!
 
   """
+  Declare a new area at `path`, which is the FULL path of the new node: sending
+  `web/dashboard` declares `dashboard` under the already-declared `web`.
+
+  A parent this store does not declare is REFUSED rather than created along the
+  way. The vocabulary is what authorizes an `area:` value, so minting one on the
+  way down would turn a single typo into two permanent areas; declare the parent
+  with its own `addArea` and send this one again.
+
+  This verb rewrites NO nib, which is what separates it from the two below:
+  nothing can be assigned to an area the vocabulary does not declare yet. A nib
+  already CARRYING the path — left on it by a retire or a hand edit, with every
+  write to that nib refused for it since — is repaired by this declaration, since
+  the value it is holding becomes a declared one.
+
+  A store that declares no areas is the ordinary FIRST call here rather than a
+  refusal: this is the verb that gets a project out of that state, whether its
+  areas.yml is missing or declares nothing. renameArea and removeArea are right to
+  refuse the same store, having no node to name.
+
+  Refused over an untouched store when `path` is already declared, when its parent
+  is not, and when no area could answer to it — a segment with no name in it, one
+  padded with whitespace, or a name longer than a store could read back.
+
+  A filesystem failure carries extensions.code = "AREA_EDIT_FAILED", for the
+  reason renameArea gives — but with none of its ambiguity about what is on disk:
+  this verb rewrites nothing before the areas.yml write, so a failure leaves the
+  store exactly as it was and rerunning the same mutation is the whole repair.
+
+  Returns AreaEditPayload: the whole vocabulary for the reason that type gives,
+  plus any note this edit owes its caller.
+  """
+  addArea(input: AddAreaInput!): AreaEditPayload!
+
+  """
   Rename the declared area at `path`, moving every nib assigned to it or to
   anything below it onto the renamed path in the SAME critical section — the
   member cascade and the `areas:` rewrite are one edit, so a concurrent one
@@ -513,6 +547,34 @@ input BodyModification {
   Appended with blank line separator.
   """
   append: String
+}
+
+"""
+Input for declaring one new area.
+
+There is no placement argument, and a client has nothing to ask for: areas render
+with siblings sorted by name, so where a declaration lands in the store's
+areas.yml carries no meaning.
+"""
+input AddAreaInput {
+  """
+  FULL path of the new area, e.g. "web/dashboard": the last segment is the new
+  node's name and everything before it names the already-declared parent to nest
+  it under. A parent this store does not declare is refused rather than created
+  along the way.
+  """
+  path: String!
+  """
+  What belongs in this area, for whoever is choosing one for new work — an agent
+  reading the vocabulary included. Omit or "" to declare none.
+  """
+  description: String
+  """
+  Color the surfaces that display areas render this one in: a color name written
+  in letters alone, or a hex code as #RGB, #RGBA, #RRGGBB or #RRGGBBAA. Anything
+  else is refused. Omit or "" to declare none.
+  """
+  color: String
 }
 
 """
