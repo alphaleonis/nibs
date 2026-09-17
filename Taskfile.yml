@@ -42,10 +42,10 @@ tasks:
       # PATH. Git Bash on Windows is where that bites: $LOCALAPPDATA is a Windows
       # path, so the shims directory splits at its drive colon if put on a POSIX
       # PATH, and a bare `npm` there silently runs whatever node is in Program
-      # Files. Under an unpinned node the web lane can fail in ways that look
-      # like code regressions — Node >= 26 predefines a stub `localStorage` that
-      # vitest's jsdom environment does not overwrite, failing 26 tests. Every
-      # npm/npx/node invocation in this file is wrapped for that reason.
+      # Files. Under an unpinned node the web lane can fail in ways that read as
+      # code regressions rather than as a toolchain problem, so every npm/npx/node
+      # invocation in this file is wrapped. The node the pin selects also needs
+      # web/vitest.config.ts's execArgv — see the comment there.
       - mise exec -- npm run codegen
 
   web:install:

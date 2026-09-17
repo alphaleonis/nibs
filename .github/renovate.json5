@@ -39,9 +39,12 @@
 
   "packageRules": [
     {
-      // A node major is a deliberate decision, not a routine bump: 24 is the
-      // major CI is green on, and moving off it means running the web suite on
-      // the new one first. Left alone this would be the first
+      // A node major is a deliberate decision, not a routine bump: 26 is the
+      // major mise.toml pins, and moving off it means running the web suite on
+      // the new one first. The 24 -> 26 move is what that costs: Node >= 26
+      // predefines a stub `localStorage` global that vitest's jsdom environment
+      // does not overwrite, so web/vitest.config.ts has to pass
+      // --no-experimental-webstorage for the suite to run at all. Left alone this would be the first
       // thing Renovate proposed here — mise.toml pins a bare major, so releases
       // inside that major need no bump at all and the only update on offer is
       // the jump to the next one. Dashboard approval keeps it visible without
