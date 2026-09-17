@@ -36,7 +36,17 @@ tasks:
     deps: [web:install]
     dir: web
     cmds:
-      - npm run codegen
+      # Through `mise exec` for the same reason as lint and licenses below: node
+      # is pinned in mise.toml, and mise is the one tool contributors install by
+      # hand, so this resolves the pinned node whether or not mise's shims are on
+      # PATH. Git Bash on Windows is where that bites: $LOCALAPPDATA is a Windows
+      # path, so the shims directory splits at its drive colon if put on a POSIX
+      # PATH, and a bare `npm` there silently runs whatever node is in Program
+      # Files. Under an unpinned node the web lane can fail in ways that look
+      # like code regressions — Node >= 26 predefines a stub `localStorage` that
+      # vitest's jsdom environment does not overwrite, failing 26 tests. Every
+      # npm/npx/node invocation in this file is wrapped for that reason.
+      - mise exec -- npm run codegen
 
   web:install:
     desc: Install the web dependencies, but only when they are missing, stale, or broken
@@ -124,14 +134,14 @@ tasks:
           # --loglevel=error silences npm's warn-level transitive-dep deprecation
           # chatter (e.g. node-domexception, pulled 6 levels deep under
           # @graphql-codegen/cli) so `task build`/`task test` output stays warning-free.
-          npm ci --no-audit --no-fund --loglevel=error
+          mise exec -- npm ci --no-audit --no-fund --loglevel=error
           # Probe the same set status: declares healthy. Checking vite alone lets a
           # tree missing graphql-codegen exit this task clean and die later in
           # `npm run build`'s prebuild hook with `graphql-codegen: not found`
           # (exit 127) — the exact confusing failure this task exists to prevent.
           if [ ! -f node_modules/.bin/vite ] || [ ! -f node_modules/.bin/graphql-codegen ]; then
             echo "task: npm ci left node_modules/.bin unpopulated; repairing with npm rebuild" >&2
-            npm rebuild --loglevel=error
+            mise exec -- npm rebuild --loglevel=error
           fi
           if [ ! -f node_modules/.bin/vite ] || [ ! -f node_modules/.bin/graphql-codegen ]; then
             rm -f .installed-lock.tmp
@@ -164,7 +174,7 @@ tasks:
     dir: web
     cmds:
       - task: go:codegen
-      - npm run build
+      - mise exec -- npm run build
 
   web:check:
     desc: Type-check the web UI (svelte-check for src/, tsc for everything else)
@@ -185,7 +195,7 @@ tasks:
       # Capped for the same reason as the vitest lane in `test`: svelte-check
       # holds the whole project graph in one node process, and it should pay for
       # that out of its own cgroup rather than the caller's (nibs-0kip).
-      - bash ../scripts/run-capped.sh --host-os {{OS}} npm run check
+      - mise exec -- bash ../scripts/run-capped.sh --host-os {{OS}} npm run check
       - task: web:check-tooling
 
   web:check-tooling:
@@ -204,7 +214,7 @@ tasks:
     deps: [web:install]
     dir: web
     cmds:
-      - bash ../scripts/run-capped.sh --host-os {{OS}} npx tsc --noEmit -p tsconfig.tooling.json
+      - mise exec -- bash ../scripts/run-capped.sh --host-os {{OS}} npx tsc --noEmit -p tsconfig.tooling.json
 
   build:
     desc: Build the nibs CLI executable
@@ -281,7 +291,7 @@ tasks:
       # session, the kernel's memcg OOM killer picks the session over any single
       # worker and the supervisor dies instead of the tests (nibs-0kip). The
       # scope makes the lane pay for its own memory.
-      - cd web && bash ../scripts/run-capped.sh --host-os {{OS}} npx vitest run --reporter=agent
+      - cd web && mise exec -- bash ../scripts/run-capped.sh --host-os {{OS}} npx vitest run --reporter=agent
 
   test:race:
     desc: Run the -race detector on the concurrency-critical packages (nibcore + graph)
@@ -312,14 +322,14 @@ tasks:
     deps: [build]
     dir: web
     cmds:
-      - npx playwright test
+      - mise exec -- npx playwright test
 
   screenshots:
     desc: Capture web UI screenshots for visual verification (web/screenshots/output)
     deps: [web:build]
     dir: web
     cmds:
-      - npx playwright test --config=playwright.screenshots.config.ts
+      - mise exec -- npx playwright test --config=playwright.screenshots.config.ts
 
   favicon:
     desc: Regenerate web/public/favicon.ico from favicon.svg (run after editing the SVG)
@@ -328,7 +338,7 @@ tasks:
     deps: [web:install]
     dir: web
     cmds:
-      - node scripts/gen-favicon.ts
+      - mise exec -- node scripts/gen-favicon.ts
 
   demo:
     desc: Serve the web UI with the sample project fixture (temporary copy)
@@ -512,7 +522,7 @@ tasks:
           A missing jq fails rather than passing: "could not check" and "nothing
           to report" must not look alike.
     cmds:
-      - bash scripts/web-vulncheck.sh
+      - mise exec -- bash scripts/web-vulncheck.sh
 
   release:prep:
     desc: Build everything a release archive needs (web assets, generated code, license notices)
