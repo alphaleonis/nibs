@@ -160,11 +160,23 @@ jobs:
       # the action reduces a broken test file to `FAIL <pkg> [build failed]` with
       # the path, line and message gone. `go build ./...` above does not cover
       # that; it exits 0 with a _test.go that does not compile.
+      # -timeout=20m, because Go's 600s default has no headroom here and CI has
+      # gone red twice without a defect in the code. Measured on one commit
+      # across two runners: graph 291s / tui 271s / cmd 241s / nibcore 160s on a
+      # fast runner, against cmd 536s / nibcore 453s with graph and tui both
+      # pegged at 600s on a slow one — the same code, 2.2-2.8x apart. 600s does
+      # not cover even 2x of the slowest, so a loaded runner kills the job and
+      # the stack trace names whatever was in flight rather than a cause
+      # (nibs-2p9f). 20m is ~4x the slowest green duration and still bounds a
+      # genuinely hung test.
+      #
+      # It is NOT a memory guard: a runaway allocates far faster than any
+      # timeout can help, which is what the capped runner is for (CLAUDE.md).
       - name: Go tests
         shell: bash
         run: |
           set -o pipefail
-          go test -count=1 -shuffle=on -json ./... | tee "$GO_TEST_EVENTS" | node -e '
+          go test -count=1 -shuffle=on -timeout=20m -json ./... | tee "$GO_TEST_EVENTS" | node -e '
             const rl = require("readline").createInterface({ input: process.stdin });
             rl.on("line", (line) => {
               let event;
@@ -224,7 +236,9 @@ jobs:
       # reintroduced data race fails CI (nibs-7l3v). Linux-only: -race on
       # Windows needs a mingw toolchain and is materially slower, and the
       # invariants are OS-independent, so one detector lane suffices.
-      - run: go test -race -count=1 ./internal/nibcore/... ./internal/graph/...
+      # -timeout=20m for the reason the lane above carries, and more so: the
+      # detector makes these packages several times slower than the plain run.
+      - run: go test -race -count=1 -timeout=20m ./internal/nibcore/... ./internal/graph/...
         if: matrix.os == 'ubuntu-latest'
       - run: cd web && npx vitest run --reporter=default
 
