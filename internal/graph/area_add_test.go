@@ -74,7 +74,7 @@ func TestAddAreaNestsUnderADeclaredParent(t *testing.T) {
 }
 
 // TestAddAreaBootstrapsAStoreDeclaringNoAreas is the case this mutation exists
-// for as much as any: renameArea and removeArea refuse a store with no
+// for as much as any: updateArea and removeArea refuse a store with no
 // vocabulary, because there is no node for them to name. Add is the verb that
 // gets a project out of that state, so it must not refuse it — and a store whose
 // areas.yml is missing entirely is the ordinary first call, not a broken store.

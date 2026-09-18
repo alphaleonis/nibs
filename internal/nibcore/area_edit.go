@@ -228,6 +228,19 @@ func (e *AreaDispositionEmptyError) Error() string {
 		area.RenderPath(e.Path))
 }
 
+// AreaUpdateEmptyError refuses an update that was given nothing to set.
+//
+// A refusal rather than a no-op, for the reason AreaDispositionEmptyError
+// carries: a silent success is the one answer a caller cannot tell apart from a
+// real edit. It is raised before the store's write lock is asked for, because
+// the arguments alone answer it.
+type AreaUpdateEmptyError struct{ Path string }
+
+func (e *AreaUpdateEmptyError) Error() string {
+	return fmt.Sprintf("no new name, description or color was given for area %q",
+		area.RenderPath(e.Path))
+}
+
 // AreaMoveTargetWithinError refuses reassigning members INTO the subtree being
 // retired: the target is about to stop existing, so the move would strand them.
 type AreaMoveTargetWithinError struct {
@@ -397,24 +410,41 @@ func (c *Core) AddArea(ctx context.Context, path, description, color string) (Ar
 	})
 }
 
-// RenameArea renames the declared node at path to newName, cascading to every
-// nib assigned at or below it.
+// UpdateArea edits the declared node at path — its name, its description, its
+// color, or any combination; a rename is u.NewName.
+//
+// A nil field leaves that key as it stands and an empty one clears it, which
+// area.NodeUpdate states canonically.
+//
+// THE CASCADE RUNS ONLY WHEN THE NAME CHANGES. A description or color edit
+// rewrites no nib — nothing stops being declared — so it plans exactly as
+// AddArea does, with no emptied path, no members and no rewrite. Setting
+// `emptied` unconditionally would put an edit that touches no nib through
+// editArea's confirming membership scan, where a nib arriving under the area
+// could refuse a color change for a reason that has nothing to do with it.
 //
 // newName is a bare name: the parent segments carry over verbatim, and a member
 // assigned BELOW the renamed node keeps the remainder it carried.
-func (c *Core) RenameArea(ctx context.Context, path, newName string) (AreaEditResult, error) {
+func (c *Core) UpdateArea(ctx context.Context, path string, u area.NodeUpdate) (AreaEditResult, error) {
+	// Before the lock, because the arguments alone answer it: waiting for the
+	// store's write lock has no deadline but ctx, and this needs no vocabulary.
+	if u.NewName == nil && u.Description == nil && u.Color == nil {
+		return AreaEditResult{}, &AreaUpdateEmptyError{Path: path}
+	}
 	return c.editArea(ctx, path, func(before, now *area.Vocabulary) (areaPlan, error) {
 		if err := requireDeclaredArea(before, now, path, AreaPathRenamed); err != nil {
 			return areaPlan{}, err
 		}
 		parent, oldName := area.SplitPath(path)
-		// Asked after the path is known to be declared: over an undeclared one,
-		// "already named" would describe a node that is not there.
-		if newName == oldName {
-			return areaPlan{}, &AreaNameUnchangedError{Path: path, Name: newName}
-		}
-		if sibling := area.JoinPath(parent, newName); now.Exists(sibling) {
-			return areaPlan{}, &AreaNameTakenError{Path: path, NewName: newName, Sibling: sibling}
+		if u.NewName != nil {
+			// Asked after the path is known to be declared: over an undeclared one,
+			// "already named" would describe a node that is not there.
+			if *u.NewName == oldName {
+				return areaPlan{}, &AreaNameUnchangedError{Path: path, Name: *u.NewName}
+			}
+			if sibling := area.JoinPath(parent, *u.NewName); now.Exists(sibling) {
+				return areaPlan{}, &AreaNameTakenError{Path: path, NewName: *u.NewName, Sibling: sibling}
+			}
 		}
 
 		// The config edit is resolved BEFORE the first nib is touched: a member
@@ -422,26 +452,28 @@ func (c *Core) RenameArea(ctx context.Context, path, newName string) (AreaEditRe
 		// fire after the cascade would strand every member. Planning first moves
 		// every refusal the editor can make to before that point.
 		edit, err := c.planAreasFileLocked(func(current []byte, exists bool) ([]byte, error) {
-			return area.PlanRename(current, exists, path, newName)
+			return area.PlanUpdate(current, exists, path, u)
 		})
 		if err != nil {
 			return areaPlan{}, err
 		}
 
-		newPath := area.JoinPath(parent, newName)
-		return areaPlan{
-			path:    path,
-			newPath: newPath,
-			emptied: path,
-			edit:    edit,
-			members: c.areaMembersLocked(now, path),
-			rewrite: func(area string) (string, bool) {
-				if !now.IsWithin(area, path) {
-					return "", false
-				}
-				return newPath + strings.TrimPrefix(area, path), true
-			},
-		}, nil
+		plan := areaPlan{path: path, edit: edit}
+		if u.NewName == nil {
+			return plan, nil
+		}
+
+		newPath := area.JoinPath(parent, *u.NewName)
+		plan.newPath = newPath
+		plan.emptied = path
+		plan.members = c.areaMembersLocked(now, path)
+		plan.rewrite = func(assigned string) (string, bool) {
+			if !now.IsWithin(assigned, path) {
+				return "", false
+			}
+			return newPath + strings.TrimPrefix(assigned, path), true
+		}
+		return plan, nil
 	})
 }
 
@@ -477,7 +509,7 @@ func (c *Core) RemoveArea(ctx context.Context, path string, disposition AreaDisp
 			return areaPlan{}, &AreaMembersPresentError{Path: path, Members: members}
 		}
 
-		// Resolved before the first nib is touched, for the reason RenameArea
+		// Resolved before the first nib is touched, for the reason UpdateArea
 		// plans first.
 		edit, err := c.planAreasFileLocked(func(current []byte, exists bool) ([]byte, error) {
 			return area.PlanRemove(current, exists, path)

@@ -172,14 +172,14 @@ func TestAreaListInAStoreDeclaringNoneSaysSo(t *testing.T) {
 	}
 }
 
-// TestAreaRenameCascadesTheWholeSubtree is the acceptance criterion: the node
+// TestAreaSetCascadesTheWholeSubtree is the acceptance criterion: the node
 // moves in areas.yml and every nib assigned to it OR to any declared descendant
 // follows, because renaming a parent moves the whole subtree's paths.
-func TestAreaRenameCascadesTheWholeSubtree(t *testing.T) {
+func TestAreaSetCascadesTheWholeSubtree(t *testing.T) {
 	nibsPath := setupAreaVerbTest(t)
 	before := storedAreas(t, nibsPath)
 
-	out, err := runArea(t, nibsPath, "rename", "web", "frontend")
+	out, err := runArea(t, nibsPath, "set", "web", "--name", "frontend")
 	if err != nil {
 		t.Fatalf("area rename: %v\nout: %s", err, out)
 	}
@@ -215,12 +215,12 @@ func TestAreaRenameCascadesTheWholeSubtree(t *testing.T) {
 	}
 }
 
-// TestAreaRenameTouchesNothingElseInTheVocabulary is hazard #1 at the command
+// TestAreaSetTouchesNothingElseInTheVocabulary is hazard #1 at the command
 // level: a rename must edit the `name:` scalar and nothing else. Marshaling a
 // Vocabulary would re-emit the struct this build models — dropping every
 // comment and every key area.Node has no field for — and the diff is the only
 // assertion that catches all of that at once.
-func TestAreaRenameTouchesNothingElseInTheVocabulary(t *testing.T) {
+func TestAreaSetTouchesNothingElseInTheVocabulary(t *testing.T) {
 	nibsPath := setupAreaVerbTest(t)
 	cfgPath := filepath.Join(nibsPath, "areas.yml")
 	// The shipped fixture's vocabulary is close enough to what a Vocabulary
@@ -241,7 +241,7 @@ func TestAreaRenameTouchesNothingElseInTheVocabulary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if out, err := runArea(t, nibsPath, "rename", "web", "frontend"); err != nil {
+	if out, err := runArea(t, nibsPath, "set", "web", "--name", "frontend"); err != nil {
 		t.Fatalf("area rename: %v\nout: %s", err, out)
 	}
 	after, err := os.ReadFile(cfgPath)
@@ -286,9 +286,9 @@ func itoa(n int) string {
 	return string(digits)
 }
 
-// TestAreaRenameRefusals covers every way the rename is refused, and asserts
+// TestAreaSetRefusals covers every way the rename is refused, and asserts
 // that a refused rename left both the vocabulary and the assignments alone.
-func TestAreaRenameRefusals(t *testing.T) {
+func TestAreaSetRefusals(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
@@ -296,37 +296,37 @@ func TestAreaRenameRefusals(t *testing.T) {
 	}{
 		{
 			name: "a path the store does not declare",
-			args: []string{"rename", "nosuch", "x"},
+			args: []string{"set", "nosuch", "--name", "x"},
 			want: []string{"nosuch", "declares no area"},
 		},
 		{
 			name: "a name a sibling already holds",
-			args: []string{"rename", "web", "auth"},
+			args: []string{"set", "web", "--name", "auth"},
 			want: []string{"already declares", "auth"},
 		},
 		{
 			name: "a name a nested sibling already holds",
-			args: []string{"rename", "api/webhooks", "webhooks"},
+			args: []string{"set", "api/webhooks", "--name", "webhooks"},
 			want: []string{"already named"},
 		},
 		{
 			name: "a path where a name belongs",
-			args: []string{"rename", "web/dashboard", "web/panel"},
-			want: []string{"not a name", "nibs area rename web/dashboard panel"},
+			args: []string{"set", "web/dashboard", "--name", "web/panel"},
+			want: []string{"not a name", "nibs area set web/dashboard --name panel"},
 		},
 		{
 			name: "a path under a different parent",
-			args: []string{"rename", "web/dashboard", "api/panel"},
+			args: []string{"set", "web/dashboard", "--name", "api/panel"},
 			want: []string{"not a name", "never moves it"},
 		},
 		{
 			name: "an empty new name",
-			args: []string{"rename", "web", ""},
+			args: []string{"set", "web", "--name", ""},
 			want: []string{"needs a name"},
 		},
 		{
 			name: "a new name that is only whitespace padding",
-			args: []string{"rename", "web", " frontend"},
+			args: []string{"set", "web", "--name", " frontend"},
 			want: []string{"whitespace"},
 		},
 		{
@@ -336,7 +336,7 @@ func TestAreaRenameRefusals(t *testing.T) {
 			// Core.Load refuses before it walks the nibs, so no command can open
 			// the store afterwards.
 			name: "a name no store could read back",
-			args: []string{"rename", "web", strings.Repeat("x", 201)},
+			args: []string{"set", "web", "--name", strings.Repeat("x", 201)},
 			want: []string{"bounded at 200"},
 		},
 	}
@@ -581,7 +581,7 @@ func TestAreaVerbsRefuseAStoreDeclaringNoAreas(t *testing.T) {
 	setupAreaVerbTest(t)
 	nibsPath := remedyStoreWithoutAreas(nil)(t)
 
-	for _, args := range [][]string{{"rename", "web", "frontend"}, {"rm", "web"}} {
+	for _, args := range [][]string{{"set", "web", "--name", "frontend"}, {"rm", "web"}} {
 		t.Run(args[0], func(t *testing.T) {
 			_, err := runArea(t, nibsPath, args...)
 			if err == nil {
@@ -597,14 +597,14 @@ func TestAreaVerbsRefuseAStoreDeclaringNoAreas(t *testing.T) {
 	}
 }
 
-// TestAreaRenameLeavesAStrandedAssignmentAlone: a nib carrying a value the
+// TestAreaSetLeavesAStrandedAssignmentAlone: a nib carrying a value the
 // vocabulary does not declare is not a member of anything, so no cascade sweeps
 // it up — the closure is over the DECLARED tree, not over the strings.
-func TestAreaRenameLeavesAStrandedAssignmentAlone(t *testing.T) {
+func TestAreaSetLeavesAStrandedAssignmentAlone(t *testing.T) {
 	nibsPath := setupAreaVerbTest(t)
 	rewriteStoredArea(t, nibsPath, "tnib-b005", "web", "web/retired")
 
-	if out, err := runArea(t, nibsPath, "rename", "web", "frontend"); err != nil {
+	if out, err := runArea(t, nibsPath, "set", "web", "--name", "frontend"); err != nil {
 		t.Fatalf("area rename: %v\nout: %s", err, out)
 	}
 	if got := storedAreas(t, nibsPath)["tnib-b005"]; got != "web/retired" {
@@ -651,20 +651,20 @@ func failRenameOnto(t *testing.T, marker string) func() {
 	return func() { armed = false }
 }
 
-// TestAreaRenamePartialCascadeIsRerunnable executes the claim the partial-failure
+// TestAreaSetPartialCascadeIsRerunnable executes the claim the partial-failure
 // message makes, rather than trusting it: the writes already made stay, the
 // declaration is untouched, and rerunning the SAME command finishes the job.
 //
 // It holds because the cascade writes the nibs BEFORE the declaration. A nib
 // already rewritten carries a path that is not within the old node, so it is no
 // longer a member and the rerun picks up exactly where this stopped.
-func TestAreaRenamePartialCascadeIsRerunnable(t *testing.T) {
+func TestAreaSetPartialCascadeIsRerunnable(t *testing.T) {
 	nibsPath := setupAreaVerbTest(t)
 	// web's members in id order are tnib-b005 then tnib-f008; failing on the
 	// second leaves a genuinely partial run.
 	disarm := failRenameOnto(t, "tnib-f008")
 
-	_, err := runArea(t, nibsPath, "rename", "web", "frontend")
+	_, err := runArea(t, nibsPath, "set", "web", "--name", "frontend")
 	if err == nil {
 		t.Fatal("expected the seeded write failure to surface")
 	}
@@ -685,7 +685,7 @@ func TestAreaRenamePartialCascadeIsRerunnable(t *testing.T) {
 	}
 
 	disarm()
-	if out, err := runArea(t, nibsPath, "rename", "web", "frontend"); err != nil {
+	if out, err := runArea(t, nibsPath, "set", "web", "--name", "frontend"); err != nil {
 		t.Fatalf("the rerun the message prescribes must finish the job: %v\nout: %s", err, out)
 	}
 	if got, want := areaVocabulary(t, nibsPath),
@@ -698,15 +698,15 @@ func TestAreaRenamePartialCascadeIsRerunnable(t *testing.T) {
 	}
 }
 
-// TestAreaRenameVocabularyWriteFailureIsRerunnable is the other half of the same
+// TestAreaSetVocabularyWriteFailureIsRerunnable is the other half of the same
 // claim, at the other end of the run: every member is rewritten and the config
 // write is what fails. Rerunning the same command still finishes, because the
 // cascade then finds no members and only the declaration is left to rename.
-func TestAreaRenameVocabularyWriteFailureIsRerunnable(t *testing.T) {
+func TestAreaSetVocabularyWriteFailureIsRerunnable(t *testing.T) {
 	nibsPath := setupAreaVerbTest(t)
 	disarm := failRenameOnto(t, "areas.yml")
 
-	_, err := runArea(t, nibsPath, "rename", "web", "frontend")
+	_, err := runArea(t, nibsPath, "set", "web", "--name", "frontend")
 	if err == nil {
 		t.Fatal("expected the seeded config write failure to surface")
 	}
@@ -721,7 +721,7 @@ func TestAreaRenameVocabularyWriteFailureIsRerunnable(t *testing.T) {
 	}
 
 	disarm()
-	if out, err := runArea(t, nibsPath, "rename", "web", "frontend"); err != nil {
+	if out, err := runArea(t, nibsPath, "set", "web", "--name", "frontend"); err != nil {
 		t.Fatalf("the rerun the message prescribes must finish the job: %v\nout: %s", err, out)
 	}
 	if got, want := areaVocabulary(t, nibsPath),
@@ -877,7 +877,7 @@ func TestAreaEditsHoldTheStoreLockAcrossTheVocabularyWrite(t *testing.T) {
 		args []string
 	}{
 		{name: "declare", args: []string{"add", "platform"}},
-		{name: "rename", args: []string{"rename", "web", "frontend"}},
+		{name: "rename", args: []string{"set", "web", "--name", "frontend"}},
 		{name: "retire", args: []string{"rm", "auth", "--unassign"}},
 	}
 	for _, tt := range tests {
@@ -1014,12 +1014,12 @@ extra: true
 		args    []string
 		wantMsg string
 	}{
-		{"rename a node declared through an alias", aliased, []string{"rename", "web/dashboard", "panel"}, "anchors, aliases or merge keys"},
+		{"rename a node declared through an alias", aliased, []string{"set", "web/dashboard", "--name", "panel"}, "anchors, aliases or merge keys"},
 		{"retire a node declared through an alias", aliased, []string{"rm", "web/dashboard", "--unassign"}, "anchors, aliases or merge keys"},
 		{"declare an area beside an alias", aliased, []string{"add", "platform"}, "anchors, aliases or merge keys"},
-		{"rename a node named by a merge key", merged, []string{"rename", "web/dashboard", "panel"}, "anchors, aliases or merge keys"},
+		{"rename a node named by a merge key", merged, []string{"set", "web/dashboard", "--name", "panel"}, "anchors, aliases or merge keys"},
 		{"declare an area beside a merge key", merged, []string{"add", "platform"}, "anchors, aliases or merge keys"},
-		{"rename in a multi-document config", twoDocs, []string{"rename", "web", "frontend"}, "more than one YAML document"},
+		{"rename in a multi-document config", twoDocs, []string{"set", "web", "--name", "frontend"}, "more than one YAML document"},
 		{"retire in a multi-document config", twoDocs, []string{"rm", "web", "--unassign"}, "more than one YAML document"},
 	}
 	for _, tt := range tests {
@@ -1156,7 +1156,7 @@ func TestAreaEditNamesNoRestart(t *testing.T) {
 	}
 	defer func() { _ = serving.Release() }()
 
-	out, err := runArea(t, nibsPath, "rename", "web", "frontend")
+	out, err := runArea(t, nibsPath, "set", "web", "--name", "frontend")
 	if err != nil {
 		t.Fatalf("area rename: %v", err)
 	}
@@ -1466,7 +1466,7 @@ func TestAreaAddAdoptsANibStrandedOnThatPath(t *testing.T) {
 	}
 }
 
-// TestAreaRenameRefusesToStrandANibThatArrived is the arrival refusal end to
+// TestAreaSetRefusesToStrandANibThatArrived is the arrival refusal end to
 // end: nibcore's decision, this surface's sentence, and the exit class that says
 // the store moved rather than that the arguments were wrong.
 //
@@ -1476,7 +1476,7 @@ func TestAreaAddAdoptsANibStrandedOnThatPath(t *testing.T) {
 // the command re-read the store is in no set the cascade walked, so a rename
 // that went ahead would leave it carrying a path the vocabulary no longer
 // declares, with every later write to it refused and exit 0 reported here.
-func TestAreaRenameRefusesToStrandANibThatArrived(t *testing.T) {
+func TestAreaSetRefusesToStrandANibThatArrived(t *testing.T) {
 	nibsPath := setupAreaVerbTest(t)
 
 	// Timed by the cascade's first rename: strictly after the command's re-read
@@ -1502,7 +1502,7 @@ func TestAreaRenameRefusesToStrandANibThatArrived(t *testing.T) {
 	}
 	t.Cleanup(func() { fsutil.RenameFn = orig })
 
-	_, err := runArea(t, nibsPath, "rename", "web", "frontend")
+	_, err := runArea(t, nibsPath, "set", "web", "--name", "frontend")
 	if !landed {
 		t.Fatal("no nib arrived inside the window, so this proves nothing")
 	}
@@ -1530,7 +1530,7 @@ func TestAreaRenameRefusesToStrandANibThatArrived(t *testing.T) {
 	}
 
 	fsutil.RenameFn = orig
-	if out, err := runArea(t, nibsPath, "rename", "web", "frontend"); err != nil {
+	if out, err := runArea(t, nibsPath, "set", "web", "--name", "frontend"); err != nil {
 		t.Fatalf("the rerun the message prescribes must finish the job: %v\nout: %s", err, out)
 	}
 	areas := storedAreas(t, nibsPath)
@@ -1563,8 +1563,8 @@ func TestAreaRefusalsCarryTheStrandedClauseOnlyWhereItIsTrue(t *testing.T) {
 		newPath string
 		written []string
 	}{
-		{name: "a rename that rewrote members", verb: "rename", newPath: "frontend", written: []string{"tnib-b005", "tnib-f008"}},
-		{name: "a rename that rewrote none", verb: "rename", newPath: "frontend"},
+		{name: "a rename that rewrote members", verb: "change", newPath: "frontend", written: []string{"tnib-b005", "tnib-f008"}},
+		{name: "a rename that rewrote none", verb: "change", newPath: "frontend"},
 		{name: "a retire that rewrote members", verb: "retire", written: []string{"tnib-b005", "tnib-f008"}},
 		{name: "a retire that rewrote none", verb: "retire"},
 	}
@@ -1600,13 +1600,13 @@ func TestAreaRefusalsCarryTheStrandedClauseOnlyWhereItIsTrue(t *testing.T) {
 	}
 }
 
-// TestAreaRenameConfirmFailureSaysWhatItStranded is the cell above as an edit
+// TestAreaSetConfirmFailureSaysWhatItStranded is the cell above as an edit
 // rather than a sentence: a rename whose cascade landed and whose confirming
 // re-read then failed leaves the members on a path the vocabulary does not
 // declare, which is the same on-disk state a nib arriving under the area
 // produces. The clause is executed rather than only asserted — the write it says
 // is refused is run, before and after the rerun it prescribes.
-func TestAreaRenameConfirmFailureSaysWhatItStranded(t *testing.T) {
+func TestAreaSetConfirmFailureSaysWhatItStranded(t *testing.T) {
 	nibsPath := setupAreaVerbTest(t)
 
 	// An unreadable directory under data/ fails the nib walk. It is made
@@ -1639,7 +1639,7 @@ func TestAreaRenameConfirmFailureSaysWhatItStranded(t *testing.T) {
 	}
 	t.Cleanup(func() { fsutil.RenameFn = orig })
 
-	out, err := runArea(t, nibsPath, "rename", "web", "frontend")
+	out, err := runArea(t, nibsPath, "set", "web", "--name", "frontend")
 	if !blocked {
 		t.Fatal("no nib was rewritten, so the confirming re-read was never the failing phase")
 	}
@@ -1669,7 +1669,7 @@ func TestAreaRenameConfirmFailureSaysWhatItStranded(t *testing.T) {
 		!strings.Contains(err.Error(), `invalid area "frontend"`) {
 		t.Errorf("a write to a cascaded member = %v, want it refused for the undeclared path the cascade gave it", err)
 	}
-	if out, err := runArea(t, nibsPath, "rename", "web", "frontend"); err != nil {
+	if out, err := runArea(t, nibsPath, "set", "web", "--name", "frontend"); err != nil {
 		t.Fatalf("the rerun the message prescribes must finish the job: %v\nout: %s", err, out)
 	}
 	if _, err := runRootWith(t, "--nibs-path", nibsPath, "set", "tnib-b005", "--title", "Unblocked"); err != nil {

@@ -33,7 +33,7 @@ import (
 // areas.yml is rewritten whole and two concurrent declarations without one lose
 // a declaration each way.
 func (r *mutationResolver) addAreaImpl(ctx context.Context, input model.AddAreaInput) (*model.AreaEditPayload, error) {
-	// Answered before the call, for the reason renameAreaImpl gives. Unlike the
+	// Answered before the call, for the reason updateAreaImpl gives. Unlike the
 	// rename's, neither of these speaks about a node the store declares — they
 	// judge the shape of the path and of the color — so no vocabulary could make
 	// one of them the wrong thing to say. The planner asks them again under the
@@ -62,19 +62,31 @@ func areaText(s *string) string {
 	return *s
 }
 
-// renameAreaImpl renames the declared node at input.Path, cascading to every nib
-// assigned at or below it.
-func (r *mutationResolver) renameAreaImpl(ctx context.Context, input model.RenameAreaInput) (*model.AreaEditPayload, error) {
-	// Answered before the call: the arguments alone decide it, and waiting for
+// updateAreaImpl edits the declared node at path — its name, its description,
+// its color, or any combination. A rename cascades to every nib assigned at or
+// below the node; an edit that changes no name rewrites none.
+//
+// It takes the store's own NodeUpdate rather than the wire input, so the
+// wire-to-engine mapping stays in the generated resolver's thin body and the
+// argument rules below read against the type the store actually acts on.
+func (r *mutationResolver) updateAreaImpl(ctx context.Context, path string, u area.NodeUpdate) (*model.AreaEditPayload, error) {
+	// Answered before the call: the arguments alone decide these, and waiting for
 	// the store's write lock has no deadline but this request's own end. The
-	// store refuses these names again under the lock, in wording about the file.
-	if err := validateAreaRenameArgument(input.NewName); err != nil {
-		return nil, err
+	// store refuses them again under the lock, in wording about the file.
+	if u.NewName != nil {
+		if err := validateAreaRenameArgument(*u.NewName); err != nil {
+			return nil, err
+		}
+	}
+	if u.Color != nil {
+		if err := area.ValidateColor(*u.Color); err != nil {
+			return nil, err
+		}
 	}
 
-	res, err := r.AreaWriter.RenameArea(ctx, input.Path, input.NewName)
+	res, err := r.AreaWriter.UpdateArea(ctx, path, u)
 	if err != nil {
-		return nil, wordAreaRenameFailure(err)
+		return nil, wordAreaUpdateFailure(err)
 	}
 	return r.areaEditResult(res), nil
 }
@@ -188,7 +200,15 @@ func wordAreaAddFailure(err error) error {
 	return wordAreaEditFailure(err, "declare")
 }
 
-func wordAreaRenameFailure(err error) error {
+func wordAreaUpdateFailure(err error) error {
+	// An update given nothing to set. Worded here rather than left to the shared
+	// arm because it names the three fields a caller may send, which is the whole
+	// repair.
+	var empty *nibcore.AreaUpdateEmptyError
+	if errors.As(err, &empty) {
+		return wordAreaRefusal(err, "nothing to change on area %q: send a newName, a description or a color — an update that sets none of them would report success over an edit that never happened",
+			area.RenderPath(empty.Path))
+	}
 	var unchanged *nibcore.AreaNameUnchangedError
 	if errors.As(err, &unchanged) {
 		return wordAreaRefusal(err, "area %q is already named %q, so the rename would change nothing",

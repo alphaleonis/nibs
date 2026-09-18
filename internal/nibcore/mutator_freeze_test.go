@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/store"
 	"github.com/fsnotify/fsnotify"
@@ -315,16 +316,16 @@ func freezeGuardCases() []freezeGuardCase {
 			},
 		},
 		{
-			name:   "RenameArea",
-			covers: []string{"RenameArea"},
+			name:   "UpdateArea",
+			covers: []string{"UpdateArea"},
 			// The default core's config declares no areas, and a store that
 			// declares none refuses every assignment — so there would be no
 			// member to rewrite and the guard would be vacuous.
 			newCore: setupCoreWithDeclaredAreas,
 			setup:   publishAreaMember,
 			mutate: func(t *testing.T, c *Core, _ string) {
-				if _, err := c.RenameArea(context.Background(), "web", "platform"); err != nil {
-					t.Fatalf("RenameArea: %v", err)
+				if _, err := c.UpdateArea(context.Background(), "web", area.NodeUpdate{NewName: ptrTo("platform")}); err != nil {
+					t.Fatalf("UpdateArea: %v", err)
 				}
 			},
 		},
@@ -580,12 +581,14 @@ func TestCoreMutators_FreezePartition(t *testing.T) {
 	// c.nibs pointer and therefore MUST have freeze-guard coverage. Verified
 	// against the nibcore sources: Create/Update/Delete/Archive/Unarchive/
 	// LoadAndUnarchive write the store (core.go); RemoveLinksTo/FixBrokenLinks
-	// rewrite linking nibs copy-on-write (link_health.go); RenameArea and
+	// rewrite linking nibs copy-on-write (link_health.go); UpdateArea and
 	// RemoveArea rewrite the members of a renamed or retired area the same way
-	// (area_edit.go, through rewriteAreaAssignmentsLocked). AddArea is in the
-	// registry because it is an area VERB and a reader classifying the three
-	// together must find all three here — it rewrites no nib, and its freeze
-	// subtest asserts exactly that.
+	// (area_edit.go, through rewriteAreaAssignmentsLocked). UpdateArea does so
+	// only when the NAME changes — an edit setting a description or color stops
+	// declaring nothing, so it rewrites no nib, and its subtest renames for that
+	// reason. AddArea is in the registry because it is an area VERB and a reader
+	// classifying them together must find all of them here — it rewrites no nib,
+	// and its freeze subtest asserts exactly that.
 	freezeMutators := map[string]bool{
 		"Create":                    true,
 		"Update":                    true,
@@ -599,7 +602,7 @@ func TestCoreMutators_FreezePartition(t *testing.T) {
 		"MigrateV1ToV2":             true,
 		"NormalizeLegacyPriorities": true,
 		"AddArea":                   true,
-		"RenameArea":                true,
+		"UpdateArea":                true,
 		"RemoveArea":                true,
 	}
 

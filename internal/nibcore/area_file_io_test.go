@@ -95,7 +95,10 @@ func TestAreaEditRefusesAVocabularyFileDeletedMidEdit(t *testing.T) {
 		},
 		{
 			name: "rename",
-			edit: func(c *Core) error { _, err := c.RenameArea(context.Background(), "web", "platform"); return err },
+			edit: func(c *Core) error {
+				_, err := c.UpdateArea(context.Background(), "web", area.NodeUpdate{NewName: ptrTo("platform")})
+				return err
+			},
 		},
 		{
 			name: "retire",
@@ -162,7 +165,7 @@ func TestAreaEditRefusalNamesTheVocabularyFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = core.RenameArea(context.Background(), "web", "platform")
+	_, err = core.UpdateArea(context.Background(), "web", area.NodeUpdate{NewName: ptrTo("platform")})
 	var refusal *area.EditRefusal
 	if !errors.As(err, &refusal) {
 		t.Fatalf("error = %v (%T), want an *area.EditRefusal", err, err)

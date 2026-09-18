@@ -11,11 +11,11 @@ import (
 	"github.com/alphaleonis/nibs/internal/nibcore"
 )
 
-// renameAreaOverTheWire runs one renameArea document through the executable
+// updateAreaOverTheWire runs one updateArea document through the executable
 // schema and returns the decoded payload, as an API client receives it. A
 // resolver-level assertion cannot stand in for this: it reads a Go struct, where
 // a field that never marshals looks the same as one that does.
-func renameAreaOverTheWire(t *testing.T, resolver *Resolver) (notes []string, prefixPresent bool) {
+func updateAreaOverTheWire(t *testing.T, resolver *Resolver) (notes []string, prefixPresent bool) {
 	t.Helper()
 
 	es := NewExecutableSchema(Config{Resolvers: resolver})
@@ -23,7 +23,7 @@ func renameAreaOverTheWire(t *testing.T, resolver *Resolver) (notes []string, pr
 
 	ctx := graphql.StartOperationTrace(context.Background())
 	params := &graphql.RawParams{
-		Query:     `mutation { renameArea(input: {path: "web", newName: "platform"}) { notes config { prefix } } }`,
+		Query:     `mutation { updateArea(input: {path: "web", newName: "platform"}) { notes config { prefix } } }`,
 		Variables: map[string]any{},
 	}
 	opCtx, errs := exec.CreateOperationContext(ctx, params)
@@ -34,21 +34,21 @@ func renameAreaOverTheWire(t *testing.T, resolver *Resolver) (notes []string, pr
 	handler, ctx := exec.DispatchOperation(ctx, opCtx)
 	resp := handler(ctx)
 	if len(resp.Errors) > 0 {
-		t.Fatalf("renameArea returned errors: %v", resp.Errors)
+		t.Fatalf("updateArea returned errors: %v", resp.Errors)
 	}
 
 	var decoded struct {
-		RenameArea struct {
+		UpdateArea struct {
 			Notes  []string `json:"notes"`
 			Config *struct {
 				Prefix string `json:"prefix"`
 			} `json:"config"`
-		} `json:"renameArea"`
+		} `json:"updateArea"`
 	}
 	if err := json.Unmarshal(resp.Data, &decoded); err != nil {
 		t.Fatalf("unmarshal %s: %v", resp.Data, err)
 	}
-	return decoded.RenameArea.Notes, decoded.RenameArea.Config != nil
+	return decoded.UpdateArea.Notes, decoded.UpdateArea.Config != nil
 }
 
 // TestAreaMutationDeliversTheNoteToAWireCaller is what the payload type exists
@@ -63,7 +63,7 @@ func TestAreaMutationDeliversTheNoteToAWireCaller(t *testing.T) {
 	}}
 	resolver.AreaWriter = stub
 
-	notes, configPresent := renameAreaOverTheWire(t, resolver)
+	notes, configPresent := updateAreaOverTheWire(t, resolver)
 	if len(notes) != 1 {
 		t.Fatalf("notes = %v, want the stale-link note", notes)
 	}
@@ -85,7 +85,7 @@ func TestAreaMutationDeliversTheNoteToAWireCaller(t *testing.T) {
 	// An ordinary edit delivers an EMPTY list rather than null, which is what the
 	// non-null `[String!]!` promises a client that iterates it without a guard.
 	stub.res.StaleLinkTarget = ""
-	notes, configPresent = renameAreaOverTheWire(t, resolver)
+	notes, configPresent = updateAreaOverTheWire(t, resolver)
 	if notes == nil || len(notes) != 0 {
 		t.Errorf("notes = %v, want an empty list", notes)
 	}

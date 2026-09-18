@@ -70,11 +70,11 @@ type ComplexityRoot struct {
 		RemoveArea      func(childComplexity int, input model.RemoveAreaInput) int
 		RemoveBlockedBy func(childComplexity int, id string, targetID string, ifMatch *string) int
 		RemoveBlocking  func(childComplexity int, id string, targetID string) int
-		RenameArea      func(childComplexity int, input model.RenameAreaInput) int
 		ReorderChildren func(childComplexity int, parentID string, childIds []string, ifMatch []*model.ChildEtag) int
 		ReorderNib      func(childComplexity int, id string, afterID *string, beforeID *string, first *bool, parentID *string, ifMatch *string, scope model.OrderScope) int
 		ReorderSiblings func(childComplexity int, siblingIds []string, afterID *string, beforeID *string, first *bool, ifMatch []*model.ChildEtag) int
 		SetParent       func(childComplexity int, id string, parentID *string, ifMatch *string) int
+		UpdateArea      func(childComplexity int, input model.UpdateAreaInput) int
 		UpdateNib       func(childComplexity int, id string, input model.UpdateNibInput) int
 	}
 
@@ -155,7 +155,7 @@ type MutationResolver interface {
 	ReorderChildren(ctx context.Context, parentID string, childIds []string, ifMatch []*model.ChildEtag) ([]*nib.Nib, error)
 	ReorderSiblings(ctx context.Context, siblingIds []string, afterID *string, beforeID *string, first *bool, ifMatch []*model.ChildEtag) ([]*nib.Nib, error)
 	AddArea(ctx context.Context, input model.AddAreaInput) (*model.AreaEditPayload, error)
-	RenameArea(ctx context.Context, input model.RenameAreaInput) (*model.AreaEditPayload, error)
+	UpdateArea(ctx context.Context, input model.UpdateAreaInput) (*model.AreaEditPayload, error)
 	RemoveArea(ctx context.Context, input model.RemoveAreaInput) (*model.AreaEditPayload, error)
 }
 type NibResolver interface {
@@ -366,17 +366,6 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.RemoveBlocking(childComplexity, args["id"].(string), args["targetId"].(string)), true
-	case "Mutation.renameArea":
-		if e.ComplexityRoot.Mutation.RenameArea == nil {
-			break
-		}
-
-		args, err := ec.field_Mutation_renameArea_args(ctx, rawArgs)
-		if err != nil {
-			return 0, false
-		}
-
-		return e.ComplexityRoot.Mutation.RenameArea(childComplexity, args["input"].(model.RenameAreaInput)), true
 	case "Mutation.reorderChildren":
 		if e.ComplexityRoot.Mutation.ReorderChildren == nil {
 			break
@@ -421,6 +410,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.SetParent(childComplexity, args["id"].(string), args["parentId"].(*string), args["ifMatch"].(*string)), true
+	case "Mutation.updateArea":
+		if e.ComplexityRoot.Mutation.UpdateArea == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_updateArea_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.UpdateArea(childComplexity, args["input"].(model.UpdateAreaInput)), true
 	case "Mutation.updateNib":
 		if e.ComplexityRoot.Mutation.UpdateNib == nil {
 			break
@@ -752,8 +752,8 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputNibFilter,
 		ec.unmarshalInputNibSort,
 		ec.unmarshalInputRemoveAreaInput,
-		ec.unmarshalInputRenameAreaInput,
 		ec.unmarshalInputReplaceOperation,
+		ec.unmarshalInputUpdateAreaInput,
 		ec.unmarshalInputUpdateNibInput,
 	)
 	first := true
@@ -1286,20 +1286,6 @@ func (ec *executionContext) field_Mutation_removeBlocking_args(ctx context.Conte
 	return args, nil
 }
 
-func (ec *executionContext) field_Mutation_renameArea_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
-	var err error
-	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
-		func(ctx context.Context, v any) (model.RenameAreaInput, error) {
-			return ec.unmarshalNRenameAreaInput2githubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐRenameAreaInput(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["input"] = arg0
-	return args, nil
-}
-
 func (ec *executionContext) field_Mutation_reorderChildren_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -1465,6 +1451,20 @@ func (ec *executionContext) field_Mutation_setParent_args(ctx context.Context, r
 		return nil, err
 	}
 	args["ifMatch"] = arg2
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_updateArea_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.UpdateAreaInput, error) {
+			return ec.unmarshalNUpdateAreaInput2githubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐUpdateAreaInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
 	return args, nil
 }
 
@@ -2512,17 +2512,17 @@ func (ec *executionContext) fieldContext_Mutation_addArea(ctx context.Context, f
 	return fc, nil
 }
 
-func (ec *executionContext) _Mutation_renameArea(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+func (ec *executionContext) _Mutation_updateArea(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
 		ec.OperationContext,
 		field,
 		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return ec.fieldContext_Mutation_renameArea(ctx, field)
+			return ec.fieldContext_Mutation_updateArea(ctx, field)
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Mutation().RenameArea(ctx, fc.Args["input"].(model.RenameAreaInput))
+			return ec.Resolvers.Mutation().UpdateArea(ctx, fc.Args["input"].(model.UpdateAreaInput))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.AreaEditPayload) graphql.Marshaler {
@@ -2532,7 +2532,7 @@ func (ec *executionContext) _Mutation_renameArea(ctx context.Context, field grap
 		true,
 	)
 }
-func (ec *executionContext) fieldContext_Mutation_renameArea(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_Mutation_updateArea(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "Mutation",
 		Field:      field,
@@ -2549,7 +2549,7 @@ func (ec *executionContext) fieldContext_Mutation_renameArea(ctx context.Context
 		}
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
-	if fc.Args, err = ec.field_Mutation_renameArea_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+	if fc.Args, err = ec.field_Mutation_updateArea_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -5480,43 +5480,6 @@ func (ec *executionContext) unmarshalInputRemoveAreaInput(ctx context.Context, o
 	return it, nil
 }
 
-func (ec *executionContext) unmarshalInputRenameAreaInput(ctx context.Context, obj any) (model.RenameAreaInput, error) {
-	var it model.RenameAreaInput
-	if obj == nil {
-		return it, nil
-	}
-
-	asMap := map[string]any{}
-	for k, v := range obj.(map[string]any) {
-		asMap[k] = v
-	}
-
-	fieldsInOrder := [...]string{"path", "newName"}
-	for _, k := range fieldsInOrder {
-		v, ok := asMap[k]
-		if !ok {
-			continue
-		}
-		switch k {
-		case "path":
-			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("path"))
-			data, err := ec.unmarshalNString2string(ctx, v)
-			if err != nil {
-				return it, err
-			}
-			it.Path = data
-		case "newName":
-			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("newName"))
-			data, err := ec.unmarshalNString2string(ctx, v)
-			if err != nil {
-				return it, err
-			}
-			it.NewName = data
-		}
-	}
-	return it, nil
-}
-
 func (ec *executionContext) unmarshalInputReplaceOperation(ctx context.Context, obj any) (model.ReplaceOperation, error) {
 	var it model.ReplaceOperation
 	if obj == nil {
@@ -5549,6 +5512,57 @@ func (ec *executionContext) unmarshalInputReplaceOperation(ctx context.Context, 
 				return it, err
 			}
 			it.New = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputUpdateAreaInput(ctx context.Context, obj any) (model.UpdateAreaInput, error) {
+	var it model.UpdateAreaInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"path", "newName", "description", "color"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "path":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("path"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Path = data
+		case "newName":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("newName"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.NewName = data
+		case "description":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("description"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Description = data
+		case "color":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("color"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Color = data
 		}
 	}
 	return it, nil
@@ -5992,9 +6006,9 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
-		case "renameArea":
+		case "updateArea":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
-				return ec._Mutation_renameArea(ctx, field)
+				return ec._Mutation_updateArea(ctx, field)
 			})
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
@@ -7545,11 +7559,6 @@ func (ec *executionContext) unmarshalNRemoveAreaInput2githubᚗcomᚋalphaleonis
 	return res, graphql.ErrorOnPath(ctx, err)
 }
 
-func (ec *executionContext) unmarshalNRenameAreaInput2githubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐRenameAreaInput(ctx context.Context, v any) (model.RenameAreaInput, error) {
-	res, err := ec.unmarshalInputRenameAreaInput(ctx, v)
-	return res, graphql.ErrorOnPath(ctx, err)
-}
-
 func (ec *executionContext) unmarshalNReplaceOperation2ᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐReplaceOperation(ctx context.Context, v any) (*model.ReplaceOperation, error) {
 	res, err := ec.unmarshalInputReplaceOperation(ctx, v)
 	return &res, graphql.ErrorOnPath(ctx, err)
@@ -7620,6 +7629,11 @@ func (ec *executionContext) marshalNTime2ᚖtimeᚐTime(ctx context.Context, sel
 		}
 	}
 	return res
+}
+
+func (ec *executionContext) unmarshalNUpdateAreaInput2githubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐUpdateAreaInput(ctx context.Context, v any) (model.UpdateAreaInput, error) {
+	res, err := ec.unmarshalInputUpdateAreaInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
 }
 
 func (ec *executionContext) unmarshalNUpdateNibInput2githubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐUpdateNibInput(ctx context.Context, v any) (model.UpdateNibInput, error) {

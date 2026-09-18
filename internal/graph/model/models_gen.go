@@ -526,16 +526,6 @@ type RemoveAreaInput struct {
 	Unassign *bool `json:"unassign,omitempty"`
 }
 
-// Input for renaming one declared area.
-type RenameAreaInput struct {
-	// Full path of the area to rename, e.g. "web/ui".
-	Path string `json:"path"`
-	// The node's new NAME — its own segment, never a path. A rename changes what a
-	// node is called and never moves it between parents, so a value carrying the '/'
-	// separator is refused rather than read as a move.
-	NewName string `json:"newName"`
-}
-
 // A single text replacement operation.
 type ReplaceOperation struct {
 	// Text to find (must occur exactly once, cannot be empty)
@@ -545,6 +535,31 @@ type ReplaceOperation struct {
 }
 
 type Subscription struct {
+}
+
+// Input for editing one declared area.
+//
+// EVERY FIELD BUT `path` IS OPTIONAL, AND OMITTED IS NOT THE SAME AS EMPTY. A field
+// left out leaves that key exactly as the store declares it; a field sent as ""
+// CLEARS it, because `description: ""` written into the file reads back as a
+// description someone emptied the text out of rather than one never given. Sending
+// none of the three is refused rather than treated as a no-op: a silent success is
+// the one answer a caller cannot tell apart from a real edit.
+type UpdateAreaInput struct {
+	// Full path of the area to edit, e.g. "web/ui".
+	Path string `json:"path"`
+	// The node's new NAME — its own segment, never a path. A rename changes what a
+	// node is called and never moves it between parents, so a value carrying the '/'
+	// separator is refused rather than read as a move. This is the only field that
+	// cascades: setting it rewrites every nib assigned at or below the node.
+	NewName *string `json:"newName,omitempty"`
+	// What belongs in this area, for whoever is choosing one for new work. "" clears
+	// it.
+	Description *string `json:"description,omitempty"`
+	// Color the surfaces that display areas render this one in: a color name written
+	// in letters alone, or a hex code as #RGB, #RGBA, #RRGGBB or #RRGGBBAA. Anything
+	// else is refused. "" clears it.
+	Color *string `json:"color,omitempty"`
 }
 
 // Input for updating an existing nib

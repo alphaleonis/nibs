@@ -347,7 +347,7 @@ func areaCommandCatalogEntries() []recipeInfo {
 	return []recipeInfo{
 		{"nibs area list", commandShort("area", "list")},
 		{"nibs area add <path>", commandShort("area", "add")},
-		{"nibs area rename <path> <new-name>", commandShort("area", "rename")},
+		{"nibs area set <path>", commandShort("area", "set")},
 		{"nibs area rm <path>", commandShort("area", "rm")},
 		{`nibs new "<title>" -t <type> --area <path>`, flagUsage("new", "area")},
 		{"nibs set <id> --area <path>", flagUsage("set", "area")},
@@ -405,7 +405,7 @@ func catalogAreas() error {
 	b.WriteString("--description and --color; a parent the store does not declare is refused\n")
 	b.WriteString("rather than created on the way.\n")
 	b.WriteString("\nEditing an area that already exists rewrites the nibs assigned at or below\n")
-	b.WriteString("what the edit touches, because an area is a PATH: 'nibs area rename' moves\n")
+	b.WriteString("what the edit touches, because an area is a PATH: 'nibs area set' moves\n")
 	b.WriteString("every path under the node it renames, and 'nibs area rm' is refused while\n")
 	b.WriteString("nibs are assigned at or below the node unless a disposition says where they\n")
 	b.WriteString("go (--move-to <area> reassigns them, --unassign drops their assignment).\n")

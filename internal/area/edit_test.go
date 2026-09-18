@@ -46,8 +46,12 @@ func planCreate(vocab, path, description, color string) ([]byte, error) {
 	return PlanCreate([]byte(vocab), true, path, description, color)
 }
 
+// planRename drives the rename half of PlanUpdate, which replaced PlanRename.
+// Kept as its own helper so every rename test below exercises the general
+// planner UNCHANGED: if it loses a rename behavior they fail, rather than being
+// rewritten to match whatever it does now.
 func planRename(vocab, path, newName string) ([]byte, error) {
-	return PlanRename([]byte(vocab), true, path, newName)
+	return PlanUpdate([]byte(vocab), true, path, NodeUpdate{NewName: &newName})
 }
 
 func planRemove(vocab, path string) ([]byte, error) {
@@ -603,7 +607,7 @@ extra: true
 // back into the bytes it was handed.
 func TestPlannersLeaveTheirInputAlone(t *testing.T) {
 	input := []byte(areaEditFixture)
-	out, err := PlanRename(input, true, "web", "frontend")
+	out, err := PlanUpdate(input, true, "web", NodeUpdate{NewName: ptrTo("frontend")})
 	got := mustPlan(t)(out, err)
 	if string(input) != areaEditFixture {
 		t.Fatalf("planning changed its input:\n%s", input)
@@ -890,7 +894,7 @@ func TestEditsStillRefuseAMissingFile(t *testing.T) {
 		verb string
 		plan func() ([]byte, error)
 	}{
-		{"rename", func() ([]byte, error) { return PlanRename(nil, false, "web", "frontend") }},
+		{"rename", func() ([]byte, error) { return PlanUpdate(nil, false, "web", NodeUpdate{NewName: ptrTo("frontend")}) }},
 		{"remove", func() ([]byte, error) { return PlanRemove(nil, false, "web") }},
 	} {
 		t.Run(edit.verb, func(t *testing.T) {
@@ -1101,7 +1105,9 @@ func TestEditRefusalsNameNoPathUntilAsked(t *testing.T) {
 	}{
 		{
 			name: "a store with no areas.yml",
-			plan: func(string) ([]byte, error) { return PlanRename(nil, false, "web", "frontend") },
+			plan: func(string) ([]byte, error) {
+				return PlanUpdate(nil, false, "web", NodeUpdate{NewName: ptrTo("frontend")})
+			},
 			want: "no areas vocabulary at",
 		},
 		{

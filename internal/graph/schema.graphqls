@@ -257,7 +257,7 @@ type Mutation {
 
   A store that declares no areas is the ordinary FIRST call here rather than a
   refusal: this is the verb that gets a project out of that state, whether its
-  areas.yml is missing or declares nothing. renameArea and removeArea are right to
+  areas.yml is missing or declares nothing. updateArea and removeArea are right to
   refuse the same store, having no node to name.
 
   Refused over an untouched store when `path` is already declared, when its parent
@@ -265,7 +265,7 @@ type Mutation {
   padded with whitespace, or a name longer than a store could read back.
 
   A filesystem failure carries extensions.code = "AREA_EDIT_FAILED", for the
-  reason renameArea gives — but with none of its ambiguity about what is on disk:
+  reason updateArea gives — but with none of its ambiguity about what is on disk:
   this verb rewrites nothing before the areas.yml write, so a failure leaves the
   store exactly as it was and rerunning the same mutation is the whole repair.
 
@@ -275,22 +275,27 @@ type Mutation {
   addArea(input: AddAreaInput!): AreaEditPayload!
 
   """
-  Rename the declared area at `path`, moving every nib assigned to it or to
-  anything below it onto the renamed path in the SAME critical section — the
-  member cascade and the `areas:` rewrite are one edit, so a concurrent one
-  cannot land between them and leave the members carrying a path the vocabulary
-  no longer declares.
+  Edit the declared area at `path`: its name, its description, its color, or any
+  combination of the three in one write.
 
-  A member assigned BELOW the renamed node keeps the remainder it carried:
-  renaming `web` to `platform` moves `web/ui` to `platform/ui`, because renaming
-  a parent moves its children's paths without changing their names.
+  A RENAME moves every nib assigned to the node or to anything below it onto the
+  renamed path in the SAME critical section — the member cascade and the `areas:`
+  rewrite are one edit, so a concurrent one cannot land between them and leave
+  the members carrying a path the vocabulary no longer declares. A member
+  assigned BELOW the renamed node keeps the remainder it carried: renaming `web`
+  to `platform` moves `web/ui` to `platform/ui`, because renaming a parent moves
+  its children's paths without changing their names.
 
-  Refused over an untouched store when `path` names no declared area, when
-  `newName` is the name the node already has, when it carries the '/' separator,
-  and when a sibling already answers to it. Every one of those lands before the
-  first nib is rewritten, which is what the plan-then-write split buys: a refusal
-  after the cascade would leave the members undeclared and every later write to
-  them refused for it.
+  AN EDIT THAT CHANGES NO NAME REWRITES NO NIB. Nothing stops being declared, so
+  setting a description or a color cascades over nothing and cannot be refused by
+  what is assigned where — the same shape `addArea` has.
+
+  Refused over an untouched store when `path` names no declared area, when the
+  input sets nothing at all, and — for a rename — when `newName` is the name the
+  node already has, when it carries the '/' separator, or when a sibling already
+  answers to it. Every one of those lands before the first nib is rewritten,
+  which is what the plan-then-write split buys: a refusal after the cascade would
+  leave the members undeclared and every later write to them refused for it.
 
   A failure on the FILESYSTEM — the store's write lock, either re-read under it,
   a member nib's rewrite, the areas.yml write, or the re-read of what it just
@@ -303,7 +308,7 @@ type Mutation {
   Returns AreaEditPayload: the whole vocabulary for the reason that type gives,
   plus any note this edit owes its caller.
   """
-  renameArea(input: RenameAreaInput!): AreaEditPayload!
+  updateArea(input: UpdateAreaInput!): AreaEditPayload!
 
   """
   Retire the declared area at `path` together with every area declared beneath
@@ -327,11 +332,11 @@ type Mutation {
   produces the very state the member refusal exists to prevent.
 
   A filesystem failure carries extensions.code = "AREA_EDIT_FAILED", for the
-  reason and with the caveat renameArea states: the code is the class, the
+  reason and with the caveat updateArea states: the code is the class, the
   message says whether the members were already disposed of and whether a rerun
   finishes the job.
 
-  Returns AreaEditPayload, for the reason renameArea does.
+  Returns AreaEditPayload, for the reason updateArea does.
   """
   removeArea(input: RemoveAreaInput!): AreaEditPayload!
 }
@@ -578,17 +583,36 @@ input AddAreaInput {
 }
 
 """
-Input for renaming one declared area.
+Input for editing one declared area.
+
+EVERY FIELD BUT `path` IS OPTIONAL, AND OMITTED IS NOT THE SAME AS EMPTY. A field
+left out leaves that key exactly as the store declares it; a field sent as ""
+CLEARS it, because `description: ""` written into the file reads back as a
+description someone emptied the text out of rather than one never given. Sending
+none of the three is refused rather than treated as a no-op: a silent success is
+the one answer a caller cannot tell apart from a real edit.
 """
-input RenameAreaInput {
-  "Full path of the area to rename, e.g. \"web/ui\"."
+input UpdateAreaInput {
+  "Full path of the area to edit, e.g. \"web/ui\"."
   path: String!
   """
   The node's new NAME — its own segment, never a path. A rename changes what a
   node is called and never moves it between parents, so a value carrying the '/'
-  separator is refused rather than read as a move.
+  separator is refused rather than read as a move. This is the only field that
+  cascades: setting it rewrites every nib assigned at or below the node.
   """
-  newName: String!
+  newName: String
+  """
+  What belongs in this area, for whoever is choosing one for new work. "" clears
+  it.
+  """
+  description: String
+  """
+  Color the surfaces that display areas render this one in: a color name written
+  in letters alone, or a hex code as #RGB, #RGBA, #RRGGBB or #RRGGBBAA. Anything
+  else is refused. "" clears it.
+  """
+  color: String
 }
 
 """

@@ -807,14 +807,14 @@ func remedySurfaces() []remedySurface {
 		{
 			name:         "a path where a name belongs names the rename that works",
 			store:        remedyStore(nil),
-			diagnose:     remedyAreaRetireRefusal([]string{"rename", "web/dashboard", "web/panel"}),
+			diagnose:     remedyAreaRetireRefusal([]string{"set", "web/dashboard", "--name", "web/panel"}),
 			mustName:     []string{"is not a name"},
 			wantCommands: 1,
 		},
 		{
 			name:         "a rename across parents points at the listing",
 			store:        remedyStore(nil),
-			diagnose:     remedyAreaRetireRefusal([]string{"rename", "web/dashboard", "api/panel"}),
+			diagnose:     remedyAreaRetireRefusal([]string{"set", "web/dashboard", "--name", "api/panel"}),
 			mustName:     []string{"never moves it between parents"},
 			wantCommands: 1,
 		},
@@ -840,7 +840,7 @@ func remedySurfaces() []remedySurface {
 		{
 			name:     "a vocabulary that inherits its content names no command",
 			store:    remedyStoreWithAreasShape(remedyAliasedAreasConfig),
-			diagnose: remedyAreaRetireRefusal([]string{"rename", "web/dashboard", "panel"}),
+			diagnose: remedyAreaRetireRefusal([]string{"set", "web/dashboard", "--name", "panel"}),
 			mustName: []string{"anchors, aliases or merge keys"},
 			// The repair is an edit to areas.yml, which no nibs command makes —
 			// so the message names the shape to write rather than a command. The
@@ -850,7 +850,7 @@ func remedySurfaces() []remedySurface {
 		{
 			name:     "a multi-document vocabulary names no command",
 			store:    remedyStoreWithAreasShape(remedyMultiDocumentAreasConfig),
-			diagnose: remedyAreaRetireRefusal([]string{"rename", "web", "frontend"}),
+			diagnose: remedyAreaRetireRefusal([]string{"set", "web", "--name", "frontend"}),
 			mustName: []string{"more than one YAML document"},
 			// Same shape: the remedy is an edit to the file. The backticked `---`
 			// in it is a YAML marker, not a flag fragment, and the extractor must

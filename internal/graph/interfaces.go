@@ -155,10 +155,11 @@ type AreaWriter interface {
 	// rewrites no nib: nothing can be assigned to an area the vocabulary does not
 	// declare yet. ctx ends the verb's wait for the store's file lock, as below.
 	AddArea(ctx context.Context, path, description, color string) (nibcore.AreaEditResult, error)
-	// RenameArea renames a declared node, cascading to every nib assigned at or
-	// below it. ctx ends the verb's wait for the store's file lock — the one step
-	// that waits on another process.
-	RenameArea(ctx context.Context, path, newName string) (nibcore.AreaEditResult, error)
+	// UpdateArea edits a declared node's name, description or color. A rename
+	// cascades to every nib assigned at or below it; an edit that changes no name
+	// rewrites none, since nothing stops being declared. ctx ends the verb's wait
+	// for the store's file lock — the one step that waits on another process.
+	UpdateArea(ctx context.Context, path string, u area.NodeUpdate) (nibcore.AreaEditResult, error)
 	// RemoveArea retires a declared node and the subtree it heads, disposing of
 	// every nib assigned at or below it as disposition says. ctx does the same here.
 	RemoveArea(ctx context.Context, path string, disposition nibcore.AreaDisposition) (nibcore.AreaEditResult, error)

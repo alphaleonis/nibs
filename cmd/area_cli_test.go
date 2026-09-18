@@ -576,8 +576,11 @@ func TestAreaCascadeWritesThePathsTheStoreHasNow(t *testing.T) {
 		{
 			name: "rename",
 			run: func(t *testing.T, app *App) error {
-				areaRenameCmd.SetContext(withApp(context.Background(), app))
-				return runAreaRename(areaRenameCmd, []string{"auth", "identity"})
+				areaSetCmd.SetContext(withApp(context.Background(), app))
+				if err := areaSetCmd.Flags().Set("name", "identity"); err != nil {
+					t.Fatalf("set --name: %v", err)
+				}
+				return runAreaSet(areaSetCmd, []string{"auth"})
 			},
 			wantArea: "identity",
 		},
@@ -596,9 +599,9 @@ func TestAreaCascadeWritesThePathsTheStoreHasNow(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			nibsPath := setupAreaCLITest(t)
 			t.Cleanup(func() {
-				areaRenameJSON, areaRmJSON, areaRmUnassign, areaRmMoveTo = false, false, false, ""
+				areaSetJSON, areaRmJSON, areaRmUnassign, areaRmMoveTo = false, false, false, ""
 				setPrefixDryRun, setPrefixForce, setPrefixJSON = false, false, false
-				areaRenameCmd.SetContext(context.Background())
+				areaSetCmd.SetContext(context.Background())
 				areaRmCmd.SetContext(context.Background())
 			})
 
@@ -731,7 +734,7 @@ func TestAreaEditsCascadeThroughTheVocabularyDeclaredUnderTheLock(t *testing.T) 
 		{
 			name: "rename",
 			run: func(t *testing.T, app *App) error {
-				return runStaleAreaVerb(t, app, areaRenameCmd, runAreaRename, nil, "api", "platform")
+				return runStaleAreaVerb(t, app, areaSetCmd, runAreaSet, map[string]string{"name": "platform"}, "api")
 			},
 			wantAreas:      map[string]string{"tnib-b011": "platform", "tnib-f011": "platform/hooks"},
 			wantVocabulary: []string{"auth", "docs", "infra", "platform", "platform/hooks", "web", "web/dashboard"},
@@ -752,7 +755,7 @@ func TestAreaEditsCascadeThroughTheVocabularyDeclaredUnderTheLock(t *testing.T) 
 			app := staleAreaApp(t, nibsPath)
 
 			resetCommandTreeFlags(rootCmd)
-			if _, err := runRootWith(t, "--nibs-path", nibsPath, "area", "rename", "api/webhooks", "hooks"); err != nil {
+			if _, err := runRootWith(t, "--nibs-path", nibsPath, "area", "set", "api/webhooks", "--name", "hooks"); err != nil {
 				t.Fatalf("the racing rename: %v", err)
 			}
 			if got := areaOf(t, nibsPath, "tnib-f011"); got != "api/hooks" {
@@ -776,14 +779,14 @@ func TestAreaEditsCascadeThroughTheVocabularyDeclaredUnderTheLock(t *testing.T) 
 
 // A refusal the two arguments alone decide must not queue behind the store's
 // write lock. That wait has no deadline and prints nothing while it lasts, so
-// `nibs area rename web ""` behind a long-running writer sat silent for the
+// `nibs area set web --name ""` behind a long-running writer sat silent for the
 // whole of that writer's run before printing an error about the empty string it
 // was handed.
 //
 // The lock is held for the length of each case, so a check that moved back under
 // it does not fail an assertion — it never returns, and the deadline below is
 // what reports that.
-func TestAreaRenameRefusesABadNameWithoutTakingTheStoreLock(t *testing.T) {
+func TestAreaSetRefusesABadNameWithoutTakingTheStoreLock(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
@@ -822,12 +825,17 @@ func TestAreaRenameRefusesABadNameWithoutTakingTheStoreLock(t *testing.T) {
 			resetCommandTreeFlags(rootCmd)
 			t.Cleanup(func() {
 				resetCommandTreeFlags(rootCmd)
-				areaRenameCmd.SetContext(context.Background())
+				areaSetCmd.SetContext(context.Background())
 			})
-			areaRenameCmd.SetContext(withApp(context.Background(), app))
+			areaSetCmd.SetContext(withApp(context.Background(), app))
+			// args is [path, new name]: the name reaches the verb through --name,
+			// which is read off the Changed bit, so it cannot be a bare assignment.
+			if err := areaSetCmd.Flags().Set("name", tt.args[1]); err != nil {
+				t.Fatalf("set --name: %v", err)
+			}
 
 			done := make(chan error, 1)
-			go func() { done <- runAreaRename(areaRenameCmd, tt.args) }()
+			go func() { done <- runAreaSet(areaSetCmd, tt.args[:1]) }()
 
 			select {
 			case err := <-done:
@@ -863,7 +871,7 @@ func TestAreaEditRefusesAVanishedVocabularyRatherThanBlamingAnotherProcess(t *te
 		{
 			name: "rename",
 			run: func(t *testing.T, app *App) error {
-				return runStaleAreaVerb(t, app, areaRenameCmd, runAreaRename, nil, "auth", "identity")
+				return runStaleAreaVerb(t, app, areaSetCmd, runAreaSet, map[string]string{"name": "identity"}, "auth")
 			},
 		},
 		{
@@ -922,9 +930,9 @@ func TestAreaEditOnAStoreThatNeverHadAVocabularyRefusesAsUndeclaredAreas(t *test
 	}{
 		{
 			name: "rename",
-			verb: "rename",
+			verb: "change",
 			run: func(t *testing.T, app *App) error {
-				return runStaleAreaVerb(t, app, areaRenameCmd, runAreaRename, nil, "auth", "identity")
+				return runStaleAreaVerb(t, app, areaSetCmd, runAreaSet, map[string]string{"name": "identity"}, "auth")
 			},
 		},
 		{
@@ -975,10 +983,10 @@ func TestAreaEditOnAStoreThatNeverHadAVocabularyRefusesAsUndeclaredAreas(t *test
 // whatever else is wrong with the arguments. The four argument-shape checks run
 // before the store's write lock is taken — deliberately, so a typo does not sit
 // silent behind a competing writer — but asked first they answer over a node
-// that is not there: `nibs area rename api/hooks hooks` asserted the nonexistent
-// area "is already named hooks", and the separator branch prescribed
-// `nibs area rename api/hooks other`, a command the tool then refuses.
-func TestAreaRenameReportsAnUndeclaredPathBeforeTheNameShape(t *testing.T) {
+// that is not there: `nibs area set api/hooks --name hooks` asserted the
+// nonexistent area "is already named hooks", and the separator branch prescribed
+// `nibs area set api/hooks --name other`, a command the tool then refuses.
+func TestAreaSetReportsAnUndeclaredPathBeforeTheNameShape(t *testing.T) {
 	tests := []struct {
 		name     string
 		args     []string
@@ -995,7 +1003,10 @@ func TestAreaRenameReportsAnUndeclaredPathBeforeTheNameShape(t *testing.T) {
 			nibsPath := setupAreaCLITest(t)
 			app := staleAreaApp(t, nibsPath)
 
-			err := runStaleAreaVerb(t, app, areaRenameCmd, runAreaRename, nil, tt.args...)
+			// args is [path, new name]; runStaleAreaVerb puts the name through the
+			// command's own FlagSet, which is what sets the Changed bit.
+			err := runStaleAreaVerb(t, app, areaSetCmd, runAreaSet,
+				map[string]string{"name": tt.args[1]}, tt.args[0])
 			if err == nil {
 				t.Fatalf("expected a refusal over %v, got nil", tt.args)
 			}
@@ -1035,7 +1046,7 @@ func TestAreaEditRefusesAPathRetiredUnderTheLock(t *testing.T) {
 		{
 			name: "rename",
 			run: func(t *testing.T, app *App) error {
-				return runStaleAreaVerb(t, app, areaRenameCmd, runAreaRename, nil, "auth", "identity")
+				return runStaleAreaVerb(t, app, areaSetCmd, runAreaSet, map[string]string{"name": "identity"}, "auth")
 			},
 		},
 		{
@@ -1106,8 +1117,11 @@ func TestAreaEditsStopWaitingForTheStoreLockWhenTheCommandEnds(t *testing.T) {
 		{
 			name: "rename",
 			run: func(ctx context.Context, app *App) error {
-				areaRenameCmd.SetContext(withApp(ctx, app))
-				return runAreaRename(areaRenameCmd, []string{"web", "frontend"})
+				areaSetCmd.SetContext(withApp(ctx, app))
+				if err := areaSetCmd.Flags().Set("name", "frontend"); err != nil {
+					t.Fatalf("set --name: %v", err)
+				}
+				return runAreaSet(areaSetCmd, []string{"web"})
 			},
 		},
 		{
@@ -1134,7 +1148,7 @@ func TestAreaEditsStopWaitingForTheStoreLockWhenTheCommandEnds(t *testing.T) {
 			t.Cleanup(func() {
 				resetCommandTreeFlags(rootCmd)
 				areaAddCmd.SetContext(context.Background())
-				areaRenameCmd.SetContext(context.Background())
+				areaSetCmd.SetContext(context.Background())
 				areaRmCmd.SetContext(context.Background())
 			})
 

@@ -505,7 +505,7 @@ func mutationErrCode(err error) (string, bool) {
 	// An area vocabulary edit that failed on the FILESYSTEM — the write lock, the
 	// re-read under it, a member nib's rewrite, the re-read that confirms the write
 	// strands nothing, the areas.yml write, or the re-read of the file it just
-	// wrote — takes the class `nibs area rename` and `nibs area rm` already give
+	// wrote — takes the class `nibs area set` and `nibs area rm` already give
 	// it. Its CONTENT counterpart, area.EditRefusal, deliberately gets no
 	// branch: it carries no Unwrap, so no sentinel below can claim it, and the
 	// caller's VALIDATION_ERROR fallback is what those two commands report for it.

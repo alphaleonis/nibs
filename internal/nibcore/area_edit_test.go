@@ -17,6 +17,10 @@ import (
 	"github.com/alphaleonis/nibs/internal/testskip"
 )
 
+// ptrTo is the optional-field helper area.NodeUpdate takes: a nil field leaves
+// that key alone, so every test that sets one needs an address.
+func ptrTo(s string) *string { return &s }
+
 // areaVerbCore is setupCoreWithDeclaredAreas with members placed for the verbs to act on:
 // one ON the node the tests rename and retire, one BELOW it, and one elsewhere.
 func areaVerbCore(t *testing.T) (*Core, string) {
@@ -52,9 +56,9 @@ func TestAreaVerbsReportWhatTheyDid(t *testing.T) {
 	t.Run("rename", func(t *testing.T) {
 		core, nibsDir := areaVerbCore(t)
 
-		res, err := core.RenameArea(context.Background(), "web", "platform")
+		res, err := core.UpdateArea(context.Background(), "web", area.NodeUpdate{NewName: ptrTo("platform")})
 		if err != nil {
-			t.Fatalf("RenameArea: %v", err)
+			t.Fatalf("UpdateArea: %v", err)
 		}
 		if res.NewPath != "platform" {
 			t.Errorf("NewPath = %q, want %q", res.NewPath, "platform")
@@ -145,7 +149,7 @@ func TestAreaEditNamesTheHalfOfTheReReadThatFailed(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		_, err := core.RenameArea(context.Background(), "web", "platform")
+		_, err := core.UpdateArea(context.Background(), "web", area.NodeUpdate{NewName: ptrTo("platform")})
 		var ioErr *AreaEditIOError
 		if !errors.As(err, &ioErr) {
 			t.Fatalf("error = %v (%T), want an *AreaEditIOError", err, err)
@@ -170,7 +174,7 @@ func TestAreaEditNamesTheHalfOfTheReReadThatFailed(t *testing.T) {
 			testskip.Unavailable(t, testskip.UnreadablePaths, "this process reads a mode-000 directory anyway (running as root?)")
 		}
 
-		_, err := core.RenameArea(context.Background(), "web", "platform")
+		_, err := core.UpdateArea(context.Background(), "web", area.NodeUpdate{NewName: ptrTo("platform")})
 		var ioErr *AreaEditIOError
 		if !errors.As(err, &ioErr) {
 			t.Fatalf("error = %v (%T), want an *AreaEditIOError", err, err)
@@ -198,7 +202,7 @@ func TestAreaEditReportsAFailedReload(t *testing.T) {
 	reloadAreasAfterEdit = func(*Core) error { return errors.New("areas.yml went missing") }
 	t.Cleanup(func() { reloadAreasAfterEdit = restore })
 
-	_, err := core.RenameArea(context.Background(), "web", "platform")
+	_, err := core.UpdateArea(context.Background(), "web", area.NodeUpdate{NewName: ptrTo("platform")})
 	var ioErr *AreaEditIOError
 	if !errors.As(err, &ioErr) {
 		t.Fatalf("error = %v (%T), want an *AreaEditIOError", err, err)
@@ -239,18 +243,18 @@ func TestAreaEditReportsAReplacedSymlink(t *testing.T) {
 		testskip.SymlinkUnavailable(t, err)
 	}
 
-	res, err := core.RenameArea(context.Background(), "web", "platform")
+	res, err := core.UpdateArea(context.Background(), "web", area.NodeUpdate{NewName: ptrTo("platform")})
 	if err != nil {
-		t.Fatalf("RenameArea: %v", err)
+		t.Fatalf("UpdateArea: %v", err)
 	}
 	if res.StaleLinkTarget != target {
 		t.Errorf("StaleLinkTarget = %q, want %q", res.StaleLinkTarget, target)
 	}
 	// And an ordinary edit reports nothing, so the field above is the replacement
 	// and not a value every edit carries.
-	plain, err := core.RenameArea(context.Background(), "platform", "web")
+	plain, err := core.UpdateArea(context.Background(), "platform", area.NodeUpdate{NewName: ptrTo("web")})
 	if err != nil {
-		t.Fatalf("RenameArea back: %v", err)
+		t.Fatalf("UpdateArea back: %v", err)
 	}
 	if plain.StaleLinkTarget != "" {
 		t.Errorf("StaleLinkTarget = %q over a regular file, want empty", plain.StaleLinkTarget)
@@ -271,7 +275,10 @@ func TestAreaEditRefusalsCarryTheirFacts(t *testing.T) {
 	}{
 		{
 			name: "renaming a path the store does not declare",
-			call: func(c *Core) error { _, err := c.RenameArea(context.Background(), "nosuch", "platform"); return err },
+			call: func(c *Core) error {
+				_, err := c.UpdateArea(context.Background(), "nosuch", area.NodeUpdate{NewName: ptrTo("platform")})
+				return err
+			},
 			want: func(t *testing.T, err error) {
 				var e *AreaUndeclaredError
 				if !errors.As(err, &e) {
@@ -289,7 +296,10 @@ func TestAreaEditRefusalsCarryTheirFacts(t *testing.T) {
 		},
 		{
 			name: "renaming to the name it already has",
-			call: func(c *Core) error { _, err := c.RenameArea(context.Background(), "web", "web"); return err },
+			call: func(c *Core) error {
+				_, err := c.UpdateArea(context.Background(), "web", area.NodeUpdate{NewName: ptrTo("web")})
+				return err
+			},
 			want: func(t *testing.T, err error) {
 				var e *AreaNameUnchangedError
 				if !errors.As(err, &e) {
@@ -302,7 +312,10 @@ func TestAreaEditRefusalsCarryTheirFacts(t *testing.T) {
 		},
 		{
 			name: "renaming onto a name a sibling holds",
-			call: func(c *Core) error { _, err := c.RenameArea(context.Background(), "web/dashboard", "ui"); return err },
+			call: func(c *Core) error {
+				_, err := c.UpdateArea(context.Background(), "web/dashboard", area.NodeUpdate{NewName: ptrTo("ui")})
+				return err
+			},
 			want: func(t *testing.T, err error) {
 				var e *AreaNameTakenError
 				if !errors.As(err, &e) {
@@ -411,7 +424,10 @@ func TestAreaEditRefusalsCarryTheirFacts(t *testing.T) {
 		},
 		{
 			name: "a name the edited vocabulary could not hold",
-			call: func(c *Core) error { _, err := c.RenameArea(context.Background(), "web", "  "); return err },
+			call: func(c *Core) error {
+				_, err := c.UpdateArea(context.Background(), "web", area.NodeUpdate{NewName: ptrTo("  ")})
+				return err
+			},
 			want: func(t *testing.T, err error) {
 				// The planner's own refusal, passed through unwrapped: it is about
 				// the file's CONTENT, which is the class every surface reports it
@@ -478,7 +494,10 @@ func TestAreaEditTellsARetiredPathApartFromOneThatNeverExisted(t *testing.T) {
 		},
 		{
 			name: "the node being renamed",
-			call: func(c *Core) error { _, err := c.RenameArea(context.Background(), "auth", "identity"); return err },
+			call: func(c *Core) error {
+				_, err := c.UpdateArea(context.Background(), "auth", area.NodeUpdate{NewName: ptrTo("identity")})
+				return err
+			},
 			role: AreaPathRenamed,
 		},
 		{
@@ -531,7 +550,7 @@ func TestAreaEditRefusesAVanishedVocabulary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := core.RenameArea(context.Background(), "web", "platform")
+	_, err := core.UpdateArea(context.Background(), "web", area.NodeUpdate{NewName: ptrTo("platform")})
 	var vanished *AreaVocabularyVanishedError
 	if !errors.As(err, &vanished) {
 		t.Fatalf("error = %v (%T), want *AreaVocabularyVanishedError", err, err)
@@ -543,7 +562,7 @@ func TestAreaEditRefusesAVanishedVocabulary(t *testing.T) {
 	// A store that never had one: the same empty vocabulary, and the ordinary
 	// refusal, whose "declares no areas" is both the true cause and the remedy.
 	fresh, _ := setupTestCore(t)
-	_, err = fresh.RenameArea(context.Background(), "web", "platform")
+	_, err = fresh.UpdateArea(context.Background(), "web", area.NodeUpdate{NewName: ptrTo("platform")})
 	var undeclared *AreaUndeclaredError
 	if !errors.As(err, &undeclared) {
 		t.Fatalf("error = %v (%T), want *AreaUndeclaredError over a store that never declared one", err, err)
@@ -557,7 +576,7 @@ func TestAreaEditRefusesAVanishedVocabulary(t *testing.T) {
 // has no list to offer, so its refusal says so instead of naming an empty one.
 func TestAreaUndeclaredErrorWordsAnEmptyVocabularyApart(t *testing.T) {
 	fresh, _ := setupTestCore(t)
-	_, err := fresh.RenameArea(context.Background(), "web", "platform")
+	_, err := fresh.UpdateArea(context.Background(), "web", area.NodeUpdate{NewName: ptrTo("platform")})
 	var undeclared *AreaUndeclaredError
 	if !errors.As(err, &undeclared) {
 		t.Fatalf("error = %v (%T), want *AreaUndeclaredError", err, err)
@@ -567,7 +586,7 @@ func TestAreaUndeclaredErrorWordsAnEmptyVocabularyApart(t *testing.T) {
 	}
 
 	core, _ := areaVerbCore(t)
-	_, err = core.RenameArea(context.Background(), "nosuch", "platform")
+	_, err = core.UpdateArea(context.Background(), "nosuch", area.NodeUpdate{NewName: ptrTo("platform")})
 	if !errors.As(err, &undeclared) {
 		t.Fatalf("error = %v (%T), want *AreaUndeclaredError", err, err)
 	}
@@ -596,7 +615,7 @@ func TestAreaEditPartialFailureIsRerunnable(t *testing.T) {
 	}
 	t.Cleanup(func() { fsutil.RenameFn = restore })
 
-	_, err := core.RenameArea(context.Background(), "web", "platform")
+	_, err := core.UpdateArea(context.Background(), "web", area.NodeUpdate{NewName: ptrTo("platform")})
 	var ioErr *AreaEditIOError
 	if !errors.As(err, &ioErr) {
 		t.Fatalf("error = %v (%T), want an *AreaEditIOError", err, err)
@@ -616,7 +635,7 @@ func TestAreaEditPartialFailureIsRerunnable(t *testing.T) {
 	}
 
 	fsutil.RenameFn = restore
-	res, err := core.RenameArea(context.Background(), "web", "platform")
+	res, err := core.UpdateArea(context.Background(), "web", area.NodeUpdate{NewName: ptrTo("platform")})
 	if err != nil {
 		t.Fatalf("the rerun the message prescribes failed: %v", err)
 	}
@@ -678,8 +697,10 @@ func TestAreaEditRefusesToStrandANibThatArrived(t *testing.T) {
 		stranded bool
 	}{
 		{
-			name:     "rename",
-			edit:     func(c *Core) (AreaEditResult, error) { return c.RenameArea(context.Background(), "web", "platform") },
+			name: "rename",
+			edit: func(c *Core) (AreaEditResult, error) {
+				return c.UpdateArea(context.Background(), "web", area.NodeUpdate{NewName: ptrTo("platform")})
+			},
 			area:     "platform",
 			cascaded: "platform/ui",
 			stranded: true,
@@ -842,8 +863,10 @@ func TestAreaEditReportsAFailedConfirmation(t *testing.T) {
 		declared string
 	}{
 		{
-			name:     "a rename",
-			edit:     func(c *Core) (AreaEditResult, error) { return c.RenameArea(context.Background(), "web", "platform") },
+			name: "a rename",
+			edit: func(c *Core) (AreaEditResult, error) {
+				return c.UpdateArea(context.Background(), "web", area.NodeUpdate{NewName: ptrTo("platform")})
+			},
 			newPath:  "platform",
 			written:  []string{"nibs-ae01", "nibs-ae02"},
 			declared: "name: web",
@@ -910,7 +933,7 @@ func TestAreaEditReportsAFailedFallbackLoad(t *testing.T) {
 	reloadNibsBeforeAreaWrite = func(*Core) error { return errors.New("the store went unreadable") }
 	t.Cleanup(func() { reloadNibsBeforeAreaWrite = restoreLoad })
 
-	_, err := core.RenameArea(context.Background(), "web", "platform")
+	_, err := core.UpdateArea(context.Background(), "web", area.NodeUpdate{NewName: ptrTo("platform")})
 	var ioErr *AreaEditIOError
 	if !errors.As(err, &ioErr) {
 		t.Fatalf("error = %v (%T), want an *AreaEditIOError", err, err)
@@ -947,7 +970,7 @@ func TestAreaEditStopsWaitingForTheStoreLockWhenItsContextEnds(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := core.RenameArea(ctx, "web", "platform")
+		_, err := core.UpdateArea(ctx, "web", area.NodeUpdate{NewName: ptrTo("platform")})
 		done <- err
 	}()
 
@@ -1009,7 +1032,10 @@ func TestAreaEditRefusesAContextAlreadyOver(t *testing.T) {
 		},
 		{
 			name: "rename",
-			edit: func(ctx context.Context, c *Core) error { _, err := c.RenameArea(ctx, "web", "platform"); return err },
+			edit: func(ctx context.Context, c *Core) error {
+				_, err := c.UpdateArea(ctx, "web", area.NodeUpdate{NewName: ptrTo("platform")})
+				return err
+			},
 		},
 		{
 			name: "retire",

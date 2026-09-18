@@ -46,9 +46,9 @@ func TestAreaMutationErrorClassesMatchTheAreaCommands(t *testing.T) {
 		app := setupAreaMutationApp(t)
 
 		_, _, err := executeQuery(app,
-			`mutation { renameArea(input: {path: "nosuch", newName: "platform"}) { config { prefix } } }`, nil, "")
+			`mutation { updateArea(input: {path: "nosuch", newName: "platform"}) { config { prefix } } }`, nil, "")
 		if err == nil {
-			t.Fatal("renameArea over an undeclared path returned no error")
+			t.Fatal("updateArea over an undeclared path returned no error")
 		}
 		var ce *output.CodedError
 		if !errors.As(err, &ce) {
@@ -73,9 +73,9 @@ func TestAreaMutationErrorClassesMatchTheAreaCommands(t *testing.T) {
 		}
 
 		_, _, err := executeQuery(app,
-			`mutation { renameArea(input: {path: "web", newName: "platform"}) { config { prefix } } }`, nil, "")
+			`mutation { updateArea(input: {path: "web", newName: "platform"}) { config { prefix } } }`, nil, "")
 		if err == nil {
-			t.Fatal("renameArea over an unreadable vocabulary returned no error")
+			t.Fatal("updateArea over an unreadable vocabulary returned no error")
 		}
 		var ce *output.CodedError
 		if !errors.As(err, &ce) {
@@ -133,9 +133,9 @@ func TestAreaMutationErrorClassesMatchTheAreaCommands(t *testing.T) {
 		}
 
 		_, _, err := executeQuery(app,
-			`mutation { renameArea(input: {path: "auth", newName: "identity"}) { config { prefix } } }`, nil, "")
+			`mutation { updateArea(input: {path: "auth", newName: "identity"}) { config { prefix } } }`, nil, "")
 		if err == nil {
-			t.Fatal("renameArea over an area retired under the lock returned no error")
+			t.Fatal("updateArea over an area retired under the lock returned no error")
 		}
 		var ce *output.CodedError
 		if !errors.As(err, &ce) {
@@ -158,9 +158,9 @@ func TestAreaMutationErrorClassesMatchTheAreaCommands(t *testing.T) {
 		}
 
 		_, _, err := executeQuery(app,
-			`mutation { renameArea(input: {path: "web", newName: "platform"}) { config { prefix } } }`, nil, "")
+			`mutation { updateArea(input: {path: "web", newName: "platform"}) { config { prefix } } }`, nil, "")
 		if err == nil {
-			t.Fatal("renameArea over a vanished vocabulary returned no error")
+			t.Fatal("updateArea over a vanished vocabulary returned no error")
 		}
 		var ce *output.CodedError
 		if !errors.As(err, &ce) {

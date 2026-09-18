@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
@@ -29,15 +30,15 @@ func storedAreasFile(t *testing.T, root string) string {
 	return string(raw)
 }
 
-// TestRenameAreaRenamesADeclaredArea is the tracer bullet for the area write
+// TestUpdateAreaRenamesADeclaredArea is the tracer bullet for the area write
 // path over GraphQL: lock, re-read, plan, write, and answer with the whole
 // vocabulary as it now stands.
-func TestRenameAreaRenamesADeclaredArea(t *testing.T) {
+func TestUpdateAreaRenamesADeclaredArea(t *testing.T) {
 	resolver, core := setupTestResolverWithAreas(t)
 
-	cfg, err := resolver.Mutation().RenameArea(context.Background(), model.RenameAreaInput{Path: "web", NewName: "platform"})
+	cfg, err := resolver.Mutation().UpdateArea(context.Background(), model.UpdateAreaInput{Path: "web", NewName: ptr("platform")})
 	if err != nil {
-		t.Fatalf("RenameArea: %v", err)
+		t.Fatalf("UpdateArea: %v", err)
 	}
 
 	got := pathsOf(cfg.Config.Areas)
@@ -75,21 +76,21 @@ func storedAreaOfNib(t *testing.T, core *nibcore.Core, id string) string {
 	return ""
 }
 
-// TestRenameAreaCascadesToMembers is the guard on the member rewrite: it runs
+// TestUpdateAreaCascadesToMembers is the guard on the member rewrite: it runs
 // BETWEEN the plan and the config write, inside the one critical section the
 // store's own verb holds both of its locks across.
 //
 // A member assigned BELOW the renamed node keeps the remainder it carried, so
 // the two rows are not the same assertion twice: `web/ui` has to arrive at
 // `platform/ui` and not at `platform`.
-func TestRenameAreaCascadesToMembers(t *testing.T) {
+func TestUpdateAreaCascadesToMembers(t *testing.T) {
 	resolver, core := setupTestResolverWithAreas(t)
 	mustCreate(t, core, &nib.Nib{ID: "cas1", Title: "On the node", Type: "task", Status: "todo", Area: "web"})
 	mustCreate(t, core, &nib.Nib{ID: "cas2", Title: "Below it", Type: "task", Status: "todo", Area: "web/ui"})
 	mustCreate(t, core, &nib.Nib{ID: "cas3", Title: "Elsewhere", Type: "task", Status: "todo", Area: "auth"})
 
-	if _, err := resolver.Mutation().RenameArea(context.Background(), model.RenameAreaInput{Path: "web", NewName: "platform"}); err != nil {
-		t.Fatalf("RenameArea: %v", err)
+	if _, err := resolver.Mutation().UpdateArea(context.Background(), model.UpdateAreaInput{Path: "web", NewName: ptr("platform")}); err != nil {
+		t.Fatalf("UpdateArea: %v", err)
 	}
 
 	for _, tc := range []struct{ id, want string }{
@@ -148,16 +149,16 @@ func assertStoreUnchanged(t *testing.T, before map[string]string, root string) {
 	}
 }
 
-// TestRenameAreaRefusesAnUndeclaredPath pins the refusal the planners cannot
+// TestUpdateAreaRefusesAnUndeclaredPath pins the refusal the planners cannot
 // word: it names the declared set, which is the repair.
-func TestRenameAreaRefusesAnUndeclaredPath(t *testing.T) {
+func TestUpdateAreaRefusesAnUndeclaredPath(t *testing.T) {
 	resolver, core := setupTestResolverWithAreas(t)
 	mustCreate(t, core, &nib.Nib{ID: "und1", Title: "Member", Type: "task", Status: "todo", Area: "web"})
 	before := storeSnapshot(t, core.Root())
 
-	_, err := resolver.Mutation().RenameArea(context.Background(), model.RenameAreaInput{Path: "nosuch", NewName: "platform"})
+	_, err := resolver.Mutation().UpdateArea(context.Background(), model.UpdateAreaInput{Path: "nosuch", NewName: ptr("platform")})
 	if err == nil {
-		t.Fatal("RenameArea accepted a path the store does not declare")
+		t.Fatal("UpdateArea accepted a path the store does not declare")
 	}
 	var ioErr *nibcore.AreaEditIOError
 	if errors.As(err, &ioErr) {
@@ -171,7 +172,7 @@ func TestRenameAreaRefusesAnUndeclaredPath(t *testing.T) {
 	assertStoreUnchanged(t, before, core.Root())
 }
 
-// TestRemoveAreaRefusesAnUndeclaredPath is TestRenameAreaRefusesAnUndeclaredPath
+// TestRemoveAreaRefusesAnUndeclaredPath is TestUpdateAreaRefusesAnUndeclaredPath
 // for the other verb. The two mutations ask requireDeclaredArea the same
 // question and neither planner can word the answer: the refusal names the
 // declared set, which is the repair.
@@ -201,21 +202,21 @@ func TestRemoveAreaRefusesAnUndeclaredPath(t *testing.T) {
 	assertStoreUnchanged(t, before, core.Root())
 }
 
-// TestRenameAreaRefusesASiblingNameBeforeTouchingAMember is the plan/write
+// TestUpdateAreaRefusesASiblingNameBeforeTouchingAMember is the plan/write
 // split's whole purpose, asserted where it is observable: the collision is a
 // refusal the planner makes, and planning runs BEFORE the cascade, so the store
 // is still untouched when it lands. Reversed, the members would already carry a
 // path the vocabulary does not declare and every later write to them would be
 // refused for it.
-func TestRenameAreaRefusesASiblingNameBeforeTouchingAMember(t *testing.T) {
+func TestUpdateAreaRefusesASiblingNameBeforeTouchingAMember(t *testing.T) {
 	resolver, core := setupTestResolverWithAreas(t)
 	mustCreate(t, core, &nib.Nib{ID: "sib1", Title: "Member", Type: "task", Status: "todo", Area: "web/dashboard"})
 	mustCreate(t, core, &nib.Nib{ID: "sib2", Title: "Also", Type: "task", Status: "todo", Area: "web/dashboard"})
 	before := storeSnapshot(t, core.Root())
 
-	_, err := resolver.Mutation().RenameArea(context.Background(), model.RenameAreaInput{Path: "web/dashboard", NewName: "ui"})
+	_, err := resolver.Mutation().UpdateArea(context.Background(), model.UpdateAreaInput{Path: "web/dashboard", NewName: ptr("ui")})
 	if err == nil {
-		t.Fatal("RenameArea accepted a name a sibling already holds")
+		t.Fatal("UpdateArea accepted a name a sibling already holds")
 	}
 	var ioErr *nibcore.AreaEditIOError
 	if errors.As(err, &ioErr) {
@@ -224,7 +225,7 @@ func TestRenameAreaRefusesASiblingNameBeforeTouchingAMember(t *testing.T) {
 	assertStoreUnchanged(t, before, core.Root())
 }
 
-// TestRenameAreaArgumentRefusals covers the ones the arguments settle on their
+// TestUpdateAreaArgumentRefusals covers the ones the arguments settle on their
 // own. A rename to the name the node already carries is a valid no-op WRITE as
 // far as the planner is concerned, so this resolver is what refuses it; a name
 // carrying the path separator is the planner's, since the edited vocabulary
@@ -234,7 +235,7 @@ func TestRenameAreaRefusesASiblingNameBeforeTouchingAMember(t *testing.T) {
 // length the request body holds, and a long enough one writes an areas.yml past
 // yamlfile.MaxBytes — which Core.Load refuses before it walks the nibs, leaving a
 // store no command can open, this mutation included.
-func TestRenameAreaArgumentRefusals(t *testing.T) {
+func TestUpdateAreaArgumentRefusals(t *testing.T) {
 	tests := []struct {
 		name    string
 		path    string
@@ -251,9 +252,9 @@ func TestRenameAreaArgumentRefusals(t *testing.T) {
 			mustCreate(t, core, &nib.Nib{ID: "arg1", Title: "Member", Type: "task", Status: "todo", Area: "web"})
 			before := storeSnapshot(t, core.Root())
 
-			_, err := resolver.Mutation().RenameArea(context.Background(), model.RenameAreaInput{Path: tt.path, NewName: tt.newName})
+			_, err := resolver.Mutation().UpdateArea(context.Background(), model.UpdateAreaInput{Path: tt.path, NewName: ptr(tt.newName)})
 			if err == nil {
-				t.Fatalf("RenameArea(%q -> %q) was accepted", tt.path, tt.newName)
+				t.Fatalf("UpdateArea(%q -> %q) was accepted", tt.path, tt.newName)
 			}
 			var ioErr *nibcore.AreaEditIOError
 			if errors.As(err, &ioErr) {
@@ -507,7 +508,7 @@ func TestAreaMutationTicksConfigChanged(t *testing.T) {
 	}
 
 	go func() {
-		_, _ = resolver.Mutation().RenameArea(ctx, model.RenameAreaInput{Path: "web", NewName: "platform"})
+		_, _ = resolver.Mutation().UpdateArea(ctx, model.UpdateAreaInput{Path: "web", NewName: ptr("platform")})
 	}()
 
 	select {
@@ -569,8 +570,8 @@ func TestAreaEditRunsAlongsideANibUpdate(t *testing.T) {
 
 		renamed := make(chan error, 1)
 		go func() {
-			_, err := resolver.Mutation().RenameArea(context.Background(),
-				model.RenameAreaInput{Path: from, NewName: to})
+			_, err := resolver.Mutation().UpdateArea(context.Background(),
+				model.UpdateAreaInput{Path: from, NewName: ptr(to)})
 			renamed <- err
 		}()
 		// Queued first, so the released gate hands the file lock to the area
@@ -595,7 +596,7 @@ func TestAreaEditRunsAlongsideANibUpdate(t *testing.T) {
 			select {
 			case err := <-renamed:
 				if err != nil {
-					t.Fatalf("round %d: RenameArea: %v", round, err)
+					t.Fatalf("round %d: UpdateArea: %v", round, err)
 				}
 			case err := <-updated:
 				if err != nil {
@@ -625,7 +626,7 @@ func (s *stubAreaWriter) AddArea(context.Context, string, string, string) (nibco
 	return s.res, s.err
 }
 
-func (s *stubAreaWriter) RenameArea(context.Context, string, string) (nibcore.AreaEditResult, error) {
+func (s *stubAreaWriter) UpdateArea(context.Context, string, area.NodeUpdate) (nibcore.AreaEditResult, error) {
 	s.calls++
 	return s.res, s.err
 }
@@ -802,8 +803,8 @@ func TestAreaMutationsWordEveryIOPhase(t *testing.T) {
 			if tt.retire {
 				_, err = resolver.Mutation().RemoveArea(context.Background(), model.RemoveAreaInput{Path: "web"})
 			} else {
-				_, err = resolver.Mutation().RenameArea(context.Background(),
-					model.RenameAreaInput{Path: "web", NewName: "platform"})
+				_, err = resolver.Mutation().UpdateArea(context.Background(),
+					model.UpdateAreaInput{Path: "web", NewName: ptr("platform")})
 			}
 			if err == nil {
 				t.Fatal("the mutation reported success over a failed edit")
@@ -846,8 +847,8 @@ func TestAreaMutationsWordANibThatArrivedUnderTheArea(t *testing.T) {
 		call    func(*Resolver) error
 	}{
 		{"rename", "platform", func(r *Resolver) error {
-			_, err := r.Mutation().RenameArea(context.Background(),
-				model.RenameAreaInput{Path: "web", NewName: "platform"})
+			_, err := r.Mutation().UpdateArea(context.Background(),
+				model.UpdateAreaInput{Path: "web", NewName: ptr("platform")})
 			return err
 		}},
 		{"retire", "", func(r *Resolver) error {
@@ -928,7 +929,7 @@ func TestAreaMutationsAnswerArgumentsWithoutTheStore(t *testing.T) {
 		{
 			name: "an empty new name",
 			call: func(r *Resolver) error {
-				_, err := r.Mutation().RenameArea(context.Background(), model.RenameAreaInput{Path: "web", NewName: ""})
+				_, err := r.Mutation().UpdateArea(context.Background(), model.UpdateAreaInput{Path: "web", NewName: ptr("")})
 				return err
 			},
 			want: "none was given",
@@ -936,7 +937,7 @@ func TestAreaMutationsAnswerArgumentsWithoutTheStore(t *testing.T) {
 		{
 			name: "a padded new name",
 			call: func(r *Resolver) error {
-				_, err := r.Mutation().RenameArea(context.Background(), model.RenameAreaInput{Path: "web", NewName: " ui"})
+				_, err := r.Mutation().UpdateArea(context.Background(), model.UpdateAreaInput{Path: "web", NewName: ptr(" ui")})
 				return err
 			},
 			want: "whitespace",
@@ -944,7 +945,7 @@ func TestAreaMutationsAnswerArgumentsWithoutTheStore(t *testing.T) {
 		{
 			name: "a new name carrying the separator",
 			call: func(r *Resolver) error {
-				_, err := r.Mutation().RenameArea(context.Background(), model.RenameAreaInput{Path: "web", NewName: "a/b"})
+				_, err := r.Mutation().UpdateArea(context.Background(), model.UpdateAreaInput{Path: "web", NewName: ptr("a/b")})
 				return err
 			},
 			want: "is not a name",
@@ -952,8 +953,8 @@ func TestAreaMutationsAnswerArgumentsWithoutTheStore(t *testing.T) {
 		{
 			name: "a name no store could read back",
 			call: func(r *Resolver) error {
-				_, err := r.Mutation().RenameArea(context.Background(),
-					model.RenameAreaInput{Path: "web", NewName: strings.Repeat("x", 201)})
+				_, err := r.Mutation().UpdateArea(context.Background(),
+					model.UpdateAreaInput{Path: "web", NewName: ptr(strings.Repeat("x", 201))})
 				return err
 			},
 			want: "bounded at 200",
@@ -1010,10 +1011,10 @@ func TestAreaMutationReportsAReplacedSymlink(t *testing.T) {
 	}}
 	resolver.AreaWriter = stub
 
-	payload, err := resolver.Mutation().RenameArea(context.Background(),
-		model.RenameAreaInput{Path: "web", NewName: "platform"})
+	payload, err := resolver.Mutation().UpdateArea(context.Background(),
+		model.UpdateAreaInput{Path: "web", NewName: ptr("platform")})
 	if err != nil {
-		t.Fatalf("RenameArea: %v", err)
+		t.Fatalf("UpdateArea: %v", err)
 	}
 	if len(payload.Notes) != 1 {
 		t.Fatalf("notes = %v, want the stale-link note", payload.Notes)
@@ -1042,10 +1043,10 @@ func TestAreaMutationReportsAReplacedSymlink(t *testing.T) {
 	// is the replacement being reported and not a line every edit carries.
 	stub.res.StaleLinkTarget = ""
 	stub.warnings = nil
-	plain, err := resolver.Mutation().RenameArea(context.Background(),
-		model.RenameAreaInput{Path: "web", NewName: "platform"})
+	plain, err := resolver.Mutation().UpdateArea(context.Background(),
+		model.UpdateAreaInput{Path: "web", NewName: ptr("platform")})
 	if err != nil {
-		t.Fatalf("RenameArea: %v", err)
+		t.Fatalf("UpdateArea: %v", err)
 	}
 	if len(plain.Notes) != 0 {
 		t.Errorf("notes = %v, want none", plain.Notes)
@@ -1080,14 +1081,14 @@ func TestAreaMutationsNameNoPath(t *testing.T) {
 		{
 			name: "a path the store does not declare",
 			call: func(r *Resolver) error {
-				_, err := r.Mutation().RenameArea(context.Background(), model.RenameAreaInput{Path: "nosuch", NewName: "x"})
+				_, err := r.Mutation().UpdateArea(context.Background(), model.UpdateAreaInput{Path: "nosuch", NewName: ptr("x")})
 				return err
 			},
 		},
 		{
 			name: "a name a sibling already holds",
 			call: func(r *Resolver) error {
-				_, err := r.Mutation().RenameArea(context.Background(), model.RenameAreaInput{Path: "web/dashboard", NewName: "ui"})
+				_, err := r.Mutation().UpdateArea(context.Background(), model.UpdateAreaInput{Path: "web/dashboard", NewName: ptr("ui")})
 				return err
 			},
 		},
@@ -1119,7 +1120,7 @@ func TestAreaMutationsNameNoPath(t *testing.T) {
 				}
 			},
 			call: func(r *Resolver) error {
-				_, err := r.Mutation().RenameArea(context.Background(), model.RenameAreaInput{Path: "web", NewName: "platform"})
+				_, err := r.Mutation().UpdateArea(context.Background(), model.UpdateAreaInput{Path: "web", NewName: ptr("platform")})
 				return err
 			},
 		},

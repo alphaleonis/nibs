@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibtypes"
@@ -733,9 +734,16 @@ func (r *mutationResolver) AddArea(ctx context.Context, input model.AddAreaInput
 	return r.addAreaImpl(ctx, input)
 }
 
-// RenameArea is the resolver for the renameArea field.
-func (r *mutationResolver) RenameArea(ctx context.Context, input model.RenameAreaInput) (*model.AreaEditPayload, error) {
-	return r.renameAreaImpl(ctx, input)
+// UpdateArea is the resolver for the updateArea field.
+func (r *mutationResolver) UpdateArea(ctx context.Context, input model.UpdateAreaInput) (*model.AreaEditPayload, error) {
+	// The wire's three optional fields ARE the store's NodeUpdate: nil leaves a
+	// key alone, "" clears it. Passed through rather than normalized, so the one
+	// definition of that distinction stays in internal/area.
+	return r.updateAreaImpl(ctx, input.Path, area.NodeUpdate{
+		NewName:     input.NewName,
+		Description: input.Description,
+		Color:       input.Color,
+	})
 }
 
 // RemoveArea is the resolver for the removeArea field.

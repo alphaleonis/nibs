@@ -79,26 +79,86 @@ func PlanCreate(current []byte, exists bool, path, description, color string) ([
 	})
 }
 
-// PlanRename renames the declared area at path in current and returns the whole
-// file rendered with the edit applied. newName is a bare name; nothing is
-// re-parented. An absent file is refused.
-func PlanRename(current []byte, exists bool, path, newName string) ([]byte, error) {
-	if err := ValidateName(newName); err != nil {
-		return nil, err
+// NodeUpdate is what one update sets on a declared area. A nil field leaves that
+// key as it stands; a non-nil EMPTY string clears it, which is a different edit
+// from writing an empty value — `description: ""` reads back as a description
+// someone emptied the text out of.
+type NodeUpdate struct {
+	// NewName is a bare name: nothing is re-parented, as the rename this
+	// replaced never re-parented either.
+	NewName     *string
+	Description *string
+	Color       *string
+}
+
+// PlanUpdate edits the declared area at path in current and returns the whole
+// file rendered with the edit applied. An absent file is refused.
+//
+// It replaced PlanRename rather than sitting beside it: a rename is the NewName
+// field, so one planner covers a name, a description and a color instead of one
+// planner per field, and a caller fixing two of them at once gets one write
+// rather than two chances to fail half way.
+//
+// NOTHING BOUNDS A DESCRIPTION — ValidateNewPath, ValidateName and ValidateColor
+// are the only validators this package has — so planEdit's rendered-size cap is
+// the whole defense against a value that would leave an areas.yml no command can
+// open afterwards. Do not assume a caller checked.
+func PlanUpdate(current []byte, exists bool, path string, u NodeUpdate) ([]byte, error) {
+	if u.NewName != nil {
+		if err := ValidateName(*u.NewName); err != nil {
+			return nil, err
+		}
+	}
+	if u.Color != nil {
+		// "" is a clear, which ValidateColor already accepts.
+		//
+		// Wrapped rather than returned as it stands: every refusal this package
+		// makes about content has to be an *EditRefusal, or a surface reports it
+		// as a filesystem failure and offers a rerun that cannot help.
+		// ValidateColor itself must NOT be changed to do this — validateNodes
+		// calls it while LOADING a vocabulary, where an edit refusal is the wrong
+		// noun. Its message is wrapped verbatim, keeping the safetext.StripBounded
+		// it already applies to the value.
+		if err := ValidateColor(*u.Color); err != nil {
+			return nil, refuseEdit("%v", err)
+		}
 	}
 	return planEdit(current, exists, refuseMissingVocabulary, func(areas *yaml.Node) error {
 		found, err := findStored(areas, path)
 		if err != nil {
 			return err
 		}
-		name := found.name
-		name.Kind = yaml.ScalarNode
-		name.Tag = "!!str"
-		name.Value = newName
-		// Drop any style the old scalar carried; it described the old value.
-		name.Style = 0
+		if u.NewName != nil {
+			setScalarValue(found.name, *u.NewName)
+		}
+		setOrClearKey(found.node, "description", u.Description)
+		setOrClearKey(found.node, "color", u.Color)
 		return nil
 	})
+}
+
+// setScalarValue rewrites a scalar in place, dropping any style the old value
+// carried: it described that value, not this one.
+func setScalarValue(n *yaml.Node, value string) {
+	n.Kind, n.Tag, n.Value, n.Style = yaml.ScalarNode, "!!str", value, 0
+}
+
+// setOrClearKey applies one optional field to a node's mapping. An existing key
+// is rewritten in place rather than removed and re-appended, so the node keeps
+// the key order its author gave it.
+func setOrClearKey(node *yaml.Node, key string, value *string) {
+	if value == nil {
+		return
+	}
+	if *value == "" {
+		removeMappingKey(node, key)
+		return
+	}
+	if existing := yamlfile.MappingValue(node, key); existing != nil {
+		setScalarValue(existing, *value)
+		return
+	}
+	appendMappingEntry(node, key, scalarNode(*value))
 }
 
 // PlanRemove retires the declared area at path and every area beneath it, and

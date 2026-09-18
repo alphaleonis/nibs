@@ -19,7 +19,10 @@ var (
 	areaAddJSON        bool
 	areaAddDescription string
 	areaAddColor       string
-	areaRenameJSON     bool
+	areaSetJSON        bool
+	areaSetName        string
+	areaSetDescription string
+	areaSetColor       string
 	areaRmJSON         bool
 	areaRmMoveTo       string
 	areaRmUnassign     bool
@@ -74,22 +77,28 @@ already holding becomes a declared one.`,
 	RunE: runAreaAdd,
 }
 
-var areaRenameCmd = &cobra.Command{
-	Use:   "rename <path> <new-name>",
-	Short: "Rename a declared area and rewrite every nib assigned below it",
-	Long: `Renames the node at <path> and rewrites the ` + "`area:`" + ` of every nib assigned to
-it or to any declared area beneath it — renaming a parent moves the whole
-subtree's paths, so its children's members move with it.
+var areaSetCmd = &cobra.Command{
+	Use:   "set <path>",
+	Short: "Change a declared area's name, description or color",
+	Long: `Edits the node at <path>: its name, its description, its color, or any
+combination of the three in one write. At least one of --name, --description and
+--color is required; setting none is refused rather than reported as a success
+over an edit that never happened.
 
-<new-name> is a NAME, not a path: a rename changes what a node is called and
-never moves it between parents. A name a sibling already holds is refused rather
-than merged, because two siblings with one name would make one path mean two
-nodes.
+--name is a NAME, not a path: it changes what a node is called and never moves it
+between parents. A name a sibling already holds is refused rather than merged,
+because two siblings with one name would make one path mean two nodes.
 
-The nibs are rewritten before the declaration is, so rerunning the same command
-finishes a run that failed part way.`,
-	Args: codedExactArgs(&areaRenameJSON, 2),
-	RunE: runAreaRename,
+RENAMING is the only part that touches nibs. It rewrites the ` + "`area:`" + ` of every nib
+assigned to the node or to any declared area beneath it, since renaming a parent
+moves the whole subtree's paths. The nibs are rewritten before the declaration
+is, so rerunning the same command finishes a run that failed part way. Setting a
+description or a color rewrites nothing — nothing stops being declared.
+
+AN EMPTY VALUE CLEARS. ` + "`--description \"\"`" + ` removes the description; leaving the
+flag off keeps whatever the store declares. The same holds for --color.`,
+	Args: codedExactArgs(&areaSetJSON, 1),
+	RunE: runAreaSet,
 }
 
 var areaRmCmd = &cobra.Command{
@@ -120,7 +129,13 @@ func init() {
 		"What belongs in this area, for the agent choosing one")
 	areaAddCmd.Flags().StringVar(&areaAddColor, "color", "",
 		"Color the surfaces that display areas render this one in")
-	areaRenameCmd.Flags().BoolVar(&areaRenameJSON, "json", false, "Output as JSON")
+	areaSetCmd.Flags().BoolVar(&areaSetJSON, "json", false, "Output as JSON")
+	areaSetCmd.Flags().StringVar(&areaSetName, "name", "",
+		"New name for the area — its own segment, never a path")
+	areaSetCmd.Flags().StringVar(&areaSetDescription, "description", "",
+		"What belongs in this area, for the agent choosing one; empty clears it")
+	areaSetCmd.Flags().StringVar(&areaSetColor, "color", "",
+		"Color the surfaces that display areas render this one in; empty clears it")
 	areaRmCmd.Flags().BoolVar(&areaRmJSON, "json", false, "Output as JSON")
 	areaRmCmd.Flags().StringVar(&areaRmMoveTo, "move-to", "",
 		"Reassign every nib at or below the retiring area to this declared area")
@@ -128,7 +143,7 @@ func init() {
 		"Drop the area assignment of every nib at or below the retiring area")
 	areaRmCmd.MarkFlagsMutuallyExclusive("move-to", "unassign")
 
-	areaCmd.AddCommand(areaListCmd, areaAddCmd, areaRenameCmd, areaRmCmd)
+	areaCmd.AddCommand(areaListCmd, areaAddCmd, areaSetCmd, areaRmCmd)
 	rootCmd.AddCommand(areaCmd)
 }
 
@@ -136,7 +151,7 @@ func init() {
 
 // areaListNode is one node of the tree `area list --json` emits. Path is what
 // --area takes; Name is the single segment the file declares, which is what a
-// later `nibs area rename` takes.
+// later `nibs area set` takes.
 type areaListNode struct {
 	Path        string         `json:"path"`
 	Name        string         `json:"name"`
@@ -297,12 +312,40 @@ func validateAreaAddArgument(jsonMode bool, path, color string) error {
 	return nil
 }
 
-// --- rename ----------------------------------------------------------------
+// --- set -------------------------------------------------------------------
 
-func runAreaRename(cmd *cobra.Command, args []string) error {
+func runAreaSet(cmd *cobra.Command, args []string) error {
 	app := getApp(cmd)
-	path, newName := args[0], args[1]
+	path := args[0]
 	parent, oldName := area.SplitPath(path)
+
+	// A flag left off leaves that key as the store declares it; one given EMPTY
+	// clears it. Only cobra's Changed can tell those apart, because the VALUE
+	// cannot: "" is both "not given" and "clear this".
+	var update area.NodeUpdate
+	if cmd.Flags().Changed("name") {
+		update.NewName = &areaSetName
+	}
+	if cmd.Flags().Changed("description") {
+		update.Description = &areaSetDescription
+	}
+	if cmd.Flags().Changed("color") {
+		update.Color = &areaSetColor
+	}
+
+	// The color is judged by its own value, so it is answered unconditionally and
+	// before the lock, exactly as runAreaAdd answers its arguments. The NAME
+	// refusals below cannot be: they speak about the node at `path`.
+	if update.Color != nil {
+		if err := area.ValidateColor(areaSetColor); err != nil {
+			return cmdError(areaSetJSON, output.ErrValidation,
+				"cannot set the color of area %s: %v", quotedArea(path), err)
+		}
+	}
+
+	// An update that sets nothing is NOT refused here: Core.UpdateArea refuses it
+	// before taking the lock too, and duplicating that check would make its typed
+	// refusal unreachable from this surface — dead wording no test could drive.
 
 	// Answered BEFORE the call, because the two arguments alone answer it and no
 	// vocabulary can change that answer. Waiting for the store's write lock has
@@ -313,7 +356,7 @@ func runAreaRename(cmd *cobra.Command, args []string) error {
 	// PRINTING it early is the separate question, and the startup snapshot
 	// settles it. Two of these refusals speak about the node at `path` — one
 	// asserts it "is already named" the name given, the other prescribes a
-	// runnable `nibs area rename` for it — so over a path the store does not
+	// runnable `nibs area set` for it — so over a path the store does not
 	// declare they answer about a node that is not there, and the prescription
 	// is a command the tool then refuses. Held rather than printed, the refusal
 	// waits behind the store's own answer and the caller reads the typo first.
@@ -324,42 +367,83 @@ func runAreaRename(cmd *cobra.Command, args []string) error {
 	// takes the fast exit; one it does not is the case where the extra
 	// information is worth the wait, since the caller has to fix the path before
 	// the name matters.
-	argErr := validateAreaRenameArgument(areaRenameJSON, path, parent, oldName, newName)
-	if argErr != nil && areaDeclaredAtStartup(app, path) {
-		return argErr
+	var argErr error
+	if update.NewName != nil {
+		argErr = validateAreaSetArgument(areaSetJSON, path, parent, oldName, areaSetName)
+		if argErr != nil && areaDeclaredAtStartup(app, path) {
+			return argErr
+		}
 	}
 
-	res, err := app.Core.RenameArea(cmd.Context(), path, newName)
+	res, err := app.Core.UpdateArea(cmd.Context(), path, update)
 	if err != nil {
-		return areaRenameRefusal(app.AreasPath(), argErr, err)
+		return areaSetRefusal(app.AreasPath(), argErr, err)
 	}
-
-	msg := fmt.Sprintf("Renamed area %s to %s", quotedArea(path), quotedArea(res.NewPath))
-	if len(res.Written) > 0 {
-		msg += fmt.Sprintf(" and rewrote %s: %s%s",
-			areaNibCount(len(res.Written)), strings.Join(namedIDs(res.Written), ", "), moreThanNamed(len(res.Written)))
-	}
-	return reportAreaEdit(areaRenameJSON, app.AreasPath(), msg, res)
+	return reportAreaEdit(areaSetJSON, app.AreasPath(), areaSetSummary(path, update, res), res)
 }
 
-// areaRenameRefusal words what `nibs area rename` refuses, and decides when the
+// areaSetSummary says which of the three fields the edit actually changed. One
+// verb now covers all three, so "Updated area web" alone would leave the caller
+// unable to tell a rename from a cleared color.
+func areaSetSummary(path string, u area.NodeUpdate, res nibcore.AreaEditResult) string {
+	var msg string
+	if u.NewName != nil {
+		msg = fmt.Sprintf("Renamed area %s to %s", quotedArea(path), quotedArea(res.NewPath))
+		if len(res.Written) > 0 {
+			msg += fmt.Sprintf(" and rewrote %s: %s%s",
+				areaNibCount(len(res.Written)), strings.Join(namedIDs(res.Written), ", "),
+				moreThanNamed(len(res.Written)))
+		}
+	} else {
+		msg = fmt.Sprintf("Updated area %s", quotedArea(path))
+	}
+
+	var also []string
+	if u.Description != nil {
+		also = append(also, areaSetFieldWord("description", *u.Description))
+	}
+	if u.Color != nil {
+		also = append(also, areaSetFieldWord("color", *u.Color))
+	}
+	if len(also) > 0 {
+		msg += " (" + strings.Join(also, ", ") + ")"
+	}
+	return msg
+}
+
+// areaSetFieldWord tells a field that was SET from one that was CLEARED, which
+// is the whole distinction an empty value carries.
+func areaSetFieldWord(field, value string) string {
+	if value == "" {
+		return "cleared the " + field
+	}
+	return "set the " + field
+}
+
+// areaSetRefusal words what `nibs area set` refuses, and decides when the
 // held argument refusal is the one to print.
-func areaRenameRefusal(areasFile string, argErr, err error) error {
+func areaSetRefusal(areasFile string, argErr, err error) error {
 	// The store answered about the NAME rather than about the path, which means
 	// the node at `path` is there and the held refusal now speaks about a node
 	// that exists. It comes first for the reason it is held at all: it can name
 	// the runnable spelling, or the fact that nothing would change, where the
 	// vocabulary's own backstop can only report that the file would be unusable.
-	if argErr != nil && areaRenameNameRefusal(err) {
+	if argErr != nil && areaSetNameRefusal(err) {
 		return argErr
+	}
+	var nothing *nibcore.AreaUpdateEmptyError
+	if errors.As(err, &nothing) {
+		return cmdError(areaSetJSON, output.ErrValidation,
+			"nothing to change on area %s: give --name, --description or --color",
+			quotedArea(nothing.Path))
 	}
 	var unchanged *nibcore.AreaNameUnchangedError
 	if errors.As(err, &unchanged) {
-		return areaNameUnchangedRefusal(areaRenameJSON, unchanged.Path, unchanged.Name)
+		return areaNameUnchangedRefusal(areaSetJSON, unchanged.Path, unchanged.Name)
 	}
 	var taken *nibcore.AreaNameTakenError
 	if errors.As(err, &taken) {
-		return cmdError(areaRenameJSON, output.ErrValidation,
+		return cmdError(areaSetJSON, output.ErrValidation,
 			"cannot rename area %s to %s: this store already declares %s, and two siblings with one name make one path mean two nodes",
 			quotedArea(taken.Path), quotedArea(taken.NewName), quotedArea(taken.Sibling))
 	}
@@ -367,62 +451,67 @@ func areaRenameRefusal(areasFile string, argErr, err error) error {
 	if errors.As(err, &ioErr) {
 		switch ioErr.Phase {
 		case nibcore.AreaEditPhaseCascade:
-			return cmdError(areaRenameJSON, output.ErrFileError,
+			return cmdError(areaSetJSON, output.ErrFileError,
 				"rewrote %d of the %s assigned at or below area %s, then %v — the vocabulary in %s still declares %s and those writes are persisted; rerun the same command to finish it, since a nib already rewritten is no longer a member and the rerun starts where this stopped",
 				len(ioErr.Written), areaNibCount(len(ioErr.Members)),
 				quotedArea(ioErr.Path), ioErr.Cause, sanitizeFilePath(ioErr.File), quotedArea(ioErr.Path))
 		case nibcore.AreaEditPhaseWrite:
-			return cmdError(areaRenameJSON, output.ErrFileError,
+			return cmdError(areaSetJSON, output.ErrFileError,
 				"rewrote %s from area %s to %s, then %s could not be updated: %v — the vocabulary still declares %s and those writes are persisted; rerun the same command to finish it, since the rewritten nibs are no longer members and the rerun only renames the declaration",
 				areaNibCount(len(ioErr.Written)), quotedArea(ioErr.Path), quotedArea(ioErr.NewPath),
 				sanitizeFilePath(ioErr.File), ioErr.Cause, quotedArea(ioErr.Path))
 		}
 	}
-	return areaEditRefusal(areaRenameJSON, areasFile, err, "rename")
+	// "change", not "rename": this verb also sets a description or a color, and
+	// the word lands in "there is none to %s" over a path the store does not
+	// declare — where naming the rename would describe an edit the caller may not
+	// have asked for.
+	return areaEditRefusal(areaSetJSON, areasFile, err, "change")
 }
 
-// areaRenameNameRefusal reports that the store refused the NEW NAME rather than
+// areaSetNameRefusal reports that the store refused the NEW NAME rather than
 // the path — the refusals a rename makes only after establishing that the node
 // it was told to rename is declared.
-func areaRenameNameRefusal(err error) bool {
+func areaSetNameRefusal(err error) bool {
 	var unchanged *nibcore.AreaNameUnchangedError
 	var taken *nibcore.AreaNameTakenError
 	var refusal *area.EditRefusal
 	return errors.As(err, &unchanged) || errors.As(err, &taken) || errors.As(err, &refusal)
 }
 
-// validateAreaRenameArgument refuses every new name the two arguments rule out
+// validateAreaSetArgument refuses every new name the two arguments rule out
 // on their own, in the order a caller can act on: the shape of the name first,
 // then whether it changes anything.
 //
 // All five read `path` and `newName` and nothing else — no vocabulary, no store — so
-// no vocabulary can change their answer and runAreaRename asks them before the
+// no vocabulary can change their answer and runAreaSet asks them before the
 // store's write lock. The vocabulary question a rename also has — does a sibling
 // already answer to the new name? — is nibcore's, under that lock.
 //
 // Two of the five nonetheless SPEAK about the node at `path`, so the refusal
 // they return is only correct over a path the store declares; when to print it
-// is runAreaRename's call and not this function's.
+// is runAreaSet's call and not this function's.
 //
 // The LENGTH clause is area.ValidateName's and is CALLED rather than
 // copied, which is the whole reason that function exists — the wire surface
 // calls it too. It is asked LAST of the shape clauses, because it is the only
 // one that cannot name a remedy: a path given where a name belongs is refused
-// above with the `nibs area rename` that would work, and a bound shared with a
+// above with the `nibs area set` that would work, and a bound shared with a
 // create can only report a count. Asked earlier, a long path-as-name reported
 // the length of the whole path and the runnable spelling was never printed.
 // Its own empty and padded clauses are unreachable from here — this function's
 // two answer first, in wording that names the node being renamed.
 //
-// area.PlanRename re-checks the RESULT before it hands back an edit
+// area.PlanUpdate re-checks the RESULT before it hands back an edit
 // to write, so none of this is what keeps a broken vocabulary off disk. What it
 // buys is the message: that backstop can only say the edit would leave the file
 // unusable, where these can name the runnable spelling, or the fact that nothing
 // would change.
-func validateAreaRenameArgument(jsonMode bool, path, parent, oldName, newName string) error {
+func validateAreaSetArgument(jsonMode bool, path, parent, oldName, newName string) error {
 	if newName == "" {
 		return cmdError(jsonMode, output.ErrValidation,
-			"area %s needs a name to be renamed to, and the new name is empty", quotedArea(path))
+			"cannot rename area %s: --name was given with no value, and every declared area needs a name",
+			quotedArea(path))
 	}
 	if strings.TrimSpace(newName) != newName {
 		return cmdError(jsonMode, output.ErrValidation,
@@ -433,7 +522,7 @@ func validateAreaRenameArgument(jsonMode bool, path, parent, oldName, newName st
 		newParent, tail := area.SplitPath(newName)
 		if newParent == parent && tail != "" {
 			return cmdError(jsonMode, output.ErrValidation,
-				"%s is not a name: a rename changes a node's name and never moves it between parents, so give the name alone — run `nibs area rename %s %s`",
+				"%s is not a name: a rename changes a node's name and never moves it between parents, so give the name alone — run `nibs area set %s --name %s`",
 				quotedArea(newName), area.RenderPath(path), area.RenderPath(tail))
 		}
 		return cmdError(jsonMode, output.ErrValidation,

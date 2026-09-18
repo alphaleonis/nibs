@@ -60,7 +60,7 @@ var servedMutations = []servedMutation{
 	{"reorderNib", `mutation { reorderNib(id: "c2", first: true) { id } }`},
 	{"reorderChildren", `mutation { reorderChildren(parentId: "ep1", childIds: ["c2", "c1"]) { id } }`},
 	{"reorderSiblings", `mutation { reorderSiblings(siblingIds: ["c1", "c2"], first: true) { id } }`},
-	{"renameArea", `mutation { renameArea(input: {path: "web", newName: "frontend"}) { config { prefix } notes } }`},
+	{"updateArea", `mutation { updateArea(input: {path: "web", newName: "frontend"}) { config { prefix } notes } }`},
 	{"removeArea", `mutation { removeArea(input: {path: "web", unassign: true}) { config { prefix } notes } }`},
 	{"addArea", `mutation { addArea(input: {path: "platform"}) { config { prefix } notes } }`},
 	{"archiveNib", `mutation { archiveNib(id: "t3") }`},
@@ -234,7 +234,7 @@ func TestServedMutationsDiscloseNoStorePath(t *testing.T) {
 			damage: func(t *testing.T, f *disclosureFixture) {
 				writeFileT(t, filepath.Join(f.store, "areas.yml"), "areas:\n  - name: [unclosed\n")
 			},
-			mustFail: []string{"addArea", "renameArea", "removeArea"},
+			mustFail: []string{"addArea", "updateArea", "removeArea"},
 		},
 		{
 			// Also no OS error: yamlfile.ReadFile stats the path, sees a
@@ -247,21 +247,21 @@ func TestServedMutationsDiscloseNoStorePath(t *testing.T) {
 				}
 				mkdirAllT(t, path)
 			},
-			mustFail: []string{"addArea", "renameArea", "removeArea"},
+			mustFail: []string{"addArea", "updateArea", "removeArea"},
 		},
 		{
 			name: "the areas vocabulary is unreadable",
 			damage: func(t *testing.T, f *disclosureFixture) {
 				makeUnreadable(t, filepath.Join(f.store, "areas.yml"))
 			},
-			mustFail: []string{"renameArea", "removeArea"},
+			mustFail: []string{"updateArea", "removeArea"},
 		},
 		{
 			name: "the data directory is unreadable",
 			damage: func(t *testing.T, f *disclosureFixture) {
 				makeUnreadable(t, storeDataDir(f.store))
 			},
-			mustFail: []string{"renameArea", "removeArea"},
+			mustFail: []string{"updateArea", "removeArea"},
 		},
 		{
 			name: "the data directory is unwritable",
@@ -283,7 +283,7 @@ func TestServedMutationsDiscloseNoStorePath(t *testing.T) {
 					t.Fatalf("remove the lock directory: %v", err)
 				}
 			},
-			mustFail: []string{"createNib", "renameArea", "deleteNib"},
+			mustFail: []string{"createNib", "updateArea", "deleteNib"},
 		},
 	}
 
