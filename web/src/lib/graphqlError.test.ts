@@ -63,4 +63,17 @@ describe("graphqlErrorMessage", () => {
   ])("%s", (_name, error, want) => {
     expect(graphqlErrorMessage(error)).toBe(want);
   });
+
+  // The mutation path reduces its failure to a STRING before any caller sees it
+  // (`CommandResult.error` is urql's aggregate message), so a surface rendering a
+  // refusal inline hands this function a string rather than a CombinedError.
+  // Without this row that call returns "" and the refusal renders blank.
+  it.each([
+    ["strips the transport prefix from a plain string", '[GraphQL] area "platform" already exists', 'area "platform" already exists'],
+    ["leaves an unprefixed string alone", "disk full", "disk full"],
+    ["strips the prefix from an aggregate with no graphQLErrors", { message: "[GraphQL] boom" }, "boom"],
+    ["returns an empty string for an empty string", "", ""],
+  ])("%s", (_name, error, want) => {
+    expect(graphqlErrorMessage(error)).toBe(want);
+  });
 });

@@ -7,6 +7,10 @@ import type {
   ArchiveNibCommand,
   SetParentCommand,
   ReorderNibCommand,
+  AddAreaCommand,
+  UpdateAreaCommand,
+  RemoveAreaCommand,
+  AreaDisposition,
   CommandResult,
   LeafCommand,
   BatchCommand,
@@ -57,6 +61,55 @@ export function reorderNib(
   if (opts.scope !== undefined) cmd.scope = opts.scope;
   // Root level is "": the Go resolver cannot tell null from omitted.
   if (opts.parentId !== undefined) cmd.parentId = opts.parentId ?? "";
+  return cmd;
+}
+
+/**
+ * Declare one area. `path` is the FULL path — an undeclared parent is refused
+ * rather than created along the way.
+ *
+ * An option the caller did not set stays ABSENT from the command, because the
+ * server reads "" as "clear this key" rather than as "unset". Passing
+ * `description: ""` deliberately is therefore still possible and still means
+ * something different from omitting it.
+ */
+export function addArea(path: string, opts?: { description?: string; color?: string }): AddAreaCommand {
+  const cmd: AddAreaCommand = { kind: "add-area", path };
+  if (opts?.description !== undefined) cmd.description = opts.description;
+  if (opts?.color !== undefined) cmd.color = opts.color;
+  return cmd;
+}
+
+/**
+ * Edit one declared area's name, description, color, or any combination.
+ *
+ * A field the caller left out stays ABSENT from the command, which is what keeps
+ * a rename from clearing a description nobody touched: the server reads a key
+ * sent as "" as one someone emptied. Passing "" deliberately still clears.
+ */
+export function updateArea(
+  path: string,
+  edit: { newName?: string; description?: string; color?: string },
+): UpdateAreaCommand {
+  const cmd: UpdateAreaCommand = { kind: "update-area", path };
+  if (edit.newName !== undefined) cmd.newName = edit.newName;
+  if (edit.description !== undefined) cmd.description = edit.description;
+  if (edit.color !== undefined) cmd.color = edit.color;
+  return cmd;
+}
+
+/**
+ * Retire one declared area and its whole subtree.
+ *
+ * The disposition is a union, so `moveTo` and `unassign` cannot both be named.
+ * Omitting it sends neither key, which is what an area with no members needs:
+ * the server refuses a disposition naming an area nothing is assigned to.
+ */
+export function removeArea(path: string, disposition?: AreaDisposition): RemoveAreaCommand {
+  const cmd: RemoveAreaCommand = { kind: "remove-area", path };
+  if (disposition === undefined) return cmd;
+  if ("unassign" in disposition) cmd.unassign = true;
+  else cmd.moveTo = disposition.moveTo;
   return cmd;
 }
 

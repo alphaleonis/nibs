@@ -62,40 +62,22 @@ if (typeof window.matchMedia !== "function") {
   };
 }
 
-// Floating UI cannot compute real positions in jsdom, so bits-ui portaled
-// containers get `visibility: hidden` on their wrapper div. This causes
-// testing-library to skip those elements when querying by role/text. We use a
-// MutationObserver to force visibility to "visible" on these floating wrappers
-// so that portaled content is queryable in tests.
-const floatingObserver = new MutationObserver((mutations) => {
-  for (const mutation of mutations) {
-    for (const node of mutation.addedNodes) {
-      if (node instanceof HTMLElement && node.style.visibility === "hidden") {
-        // Floating UI sets `position: fixed` on the wrapper div
-        if (node.style.position === "fixed") {
-          node.style.visibility = "visible";
-        }
-      }
-    }
-    // Also handle style attribute changes
-    if (
-      mutation.type === "attributes" &&
-      mutation.attributeName === "style" &&
-      mutation.target instanceof HTMLElement
-    ) {
-      const el = mutation.target;
-      if (el.style.visibility === "hidden" && el.style.position === "fixed") {
-        el.style.visibility = "visible";
-      }
-    }
-  }
-});
-floatingObserver.observe(document.body, {
-  childList: true,
-  subtree: true,
-  attributes: true,
-  attributeFilter: ["style"],
-});
+// bits-ui decides a floating layer's anchor is gone by asking the anchor for its
+// client rects — `isReferenceHidden` is `!isConnected || hidden || no rects` —
+// and answers a gone anchor by stamping `visibility: hidden` on the portaled
+// wrapper div. jsdom answers that question with an empty list for EVERY element,
+// so every portaled wrapper was hidden, and testing-library then skips the
+// content — not only by visibility: an accessible name computed from content
+// skips hidden subtrees, so a portaled button ends up with no name for any query
+// to match.
+//
+// Answering with a rect for a CONNECTED element leaves `isConnected` as the only
+// thing that question turns on. Portaled content is queryable, and a wrapper that
+// IS hidden still means what bits-ui uses it to mean — that its anchor went away
+// — which is a state the app must answer and a test must be able to see.
+Element.prototype.getClientRects = function (this: Element) {
+  return (this.isConnected ? [this.getBoundingClientRect()] : []) as unknown as DOMRectList;
+};
 
 // bits-ui dialog components add scroll-lock styles (pointer-events: none,
 // overflow: hidden) to document.body. These may persist across tests in jsdom

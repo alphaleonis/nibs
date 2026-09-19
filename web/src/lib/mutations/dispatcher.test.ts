@@ -7,9 +7,13 @@ import {
   archiveNib,
   setParent,
   reorderNib,
+  addArea,
+  updateArea,
+  removeArea,
   batch,
   sequence,
 } from "./commands";
+import { ADD_AREA_MUTATION, UPDATE_AREA_MUTATION, REMOVE_AREA_MUTATION } from "../queries";
 import type { CommandResult } from "./types";
 
 // Mock svelte-sonner toast
@@ -137,6 +141,169 @@ describe("MutationDispatcher", () => {
 
       const [, vars] = client.mutation.mock.calls[0];
       expect(vars).not.toHaveProperty("scope");
+    });
+  });
+
+  describe("area vocabulary commands", () => {
+    it("executes addArea against the addArea document, wrapping the path in an input", () => {
+      const client = createMockClient({ data: { addArea: { config: {}, notes: [] } } });
+      const dispatcher = new MutationDispatcher(client);
+
+      return dispatcher.execute(addArea("web/dashboard")).then(() => {
+        const [doc, vars] = client.mutation.mock.calls[0];
+        expect(doc).toBe(ADD_AREA_MUTATION);
+        expect(vars).toEqual({ input: { path: "web/dashboard" } });
+      });
+    });
+
+    // Same reason the factory omits them: "" reaches the server as "clear this
+    // key", so an unset option must not become one on the wire.
+    it("sends no description or color key for options the caller never set", async () => {
+      const client = createMockClient({ data: { addArea: { config: {}, notes: [] } } });
+      const dispatcher = new MutationDispatcher(client);
+
+      await dispatcher.execute(addArea("web"));
+
+      const [, vars] = client.mutation.mock.calls[0];
+      expect(vars.input).not.toHaveProperty("description");
+      expect(vars.input).not.toHaveProperty("color");
+    });
+
+    it("passes a deliberately empty description through", async () => {
+      const client = createMockClient({ data: { addArea: { config: {}, notes: [] } } });
+      const dispatcher = new MutationDispatcher(client);
+
+      await dispatcher.execute(addArea("web", { description: "" }));
+
+      const [, vars] = client.mutation.mock.calls[0];
+      expect(vars).toEqual({ input: { path: "web", description: "" } });
+    });
+
+    // addArea rewrites NO nib — it only adds a line to areas.yml — so invalidating
+    // the Nib typename here would re-run every list query on the page for a change
+    // that cannot have altered one. The cascading verbs are the ones that must.
+    it("does NOT invalidate the Nib cache, because declaring an area rewrites no nib", async () => {
+      const client = createMockClient({ data: { addArea: { config: {}, notes: [] } } });
+      const dispatcher = new MutationDispatcher(client);
+
+      await dispatcher.execute(addArea("web"));
+
+      const [, , opts] = client.mutation.mock.calls[0];
+      expect(opts).toBeUndefined();
+    });
+  });
+
+  describe("editing an area", () => {
+    const payload = { data: { updateArea: { config: {}, notes: [] } } };
+
+    it("executes updateArea against the updateArea document", async () => {
+      const client = createMockClient(payload);
+      const dispatcher = new MutationDispatcher(client);
+
+      await dispatcher.execute(updateArea("web", { newName: "platform" }));
+
+      const [doc, vars] = client.mutation.mock.calls[0];
+      expect(doc).toBe(UPDATE_AREA_MUTATION);
+      expect(vars).toEqual({ input: { path: "web", newName: "platform" } });
+    });
+
+    // The field the caller left out must not reach the wire at all: the server
+    // reads a key sent as "" as one someone emptied, so a rename carrying
+    // `description: ""` would wipe a description nobody edited.
+    it("sends only the fields the caller set", async () => {
+      const client = createMockClient(payload);
+      const dispatcher = new MutationDispatcher(client);
+
+      await dispatcher.execute(updateArea("web", { newName: "platform" }));
+
+      const [, vars] = client.mutation.mock.calls[0];
+      expect(vars.input).not.toHaveProperty("description");
+      expect(vars.input).not.toHaveProperty("color");
+    });
+
+    it("passes a deliberately empty description through, which clears it", async () => {
+      const client = createMockClient(payload);
+      const dispatcher = new MutationDispatcher(client);
+
+      await dispatcher.execute(updateArea("web", { description: "" }));
+
+      const [, vars] = client.mutation.mock.calls[0];
+      expect(vars).toEqual({ input: { path: "web", description: "" } });
+    });
+
+    // The contrast with addArea above, and the reason the two verbs are not
+    // treated alike: a rename rewrites every nib assigned at or below the node,
+    // so the list queries holding those rows are now stale.
+    it("DOES invalidate the Nib cache, because a rename cascades over its members", async () => {
+      const client = createMockClient(payload);
+      const dispatcher = new MutationDispatcher(client);
+
+      await dispatcher.execute(updateArea("web", { newName: "platform" }));
+
+      const [, , opts] = client.mutation.mock.calls[0];
+      expect(opts).toEqual({ additionalTypenames: ["Nib"] });
+    });
+  });
+
+  describe("retiring an area", () => {
+    const payload = { data: { removeArea: { config: {}, notes: [] } } };
+
+    it("executes removeArea against the removeArea document", async () => {
+      const client = createMockClient(payload);
+      const dispatcher = new MutationDispatcher(client);
+
+      await dispatcher.execute(removeArea("web/legacy"));
+
+      const [doc, vars] = client.mutation.mock.calls[0];
+      expect(doc).toBe(REMOVE_AREA_MUTATION);
+      expect(vars).toEqual({ input: { path: "web/legacy" } });
+    });
+
+    // A disposition naming an area nothing is assigned to is refused, so the
+    // no-member case must send NEITHER key rather than a harmless-looking default.
+    it("sends neither disposition key when none was given", async () => {
+      const client = createMockClient(payload);
+      const dispatcher = new MutationDispatcher(client);
+
+      await dispatcher.execute(removeArea("web/legacy"));
+
+      const [, vars] = client.mutation.mock.calls[0];
+      expect(vars.input).not.toHaveProperty("moveTo");
+      expect(vars.input).not.toHaveProperty("unassign");
+    });
+
+    it("sends moveTo alone when the members are being reassigned", async () => {
+      const client = createMockClient(payload);
+      const dispatcher = new MutationDispatcher(client);
+
+      await dispatcher.execute(removeArea("web/legacy", { moveTo: "web" }));
+
+      const [, vars] = client.mutation.mock.calls[0];
+      expect(vars).toEqual({ input: { path: "web/legacy", moveTo: "web" } });
+      expect(vars.input).not.toHaveProperty("unassign");
+    });
+
+    // `unassign: false` reads as "no disposition" on the server rather than as a
+    // contradiction, so the only value worth sending is true.
+    it("sends unassign alone, and only as true", async () => {
+      const client = createMockClient(payload);
+      const dispatcher = new MutationDispatcher(client);
+
+      await dispatcher.execute(removeArea("web/legacy", { unassign: true }));
+
+      const [, vars] = client.mutation.mock.calls[0];
+      expect(vars).toEqual({ input: { path: "web/legacy", unassign: true } });
+      expect(vars.input).not.toHaveProperty("moveTo");
+    });
+
+    it("DOES invalidate the Nib cache, because a disposition rewrites its members", async () => {
+      const client = createMockClient(payload);
+      const dispatcher = new MutationDispatcher(client);
+
+      await dispatcher.execute(removeArea("web/legacy", { unassign: true }));
+
+      const [, , opts] = client.mutation.mock.calls[0];
+      expect(opts).toEqual({ additionalTypenames: ["Nib"] });
     });
   });
 

@@ -223,6 +223,95 @@ export const REORDER_NIB_MUTATION = graphql(`
   }
 `);
 
+/**
+ * Declare one area. The payload is the WHOLE config, the same selection
+ * CONFIG_QUERY and CONFIG_CHANGED_SUBSCRIPTION make, so the app re-renders the
+ * vocabulary from one shape whether the edit was its own or another process's.
+ *
+ * `notes` is empty for an ordinary edit; every entry is something the caller has
+ * to act on.
+ */
+export const ADD_AREA_MUTATION = graphql(`
+  mutation AddArea($input: AddAreaInput!) {
+    addArea(input: $input) {
+      config {
+        projectName
+        prefix
+        areas {
+          path
+          name
+          description
+          color
+          depth
+        }
+      }
+      notes
+    }
+  }
+`);
+
+/**
+ * Edit one declared area. Selects the same whole-config shape ADD_AREA_MUTATION
+ * does, for the same reason.
+ */
+export const UPDATE_AREA_MUTATION = graphql(`
+  mutation UpdateArea($input: UpdateAreaInput!) {
+    updateArea(input: $input) {
+      config {
+        projectName
+        prefix
+        areas {
+          path
+          name
+          description
+          color
+          depth
+        }
+      }
+      notes
+    }
+  }
+`);
+
+/**
+ * Retire one declared area and its whole subtree. Selects the same whole-config
+ * shape the other two area verbs do, for the same reason.
+ */
+export const REMOVE_AREA_MUTATION = graphql(`
+  mutation RemoveArea($input: RemoveAreaInput!) {
+    removeArea(input: $input) {
+      config {
+        projectName
+        prefix
+        areas {
+          path
+          name
+          description
+          color
+          depth
+        }
+      }
+      notes
+    }
+  }
+`);
+
+/**
+ * The nibs a retirement would strand: everything assigned to `area` or to an
+ * area declared beneath it.
+ *
+ * The server's `area:` filter is DOWNWARD-CLOSED over the declared tree, so this
+ * is the subtree-wide population without the client walking the subtree itself.
+ * Selects `id` alone — the caller counts the rows rather than showing them.
+ */
+export const AREA_MEMBERS_QUERY = graphql(`
+  query AreaMembers($area: String!) {
+    nibs(filter: { area: $area }) {
+      id
+    }
+  }
+`);
+
 export const TREE_TABLE_QUERY = graphql(`
   query TreeTable($filter: NibFilter) {
     nibs(filter: $filter, sort: { field: ORDER, direction: ASC }) {

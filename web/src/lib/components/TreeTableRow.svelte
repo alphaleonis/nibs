@@ -4,8 +4,9 @@
   import { ALL_COLUMN_KEYS } from "../columns";
   import type { ColumnKey, RowContext } from "../columns";
   import type { RowSection } from "../tableData";
-  import { Plus } from "@lucide/svelte";
+  import { Plus, Ellipsis } from "@lucide/svelte";
   import { canHaveChildren } from "../typeHierarchy";
+  import { isSyntheticRowId } from "../tree";
   import { useSelection, useDrag } from "../contexts";
   import { useColumnAdapters } from "../ColumnAdapters.svelte";
 
@@ -83,6 +84,17 @@
   // which would color an assignment like a parent-axis drop.
   let treatment = $derived(dropValid ? dropTreatment(drag.dropAccepted) : null);
 
+  // A fabricated row heading a DECLARED area, which is what the vocabulary
+  // editor acts on. The "No area" leftover is GOVERNS_NOTHING, so it carries a
+  // `byRow` entry rather than an `assign` one and offers no editor — there is no
+  // declaration behind it to rename or retire.
+  let drawsAreaSection = $derived(
+    drawsSection !== null &&
+      isSyntheticRowId(nib.id) &&
+      drawsSection.onEnter.kind === "assign" &&
+      drawsSection.onEnter.field === "area",
+  );
+
   const isBlocked = $derived(nib.blockedByIds.length > 0);
   // Suppressed while dragged, a drop target, or pulsing, so the dim does not mute those.
   const blockedDim = $derived(
@@ -138,6 +150,18 @@
           title="Add child"
         >
           <Plus size={14} />
+        </button>
+      {/if}
+      {#if drawsAreaSection}
+        <!-- Raw button so this component's scoped CSS styles it; clicks are delegated via data-action. -->
+        <button
+          data-testid="row-area-actions"
+          data-action="area-actions"
+          class="row-add-child-btn"
+          title="Area actions"
+          aria-label="Area actions"
+        >
+          <Ellipsis size={14} />
         </button>
       {/if}
     </div>
