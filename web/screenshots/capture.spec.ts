@@ -793,3 +793,77 @@ test("table — flat with both assignment axes as columns", async ({ page }) => 
   await expect(page.locator('tr[data-nib-id="tnib-b005"] [data-testid="nib-area"]')).toHaveText("web");
   await shot(page, "table-assignment-columns");
 });
+
+// The areas vocabulary editor. Four captures, because jsdom performs no layout:
+// the unit suite can prove the panel's state machine but never that a surface
+// this dense reads clearly, and never that it stays anchored while rows move.
+//
+// None of these commits a mutation, per the rule above — the panel is opened and
+// the remove form is entered, but Retire is never pressed. Entering that form is
+// safe because its member count is a READ; nothing is written until Retire.
+//
+// `web` is the subject throughout: it is the one declared area carrying members
+// BELOW it as well as on it (tnib-b005 on `web`, tnib-f008 on `web/dashboard`),
+// so its count is the downward-closed one the editor must state before asking.
+const WEB_SECTION = 'tr[data-nib-id="/section:web_"]';
+
+// The `[⋯]` shares `.row-add-child-btn` with the add-child `[+]`, so it sits at
+// `opacity: 0` until its row is hovered. Without the hover the actions cell
+// photographs empty, which reads as the affordance being absent rather than idle.
+test("areas — the row actions affordance, revealed on hover", async ({ page }) => {
+  await openApp(page, "areas");
+  const row = page.locator(WEB_SECTION);
+  await expect(row).toBeVisible({ timeout: 10_000 });
+  await row.hover();
+  await expect(row.locator('[data-testid="row-area-actions"]')).toBeVisible();
+  await shot(page, "areas-row-actions");
+});
+
+test("areas — the row panel's menu", async ({ page }) => {
+  await openApp(page, "areas");
+  const row = page.locator(WEB_SECTION);
+  await expect(row).toBeVisible({ timeout: 10_000 });
+  await row.locator('[data-testid="row-area-actions"]').click();
+  await expect(page.locator('[data-testid="area-row-panel"]')).toBeVisible();
+  await shot(page, "areas-panel-menu");
+});
+
+// The nib's own acceptance item: the affected count is over the whole SUBTREE,
+// not the node, and it has to be on screen BEFORE the user is asked to choose a
+// disposition. An armed Retire with no count beside it is the frame this excludes.
+test("areas — retiring an area that has members", async ({ page }) => {
+  await openApp(page, "areas");
+  const row = page.locator(WEB_SECTION);
+  await expect(row).toBeVisible({ timeout: 10_000 });
+  await row.locator('[data-testid="row-area-actions"]').click();
+  const panel = page.locator('[data-testid="area-row-panel"]');
+  await expect(panel).toBeVisible();
+  await panel.getByRole("button", { name: "Remove" }).click();
+  await expect(page.locator('[data-testid="area-remove-form"]')).toBeVisible();
+  // The count itself, not merely the form. `area-remove-unknown` occupies the
+  // same slot while the query is unanswered, and that frame must not pass for
+  // this one — it is the state the editor is required to distinguish.
+  await expect(page.locator('[data-testid="area-remove-count"]')).toBeVisible({ timeout: 10_000 });
+  await shot(page, "areas-remove-with-members");
+});
+
+// The one claim no jsdom test can settle, since jsdom has no layout: the panel
+// anchors to the live `[⋯]` element rather than to the viewport rect that button
+// held at click time, so it must travel with its row as the table scrolls.
+test("areas — the panel stays with its row while the table scrolls", async ({ page }) => {
+  await openApp(page, "areas");
+  const row = page.locator(WEB_SECTION);
+  await expect(row).toBeVisible({ timeout: 10_000 });
+  await row.locator('[data-testid="row-area-actions"]').click();
+  const panel = page.locator('[data-testid="area-row-panel"]');
+  await expect(panel).toBeVisible();
+  const before = await panel.boundingBox();
+  await page.locator(".scroll-container").evaluate((el) => el.scrollBy(0, 160));
+  await page.waitForTimeout(150);
+  const after = await panel.boundingBox();
+  // Asserted rather than left for a reader to spot across two PNGs: a panel
+  // pinned to click-time coordinates does not move at all, so this fails on
+  // exactly the regression the capture exists to rule out.
+  expect(Math.abs((after?.y ?? 0) - (before?.y ?? 0))).toBeGreaterThan(20);
+  await shot(page, "areas-panel-scrolled");
+});
