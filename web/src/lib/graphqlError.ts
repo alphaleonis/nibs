@@ -49,14 +49,27 @@ export function graphqlErrorCode(error: unknown): string | undefined {
   return undefined;
 }
 
+/** urql's aggregate message leads with this; the user must never read it. */
+const TRANSPORT_PREFIX = "[GraphQL] ";
+
+function withoutTransportPrefix(message: string): string {
+  return message.startsWith(TRANSPORT_PREFIX) ? message.slice(TRANSPORT_PREFIX.length) : message;
+}
+
 /**
  * The first GraphQL error's message, else the CombinedError's. Use this for text
  * shown in the UI: urql prefixes its aggregate message with "[GraphQL] ".
+ *
+ * A plain STRING is accepted too, because the mutation path has already reduced
+ * its failure to `CommandResult.error` — urql's aggregate, prefix and all — by
+ * the time a caller has it. Both routes strip the prefix, so one helper answers
+ * for the read path and the write path alike.
  */
 export function graphqlErrorMessage(error: unknown): string {
+  if (typeof error === "string") return withoutTransportPrefix(error);
   for (const gqlErr of graphQLErrorsOf(error)) {
     if (typeof gqlErr.message === "string" && gqlErr.message !== "") return gqlErr.message;
   }
   const combined = asCombinedErrorLike(error);
-  return typeof combined?.message === "string" ? combined.message : "";
+  return typeof combined?.message === "string" ? withoutTransportPrefix(combined.message) : "";
 }

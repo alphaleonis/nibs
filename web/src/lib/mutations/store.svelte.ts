@@ -17,6 +17,11 @@ function extractIds(cmd: AnyCommand): string[] {
     case "set-parent":
     case "reorder-nib":
       return [cmd.id];
+    case "add-area":
+    case "update-area":
+    case "remove-area":
+      // Names an area path, not a nib, so no row is in flight for it.
+      return [];
     case "batch":
       return cmd.commands.flatMap((c) => extractIds(c));
     case "sequence":

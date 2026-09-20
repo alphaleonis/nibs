@@ -9,6 +9,9 @@ import {
   CREATE_NIB_MUTATION,
   SET_PARENT_MUTATION,
   REORDER_NIB_MUTATION,
+  ADD_AREA_MUTATION,
+  UPDATE_AREA_MUTATION,
+  REMOVE_AREA_MUTATION,
 } from "../queries";
 import type {
   AnyCommand,
@@ -36,11 +39,22 @@ function getMutationDoc(kind: LeafCommand["kind"]): DocumentNode {
     case "archive-nib": return ARCHIVE_NIB_MUTATION;
     case "set-parent": return SET_PARENT_MUTATION;
     case "reorder-nib": return REORDER_NIB_MUTATION;
+    case "add-area": return ADD_AREA_MUTATION;
+    case "update-area": return UPDATE_AREA_MUTATION;
+    case "remove-area": return REMOVE_AREA_MUTATION;
   }
 }
 
-/** Kinds that need cache invalidation via additionalTypenames. */
-const INVALIDATING_KINDS = new Set<string>(["create-nib", "delete-nib", "archive-nib", "set-parent", "reorder-nib"]);
+/**
+ * Kinds that need cache invalidation via additionalTypenames.
+ *
+ * The area verbs are not uniform. `add-area` only adds a line to areas.yml and
+ * rewrites no nib, so it stays out. `update-area` is in because a rename
+ * rewrites every nib assigned at or below the node, and `remove-area` because a
+ * disposition reassigns or unassigns every member. Membership is per KIND, so
+ * the two cascading verbs invalidate even on the runs that rewrite nothing.
+ */
+const INVALIDATING_KINDS = new Set<string>(["create-nib", "delete-nib", "archive-nib", "set-parent", "reorder-nib", "update-area", "remove-area"]);
 
 /** Maps a leaf command to the GraphQL variables. */
 function getVariables(cmd: LeafCommand): Record<string, unknown> {
@@ -68,6 +82,31 @@ function getVariables(cmd: LeafCommand): Record<string, unknown> {
       if (cmd.parentId !== undefined) vars.parentId = cmd.parentId;
       if (cmd.scope !== undefined) vars.scope = cmd.scope;
       return vars;
+    }
+    case "add-area": {
+      // An unset key is left OUT of the input rather than sent as "": the server
+      // reads "" as a description or color someone emptied.
+      const input: Record<string, unknown> = { path: cmd.path };
+      if (cmd.description !== undefined) input.description = cmd.description;
+      if (cmd.color !== undefined) input.color = cmd.color;
+      return { input };
+    }
+    case "update-area": {
+      // Same rule as add-area, and load-bearing here: a key sent as "" CLEARS
+      // what the store declares, so a rename must carry newName alone.
+      const input: Record<string, unknown> = { path: cmd.path };
+      if (cmd.newName !== undefined) input.newName = cmd.newName;
+      if (cmd.description !== undefined) input.description = cmd.description;
+      if (cmd.color !== undefined) input.color = cmd.color;
+      return { input };
+    }
+    case "remove-area": {
+      // Neither key is sent without a disposition: the server refuses one that
+      // names an area nothing is assigned to, so a default would be a refusal.
+      const input: Record<string, unknown> = { path: cmd.path };
+      if (cmd.moveTo !== undefined) input.moveTo = cmd.moveTo;
+      if (cmd.unassign !== undefined) input.unassign = cmd.unassign;
+      return { input };
     }
   }
 }

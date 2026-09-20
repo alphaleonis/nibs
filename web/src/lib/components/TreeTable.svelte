@@ -15,8 +15,11 @@
   import { hierarchyTokens, clearHierarchyFilters, contradictionTokens } from "../query";
   import { graphqlErrorCode, graphqlErrorMessage } from "../graphqlError";
   import { Button } from "$lib/components/ui/button/index.js";
+  import * as Popover from "$lib/components/ui/popover/index.js";
   import TreeTableRow from "./TreeTableRow.svelte";
   import TableHeader from "./TableHeader.svelte";
+  import AreaDeclareForm from "./AreaDeclareForm.svelte";
+  import AreaRowPanel from "./AreaRowPanel.svelte";
   import type { DropPlan } from "../ordering/dropPlan";
   import { regionBandAt, type BandAxis } from "../ordering/regionBand";
   import type { PanelPolicy } from "../selection.svelte";
@@ -517,6 +520,32 @@
       return; // Don't fire row click for add-child
     }
 
+    if (action === "area-actions") {
+      // The area path comes off the section's KEY, which is the declared path.
+      // The fabricated row id is an escaped form and is not a path.
+      const row = rows.find((r) => r.nib.id === nibId);
+      const section = row?.drawsSection;
+      if (section) {
+        // A second click on the same row's [⋯] closes the panel: that is the
+        // gesture a user reaches for to get the menu back, and closing is also
+        // what drops the sub-form and draft the panel was left in.
+        if (areaPanel?.path === section.key) {
+          areaPanel = null;
+        } else {
+          // The node's own segment comes from the section's LABEL rather than from
+          // splitting the path, which is what a rename sets.
+          areaPanel = {
+            path: section.key,
+            name: section.display.label,
+            description: section.display.description,
+            color: section.display.color,
+            anchorEl: actionResult!.el,
+          };
+        }
+      }
+      return; // Don't toggle the section: this click was for its editor.
+    }
+
     // Any click on a bucket row, modified or not, toggles its group. SelectionState
     // also refuses bucket ids on its own.
     if (isSyntheticRowId(nibId)) {
@@ -616,6 +645,30 @@
   function leaveAreasView() {
     switchViewLevel(prefs, onviewlevelchange, treeView, resolvedViewLevel, TREE_VIEW_LEVEL);
   }
+
+  // The declare form reaches the mutation store, which throws outside a
+  // provider; mounting it only once asked for keeps this table renderable
+  // without one.
+  let declaringArea = $state(false);
+
+  // The area whose row panel is open, or null. Mounted only once opened, for the
+  // same reason the declare form is. `anchorEl` is the [⋯] button itself rather
+  // than its rect, so the panel stays on it while the table scrolls.
+  let areaPanel:
+    | { path: string; name: string; description: string; color: string; anchorEl: HTMLElement }
+    | null = $state(null);
+
+  // A push that retires or renames the open area destroys its section row and the
+  // [⋯] the panel hangs off. bits-ui answers a vanished anchor by HIDING the
+  // floating wrapper rather than closing, so the panel would stay mounted and
+  // invisible over a draft the user can no longer reach. Keyed on the vocabulary
+  // rather than on `anchorEl`: the push is what changes, and a node going
+  // detached is not something an effect can wake on.
+  $effect(() => {
+    if (areaPanel !== null && viewSpine().areas.validity(areaPanel.path) !== "declared") {
+      areaPanel = null;
+    }
+  });
 </script>
 
 <div data-testid="tree-table" class="h-full">
@@ -652,7 +705,16 @@
         and each nib's area can name one. A running server picks the file up, so
         this view fills in without a reload.
       </span>
-      <Button variant="outline" size="sm" onclick={leaveAreasView}>Switch to Tree</Button>
+      <div class="flex items-center gap-2">
+        {#if declaringArea}
+          <AreaDeclareForm onclose={() => (declaringArea = false)} />
+        {:else}
+          <Button variant="outline" size="sm" onclick={() => (declaringArea = true)}>Declare an area</Button>
+        {/if}
+        <!-- Outside the branch: opening the form must not take away the escape
+             the user arrived with, since this panel is the whole view. -->
+        <Button variant="outline" size="sm" onclick={leaveAreasView}>Switch to Tree</Button>
+      </div>
     </div>
   {/if}
 {:else if dataSource.fetching && allNibs.length === 0}
@@ -749,5 +811,34 @@
     </tbody>
   </table>
   </div>
+  {#if areaPanel}
+    <!-- A Popover rather than a hand-placed div: Escape and an outside click
+         dismiss it, and `customAnchor` tracks the button instead of freezing the
+         viewport coordinates it had when clicked. -->
+    <Popover.Root
+      open={true}
+      onOpenChange={(open) => {
+        if (!open) areaPanel = null;
+      }}
+    >
+      <Popover.Content
+        customAnchor={areaPanel.anchorEl}
+        align="start"
+        class="w-auto min-w-56 p-1"
+      >
+        <!-- Keyed by path so opening the panel on another area remounts it: its
+             open entry and each form's draft belong to the area they were opened on. -->
+        {#key areaPanel.path}
+          <AreaRowPanel
+            path={areaPanel.path}
+            name={areaPanel.name}
+            description={areaPanel.description}
+            color={areaPanel.color}
+            onclose={() => (areaPanel = null)}
+          />
+        {/key}
+      </Popover.Content>
+    </Popover.Root>
+  {/if}
 {/if}
 </div>

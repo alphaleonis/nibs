@@ -6,6 +6,8 @@ import {
   archiveNib,
   setParent,
   reorderNib,
+  addArea,
+  removeArea,
   batch,
   sequence,
   reorderChain,
@@ -336,5 +338,61 @@ describe("batch mutations carry ifMatch", () => {
     // always fails.
     const cmd = setStatusBatch(["a", "missing"], "todo", etagOf);
     expect((cmd.commands[1] as { ifMatch?: string }).ifMatch).toBeUndefined();
+  });
+});
+
+describe("area vocabulary factories", () => {
+  it("addArea carries the full path", () => {
+    expect(addArea("web/dashboard")).toEqual({ kind: "add-area", path: "web/dashboard" });
+  });
+
+  // The distinction the server draws: a key left OUT declares nothing for it,
+  // while "" is a value someone emptied. Collapsing the two here would make the
+  // difference unreachable from this layer, so the command must not carry a key
+  // the caller never set. Key ABSENCE is the assertion, because `toHaveProperty`
+  // counts an explicitly-undefined own key as present.
+  it("omits description and color entirely when the caller set neither", () => {
+    const cmd = addArea("web");
+    expect(cmd).not.toHaveProperty("description");
+    expect(cmd).not.toHaveProperty("color");
+  });
+
+  it("keeps a deliberately empty description, which is not the same as omitting it", () => {
+    const cmd = addArea("web", { description: "" });
+    expect(cmd).toEqual({ kind: "add-area", path: "web", description: "" });
+  });
+
+  it("removeArea carries neither disposition key when none is given", () => {
+    const cmd = removeArea("web/legacy");
+    expect(cmd).toEqual({ kind: "remove-area", path: "web/legacy" });
+    expect(cmd).not.toHaveProperty("moveTo");
+    expect(cmd).not.toHaveProperty("unassign");
+  });
+
+  // The two are a union rather than two optional fields, so naming both does not
+  // compile. What the factory still has to get right is setting only the one it
+  // was handed.
+  it("removeArea sets only the disposition it was handed", () => {
+    expect(removeArea("web/legacy", { moveTo: "web" })).toEqual({
+      kind: "remove-area",
+      path: "web/legacy",
+      moveTo: "web",
+    });
+    expect(removeArea("web/legacy", { unassign: true })).toEqual({
+      kind: "remove-area",
+      path: "web/legacy",
+      unassign: true,
+    });
+    expect(removeArea("web/legacy", { moveTo: "web" })).not.toHaveProperty("unassign");
+    expect(removeArea("web/legacy", { unassign: true })).not.toHaveProperty("moveTo");
+  });
+
+  it("carries a description and color when given", () => {
+    expect(addArea("web", { description: "The browser surface", color: "#4488ff" })).toEqual({
+      kind: "add-area",
+      path: "web",
+      description: "The browser surface",
+      color: "#4488ff",
+    });
   });
 });

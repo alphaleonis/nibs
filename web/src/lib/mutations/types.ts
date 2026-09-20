@@ -81,13 +81,68 @@ export type ArchiveNibCommand = { kind: "archive-nib"; id: string };
 export type SetParentCommand = { kind: "set-parent"; id: string; parentId: string | null };
 export type ReorderNibCommand = { kind: "reorder-nib"; id: string; afterId?: string; beforeId?: string; first?: boolean; parentId?: string; scope?: OrderScope };
 
+/**
+ * Declare one area at `path`, which is the FULL path: the last segment names the
+ * new node and everything before it names an already-declared parent.
+ *
+ * `description` and `color` are absent rather than "" when the caller set
+ * neither — the server reads "" as a value someone emptied, so the two cannot be
+ * collapsed. Keep them optional here so the distinction survives into
+ * `getVariables`.
+ */
+export type AddAreaCommand = { kind: "add-area"; path: string; description?: string; color?: string };
+
+/**
+ * Edit the declared area at `path`. Every field but `path` is optional, and an
+ * absent one leaves that key exactly as the store declares it while "" CLEARS
+ * it — so an unset field must stay off the command rather than becoming "".
+ *
+ * `newName` is the node's own SEGMENT, never a path.
+ */
+export type UpdateAreaCommand = {
+  kind: "update-area";
+  path: string;
+  newName?: string;
+  description?: string;
+  color?: string;
+};
+
+/**
+ * What to do with the nibs assigned at or below an area being retired. The two
+ * are mutually exclusive, so they are a UNION rather than two optional fields —
+ * a caller cannot name both without failing to compile.
+ *
+ * `unassign` is `true` alone: the server reads `false` as "no disposition"
+ * rather than as a contradiction, so a `false` here would silently mean
+ * something other than what it looks like.
+ */
+export type AreaDisposition = { moveTo: string } | { unassign: true };
+
+/**
+ * Retire the declared area at `path`, together with its whole subtree.
+ *
+ * Refused while any nib is assigned at or below the node unless a disposition
+ * says what to do with those members instead — and equally refused when a
+ * disposition names an area nothing is assigned to, so an absent disposition
+ * is not a safe default to send.
+ */
+export type RemoveAreaCommand = {
+  kind: "remove-area";
+  path: string;
+  moveTo?: string;
+  unassign?: true;
+};
+
 export type LeafCommand =
   | CreateNibCommand
   | UpdateNibCommand
   | DeleteNibCommand
   | ArchiveNibCommand
   | SetParentCommand
-  | ReorderNibCommand;
+  | ReorderNibCommand
+  | AddAreaCommand
+  | UpdateAreaCommand
+  | RemoveAreaCommand;
 
 // --- Result types ---
 
