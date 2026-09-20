@@ -85,6 +85,31 @@ describe("createNibSearch", () => {
     );
   });
 
+  // The narrowing has to travel as a query VARIABLE. Applied after the response
+  // instead, it would sieve an already-capped list: a store whose milestones sort
+  // below eight other matches would complete to nothing.
+  it("passes a token's type constraint as the `types` variable", async () => {
+    const { client, query } = fakeClient({ data: { nibs: [] } });
+
+    await createNibSearch(client)("v1", ["milestone"]);
+
+    expect(query).toHaveBeenCalledWith(
+      SEARCH_NIBS_QUERY,
+      { search: "v1", types: ["milestone"] },
+      { requestPolicy: "network-only" },
+    );
+  });
+
+  it("returns what the constrained query answered, unsieved", async () => {
+    // A row the constraint would have excluded, to catch a post-response filter:
+    // the server decides membership, so every hit maps through.
+    const { client } = fakeClient({ data: { nibs: [hit({ id: "tnib-e1", type: "epic" })] } });
+
+    const results = await createNibSearch(client)("v1", ["milestone"]);
+
+    expect(results.map((r) => r.id)).toEqual(["tnib-e1"]);
+  });
+
   it("treats a missing `data.nibs` as no hits (empty list)", async () => {
     const { client } = fakeClient({ data: {} });
 

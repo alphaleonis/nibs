@@ -2,12 +2,15 @@ import { describe, it, expect } from "vitest";
 import {
   EXISTENCE_TOKENS,
   REL_ID_FIELDS,
+  REL_ID_SEARCH_TYPES,
   REL_TOKEN_ORDER,
   clearHierarchyFilters,
   contradictionTokens,
   hierarchyTokens,
+  isRefusedMilestone,
   recognizeRelationship,
 } from "./relations";
+import type { MilestoneOption } from "../milestones";
 
 // `REL_TOKEN_ORDER` is the single source of truth for the rel/existence vocabulary:
 // `serialize.ts` emits from it, `complete.ts` offers from it, and the two recognition
@@ -162,6 +165,73 @@ describe("relations — the assignment axis", () => {
       ["milestone:tnib-1", "is:backlog"],
     ]);
     expect(contradictionTokens({ milestone: "tnib-1", noMilestone: false })).toEqual([]);
+  });
+
+  // Only this token constrains its typeahead, and the constraint has to live on
+  // the spec: the search behind it is the one every relationship token uses.
+  it("declares the milestone-only search constraint on its own spec", () => {
+    for (const spec of REL_TOKEN_ORDER) {
+      if (spec.kind !== "id") continue;
+      const expected = spec.name === "milestone" ? ["milestone"] : undefined;
+      expect(REL_ID_SEARCH_TYPES.get(spec.name)).toEqual(expected);
+    }
+  });
+});
+
+// The typed-or-pasted half: the completion can only narrow what it OFFERS, and a
+// value the server will refuse still reaches the box by hand or by a shared link.
+describe("relations — milestone vocabulary refusal", () => {
+  const MILESTONES: MilestoneOption[] = [
+    { id: "tnib-m1", title: "v1", status: "todo" },
+    { id: "tnib-m2", title: "v2", status: "in-progress" },
+  ];
+
+  it("refuses an id no milestone carries", () => {
+    expect(isRefusedMilestone("tnib-abc1", MILESTONES, "tnib-")).toBe(true);
+  });
+
+  it("accepts a declared milestone id, whatever its status", () => {
+    expect(isRefusedMilestone("tnib-m1", MILESTONES, "tnib-")).toBe(false);
+    expect(isRefusedMilestone("tnib-m2", MILESTONES, "tnib-")).toBe(false);
+  });
+
+  // `normalizeIDInMap` prepends the store prefix, so `milestone:m1` is a WORKING
+  // filter, and the typeahead's own search matches short ids too. Refusing one
+  // would name an innocent token.
+  it("accepts the short form the server's prefix-prepend resolves", () => {
+    expect(isRefusedMilestone("m1", MILESTONES, "tnib-")).toBe(false);
+    expect(isRefusedMilestone("m9", MILESTONES, "tnib-")).toBe(true);
+    // A store with no prefix gets no prepend, server-side or here.
+    expect(isRefusedMilestone("m1", MILESTONES, "")).toBe(true);
+  });
+
+  // The prepend is skipped when the id already carries the prefix, so a doubled
+  // prefix resolves to nothing there and must resolve to nothing here.
+  it("does not prepend a prefix the value already carries", () => {
+    const doubled: MilestoneOption[] = [{ id: "tnib-tnib-m1", title: "v1", status: "todo" }];
+    expect(isRefusedMilestone("tnib-m1", doubled, "tnib-")).toBe(true);
+  });
+
+  // The server's map lookup is exact. The box lowercases a token's value, so an
+  // uppercase-prefix store — `ValidatePrefix` runs from `nibs init`/`set-prefix`,
+  // never on config load — has its query refused whatever is typed. Folding here
+  // would answer "accepted" for precisely that store.
+  it("compares ids exactly", () => {
+    const shouty: MilestoneOption[] = [{ id: "TNIB-M1", title: "v1", status: "todo" }];
+    expect(isRefusedMilestone("tnib-m1", shouty, "tnib-")).toBe(true);
+  });
+
+  // The population an "empty means loading" reading never flagged: here the
+  // server refuses every `milestone:` value, so every one is worth a marker.
+  it("refuses every value in a store that holds no milestones", () => {
+    expect(isRefusedMilestone("tnib-m1", [], "tnib-")).toBe(true);
+  });
+
+  // `MILESTONES_QUERY` and `CONFIG_QUERY` resolve on their own schedules, and a
+  // short id cannot be judged without the prefix at all.
+  it("withholds judgment until both the list and the prefix have arrived", () => {
+    expect(isRefusedMilestone("tnib-abc1", null, "tnib-")).toBe(false);
+    expect(isRefusedMilestone("tnib-abc1", MILESTONES, null)).toBe(false);
   });
 });
 

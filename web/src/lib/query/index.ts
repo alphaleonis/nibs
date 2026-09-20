@@ -1,8 +1,8 @@
 // GitHub-style query language for the web filter box: parsing and canonical
 // serialization between box text and NibFilter, completion, and highlighting.
 //
-// Every function is pure. Runtime vocabularies (area paths, tags) are passed in;
-// `../areas` is imported for types only.
+// Every function is pure. Runtime vocabularies (area paths, tags, milestones) are
+// passed in; `../areas` and `../milestones` are imported for types only.
 //
 // Token kinds: metadata facets `field:v1,v2` with `-` for exclusion (fields.ts),
 // relationship and existence tokens (relations.ts), and `area:<path>` (area.ts).
@@ -34,3 +34,6 @@ export type { RelValueContext, NibSuggestion } from "./relComplete";
 // The box asks `isRefusedArea` again when the vocabulary changes; `parseQuery`
 // asked once, with whatever vocabulary its caller had.
 export { AREA_FIELD, isRefusedArea } from "./area";
+// The same question for `milestone:`, asked against the milestone list and store
+// prefix the client already holds, resolving the id the way the server does.
+export { MILESTONE_FIELD, isRefusedMilestone } from "./relations";

@@ -47,7 +47,15 @@ describe("relTokenValueContext — recognizes a rel-id token value", () => {
   // in REL_TOKEN_ORDER as an `id` entry is what gives it the same typeahead.
   it("milestone:tni → milestone + fragment 'tni' + replace range", () => {
     const ctx = relTokenValueContext("milestone:tni", 13);
-    expect(ctx).toEqual({ field: "milestone", name: "milestone", fragment: "tni", start: 10, end: 13 });
+    expect(ctx).toEqual({ field: "milestone", name: "milestone", fragment: "tni", start: 10, end: 13, searchTypes: ["milestone"] });
+  });
+
+  // The constraint rides on the token spec, so it reaches the search for this one
+  // name and no other — the same search serves every relationship token.
+  it("carries no search constraint for the relationship tokens", () => {
+    expect(at("parent:tni")?.searchTypes).toBeUndefined();
+    expect(at("blocking:tni")?.searchTypes).toBeUndefined();
+    expect(at("mentions:tni")?.searchTypes).toBeUndefined();
   });
 
   it("takes the WHOLE post-colon run as the fragment even when the caret is mid-value", () => {

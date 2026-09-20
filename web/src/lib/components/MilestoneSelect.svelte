@@ -16,7 +16,7 @@
   let { value, subjectStatus, onchange, testId = "milestone-select", disabled = false }: Props = $props();
 
   const milestones = useMilestones();
-  let choices = $derived(milestoneChoices(milestones(), { status: subjectStatus, milestone: value }));
+  let choices = $derived(milestoneChoices(milestones() ?? [], { status: subjectStatus, milestone: value }));
   // An assignment can name a milestone the list does not hold (deleted, or not yet
   // loaded); show the raw id rather than blank.
   let current = $derived(choices.find((c) => c.id === value));

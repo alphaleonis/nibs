@@ -31,7 +31,7 @@ type Documents = {
     "\n  mutation RemoveArea($input: RemoveAreaInput!) {\n    removeArea(input: $input) {\n      config {\n        projectName\n        prefix\n        areas {\n          path\n          name\n          description\n          color\n          depth\n        }\n      }\n      notes\n    }\n  }\n": typeof types.RemoveAreaDocument,
     "\n  query AreaMembers($area: String!) {\n    nibs(filter: { area: $area }) {\n      id\n    }\n  }\n": typeof types.AreaMembersDocument,
     "\n  query TreeTable($filter: NibFilter) {\n    nibs(filter: $filter, sort: { field: ORDER, direction: ASC }) {\n      id\n      title\n      status\n      type\n      priority\n      estimate\n      tags\n      createdAt\n      updatedAt\n      parentId\n      milestone\n      milestoneOrder\n      area\n      blockingIds\n      blockedByIds\n      etag\n    }\n  }\n": typeof types.TreeTableDocument,
-    "\n  query SearchNibs($search: String!) {\n    nibs(filter: { search: $search }) {\n      id\n      title\n      type\n      status\n    }\n  }\n": typeof types.SearchNibsDocument,
+    "\n  query SearchNibs($search: String!, $types: [String!]) {\n    nibs(filter: { search: $search, type: $types }) {\n      id\n      title\n      type\n      status\n    }\n  }\n": typeof types.SearchNibsDocument,
     "\n  subscription NibChanged($id: ID) {\n    nibChanged(id: $id) {\n      type\n      nibId\n      nib {\n        id\n        title\n        status\n        type\n        priority\n        estimate\n        milestone\n        area\n        tags\n        body\n        etag\n        updatedAt\n        parentId\n        blockingIds\n        blockedByIds\n      }\n    }\n  }\n": typeof types.NibChangedDocument,
 };
 const documents: Documents = {
@@ -52,7 +52,7 @@ const documents: Documents = {
     "\n  mutation RemoveArea($input: RemoveAreaInput!) {\n    removeArea(input: $input) {\n      config {\n        projectName\n        prefix\n        areas {\n          path\n          name\n          description\n          color\n          depth\n        }\n      }\n      notes\n    }\n  }\n": types.RemoveAreaDocument,
     "\n  query AreaMembers($area: String!) {\n    nibs(filter: { area: $area }) {\n      id\n    }\n  }\n": types.AreaMembersDocument,
     "\n  query TreeTable($filter: NibFilter) {\n    nibs(filter: $filter, sort: { field: ORDER, direction: ASC }) {\n      id\n      title\n      status\n      type\n      priority\n      estimate\n      tags\n      createdAt\n      updatedAt\n      parentId\n      milestone\n      milestoneOrder\n      area\n      blockingIds\n      blockedByIds\n      etag\n    }\n  }\n": types.TreeTableDocument,
-    "\n  query SearchNibs($search: String!) {\n    nibs(filter: { search: $search }) {\n      id\n      title\n      type\n      status\n    }\n  }\n": types.SearchNibsDocument,
+    "\n  query SearchNibs($search: String!, $types: [String!]) {\n    nibs(filter: { search: $search, type: $types }) {\n      id\n      title\n      type\n      status\n    }\n  }\n": types.SearchNibsDocument,
     "\n  subscription NibChanged($id: ID) {\n    nibChanged(id: $id) {\n      type\n      nibId\n      nib {\n        id\n        title\n        status\n        type\n        priority\n        estimate\n        milestone\n        area\n        tags\n        body\n        etag\n        updatedAt\n        parentId\n        blockingIds\n        blockedByIds\n      }\n    }\n  }\n": types.NibChangedDocument,
 };
 
@@ -141,7 +141,7 @@ export function graphql(source: "\n  query TreeTable($filter: NibFilter) {\n    
 /**
  * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
  */
-export function graphql(source: "\n  query SearchNibs($search: String!) {\n    nibs(filter: { search: $search }) {\n      id\n      title\n      type\n      status\n    }\n  }\n"): (typeof documents)["\n  query SearchNibs($search: String!) {\n    nibs(filter: { search: $search }) {\n      id\n      title\n      type\n      status\n    }\n  }\n"];
+export function graphql(source: "\n  query SearchNibs($search: String!, $types: [String!]) {\n    nibs(filter: { search: $search, type: $types }) {\n      id\n      title\n      type\n      status\n    }\n  }\n"): (typeof documents)["\n  query SearchNibs($search: String!, $types: [String!]) {\n    nibs(filter: { search: $search, type: $types }) {\n      id\n      title\n      type\n      status\n    }\n  }\n"];
 /**
  * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
  */

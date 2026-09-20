@@ -22,10 +22,11 @@
   import type { TypeIconInfo } from "../icons";
   import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnOrder, emitFilter as emitFilterHelper, switchViewLevel } from "../resolvePrefs";
   import type { TreeViewState } from "../treeView.svelte";
-  import { parseQuery, serializeQuery, getCompletion, tokenGroups, tokenSegments, relTokenValueContext, AREA_FIELD, isRefusedArea } from "../query";
+  import { parseQuery, serializeQuery, getCompletion, tokenGroups, tokenSegments, relTokenValueContext, AREA_FIELD, isRefusedArea, MILESTONE_FIELD, isRefusedMilestone } from "../query";
   import type { Completion, QueryFilter, SpanKind, RelValueContext, NibSuggestion } from "../query";
   import type { AreaVocabulary } from "../areas";
   import { createNibSearch, type SearchNibsFn } from "../searchNibs";
+  import { useMilestones } from "../contexts";
   import { getContextClient } from "@urql/svelte";
   import { untrack, tick } from "svelte";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
@@ -69,6 +70,7 @@
     availableTags = [],
     areas = undefined,
     projectName = "",
+    prefix = null,
     searchNibs = undefined,
   }: {
     prefs?: Preferences;
@@ -101,6 +103,10 @@
     /** For `area:` completion and validity; a prop for the same reason as
      *  `treeView`. Absent, nothing is completed or flagged. */
     areas?: AreaVocabulary;
+    /** The store's id prefix, for judging a short `milestone:` id the way the
+     *  server resolves one. `null` until `CONFIG_QUERY` answers, which withholds
+     *  that judgment rather than guessing it. */
+    prefix?: string | null;
     projectName?: string;
     searchNibs?: SearchNibsFn;
   } = $props();
@@ -117,6 +123,11 @@
     }
   }
   const effectiveSearchNibs: SearchNibsFn = injectedSearch ?? contextSearchNibs ?? (async () => []);
+
+  // The whole milestone set, for judging a `milestone:` value the box was given
+  // rather than offered. A getter: the list arrives after first paint. Optional
+  // outside a provider, where it reads `null` and nothing is judged.
+  const milestones = useMilestones();
 
   let resolvedDensity = $derived(prefs ? prefs.rowDensity : rowDensity);
 
@@ -331,21 +342,29 @@
     else localInvalidTokens = tokens;
   }
 
-  // The parked tokens plus an `area:` path the current vocabulary refuses.
+  // The parked tokens plus the vocabulary-checked values the current vocabularies
+  // refuse: an `area:` path and a `milestone:` id.
   // `Preferences.setQuery` parses without a vocabulary, so a loaded undeclared
-  // path is never parked, while `withSendableArea` withholds it from the query.
+  // path is never parked, while `withSendableArea` withholds the area from the
+  // query.
   // Display only: `canonicalQuery` reads the parked tokens alone, so the token is
-  // serialized once. "unknown" (loading or failed config) is not flagged, and an
-  // empty path serializes to no token.
+  // serialized once. Neither value is flagged while its vocabulary has no answer —
+  // an area "unknown" (loading or failed config), a milestone list or store prefix
+  // that has not arrived — and an empty value serializes to no token.
   let flaggedTokens = $derived.by(() => {
+    const tokens = [...resolvedInvalidTokens];
+    const add = (token: string) => {
+      if (!tokens.includes(token)) tokens.push(token);
+    };
     const area = resolvedFilter.area;
-    if (typeof area !== "string" || area === "" || !isRefusedArea(area, areas)) {
-      return resolvedInvalidTokens;
+    if (typeof area === "string" && area !== "" && isRefusedArea(area, areas)) {
+      add(`${AREA_FIELD}:${area}`);
     }
-    const token = `${AREA_FIELD}:${area}`;
-    return resolvedInvalidTokens.includes(token)
-      ? resolvedInvalidTokens
-      : [...resolvedInvalidTokens, token];
+    const milestone = resolvedFilter.milestone;
+    if (typeof milestone === "string" && milestone !== "" && isRefusedMilestone(milestone, milestones(), prefix)) {
+      add(`${MILESTONE_FIELD}:${milestone}`);
+    }
+    return tokens;
   });
 
   let keywordFocused = $state(false);
@@ -459,7 +478,7 @@
   // avoid flicker, so accepting refuses rows for a stale fragment.
   let relResultsFragment = $state("");
   let relDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-  // Bumped per query; a response with an old seq is dropped.
+  // Bumped per query and per cancel; a response with an old seq is dropped.
   let relRequestSeq = 0;
 
   let activeItemCount = $derived(
@@ -470,8 +489,14 @@
     active?.kind === "rel" && relResultsFragment === active.ctx.fragment,
   );
 
+  // Drops the pending query AND anything already in flight. The seq bump is the
+  // load-bearing half: a response carries the `searchTypes` constraint of the
+  // token it was dispatched for, so a milestone-only answer landing after the
+  // caret moved to `parent:` would offer milestones alone — and the fragment
+  // guard cannot see that, since the fragment may be unchanged.
   function cancelRelSearch() {
     if (relDebounceTimer) { clearTimeout(relDebounceTimer); relDebounceTimer = null; }
+    relRequestSeq++;
   }
 
   const sameItems = (a: readonly string[], b: readonly string[]) =>
@@ -491,7 +516,7 @@
     const relCtx = relTokenValueContext(value, caret);
     if (relCtx) {
       active = { kind: "rel", ctx: relCtx };
-      scheduleRelSearch(relCtx.fragment);
+      scheduleRelSearch(relCtx.fragment, relCtx.searchTypes);
       return;
     }
 
@@ -521,22 +546,24 @@
     relResultsFragment = fragment;
   }
 
-  function scheduleRelSearch(fragment: string) {
+  // `types` is the caret token's own constraint (`RelValueContext.searchTypes`):
+  // the search is shared by every relationship token, so it travels per call.
+  function scheduleRelSearch(fragment: string, types?: readonly string[]) {
     cancelRelSearch();
     // No query until at least one character follows the colon.
     if (fragment === "") { setRelResults([], fragment); return; }
     relDebounceTimer = setTimeout(() => {
       relDebounceTimer = null;
-      void runRelSearch(fragment);
+      void runRelSearch(fragment, types);
     }, REL_SEARCH_DEBOUNCE_MS);
   }
 
-  async function runRelSearch(fragment: string) {
+  async function runRelSearch(fragment: string, types?: readonly string[]) {
     const seq = ++relRequestSeq;
     // A rejecting search fn degrades to no suggestions; the caller does not catch.
     let results: NibSuggestion[];
     try {
-      results = await effectiveSearchNibs(fragment);
+      results = await effectiveSearchNibs(fragment, types);
     } catch (err) {
       console.warn("rel-token search failed:", err);
       results = [];

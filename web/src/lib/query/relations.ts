@@ -1,4 +1,5 @@
 import type { QueryFilter } from "./fields";
+import type { MilestoneOption } from "../milestones";
 
 // Relationship and existence tokens, recognized separately from the metadata
 // grammar. `FIELD_TOKEN`'s `[A-Za-z]+` name group cannot match the hyphenated
@@ -29,6 +30,10 @@ export type RelIdKey =
   | "mentionedById"
   | "milestone";
 
+/** The assignment axis's token name, which is also its `NibFilter` key. Exported
+ *  so the box spells a refused `milestone:` token from the vocabulary. */
+export const MILESTONE_FIELD = "milestone";
+
 /** Existence fields with both a `has:` and a `no:` spelling. */
 type PairedExistenceKey = "hasParent" | "hasBlocking" | "hasBlockedBy";
 
@@ -50,6 +55,12 @@ export type RelTokenSpec =
       name: string;
       /** One line for the in-UI syntax help, from the matched nib's side. */
       description: string;
+      /** The nib types this token's value may name, absent when any nib will do.
+       *  It travels to the server as part of the typeahead query, so the eight-row
+       *  cap trims a list the server already narrowed rather than one this then
+       *  sieves. One search serves every id token, so the SEARCH constraint belongs
+       *  here and not at that call site. */
+      searchTypes?: readonly string[];
     }
   | {
       kind: "bool";
@@ -92,7 +103,10 @@ export const REL_TOKEN_ORDER = [
   // Backlog is one `is:` token, not a `has:`/`no:milestone` pair: on a field named
   // `noMilestone` a pair would write true for `no:`, while the `_PairsKeep*`
   // guards read an entry's value as its polarity.
-  { kind: "id", field: "milestone", name: "milestone", description: "Nibs assigned to this milestone" },
+  //
+  // The server refuses a query whose target is not a milestone, so the typeahead
+  // offers milestones alone: a candidate it cannot accept is a broken filter.
+  { kind: "id", field: MILESTONE_FIELD, name: MILESTONE_FIELD, description: "Nibs assigned to this milestone", searchTypes: ["milestone"] },
   { kind: "bool", field: "noMilestone", token: "is:backlog", value: true, description: "Nibs in no milestone's plan, their own or an inherited one" },
 ] as const satisfies readonly RelTokenSpec[];
 
@@ -109,6 +123,15 @@ type OrderedSpec<K extends RelTokenSpec["kind"]> = Extract<
 export const REL_ID_FIELDS: ReadonlyMap<string, RelIdKey> = new Map(
   REL_TOKEN_ORDER.flatMap((spec): [string, RelIdKey][] =>
     spec.kind === "id" ? [[spec.name, spec.field]] : [],
+  ),
+);
+
+// Token field-name → the nib types its typeahead may offer. Only a token that
+// constrains its value has an entry; `relTokenValueContext` reads it, and a miss
+// means "any nib". A Map for the same reason as `REL_ID_FIELDS`.
+export const REL_ID_SEARCH_TYPES: ReadonlyMap<string, readonly string[]> = new Map(
+  REL_TOKEN_ORDER.flatMap((spec): [string, readonly string[]][] =>
+    spec.kind === "id" && "searchTypes" in spec ? [[spec.name, spec.searchTypes]] : [],
   ),
 );
 
@@ -214,6 +237,34 @@ export function clearHierarchyFilters<T extends QueryFilter>(filter: T): T {
     delete next[field];
   }
   return next;
+}
+
+// --- The milestone vocabulary --------------------------------------------------
+
+/**
+ * Whether a `milestone:` value names nothing the server would resolve — the case
+ * it refuses the WHOLE query for, which renders as an error with no rows. The
+ * completion narrows what it OFFERS; this covers a value typed or pasted past it.
+ *
+ * Resolution mirrors `normalizeIDInMap` (internal/nibcore/mentions.go), which
+ * every id-valued filter field goes through: the id as typed, or the store prefix
+ * prepended when the id does not already carry it. So `milestone:m1` is a working
+ * filter in a `tnib-` store, not a refused one. Compared exactly, as the server's
+ * map lookup compares.
+ *
+ * `null` for either input withholds judgment: `MILESTONES_QUERY` and
+ * `CONFIG_QUERY` resolve on their own schedules, and answering before both have
+ * would flag valid ids during startup. An EMPTY list is an answer, not a state to
+ * wait out — a store holding no milestones refuses every `milestone:` value.
+ */
+export function isRefusedMilestone(
+  value: string,
+  milestones: readonly MilestoneOption[] | null,
+  prefix: string | null,
+): boolean {
+  if (milestones === null || prefix === null) return false;
+  const prefixed = prefix !== "" && !value.startsWith(prefix) ? prefix + value : null;
+  return !milestones.some((m) => m.id === value || m.id === prefixed);
 }
 
 /** A scalar-id assignment, a boolean existence assignment, or a negated token for

@@ -128,7 +128,7 @@
   // right-clicked row's status is known, and the server refuses per row.
   let milestoneEntries = $derived([
     { value: NO_MILESTONE, label: "None" },
-    ...milestoneChoices(milestones(), {
+    ...milestoneChoices(milestones() ?? [], {
       status: nib?.status ?? "",
       milestone: nib?.milestone ?? "",
     }).map((c) => ({
