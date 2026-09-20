@@ -260,15 +260,31 @@ describe("parseQuery — relationship + existence tokens (phase 5)", () => {
   });
 });
 
-// The assignment axis, whose two tokens land on two differently-shaped fields:
-// `milestone` is a scalar id read as DIRECT assignment, `noMilestone` a tri-state
-// read over DERIVED membership. Only the true half of the tri-state is typeable,
-// which is what keeps the grammar's `no:` prefix meaning false everywhere.
+// The assignment axis, whose three tokens land on three differently-shaped
+// fields: `milestone:` is a scalar id read as DERIVED membership (`inMilestone`),
+// `milestone-exact:` the scalar id read as DIRECT assignment (`milestone`), and
+// `is:backlog` a tri-state over the derived reading. Only the true half of the
+// tri-state is typeable, which is what keeps the grammar's `no:` prefix meaning
+// false everywhere.
+//
+// Which key each token writes is the whole point of the first rows: the two
+// spellings are one character apart and select different sets, so a token wired
+// to the other field would look right in the box and answer the wrong question.
 describe("parseQuery — assignment axis tokens", () => {
   const cases: { name: string; input: string; expected: ParsedQuery }[] = [
-    { name: "milestone:<id>", input: "milestone:tnib-1", expected: { filter: { milestone: "tnib-1" }, invalidTokens: [] } },
-    { name: "milestone field-name and id are lowercased", input: "MILESTONE:TNIB-ABC", expected: { filter: { milestone: "tnib-abc" }, invalidTokens: [] } },
-    { name: "repeated milestone overwrites (last wins)", input: "milestone:a milestone:b", expected: { filter: { milestone: "b" }, invalidTokens: [] } },
+    { name: "milestone:<id> writes the DERIVED field", input: "milestone:tnib-1", expected: { filter: { inMilestone: "tnib-1" }, invalidTokens: [] } },
+    { name: "milestone-exact:<id> writes the DIRECT field", input: "milestone-exact:tnib-1", expected: { filter: { milestone: "tnib-1" }, invalidTokens: [] } },
+    {
+      name: "the two spellings are independent fields, not one field twice",
+      input: "milestone:tnib-1 milestone-exact:tnib-2",
+      expected: { filter: { inMilestone: "tnib-1", milestone: "tnib-2" }, invalidTokens: [] },
+    },
+    { name: "milestone field-name and id are lowercased", input: "MILESTONE:TNIB-ABC", expected: { filter: { inMilestone: "tnib-abc" }, invalidTokens: [] } },
+    { name: "milestone-exact field-name and id are lowercased", input: "MILESTONE-EXACT:TNIB-ABC", expected: { filter: { milestone: "tnib-abc" }, invalidTokens: [] } },
+    { name: "repeated milestone overwrites (last wins)", input: "milestone:a milestone:b", expected: { filter: { inMilestone: "b" }, invalidTokens: [] } },
+    { name: "repeated milestone-exact overwrites (last wins)", input: "milestone-exact:a milestone-exact:b", expected: { filter: { milestone: "b" }, invalidTokens: [] } },
+    { name: "milestone-exact: with empty value is free text", input: "milestone-exact:", expected: { filter: { search: "milestone-exact:" }, invalidTokens: [] } },
+    { name: "-milestone-exact:x → invalid", input: "-milestone-exact:x", expected: { filter: {}, invalidTokens: ["-milestone-exact:x"] } },
     {
       name: "is:backlog writes noMilestone TRUE — the backlog is the nibs no plan covers",
       input: "is:backlog",
@@ -291,7 +307,7 @@ describe("parseQuery — assignment axis tokens", () => {
       name: "both axis tokens coexist with metadata and free text",
       input: "type:epic milestone:tnib-1 is:backlog login",
       expected: {
-        filter: { type: ["epic"], milestone: "tnib-1", noMilestone: true, search: "login" },
+        filter: { type: ["epic"], inMilestone: "tnib-1", noMilestone: true, search: "login" },
         invalidTokens: [],
       },
     },
@@ -571,6 +587,39 @@ describe("parseQuery — the area token", () => {
         },
         invalidTokens: [],
       },
+    },
+    // The exact token writes the OTHER NibFilter key: same path, different
+    // question, and the server answers them differently (`areaExact: "web"`
+    // leaves `web/dashboard` out).
+    {
+      name: "area-exact:<path> writes areaExact",
+      input: "area-exact:web",
+      areas: READY,
+      expected: { filter: { areaExact: "web" }, invalidTokens: [] },
+    },
+    {
+      name: "area-exact takes a nested path whole",
+      input: "area-exact:web/dashboard",
+      areas: READY,
+      expected: { filter: { areaExact: "web/dashboard" }, invalidTokens: [] },
+    },
+    {
+      name: "the two spellings are independent fields, not one field twice",
+      input: "area:web area-exact:webhooks",
+      areas: READY,
+      expected: { filter: { area: "web", areaExact: "webhooks" }, invalidTokens: [] },
+    },
+    {
+      name: "an undeclared area-exact path is parked under its own spelling",
+      input: "area-exact:retired",
+      areas: READY,
+      expected: { filter: {}, invalidTokens: ["area-exact:retired"] },
+    },
+    {
+      name: "a negated area-exact token is parked whole",
+      input: "-area-exact:web",
+      areas: READY,
+      expected: { filter: {}, invalidTokens: ["-area-exact:web"] },
     },
   ];
 

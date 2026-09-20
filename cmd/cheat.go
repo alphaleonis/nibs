@@ -83,8 +83,8 @@ PRIO   %s (default normal)   EST  %s (s=1 m=3 l=5 xl=8; default m)
 FILTER list/rel show OPEN only by default (closed statuses hidden; header notes "N hidden — --all to include").
        -s overrides (-s closed = only closed); --all = every status. Open work under X: 'rel <id> --rel
        descendants -t bug' is already open — no post-filter. -c/-q honor the open default (--all for totals).
-       list only: --milestone <ms> = that queue, in queue order; --backlog = no assignment, own or inherited;
-                  --area <path> = that area and every area declared beneath it.
+       list only: --milestone <ms> = its plan (--milestone-exact = its queue, in queue order); --backlog =
+                  no assignment, own or inherited; --area <path> = that area and every area declared beneath it (--area-exact = it alone).
 RULE   On any nibs error: STOP, find the root cause, never silently retry. A queue "warning:" printed by a
        command that exited 0 is a lint on a successful write, not an error — read it, don't stop for it.
 `,

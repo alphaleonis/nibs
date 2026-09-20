@@ -1,10 +1,11 @@
 import { FIELD_SPECS, completionValues } from "./fields";
 import { REL_TOKEN_ORDER } from "./relations";
-import { AREA_DESCRIPTION, AREA_FIELD } from "./area";
+import { AREA_TOKEN_ORDER } from "./area";
 
 // The in-UI syntax reference for the filter box. Token rows are generated from
-// `FIELD_SPECS`, `REL_TOKEN_ORDER` and area.ts, the structures the parser reads; do
-// not hand-list tokens. Only the operator rows and examples are written by hand.
+// `FIELD_SPECS`, `REL_TOKEN_ORDER` and `AREA_TOKEN_ORDER`, the structures the
+// parser reads; do not hand-list tokens. Only the operator rows and examples are
+// written by hand.
 
 export interface HelpRow {
   /** The token pattern, rendered in code style (`type:<value>`, `has:parent`). */
@@ -50,7 +51,10 @@ export function queryHelpSections(): HelpSection[] {
     {
       title: "Areas",
       note: "Takes a declared area path. Closure is over the declared tree, so webhooks is not within web.",
-      rows: [{ token: `${AREA_FIELD}:<path>`, description: AREA_DESCRIPTION }],
+      rows: AREA_TOKEN_ORDER.map((spec) => ({
+        token: `${spec.name}:<path>`,
+        description: spec.description,
+      })),
     },
     {
       title: "Operators",

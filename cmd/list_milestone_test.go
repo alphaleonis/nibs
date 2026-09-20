@@ -8,7 +8,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/output"
 )
 
-// TestListMilestoneQueue pins `nibs list --milestone`: the queue in
+// TestListMilestoneQueue pins `nibs list --milestone-exact`: the queue in
 // milestone_order by default, short ids accepted, and an explicit --sort
 // winning over the queue-order default.
 func TestListMilestoneQueue(t *testing.T) {
@@ -31,7 +31,7 @@ func TestListMilestoneQueue(t *testing.T) {
 		t.Errorf("queue after move = %v, want %s", got, want)
 	}
 	resetListFlags()
-	out, err := runRootWith(t, "--nibs-path", nibsPath, "list", "--milestone", "tnib-m001", "--sort", "id", "-q")
+	out, err := runRootWith(t, "--nibs-path", nibsPath, "list", "--milestone-exact", "tnib-m001", "--sort", "id", "-q")
 	if err != nil {
 		t.Fatalf("list --sort id: %v", err)
 	}

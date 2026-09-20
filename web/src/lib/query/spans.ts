@@ -11,8 +11,8 @@ import type { AreaVocabulary } from "../areas";
 // - `operator`   — the `:` after a field and the `,` between values.
 // - `value`      — a value the parser accepts.
 // - `invalid`    — what `parseQuery` puts in `invalidTokens`: a rejected value (the
-//                  span covers the value), or a negated rel/existence/area token (the
-//                  whole token).
+//                  span covers the value), or a negated rel/existence/ownership
+//                  token (the whole token).
 // - `freetext`   — everything `parseQuery` routes to `search`, `type:` and `type:,` included.
 // - `whitespace` — a whitespace run.
 export type SpanKind = "field" | "operator" | "value" | "invalid" | "freetext" | "whitespace";

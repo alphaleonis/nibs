@@ -323,7 +323,9 @@ describe("prepareFilter area rule", () => {
   // value can arrive in. `sent` is the whole assertion: a value reaches
   // serverFilter iff this vocabulary declares it — except the empty string,
   // which is sent unconditionally so the server's own refusal of it is what the
-  // user sees (see withSendableArea).
+  // user sees (see withSendableAreas). `areaExact` is checked the same way and
+  // against the same vocabulary — the server refuses an undeclared path on both
+  // fields — so the matrix runs over both keys.
   const ALL_VOCABULARIES = [
     "pre-load",
     "config query failed",
@@ -344,19 +346,31 @@ describe("prepareFilter area rule", () => {
     ["the empty string", "", ALL_VOCABULARIES],
   ];
 
-  for (const [vocabLabel, areas] of vocabularies) {
-    for (const [valueLabel, value, sendingVocabs] of values) {
-      const sent = sendingVocabs.includes(vocabLabel);
-      it(`${sent ? "sends" : "withholds"} ${valueLabel} with a ${vocabLabel} vocabulary`, () => {
-        const result = prepareFilter({ area: value }, areas);
-        if (sent) {
-          expect(result.serverFilter.area).toBe(value);
-        } else {
-          expect(result.serverFilter).not.toHaveProperty("area");
-        }
-      });
+  const areaKeys = ["area", "areaExact"] as const;
+
+  for (const key of areaKeys) {
+    for (const [vocabLabel, areas] of vocabularies) {
+      for (const [valueLabel, value, sendingVocabs] of values) {
+        const sent = sendingVocabs.includes(vocabLabel);
+        it(`${sent ? "sends" : "withholds"} ${key} carrying ${valueLabel} with a ${vocabLabel} vocabulary`, () => {
+          const result = prepareFilter({ [key]: value }, areas);
+          if (sent) {
+            expect(result.serverFilter[key]).toBe(value);
+          } else {
+            expect(result.serverFilter).not.toHaveProperty(key);
+          }
+        });
+      }
     }
   }
+
+  // The two keys are judged independently: one withheld must not take the other
+  // with it, which a single shared early return would do.
+  it("withholds only the undeclared half when both keys are set", () => {
+    const result = prepareFilter({ area: "web", areaExact: "retired" }, READY_AREAS);
+    expect(result.serverFilter.area).toBe("web");
+    expect(result.serverFilter).not.toHaveProperty("areaExact");
+  });
 
   it("leaves a filter carrying no area untouched, whatever the vocabulary answers", () => {
     for (const [, areas] of vocabularies) {

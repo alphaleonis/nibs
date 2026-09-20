@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -35,8 +36,10 @@ var (
 	listMentions    string
 	listMentionedBy string
 	listMilestone   string
+	listMilestoneEx string
 	listBacklog     bool
 	listArea        string
+	listAreaExact   string
 	listReady       bool
 	listAll         bool
 	listOpen        bool
@@ -59,22 +62,31 @@ The filtered set is projected and rendered as tab-separated rows under a
 "# <n> nibs" comment header (drop it with --no-header). Every output form
 shares one field-selection model with 'nibs get'.
 
-Id-valued filters (--parent, --milestone, --mentions, --mentioned-by):
+Id-valued filters (--parent, --milestone, --milestone-exact, --mentions,
+--mentioned-by):
   An id naming no nib is refused with a "not found" error (exit 3) rather than
   listing zero rows, so a mistyped or stale id — --parent "$ID" with $ID unset
   or wrong — stays distinguishable from a nib that genuinely has no children.
   An empty value is rejected outright (use --no-parent to select the parentless
-  nibs, --backlog for the ones in no milestone). --milestone given a nib that is
-  not a milestone is refused as a validation error (exit 2) naming its type,
-  as 'nibs set --milestone' refuses the same id.
+  nibs, --backlog for the ones in no milestone). Either milestone flag given a
+  nib that is not a milestone is refused as a validation error (exit 2) naming
+  its type, as 'nibs set --milestone' refuses the same id.
 
-Milestone queue and backlog:
-  --milestone <id>   The milestone's queue — the nibs assigned to it — in
-                     queue order (milestone_order) unless --sort says otherwise.
-  --backlog          The backlog in tree order: nibs with no
-                     assignment of their own and none up their parent chain
-                     (a child of an assigned epic is planned work, not backlog).
-                     Milestones themselves are in no queue and so appear here;
+Milestone plan, queue and backlog:
+  --milestone <id>   The milestone's whole plan: the nibs assigned to it and
+                     the subtrees that ride along with them (a child of an
+                     assigned epic is planned work). Ordered like a plain
+                     'nibs list'; only --milestone-exact substitutes queue
+                     order, since the inherited members carry no queue key.
+  --milestone-exact <id>
+                     The queue alone — the nibs whose own assignment resolves
+                     to that milestone, the ones 'nibs mv --queue' can
+                     reposition — in queue order (milestone_order) unless
+                     --sort says otherwise.
+  --backlog          The backlog: nibs with no assignment of their own and
+                     none up their parent chain, which is exactly what no
+                     --milestone selects. Ordered like a plain 'nibs list'.
+                     Milestones themselves are in no plan and so appear here;
                      add --no-type milestone to drop them.
 
 Area scope:
@@ -86,6 +98,9 @@ Area scope:
                      way is a different area. A path the store does not declare
                      is refused (exit 2) naming the declared set, and a store
                      that declares no areas at all says that instead.
+  --area-exact <path>
+                     That path alone, without the closure: --area-exact web
+                     leaves web/dashboard out. Same refusals as --area.
 
 Status filtering (open by default):
   With no status flag, only open nibs are listed (the closed statuses are
@@ -217,31 +232,48 @@ Search Syntax (--search/-S):
 			return reportErr(listJSON, output.ErrValidation,
 				fmt.Errorf(`--milestone was given an empty value; use --backlog to select nibs in no milestone`))
 		}
-		// --area takes a declared PATH rather than a nib id, so it is not one of
-		// the id-valued filters above; the empty value is refused for the same
-		// reason all the same, and the message names no sibling flag because
-		// there is no --no-area to redirect to.
+		if cmd.Flags().Changed("milestone-exact") && listMilestoneEx == "" {
+			return reportErr(listJSON, output.ErrValidation,
+				fmt.Errorf(`--milestone-exact was given an empty value; use --backlog to select nibs in no milestone`))
+		}
+		// --area and --area-exact take a declared PATH rather than a nib id, so
+		// they are not among the id-valued filters above; the empty value is
+		// refused for the same reason all the same, and the messages name no
+		// sibling flag because there is no --no-area to redirect to.
 		if cmd.Flags().Changed("area") && listArea == "" {
 			return reportErr(listJSON, output.ErrValidation,
 				fmt.Errorf(`--area was given an empty value; it takes a declared area path`))
+		}
+		if cmd.Flags().Changed("area-exact") && listAreaExact == "" {
+			return reportErr(listJSON, output.ErrValidation,
+				fmt.Errorf(`--area-exact was given an empty value; it takes a declared area path`))
 		}
 		if listParentID != "" {
 			filter.ParentID = &listParentID
 		}
 
-		// --milestone <id> names a queue and --backlog the set outside every
-		// queue, so together they select nothing by construction — refused
-		// like --parent with --no-parent rather than answered with an empty
-		// listing. The milestone filter is the RESOLVED direct assignment
-		// (the queue the ordering engine groups by); --backlog is the derived
-		// reading (no assignment anywhere up the parent chain). Both rules
-		// live in the graph layer's NibFilter docstrings.
-		if listMilestone != "" && listBacklog {
-			return reportErr(listJSON, output.ErrValidation,
-				fmt.Errorf("--milestone and --backlog are mutually exclusive (no nib is both in milestone %q and in no milestone)", listMilestone))
+		// Either milestone flag names a membership and --backlog names the
+		// absence of one, so together they select nothing by construction —
+		// refused like --parent with --no-parent rather than answered with an
+		// empty listing. --milestone is the DERIVED reading (this nib or an
+		// ancestor is assigned) and --milestone-exact the direct one (the queue
+		// the ordering engine groups by); --backlog is the complement of the
+		// derived reading, which is why it contradicts both. All the rules live
+		// in the graph layer's NibFilter docstrings.
+		for _, pair := range []struct {
+			flag  string
+			value string
+		}{{"--milestone", listMilestone}, {"--milestone-exact", listMilestoneEx}} {
+			if pair.value != "" && listBacklog {
+				return reportErr(listJSON, output.ErrValidation,
+					fmt.Errorf("%s and --backlog are mutually exclusive (no nib is both in milestone %q and in no milestone)", pair.flag, pair.value))
+			}
 		}
 		if listMilestone != "" {
-			filter.Milestone = &listMilestone
+			filter.InMilestone = &listMilestone
+		}
+		if listMilestoneEx != "" {
+			filter.Milestone = &listMilestoneEx
 		}
 		if listBacklog {
 			backlog := true
@@ -255,6 +287,9 @@ Search Syntax (--search/-S):
 		// the same value.
 		if listArea != "" {
 			filter.Area = &listArea
+		}
+		if listAreaExact != "" {
+			filter.AreaExact = &listAreaExact
 		}
 
 		// --has-parent/--no-parent and --has-blocking/--no-blocking are each
@@ -400,16 +435,19 @@ Search Syntax (--search/-S):
 			sel, _ = projection.ViewFields(string(projection.ViewRef))
 		}
 
-		// Execute the query (filter + sort). A queue listing is in queue order
-		// by default — the order key is the sibling order, which says nothing
-		// about a milestone's plan — and an explicit --sort still wins. An
-		// unrecognized --sort is refused here, before the query, so the
+		// Execute the query (filter + sort). A QUEUE listing is in queue order by
+		// default — the order key is the sibling order, which says nothing about
+		// a milestone's plan — and an explicit --sort still wins. Only
+		// --milestone-exact gets that default: the derived plan --milestone
+		// selects also holds nibs that carry no queue key at all, and sorting
+		// them by one would scatter each subtree away from the assignee it hangs
+		// under. An unrecognized --sort is refused here, before the query, so the
 		// count/quiet shortcuts reject it too.
 		nibSort, err := buildNibSort(listSort)
 		if err != nil {
 			return reportErr(listJSON, output.ErrValidation, err)
 		}
-		if listMilestone != "" && listSort == "" {
+		if listMilestoneEx != "" && listSort == "" {
 			nibSort = &model.NibSort{Field: model.NibSortFieldMilestoneOrder}
 		}
 		resolver := app.newResolver()
@@ -420,7 +458,7 @@ Search Syntax (--search/-S):
 			// or mistyped id is distinguishable from a parent that has no
 			// children. See filterTargetErrCode for the classes it tells apart.
 			if code, ok := filterTargetErrCode(err); ok {
-				return reportErr(listJSON, code, err)
+				return reportErr(listJSON, code, nameMilestoneFieldAsFlag(err))
 			}
 			return fmt.Errorf("querying nibs: %w", err)
 		}
@@ -568,6 +606,78 @@ func countHiddenClosed(ctx context.Context, cfg *config.Config, resolver *graph.
 	return hidden, nil
 }
 
+// milestoneFieldFlags maps the two milestone filter fields onto the list flags
+// that write them. The readings are crossed — --milestone writes inMilestone
+// (the derived plan) and --milestone-exact writes milestone (the queue) — so a
+// refusal echoing the schema spelling names a REAL adjacent flag on the same
+// command with the opposite meaning, and a caller told to fix "milestone"
+// switches to --milestone and turns a mistyped id into a ten-times-wider query.
+// Every other id-valued field is a recognizable transform of its own flag
+// (parentId/--parent, mentionsId/--mentions), so only these two are rewritten.
+var milestoneFieldFlags = map[string]string{
+	"milestone":   "--milestone-exact",
+	"inMilestone": "--milestone",
+}
+
+// nameMilestoneFieldAsFlag returns err with a milestone filter field spelled as
+// the flag that writes it, and err unchanged for every other field. The copy is
+// shallow and the concrete class is preserved, so filterTargetErrCode still
+// decides the exit status from the same type it would have seen.
+//
+// Only `nibs list` applies it. `nibs query` and `nibs serve` speak the schema,
+// where the field names are the caller's own input and renaming them would
+// answer a GraphQL document with a flag that is not in it.
+func nameMilestoneFieldAsFlag(err error) error {
+	var notFound *graph.FilterTargetNotFoundError
+	var wrongType *graph.FilterTargetTypeError
+	var unreadable *graph.FilterTargetUnreadableError
+	var empty *graph.FilterTargetEmptyError
+	var contradiction *graph.FilterTargetContradictionError
+	var disjoint *graph.FilterTargetsDisjointError
+	switch {
+	case errors.As(err, &notFound):
+		if flag, ok := milestoneFieldFlags[notFound.Field]; ok {
+			c := *notFound
+			c.Field = flag
+			return &c
+		}
+	case errors.As(err, &wrongType):
+		if flag, ok := milestoneFieldFlags[wrongType.Field]; ok {
+			c := *wrongType
+			c.Field = flag
+			return &c
+		}
+	case errors.As(err, &unreadable):
+		if flag, ok := milestoneFieldFlags[unreadable.Field]; ok {
+			c := *unreadable
+			c.Field = flag
+			return &c
+		}
+	case errors.As(err, &empty):
+		if flag, ok := milestoneFieldFlags[empty.Field]; ok {
+			c := *empty
+			c.Field = flag
+			return &c
+		}
+	case errors.As(err, &contradiction):
+		if flag, ok := milestoneFieldFlags[contradiction.Field]; ok {
+			c := *contradiction
+			c.Field = flag
+			return &c
+		}
+	case errors.As(err, &disjoint):
+		c := *disjoint
+		if flag, ok := milestoneFieldFlags[c.Field]; ok {
+			c.Field = flag
+		}
+		if flag, ok := milestoneFieldFlags[c.Other]; ok {
+			c.Other = flag
+		}
+		return &c
+	}
+	return err
+}
+
 // listSortOption is one accepted `--sort` value and the NibSort it selects.
 type listSortOption struct {
 	Key   string
@@ -587,7 +697,7 @@ type listSortOption struct {
 //
 // The empty string is deliberately not a key here: it is the "no --sort given"
 // signal rather than something a caller types, and it selects the order key
-// while leaving --milestone free to substitute queue order.
+// while leaving --milestone-exact free to substitute queue order.
 var listSortOptions = []listSortOption{
 	{Key: "created", Field: model.NibSortFieldCreatedAt, Desc: true},
 	{Key: "updated", Field: model.NibSortFieldUpdatedAt, Desc: true},
@@ -614,8 +724,8 @@ func listSortKeys() []string {
 // other enum on this surface gives a bad value. A silent fallback would be worse
 // here than an ordinary wrong default: the caller's queue-order substitution
 // below keys on an EMPTY --sort, so an unrecognized key would both sort by the
-// order key AND suppress the --milestone queue order, producing an order that
-// matches neither the default nor any legal key, at exit 0.
+// order key AND suppress the --milestone-exact queue order, producing an order
+// that matches neither the default nor any legal key, at exit 0.
 func buildNibSort(sortFlag string) (*model.NibSort, error) {
 	if sortFlag == "" {
 		return &model.NibSort{Field: model.NibSortFieldOrder}, nil
@@ -655,16 +765,18 @@ func init() {
 	listCmd.Flags().BoolVar(&listIsBlocked, "is-blocked", false, "Filter nibs that are blocked by others")
 	listCmd.Flags().StringVar(&listMentions, "mentions", "", "Filter nibs whose bodies mention this ID (short or full; an id naming no nib is an error, not an empty listing)")
 	listCmd.Flags().StringVar(&listMentionedBy, "mentioned-by", "", "Filter nibs mentioned in the given ID's body (short or full; an id naming no nib is an error, not an empty listing)")
-	listCmd.Flags().StringVar(&listMilestone, "milestone", "", "Show the milestone's queue — the nibs assigned to it — in queue order (an id naming no nib, or a nib that is not a milestone, is an error, not an empty listing)")
-	listCmd.Flags().BoolVar(&listBacklog, "backlog", false, "Show the backlog: nibs in no milestone, own assignment or inherited (tree order)")
-	// No allowed set in the usage string: areas are declared per store, and this
+	listCmd.Flags().StringVar(&listMilestone, "milestone", "", "Show the milestone's whole plan — the nibs assigned to it and the subtrees that ride along with them (an id naming no nib, or a nib that is not a milestone, is an error, not an empty listing)")
+	listCmd.Flags().StringVar(&listMilestoneEx, "milestone-exact", "", "Show the milestone's queue alone — the nibs whose own assignment resolves to it — in queue order (same refusals as --milestone)")
+	listCmd.Flags().BoolVar(&listBacklog, "backlog", false, "Show the backlog: nibs in no milestone, own assignment or inherited")
+	// No allowed set in the usage strings: areas are declared per store, and this
 	// text is rendered from a default config that declares none.
 	listCmd.Flags().StringVar(&listArea, "area", "", "Show an area's work — the nibs assigned to it or to any area declared beneath it (a path the store does not declare is an error, not an empty listing)")
+	listCmd.Flags().StringVar(&listAreaExact, "area-exact", "", "Show the nibs assigned to exactly that area, without the areas declared beneath it (same refusals as --area)")
 	listCmd.Flags().BoolVar(&listReady, "ready", false, readyFlagUsage(config.Default()))
 	listCmd.Flags().BoolVar(&listAll, "all", false, "Include every status (disable the open-by-default filter)")
 	listCmd.Flags().BoolVar(&listOpen, "open", false, "Show only open nibs — shorthand for -s open; slightly narrower than the open-by-default rule, which excludes the closed statuses and so keeps a nib with no status")
 	listCmd.Flags().BoolVarP(&listQuiet, "quiet", "q", false, "Only output IDs, one per line (honors the open default; add --all to include closed nibs)")
-	listCmd.Flags().StringVar(&listSort, "sort", "", "Sort by: "+strings.Join(listSortKeys(), ", ")+" (default: order key; queue order with --milestone)")
+	listCmd.Flags().StringVar(&listSort, "sort", "", "Sort by: "+strings.Join(listSortKeys(), ", ")+" (default: order key; queue order with --milestone-exact)")
 	listCmd.Flags().StringVar(&listView, "view", "", "View tier: id, ref, card, or full (default: ref)")
 	listCmd.Flags().StringVarP(&listFields, "fields", "f", "", "Field selection (additive over --view), e.g. \"status,priority\" or \"id,blocked-by(id,status)\"")
 	listCmd.Flags().BoolVar(&listNoHeader, "no-header", false, "Drop the \"# <n> nibs\" header from TSV output")

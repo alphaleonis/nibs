@@ -1,6 +1,6 @@
 import { FIELD_SPECS, completionValues, fieldSpec } from "./fields";
 import { REL_TOKEN_ORDER } from "./relations";
-import { AREA_FIELD } from "./area";
+import { AREA_TOKEN_ORDER } from "./area";
 import type { AreaVocabulary } from "../areas";
 
 export type CompletionKind = "field" | "value" | "tag";
@@ -39,15 +39,18 @@ const ALL_FIELD_NAMES: readonly string[] = [
   ...METADATA_FIELD_NAMES,
   ...REL_ID_NAMES,
   ...EXISTENCE_VALUES.keys(),
-  AREA_FIELD,
+  ...AREA_TOKEN_ORDER.map((spec) => spec.name),
 ];
+
+/** The ownership token names, for the value branch below. */
+const AREA_TOKEN_NAMES: ReadonlySet<string> = new Set(AREA_TOKEN_ORDER.map((spec) => spec.name));
 
 export interface CompletionOptions {
   /** Completion was requested explicitly (Ctrl+Space); an empty token then yields
    *  the field list instead of `null`. */
   explicit?: boolean;
-  /** The areas vocabulary for `area:<partial>`. Offers nothing while loading or
-   *  unavailable. */
+  /** The areas vocabulary for `area:<partial>` and `area-exact:<partial>`. Offers
+   *  nothing while loading or unavailable. */
   areas?: AreaVocabulary;
 }
 
@@ -69,8 +72,8 @@ export interface Completion {
  * - `field:partial` for a known enum → its group names, then values (substring);
  * - `tags:partial` → matching `availableTags` (substring);
  * - `has:` / `no:` / `is:` → the values that word accepts (substring);
- * - `area:partial` → declared paths from `options.areas` that contain no
- *   whitespace (case-insensitive substring);
+ * - `area:partial` and `area-exact:partial` → declared paths from
+ *   `options.areas` that contain no whitespace (case-insensitive substring);
  * - any other field (`title:`, `parent:`) → `null`; relationship ids come from the
  *   caller's async typeahead;
  * - an empty token → `null`, unless `options.explicit`, which yields every field.
@@ -119,7 +122,7 @@ export function getCompletion(
 
   // Area paths: the whole post-colon run is the segment, not lowercased because
   // paths are case-sensitive.
-  if (!negated && name.toLowerCase() === AREA_FIELD) {
+  if (!negated && AREA_TOKEN_NAMES.has(name.toLowerCase())) {
     const segment = body.slice(colon + 1);
     // `area.validateNodes` allows interior whitespace in
     // a declared name, but the grammar splits on whitespace and has no quoting:

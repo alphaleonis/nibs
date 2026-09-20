@@ -32,6 +32,9 @@ var boundingFilterFields = []string{
 	// milestone names a nib whose queue bounds the working set — "of X's
 	// assignees, which match q" — even though its name does not end in "Id".
 	"milestone",
+	// inMilestone names one too, and bounds a wider set: the whole plan rather
+	// than the queue. Which set is larger is not the test — see hasBoundingFilter.
+	"inMilestone",
 }
 
 // nonBoundingFilterFields are the fields that narrow without naming a nib, so
@@ -55,10 +58,11 @@ var nonBoundingFilterFields = []string{
 	"isBlocked",
 	"hasBlockedBy",
 	"noMilestone",
-	// area names a declared PATH and not a nib, so however few nibs an area
-	// holds, no relation bounds the population a term selects from — the test
-	// here is what the field NAMES, not how large its set turns out to be.
+	// area and areaExact name a declared PATH and not a nib, so however few nibs
+	// an area holds, no relation bounds the population a term selects from — the
+	// test here is what the field NAMES, not how large its set turns out to be.
 	"area",
+	"areaExact",
 }
 
 // nibFilterFieldNames returns the schema name of every field of

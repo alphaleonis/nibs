@@ -382,7 +382,7 @@ func TestCatalogExamplesShowOpenWorkRecipes(t *testing.T) {
 	want := []recipeInfo{
 		{"nibs list", "open work everywhere (closed statuses hidden by default)"},
 		{"nibs rel <id> --rel descendants", "open work under a parent (add -t bug for open bugs only)"},
-		{"nibs list --milestone <id>", "open work in a milestone's queue, in queue order (--backlog: what no milestone holds)"},
+		{"nibs list --milestone <id>", "open work in a milestone's plan, inherited work included (--milestone-exact: its queue alone, in queue order; --backlog: what no milestone holds)"},
 		{"nibs list -s closed", "only closed nibs (an explicit -s overrides the open default)"},
 		{"nibs list --all", "every status, including the closed ones"},
 		{"nibs list --ready", readyFlag.Usage},
@@ -710,6 +710,7 @@ func TestCatalogAreasFromLiveCommands(t *testing.T) {
 		`nibs new "<title>" -t <type> --area <path>`: flagUsage("new", "area"),
 		"nibs set <id> --area <path>":                flagUsage("set", "area"),
 		"nibs list --area <path>":                    flagUsage("list", "area"),
+		"nibs list --area-exact <path>":              flagUsage("list", "area-exact"),
 	}
 	if len(got.Commands) != len(want) {
 		t.Fatalf("got %d area commands, want %d", len(got.Commands), len(want))

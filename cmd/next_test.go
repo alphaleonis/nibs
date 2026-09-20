@@ -264,7 +264,11 @@ func TestNextDoesNotRouteAroundAnActiveMilestone(t *testing.T) {
 		if got.Fallback != nil {
 			t.Errorf("fallback = %+v, want none — unplanned work must not be offered around a plan", got.Fallback)
 		}
-		for _, want := range []string{"1 closed", "1 blocked", "1 open but not startable"} {
+		// The remedy is the one instruction an agent is handed at the moment it
+		// is stuck, and `nibs context` reuses this message verbatim. It must
+		// name the flag that shows the QUEUE the walk just exhausted, not the
+		// derived plan, or acting on it reaches nibs it cannot reposition.
+		for _, want := range []string{"1 closed", "1 blocked", "1 open but not startable", "`nibs list --milestone-exact nm1`"} {
 			if !strings.Contains(got.NoAnswer.Message, want) {
 				t.Errorf("no_answer message %q does not name %q", got.NoAnswer.Message, want)
 			}

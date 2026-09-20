@@ -5201,7 +5201,7 @@ func (ec *executionContext) unmarshalInputNibFilter(ctx context.Context, obj any
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"search", "status", "excludeStatus", "type", "excludeType", "priority", "excludePriority", "estimate", "excludeEstimate", "tags", "excludeTags", "hasParent", "parentId", "ancestorId", "descendantId", "siblingId", "hasBlocking", "blockingId", "isBlocked", "hasBlockedBy", "blockedById", "mentionsId", "mentionedById", "milestone", "noMilestone", "area"}
+	fieldsInOrder := [...]string{"search", "status", "excludeStatus", "type", "excludeType", "priority", "excludePriority", "estimate", "excludeEstimate", "tags", "excludeTags", "hasParent", "parentId", "ancestorId", "descendantId", "siblingId", "hasBlocking", "blockingId", "isBlocked", "hasBlockedBy", "blockedById", "mentionsId", "mentionedById", "milestone", "inMilestone", "noMilestone", "area", "areaExact"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -5376,6 +5376,13 @@ func (ec *executionContext) unmarshalInputNibFilter(ctx context.Context, obj any
 				return it, err
 			}
 			it.Milestone = data
+		case "inMilestone":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("inMilestone"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.InMilestone = data
 		case "noMilestone":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("noMilestone"))
 			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
@@ -5390,6 +5397,13 @@ func (ec *executionContext) unmarshalInputNibFilter(ctx context.Context, obj any
 				return it, err
 			}
 			it.Area = data
+		case "areaExact":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("areaExact"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.AreaExact = data
 		}
 	}
 	return it, nil

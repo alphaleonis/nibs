@@ -49,6 +49,10 @@ func filterTargetErrCode(err error) (string, bool) {
 	if errors.As(err, &contradiction) {
 		return output.ErrValidation, true
 	}
+	var disjoint *graph.FilterTargetsDisjointError
+	if errors.As(err, &disjoint) {
+		return output.ErrValidation, true
+	}
 	var wrongType *graph.FilterTargetTypeError
 	if errors.As(err, &wrongType) {
 		return output.ErrValidation, true

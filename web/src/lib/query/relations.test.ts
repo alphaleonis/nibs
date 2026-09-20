@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   EXISTENCE_TOKENS,
+  MILESTONE_ID_TOKENS,
   REL_ID_FIELDS,
   REL_ID_SEARCH_TYPES,
   REL_TOKEN_ORDER,
@@ -112,11 +113,24 @@ describe("relations — the ordered vocabulary drives recognition", () => {
   });
 });
 
-// The assignment axis. `milestone:<id>` is direct assignment (the queue);
-// `is:backlog` is the complement of derived membership.
+// The assignment axis. `milestone:<id>` is DERIVED membership (the milestone's
+// whole plan), `milestone-exact:<id>` the DIRECT assignment alone (its queue),
+// and `is:backlog` the complement of the derived reading.
+//
+// Which key each of the two id tokens writes is the load-bearing part: they are
+// one suffix apart and select different sets, so a spelling wired to the other
+// field reads correctly in the box and answers the wrong question.
 describe("relations — the assignment axis", () => {
-  it("recognizes milestone:<id> as the scalar assignment field", () => {
+  it("recognizes milestone:<id> as the DERIVED field", () => {
     expect(recognizeRelationship("milestone:tnib-1")).toEqual({
+      kind: "id",
+      field: "inMilestone",
+      value: "tnib-1",
+    });
+  });
+
+  it("recognizes milestone-exact:<id> as the DIRECT field", () => {
+    expect(recognizeRelationship("milestone-exact:tnib-1")).toEqual({
       kind: "id",
       field: "milestone",
       value: "tnib-1",
@@ -129,7 +143,12 @@ describe("relations — the assignment axis", () => {
   // vocabulary, so the rejection can only be the empty value.
   it("does not recognize milestone: with an empty value", () => {
     expect(recognizeRelationship("milestone:")).toBeUndefined();
-    expect(REL_ID_FIELDS.get("milestone")).toBe("milestone");
+    expect(REL_ID_FIELDS.get("milestone")).toBe("inMilestone");
+  });
+
+  it("does not recognize milestone-exact: with an empty value", () => {
+    expect(recognizeRelationship("milestone-exact:")).toBeUndefined();
+    expect(REL_ID_FIELDS.get("milestone-exact")).toBe("milestone");
   });
 
   it("writes noMilestone TRUE for is:backlog — the backlog is the nibs no plan covers", () => {
@@ -161,20 +180,41 @@ describe("relations — the assignment axis", () => {
   // A nib in a milestone's queue belongs to that milestone, so it is never
   // backlog: the server refuses the pair, and the refused half is the `true` one.
   it("is a contradictory pair with backlog, and only with backlog set", () => {
-    expect(contradictionTokens({ milestone: "tnib-1", noMilestone: true })).toEqual([
+    expect(contradictionTokens({ inMilestone: "tnib-1", noMilestone: true })).toEqual([
       ["milestone:tnib-1", "is:backlog"],
+    ]);
+    expect(contradictionTokens({ inMilestone: "tnib-1", noMilestone: false })).toEqual([]);
+  });
+
+  // The direct field carries the same refusal on the server, so the box must be
+  // able to name that pair too.
+  it("names the exact spelling's pair with backlog", () => {
+    expect(contradictionTokens({ milestone: "tnib-1", noMilestone: true })).toEqual([
+      ["milestone-exact:tnib-1", "is:backlog"],
     ]);
     expect(contradictionTokens({ milestone: "tnib-1", noMilestone: false })).toEqual([]);
   });
 
   // Only this token constrains its typeahead, and the constraint has to live on
   // the spec: the search behind it is the one every relationship token uses.
-  it("declares the milestone-only search constraint on its own spec", () => {
+  it("declares the milestone-only search constraint on both assignment specs", () => {
+    const constrained = new Set(["milestone", "milestone-exact"]);
     for (const spec of REL_TOKEN_ORDER) {
       if (spec.kind !== "id") continue;
-      const expected = spec.name === "milestone" ? ["milestone"] : undefined;
+      const expected = constrained.has(spec.name) ? ["milestone"] : undefined;
       expect(REL_ID_SEARCH_TYPES.get(spec.name)).toEqual(expected);
     }
+  });
+});
+
+// The two tokens the box checks against the milestone list, derived from the
+// same constraint that narrows their typeahead rather than listed a second time.
+describe("relations — the assignment-axis token list", () => {
+  it("covers both spellings, each paired with the field it writes", () => {
+    expect(MILESTONE_ID_TOKENS).toEqual([
+      { field: "inMilestone", name: "milestone" },
+      { field: "milestone", name: "milestone-exact" },
+    ]);
   });
 });
 

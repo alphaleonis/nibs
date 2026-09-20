@@ -334,7 +334,7 @@ describe("round-trip identity — serializeQuery(parseQuery(s)) === s", () => {
   }
 });
 
-describe("serializeQuery — the area token", () => {
+describe("serializeQuery — the ownership tokens", () => {
   const READY: AreaVocabulary = createAreaVocabulary([
     { path: "web", name: "web", description: "", color: "", depth: 0 },
     { path: "web/dashboard", name: "dashboard", description: "", color: "", depth: 1 },
@@ -349,10 +349,28 @@ describe("serializeQuery — the area token", () => {
     const filter: NibFilter = {
       search: "login",
       area: "web",
-      milestone: "tnib-9",
+      inMilestone: "tnib-9",
       type: ["bug"],
     };
     expect(serializeQuery({ filter })).toBe("type:bug milestone:tnib-9 area:web login");
+  });
+
+  // Each assignment field has its own spelling, and the derived one comes first
+  // because REL_TOKEN_ORDER lists it first.
+  it("spells the two assignment fields apart", () => {
+    expect(serializeQuery({ filter: { milestone: "tnib-9" } })).toBe("milestone-exact:tnib-9");
+    expect(serializeQuery({ filter: { inMilestone: "tnib-9", milestone: "tnib-8" } })).toBe(
+      "milestone:tnib-9 milestone-exact:tnib-8",
+    );
+  });
+
+  it("emits areaExact under its own name, after area", () => {
+    expect(serializeQuery({ filter: { areaExact: "web/dashboard" } })).toBe(
+      "area-exact:web/dashboard",
+    );
+    expect(serializeQuery({ filter: { area: "web", areaExact: "webhooks" } })).toBe(
+      "area:web area-exact:webhooks",
+    );
   });
 
   // The round-trip identity is per-vocabulary: parse must be asked with the same

@@ -140,7 +140,7 @@
   );
 
   // Server and client parts of the filter. The vocabulary decides whether an
-  // `area` value is sent (withSendableArea in filter.ts); read inside the derived
+  // `area` value is sent (withSendableAreas in filter.ts); read inside the derived
   // so a withheld area is re-applied when the config lands.
   let prepared = $derived(prepareFilter(resolvedFilter, viewSpine().areas));
 

@@ -22,7 +22,7 @@
   import type { TypeIconInfo } from "../icons";
   import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnOrder, emitFilter as emitFilterHelper, switchViewLevel } from "../resolvePrefs";
   import type { TreeViewState } from "../treeView.svelte";
-  import { parseQuery, serializeQuery, getCompletion, tokenGroups, tokenSegments, relTokenValueContext, AREA_FIELD, isRefusedArea, MILESTONE_FIELD, isRefusedMilestone } from "../query";
+  import { parseQuery, serializeQuery, getCompletion, tokenGroups, tokenSegments, relTokenValueContext, AREA_TOKEN_ORDER, isRefusedArea, MILESTONE_ID_TOKENS, isRefusedMilestone } from "../query";
   import type { Completion, QueryFilter, SpanKind, RelValueContext, NibSuggestion } from "../query";
   import type { AreaVocabulary } from "../areas";
   import { createNibSearch, type SearchNibsFn } from "../searchNibs";
@@ -315,9 +315,9 @@
     "parentId", "ancestorId", "descendantId", "siblingId",
     "blockingId", "blockedById", "mentionsId", "mentionedById",
     // The scheduling axis.
-    "milestone",
+    "milestone", "inMilestone",
     // The ownership axis.
-    "area",
+    "area", "areaExact",
     // Existence/state booleans.
     "hasParent", "hasBlocking", "hasBlockedBy", "isBlocked", "noMilestone",
   ] as const satisfies readonly (keyof QueryFilter)[];
@@ -343,9 +343,10 @@
   }
 
   // The parked tokens plus the vocabulary-checked values the current vocabularies
-  // refuse: an `area:` path and a `milestone:` id.
+  // refuse: an ownership path and an assignment-axis id, on either token of each
+  // axis.
   // `Preferences.setQuery` parses without a vocabulary, so a loaded undeclared
-  // path is never parked, while `withSendableArea` withholds the area from the
+  // path is never parked, while `withSendableAreas` withholds the area from the
   // query.
   // Display only: `canonicalQuery` reads the parked tokens alone, so the token is
   // serialized once. Neither value is flagged while its vocabulary has no answer —
@@ -356,13 +357,17 @@
     const add = (token: string) => {
       if (!tokens.includes(token)) tokens.push(token);
     };
-    const area = resolvedFilter.area;
-    if (typeof area === "string" && area !== "" && isRefusedArea(area, areas)) {
-      add(`${AREA_FIELD}:${area}`);
+    for (const spec of AREA_TOKEN_ORDER) {
+      const path = resolvedFilter[spec.field];
+      if (typeof path === "string" && path !== "" && isRefusedArea(path, areas)) {
+        add(`${spec.name}:${path}`);
+      }
     }
-    const milestone = resolvedFilter.milestone;
-    if (typeof milestone === "string" && milestone !== "" && isRefusedMilestone(milestone, milestones(), prefix)) {
-      add(`${MILESTONE_FIELD}:${milestone}`);
+    for (const spec of MILESTONE_ID_TOKENS) {
+      const id = resolvedFilter[spec.field];
+      if (typeof id === "string" && id !== "" && isRefusedMilestone(id, milestones(), prefix)) {
+        add(`${spec.name}:${id}`);
+      }
     }
     return tokens;
   });

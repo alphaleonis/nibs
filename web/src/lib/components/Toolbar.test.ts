@@ -2354,7 +2354,7 @@ describe("Toolbar — the area token", () => {
 
   // `Preferences.setQuery` parses with NO vocabulary — that is every load, from
   // localStorage and from a shared `?q=` link alike — so an undeclared path lands
-  // on the filter unjudged rather than parked. `withSendableArea` then withholds it
+  // on the filter unjudged rather than parked. `withSendableAreas` then withholds it
   // from the wire once the config refuses it, so the table shows the whole store
   // while the box still displays an area filter. The chip is what tells the user.
   it("flags a restored path that the vocabulary refuses once it arrives", async () => {
@@ -2471,8 +2471,20 @@ describe("Toolbar — milestone token validity", () => {
 
     expect(screen.getByTestId("filter-invalid")).toHaveTextContent("milestone:tnib-abc1");
     // Display only: the chip names the refusal without rewriting what was typed.
-    expect(prefs.filter.milestone).toBe("tnib-abc1");
+    expect(prefs.filter.inMilestone).toBe("tnib-abc1");
     expect(prefs.query).toBe("milestone:tnib-abc1");
+  });
+
+  // The exact spelling reaches the same server refusal, so it earns the same
+  // chip — and the chip must name the spelling that was typed, not the other one.
+  it("flags a refused value on the exact spelling too", async () => {
+    const { prefs, input } = renderWith(MILESTONES);
+
+    await user.type(input, "milestone-exact:tnib-abc1");
+
+    expect(screen.getByTestId("filter-invalid")).toHaveTextContent("milestone-exact:tnib-abc1");
+    expect(prefs.filter.milestone).toBe("tnib-abc1");
+    expect(prefs.query).toBe("milestone-exact:tnib-abc1");
   });
 
   it("flags nothing for a real milestone id, whatever its status", async () => {
@@ -2481,7 +2493,7 @@ describe("Toolbar — milestone token validity", () => {
     await user.type(input, "milestone:tnib-m2");
 
     expect(screen.queryByTestId("filter-invalid")).not.toBeInTheDocument();
-    expect(prefs.filter.milestone).toBe("tnib-m2");
+    expect(prefs.filter.inMilestone).toBe("tnib-m2");
   });
 
   // `null`, not `[]`, is the first paint: flagging before MILESTONES_QUERY
@@ -2524,7 +2536,7 @@ describe("Toolbar — milestone token validity", () => {
     await user.type(input, "milestone:m1");
 
     expect(screen.queryByTestId("filter-invalid")).not.toBeInTheDocument();
-    expect(prefs.filter.milestone).toBe("m1");
+    expect(prefs.filter.inMilestone).toBe("m1");
   });
 
   // The transition `useMilestones()` is a GETTER for: the list arrives after first
@@ -2547,7 +2559,7 @@ describe("Toolbar — milestone token validity", () => {
 
     expect(screen.getByTestId("filter-invalid")).toHaveTextContent("milestone:tnib-gone");
     // The value stays on the filter: the box keeps showing what the user stored.
-    expect(prefs.filter.milestone).toBe("tnib-gone");
+    expect(prefs.filter.inMilestone).toBe("tnib-gone");
   });
 
   // Nothing re-parses when the list arrives, so the flag has to come from asking
@@ -2588,14 +2600,15 @@ describe("Toolbar — milestone token validity", () => {
 // nothing else, so a key absent from that list parses, completes, highlights, and
 // is dropped on the way to the filter (nibs-7bwy).
 describe("Toolbar — the milestone axis tokens", () => {
-  it("milestone:<id> reaches the filter and survives a blur", async () => {
+  it("milestone:<id> reaches the DERIVED field and survives a blur", async () => {
     const prefs = new Preferences();
     render(Toolbar, { prefs, oncreatenew: vi.fn() });
     const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
 
     await user.type(input, "milestone:tnib-1");
 
-    expect(prefs.filter.milestone).toBe("tnib-1");
+    expect(prefs.filter.inMilestone).toBe("tnib-1");
+    expect(prefs.filter.milestone).toBeUndefined();
     // Recognized as a token, so it does not leak into free text.
     expect(prefs.filter.search).toBeUndefined();
     expect(prefs.invalidTokens).toEqual([]);
@@ -2606,6 +2619,28 @@ describe("Toolbar — the milestone axis tokens", () => {
     await tick();
 
     expect(input.value).toBe("milestone:tnib-1");
+    expect(prefs.filter.inMilestone).toBe("tnib-1");
+  });
+
+  // `BOX_FIELD_KEYS` is what carries a parsed key onto the live filter, so each
+  // new key needs its own trip through the component: one left off that list
+  // parses, completes and highlights, then vanishes (nibs-7bwy).
+  it("milestone-exact:<id> reaches the DIRECT field and survives a blur", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+
+    await user.type(input, "milestone-exact:tnib-1");
+
+    expect(prefs.filter.milestone).toBe("tnib-1");
+    expect(prefs.filter.inMilestone).toBeUndefined();
+    expect(prefs.filter.search).toBeUndefined();
+    expect(prefs.invalidTokens).toEqual([]);
+
+    await fireEvent.blur(input);
+    await tick();
+
+    expect(input.value).toBe("milestone-exact:tnib-1");
     expect(prefs.filter.milestone).toBe("tnib-1");
   });
 
@@ -2633,12 +2668,12 @@ describe("Toolbar — the milestone axis tokens", () => {
     const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
 
     await user.type(input, "milestone:tnib-1 is:backlog");
-    expect(prefs.filter.milestone).toBe("tnib-1");
+    expect(prefs.filter.inMilestone).toBe("tnib-1");
     expect(prefs.filter.noMilestone).toBe(true);
 
     await user.clear(input);
 
-    expect(prefs.filter.milestone).toBeUndefined();
+    expect(prefs.filter.inMilestone).toBeUndefined();
     expect(prefs.filter.noMilestone).toBeUndefined();
   });
 

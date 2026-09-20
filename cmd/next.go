@@ -178,7 +178,7 @@ func noAnswerMessage(res graph.NextResult) string {
 	remedy := ""
 	if res.Milestone != nil {
 		where = fmt.Sprintf("in milestone %s's queue", stripControlChars(res.Milestone.ID))
-		remedy = fmt.Sprintf(" — `nibs list --milestone %s` shows the queue; unblock, close or assign work to change this",
+		remedy = fmt.Sprintf(" — `nibs list --milestone-exact %s` shows the queue; unblock, close or assign work to change this",
 			stripControlChars(res.Milestone.ID))
 	}
 	if !res.Tally.Any() {

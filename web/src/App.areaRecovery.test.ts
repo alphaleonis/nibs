@@ -7,7 +7,7 @@ import { prepareFilter } from "./lib/filter";
 import type { ViewSpine } from "./lib/viewSpine";
 
 // CONFIG_QUERY runs once, so a failed one costs the areas vocabulary for the
-// rest of the session unless something re-asks: `withSendableArea` withholds
+// rest of the session unless something re-asks: `withSendableAreas` withholds
 // every `area` against the "unknown" that UNAVAILABLE_AREAS answers, so the list
 // silently widens to the whole store while the filter says otherwise.
 //

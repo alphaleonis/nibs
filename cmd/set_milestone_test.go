@@ -32,15 +32,16 @@ func resetQueueCLIFlags() {
 	resetRootPersistentFlags()
 }
 
-// queueIDs runs `nibs list --milestone <ms> -q` and returns the queue in its
-// reported order.
+// queueIDs runs `nibs list --milestone-exact <ms> -q` and returns the queue in
+// its reported order. The exact flag is the queue: --milestone would also bring
+// in the subtrees that ride along with each assignee, which hold no queue key.
 func queueIDs(t *testing.T, nibsPath, milestone string) []string {
 	t.Helper()
 	resetListFlags()
 	resetRootPersistentFlags()
-	out, err := runRootWith(t, "--nibs-path", nibsPath, "list", "--milestone", milestone, "-q")
+	out, err := runRootWith(t, "--nibs-path", nibsPath, "list", "--milestone-exact", milestone, "-q")
 	if err != nil {
-		t.Fatalf("list --milestone %s: %v", milestone, err)
+		t.Fatalf("list --milestone-exact %s: %v", milestone, err)
 	}
 	return strings.Fields(out)
 }
@@ -71,7 +72,7 @@ func axisFields(t *testing.T, nibsPath, id string) (milestone, milestoneOrder, a
 // TestSetMilestoneAssignsAndQueues pins the happy path end to end: `nibs set
 // --milestone` assigns (short ids normalize), the ordering engine appends the
 // nib to the queue, the projection exposes the axis fields, and `nibs list
-// --milestone` shows the queue in queue order.
+// --milestone-exact` shows the queue in queue order.
 func TestSetMilestoneAssignsAndQueues(t *testing.T) {
 	nibsPath := setupQueueCLITest(t)
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/nibcore"
 )
 
 // applyFilterOK runs ApplyFilter and fails the test if it reports an error.
@@ -203,10 +204,10 @@ func TestApplyFilterUnknownTargetIsNotFound(t *testing.T) {
 // id-valued names in idValuedNonIdNamedFields — and it is applied BEFORE any
 // check on the field's shape: an id-valued field this test cannot drive fails
 // here rather than being skipped, so a plural or differently-typed id filter
-// cannot be exempted by accident. Search is the only *string field outside the
-// selector and is not an id at all; every list facet is a []string whose tag
-// does not end in "Id" either. A field that genuinely should not refuse has to
-// be excepted deliberately.
+// cannot be exempted by accident. The *string fields outside the selector —
+// search, area and areaExact — are not ids at all; every list facet is a
+// []string whose tag does not end in "Id" either. A field that genuinely should
+// not refuse has to be excepted deliberately.
 func TestEveryIDValuedFilterFieldHasAGuard(t *testing.T) {
 	reader := hierarchyFixture()
 	blocking := &stubBlockingChecker{}
@@ -241,8 +242,14 @@ type idFilterField struct {
 // value.
 func (f idFilterField) filterWith(value string) *model.NibFilter {
 	filter := &model.NibFilter{}
-	reflect.ValueOf(filter).Elem().Field(f.index).Set(reflect.ValueOf(&value))
+	f.setOn(filter, value)
 	return filter
+}
+
+// setOn sets this field on an existing filter, so a walk can combine two of
+// them without either knowing which the other is.
+func (f idFilterField) setOn(filter *model.NibFilter, value string) {
+	reflect.ValueOf(filter).Elem().Field(f.index).Set(reflect.ValueOf(&value))
 }
 
 // idValuedNonIdNamedFields enumerates the id-valued filter fields whose json
@@ -251,7 +258,7 @@ func (f idFilterField) filterWith(value string) *model.NibFilter {
 // eight, but is named for the queue it selects rather than for the id that
 // selects it; listing it here enrolls it in every "all the id filters behave
 // alike" walk instead of leaving its guards to convention.
-var idValuedNonIdNamedFields = []string{"milestone"}
+var idValuedNonIdNamedFields = []string{"milestone", "inMilestone"}
 
 // idValuedFilterFields selects every *string field of model.NibFilter whose
 // json tag ends in "Id" — plus the enumerated names in
@@ -263,10 +270,10 @@ var idValuedNonIdNamedFields = []string{"milestone"}
 // The json tag is the whole selector, and it is applied BEFORE any check on the
 // field's shape — an id-named field these tests cannot drive fails here rather
 // than being skipped, so a plural or differently-typed id filter cannot be
-// exempted by accident. Search is the only *string field outside the selector
-// and is not an id at all; every list facet is a []string whose tag does not
-// end in "Id" either. A field that genuinely should not refuse has to be
-// excepted deliberately.
+// exempted by accident. The *string fields outside the selector — search, area
+// and areaExact — are not ids at all; every list facet is a []string whose tag
+// does not end in "Id" either. A field that genuinely should not refuse has to
+// be excepted deliberately.
 func idValuedFilterFields(t *testing.T) []idFilterField {
 	t.Helper()
 
@@ -2430,5 +2437,158 @@ func TestARefusalShortCircuitsBeforeTheSearchIndex(t *testing.T) {
 				t.Errorf("error = %T (%v), want the refusal class this row names", err, err)
 			}
 		})
+	}
+}
+
+// pairOracleStore builds the store both pair walks run against: ten nibs whose
+// parentage, blocking, mentions and milestone membership are the real ones,
+// built through Core rather than stubbed.
+func pairOracleStore(t *testing.T) (*Resolver, *nibcore.Core) {
+	t.Helper()
+	resolver, core := setupTestResolver(t)
+	for _, b := range []*nib.Nib{
+		{ID: "ms", Title: "Milestone", Type: "milestone", Status: "in-progress"},
+		{ID: "ms2", Title: "Second milestone", Type: "milestone", Status: "todo"},
+		{ID: "r1", Title: "Assigned root epic", Type: "epic", Status: "todo", Milestone: "ms", MilestoneOrder: "a0"},
+		{ID: "r2", Title: "Backlog root epic", Type: "epic", Status: "todo"},
+		{ID: "b1", Title: "Open root blocker", Type: "task", Status: "todo", Body: "See #r2."},
+		{ID: "b2", Title: "Released root blocker", Type: "task", Status: "completed"},
+		{ID: "c3", Title: "Child of the assigned epic", Type: "task", Status: "todo", Parent: "r1"},
+		{ID: "c2", Title: "Blocked backlog feature", Type: "feature", Status: "todo", Parent: "r2", BlockedBy: []string{"b1"}, Body: "See #r1."},
+		{ID: "h", Title: "Root blocked by a child", Type: "task", Status: "todo", BlockedBy: []string{"c2"}},
+		{ID: "c1", Title: "Assigned blocked child", Type: "task", Status: "todo", Parent: "r2", Milestone: "ms", MilestoneOrder: "b0",
+			BlockedBy: []string{"b1", "b2", "r1", "c3"}, Body: "See #b1, #r1 and #c2."},
+		{ID: "g", Title: "Grandchild with a released blocker", Type: "task", Status: "todo", Parent: "c2", BlockedBy: []string{"b2"}, Body: "See #c1."},
+	} {
+		mustCreate(t, core, b)
+	}
+	return resolver, core
+}
+
+// TestEveryIDPairAnswersTheIntersectionOrRefusesIt is the id×id half of the
+// pair oracle, standing to TestEveryIDAndPresencePairIsRefusedExactlyWhenUnsatisfiable
+// as id×id stands to id×tri-state. It drives every pair of distinct id-valued
+// filter fields against every pair of targets and requires two things of each
+// combination, both derived rather than listed:
+//
+//   - Answered means answered with exactly what the two halves share. Every
+//     ApplyFilter branch narrows, so their intersection IS the pair's answer,
+//     which makes this an oracle rather than a restatement of the code.
+//   - Refused means the halves share nothing. A refusal that deletes a query
+//     some store can satisfy is the worse failure of the two, because the
+//     caller has no way to ask the question at all.
+//
+// The direction id×tri-state can also check — refuse everything unsatisfiable —
+// has no counterpart here: whether two ids can share a nib depends on the store
+// for most of these pairs, and no fixture proves the general case. What IS
+// checked is the shape the milestone pair has: a pair answered for every target
+// while sharing a nib for none is unsatisfiable as far as any evidence here
+// goes, and is failed so the next such pair is caught without being named.
+func TestEveryIDPairAnswersTheIntersectionOrRefusesIt(t *testing.T) {
+	resolver, core := pairOracleStore(t)
+	ctx := context.Background()
+	all := core.All()
+
+	// half caches one id field's answer per target, since the walk asks for the
+	// same half once per partner field. A target the field refuses on its own —
+	// a non-milestone for milestone — says nothing about any pair and is left
+	// out, which is what ok=false reports.
+	type key struct {
+		field, target string
+	}
+	halves := map[key]map[string]bool{}
+	refusedAlone := map[key]bool{}
+	half := func(t *testing.T, f idFilterField, target string) (map[string]bool, bool) {
+		t.Helper()
+		k := key{f.name, target}
+		if refusedAlone[k] {
+			return nil, false
+		}
+		if got, ok := halves[k]; ok {
+			return got, true
+		}
+		got, err := ApplyFilter(ctx, all, f.filterWith(target), core, resolver.Blocking)
+		if err != nil {
+			refusedAlone[k] = true
+			return nil, false
+		}
+		set := make(map[string]bool, len(got))
+		for _, b := range got {
+			set[b.ID] = true
+		}
+		halves[k] = set
+		return set, true
+	}
+
+	fields := idValuedFilterFields(t)
+	for i, first := range fields {
+		for _, second := range fields[i+1:] {
+			t.Run(first.name+"+"+second.name, func(t *testing.T) {
+				// Counted separately for DISTINCT targets: a pair satisfiable
+				// only when both halves name the same nib is unsatisfiable by
+				// construction for two nibs, which is the milestone pair's
+				// shape and the shape the next one will have.
+				var answered, witnesses, distinctAnswered, distinctWitnesses int
+				for _, t1 := range all {
+					firstHalf, ok := half(t, first, t1.ID)
+					if !ok {
+						continue
+					}
+					for _, t2 := range all {
+						secondHalf, ok := half(t, second, t2.ID)
+						if !ok {
+							continue
+						}
+						var shared []string
+						for id := range firstHalf {
+							if secondHalf[id] {
+								shared = append(shared, id)
+							}
+						}
+						sort.Strings(shared)
+
+						pair := first.filterWith(t1.ID)
+						second.setOn(pair, t2.ID)
+						got, err := ApplyFilter(ctx, all, pair, core, resolver.Blocking)
+						var disjoint *FilterTargetsDisjointError
+						switch {
+						case errors.As(err, &disjoint):
+							if len(shared) > 0 {
+								t.Errorf("%s %s + %s %s refused, but the two halves share %v",
+									first.name, t1.ID, second.name, t2.ID, shared)
+							}
+						case err != nil:
+							t.Fatalf("%s %s + %s %s: unexpected error %v", first.name, t1.ID, second.name, t2.ID, err)
+						default:
+							answered++
+							if len(shared) > 0 {
+								witnesses++
+							}
+							if t1.ID != t2.ID {
+								distinctAnswered++
+								if len(shared) > 0 {
+									distinctWitnesses++
+								}
+							}
+							gotIDs := make([]string, len(got))
+							for i, b := range got {
+								gotIDs[i] = b.ID
+							}
+							sort.Strings(gotIDs)
+							if !slices.Equal(gotIDs, shared) {
+								t.Errorf("%s %s + %s %s answered %v, but its halves share %v",
+									first.name, t1.ID, second.name, t2.ID, gotIDs, shared)
+							}
+						}
+					}
+				}
+				if answered > 0 && witnesses == 0 {
+					t.Errorf("answered %d target combinations and none of them shares a nib: refuse the pair if no store can satisfy it, or add a nib that does", answered)
+				}
+				if distinctAnswered > 0 && distinctWitnesses == 0 {
+					t.Errorf("answered %d combinations naming two DIFFERENT nibs and none of them shares a nib: refuse the pair when its targets differ, or add a nib that satisfies it", distinctAnswered)
+				}
+			})
+		}
 	}
 }

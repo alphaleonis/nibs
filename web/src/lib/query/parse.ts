@@ -2,7 +2,8 @@ import { FIELD_SPECS, expandValue, fieldSpec, isValidValue } from "./fields";
 import type { QueryFilter } from "./fields";
 import { recognizeRelationship } from "./relations";
 import type { RelIdKey, ExistenceKey } from "./relations";
-import { AREA_FIELD, isRefusedArea, recognizeArea } from "./area";
+import { isRefusedArea, recognizeArea } from "./area";
+import type { AreaKey } from "./area";
 import type { AreaVocabulary } from "../areas";
 
 // Parsed box text. `invalidTokens` holds rejected values (`status:banana`,
@@ -27,8 +28,9 @@ export const FIELD_TOKEN = /^(-?)([A-Za-z]+):(.+)$/;
  * - comma-separated values and repeated tokens for one field union, deduplicated.
  * - relationship-id token → scalar field; existence token → boolean field. Last
  *   wins, including across a `has:`/`no:` pair. Negated → `invalidTokens`.
- * - `area:<path>` → `area`, last wins, unless `areas` answers "undeclared"
- *   (→ `invalidTokens`). Without `areas` the path is kept. Negated → `invalidTokens`.
+ * - `area:<path>` → `area` and `area-exact:<path>` → `areaExact`, last wins per
+ *   token, unless `areas` answers "undeclared" (→ `invalidTokens`). Without
+ *   `areas` the path is kept. Negated → `invalidTokens`.
  * - anything else, `title:foo` and `type:` included → free-text `search`.
  *
  * Names and values are lowercased, except area paths. Unset keys are omitted.
@@ -40,7 +42,7 @@ export function parseQuery(text: string, areas?: AreaVocabulary): ParsedQuery {
   const words: string[] = [];
   const relIds = new Map<RelIdKey, string>();
   const existence = new Map<ExistenceKey, boolean>();
-  let area: string | undefined;
+  const areaValues = new Map<AreaKey, string>();
 
   const push = (map: Map<string, string[]>, key: string, value: string) => {
     const list = map.get(key);
@@ -66,8 +68,8 @@ export function parseQuery(text: string, areas?: AreaVocabulary): ParsedQuery {
       if (areaToken) {
         if (areaToken.kind === "invalid") invalidTokens.push(areaToken.token);
         else if (isRefusedArea(areaToken.value, areas)) {
-          invalidTokens.push(`${AREA_FIELD}:${areaToken.value}`);
-        } else area = areaToken.value;
+          invalidTokens.push(`${areaToken.name}:${areaToken.value}`);
+        } else areaValues.set(areaToken.field, areaToken.value);
         continue;
       }
       words.push(token);
@@ -110,7 +112,9 @@ export function parseQuery(text: string, areas?: AreaVocabulary): ParsedQuery {
   for (const [field, value] of existence) {
     filter[field] = value;
   }
-  if (area !== undefined) filter.area = area;
+  for (const [field, value] of areaValues) {
+    filter[field] = value;
+  }
   const search = words.join(" ");
   if (search !== "") filter.search = search;
 

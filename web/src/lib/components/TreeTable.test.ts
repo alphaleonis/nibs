@@ -667,14 +667,26 @@ describe("TreeTable", () => {
     // The assignment pair's refused half is `is:backlog`, a true-valued token, and
     // the axis is outside the hierarchy the escape hatch clears.
     it("names a milestone/backlog pair but omits the hierarchy escape hatch", () => {
-      renderWithError(contradictionError("milestone filter: contradicts noMilestone: true"), {
-        filter: { milestone: "nibs-m", noMilestone: true },
+      renderWithError(contradictionError("inMilestone filter: contradicts noMilestone: true"), {
+        filter: { inMilestone: "nibs-m", noMilestone: true },
       });
 
       const explanation = screen.getByTestId("empty-contradiction");
       expect(explanation).toHaveTextContent("milestone:nibs-m");
       expect(explanation).toHaveTextContent("is:backlog");
       expect(screen.queryByRole("button", { name: /clear hierarchy filters/i })).not.toBeInTheDocument();
+    });
+
+    // The direct field carries the same refusal, and the explanation has to spell
+    // it back as the token that was typed rather than as the other spelling.
+    it("names the exact spelling's pair under its own token", () => {
+      renderWithError(contradictionError("milestone filter: contradicts noMilestone: true"), {
+        filter: { milestone: "nibs-m", noMilestone: true },
+      });
+
+      const explanation = screen.getByTestId("empty-contradiction");
+      expect(explanation).toHaveTextContent("milestone-exact:nibs-m");
+      expect(explanation).toHaveTextContent("is:backlog");
     });
 
     // The calm treatment is earned by the code AND by the client being able to

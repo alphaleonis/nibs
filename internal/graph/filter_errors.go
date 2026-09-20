@@ -137,6 +137,33 @@ func (e *FilterTargetContradictionError) Error() string {
 		e.Field, e.PresenceField, e.PresenceValue, e.Field, echoID(e.ID), e.PresenceField, !e.PresenceValue)
 }
 
+// FilterTargetsDisjointError reports that two id-valued filter fields reading
+// ONE axis were given targets that cannot both be met —
+// `nibs(filter:{milestone:"nibs-m1", inMilestone:"nibs-m2"})`. It is the
+// validation class (exit 2), the class every other unsatisfiable pair gives.
+//
+// Distinct from FilterTargetContradictionError, which pairs an id with a
+// tri-state field and is decided before any id resolves. This one is decided on
+// the RESOLVED ids, because a pair naming the same nib twice is satisfiable and
+// two spellings of one id name the same nib.
+//
+// Do not add Unwrap — see FilterTargetEmptyError.
+type FilterTargetsDisjointError struct {
+	// Field and Other are the two GraphQL filter fields, in the order
+	// ApplyFilter evaluates them — the same spellings as in the schema.
+	Field string
+	Other string
+	// ID and OtherID are the resolved (full) targets, so the message shows the
+	// two nibs the refusal actually compared.
+	ID      string
+	OtherID string
+}
+
+func (e *FilterTargetsDisjointError) Error() string {
+	return fmt.Sprintf("%s filter: contradicts %s: %s and %s are two targets on one axis — every nib matching %s %s also matches %s %s, so nothing can match both",
+		e.Field, e.Other, echoID(e.ID), echoID(e.OtherID), e.Field, echoID(e.ID), e.Other, echoID(e.ID))
+}
+
 // FilterTargetTypeError reports that a filter field naming a nib of one
 // particular type was given an id that resolves to a nib of another —
 // `nibs(filter:{milestone:"nibs-e1"})` where nibs-e1 is an epic. It is the
