@@ -42,9 +42,9 @@ func dataFileDigests(t *testing.T, nibsPath string) map[string]string {
 // its milestone queue and rewrites the subject's file and no other — the
 // one-file property that makes parallel queue edits merge cleanly. The
 // property holds once every member carries a queue key, which the fixture's
-// tnib-m001 queue (keys a..d) does; a member without one is keyed once by the
-// first move that reads the queue, the engine's lazy backfill, and that write
-// is outside what this test claims.
+// tnib-m001 queue does; a member without one is keyed once by the first move
+// that reads the queue, the engine's lazy backfill, and that write is outside
+// what this test claims.
 func TestMvQueueOnKeyedQueueMovesExactlyOneFile(t *testing.T) {
 	nibsPath := setupQueueCLITest(t)
 	before := dataFileDigests(t, nibsPath)
@@ -66,7 +66,7 @@ func TestMvQueueOnKeyedQueueMovesExactlyOneFile(t *testing.T) {
 	if len(after) != len(before) {
 		t.Errorf("file count changed %d -> %d; a queue move must not create or remove files", len(before), len(after))
 	}
-	if got, want := queueIDs(t, nibsPath, "tnib-m001"), "tnib-e003 tnib-e001 tnib-e002 tnib-e004"; strings.Join(got, " ") != want {
+	if got, want := queueIDs(t, nibsPath, "tnib-m001"), "tnib-e003 tnib-e001 tnib-e002 tnib-e004 tnib-t041"; strings.Join(got, " ") != want {
 		t.Errorf("queue = %v, want %s", got, want)
 	}
 	// The sibling order key is untouched: e003 still sits among the roots in
@@ -84,14 +84,14 @@ func TestMvQueueAnchors(t *testing.T) {
 	if _, err := runRootWith(t, "--nibs-path", nibsPath, "mv", "tnib-e004", "--queue", "--after", "e001"); err != nil {
 		t.Fatalf("mv --queue --after: %v", err)
 	}
-	if got, want := queueIDs(t, nibsPath, "tnib-m001"), "tnib-e001 tnib-e004 tnib-e002 tnib-e003"; strings.Join(got, " ") != want {
+	if got, want := queueIDs(t, nibsPath, "tnib-m001"), "tnib-e001 tnib-e004 tnib-e002 tnib-e003 tnib-t041"; strings.Join(got, " ") != want {
 		t.Errorf("queue after --after = %v, want %s", got, want)
 	}
 	resetMvFlags()
 	if _, err := runRootWith(t, "--nibs-path", nibsPath, "mv", "tnib-e001", "--queue", "--before", "tnib-e003"); err != nil {
 		t.Fatalf("mv --queue --before: %v", err)
 	}
-	if got, want := queueIDs(t, nibsPath, "tnib-m001"), "tnib-e004 tnib-e002 tnib-e001 tnib-e003"; strings.Join(got, " ") != want {
+	if got, want := queueIDs(t, nibsPath, "tnib-m001"), "tnib-e004 tnib-e002 tnib-e001 tnib-e003 tnib-t041"; strings.Join(got, " ") != want {
 		t.Errorf("queue after --before = %v, want %s", got, want)
 	}
 }

@@ -213,7 +213,7 @@ func TestListSortInvalidValueDoesNotReorderTheQueue(t *testing.T) {
 	if _, err := runRootWith(t, "--nibs-path", nibsPath, "mv", "tnib-e003", "--queue", "--first"); err != nil {
 		t.Fatalf("mv --queue --first: %v", err)
 	}
-	const wantQueue = "tnib-e003 tnib-e001 tnib-e002 tnib-e004"
+	const wantQueue = "tnib-e003 tnib-e001 tnib-e002 tnib-e004 tnib-t041"
 	if got := strings.Join(queueIDs(t, nibsPath, "tnib-m001"), " "); got != wantQueue {
 		t.Fatalf("--milestone with no --sort = %s, want the queue %s", got, wantQueue)
 	}

@@ -40,12 +40,28 @@ async function boxOf(page: Page, nibId: string) {
   return box;
 }
 
-async function openMilestones(page: Page) {
-  await page.addInitScript(() => {
-    localStorage.setItem("nibs-filter-preferences", JSON.stringify({ filter: {}, viewLevel: "milestones" }));
-  });
+async function openView(page: Page, viewLevel: "milestones" | "features") {
+  await page.addInitScript((level) => {
+    localStorage.setItem("nibs-filter-preferences", JSON.stringify({ filter: {}, viewLevel: level }));
+  }, viewLevel);
   await page.goto("/");
   await expect(page.locator("tr[data-nib-id]").first()).toBeVisible({ timeout: 10_000 });
+}
+
+async function openMilestones(page: Page) {
+  await openView(page, "milestones");
+}
+
+/**
+ * The Features view, for the two badge tests below. They want two siblings in
+ * one ordering group, and tnib-t041 carries a milestone of its own, so the
+ * Milestones view's membership lens draws it in that queue and leaves its
+ * sibling behind under tnib-f020. Grouping by TYPE moves no row into another
+ * ordering group (`typeLens`'s `meaning` is `GOVERNS_NOTHING`), so the region
+ * the badge names here is still the parent group.
+ */
+async function openFeatures(page: Page) {
+  await openView(page, "features");
 }
 
 /**
@@ -140,7 +156,7 @@ async function rowIds(page: Page): Promise<(string | undefined)[]> {
 // operations"), so a drag between them stays inside one ordering region and the
 // badge has a container with a real title to name.
 test("the drag badge names the list the release would reorder within", async ({ page }) => {
-  await openMilestones(page);
+  await openFeatures(page);
   await centerOn(page, "tnib-t041");
 
   const source = await boxOf(page, "tnib-t042");
@@ -182,7 +198,7 @@ test("the drag badge names the list the release would reorder within", async ({ 
 // reports every box as 0x0, so DragBadge.test.ts can check the clamp's
 // arithmetic and not its effect.
 test("the drag badge stays whole and on screen against the right edge", async ({ page }) => {
-  await openMilestones(page);
+  await openFeatures(page);
   await centerOn(page, "tnib-t041");
 
   const source = await boxOf(page, "tnib-t042");
@@ -230,13 +246,13 @@ test("the drag badge stays whole and on screen against the right edge", async ({
 // Both are reachable from the running app, and each names its own cause.
 test("a refusal names which of the two causes it was", async ({ page }) => {
   await openMilestones(page);
-  await centerOn(page, "tnib-t041");
+  await centerOn(page, "tnib-t042");
 
   // MIXED SOURCE: one row inside f020's children, one at the top level.
-  await page.locator('tr[data-nib-id="tnib-t041"] [data-action="title"]').click({ modifiers: ["Control"] });
+  await page.locator('tr[data-nib-id="tnib-t042"] [data-action="title"]').click({ modifiers: ["Control"] });
   await page.locator('tr[data-nib-id="tnib-b012"] [data-action="title"]').click({ modifiers: ["Control"] });
 
-  const mixedSource = await boxOf(page, "tnib-t041");
+  const mixedSource = await boxOf(page, "tnib-t042");
   const mixedTarget = await boxOf(page, "tnib-b012");
   await page.mouse.move(mixedSource.x + 300, mixedSource.y + mixedSource.height / 2);
   await page.mouse.down();
@@ -257,10 +273,10 @@ test("a refusal names which of the two causes it was", async ({ page }) => {
   await expect(toast).toContainText("the top level");
   const mixedMessage = (await toast.textContent()) ?? "";
 
-  // HIDDEN MEMBER: same selection, but f020 is collapsed, so t041 leaves the
+  // HIDDEN MEMBER: same selection, but f020 is collapsed, so t042 leaves the
   // rendered rows while staying in the selection.
   await page.locator('tr[data-nib-id="tnib-f020"] [data-action="toggle"]').click();
-  await expect(page.locator('tr[data-nib-id="tnib-t041"]')).toHaveCount(0);
+  await expect(page.locator('tr[data-nib-id="tnib-t042"]')).toHaveCount(0);
 
   const hiddenSource = await boxOf(page, "tnib-b012");
   const hiddenTarget = await boxOf(page, "tnib-b013");
@@ -275,7 +291,7 @@ test("a refusal names which of the two causes it was", async ({ page }) => {
   // — not the mixed-selection one above. Compared as captured text rather than
   // with a retrying `not.toContainText`, which would also be satisfied by the
   // toast simply auto-dismissing.
-  await expect(toast).toContainText("tnib-t041 is selected but not shown here");
+  await expect(toast).toContainText("tnib-t042 is selected but not shown here");
   const hiddenMessage = (await toast.textContent()) ?? "";
   expect(hiddenMessage).not.toContain("different ordering groups");
   expect(hiddenMessage).not.toBe(mixedMessage);

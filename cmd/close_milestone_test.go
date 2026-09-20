@@ -53,9 +53,9 @@ func setupMilestoneCloseTest(t *testing.T, files map[string]string) string {
 }
 
 // setupMilestoneCloseFixture is the same for the sample fixture, whose queues
-// are tnib-e001..e004 -> tnib-m001 (keys a..d, m001 in-progress) and
-// tnib-e005/e006 -> tnib-m002 (keys a, b, m002 draft). Every one of those six
-// members is open.
+// are tnib-e001..e004 plus tnib-t041 -> tnib-m001 (keys a..e, m001
+// in-progress) and tnib-e005/e006 -> tnib-m002 (keys a, b, m002 draft). Every
+// one of those seven members is open.
 func setupMilestoneCloseFixture(t *testing.T) string {
 	t.Helper()
 	nibsDir := setupQueueCLITest(t)
@@ -126,10 +126,10 @@ func TestCloseMilestoneRefusesWithOpenAssignedWork(t *testing.T) {
 
 			msg := err.Error()
 			// How much: the count, and the ids it could name.
-			if !strings.Contains(msg, "4 open nibs are") {
+			if !strings.Contains(msg, "5 open nibs are") {
 				t.Errorf("refusal should count the open queue, got: %s", msg)
 			}
-			for _, id := range []string{"tnib-e001", "tnib-e002", "tnib-e003", "tnib-e004"} {
+			for _, id := range []string{"tnib-e001", "tnib-e002", "tnib-e003", "tnib-e004", "tnib-t041"} {
 				if !strings.Contains(msg, id) {
 					t.Errorf("refusal should name %s, got: %s", id, msg)
 				}
@@ -192,7 +192,7 @@ func TestCloseMilestoneMovesOpenWorkToAnotherQueue(t *testing.T) {
 	}
 
 	// Appended last, after the target's own two members, in source order.
-	want := []string{"tnib-e005", "tnib-e006", "tnib-e001", "tnib-e002", "tnib-e003", "tnib-e004"}
+	want := []string{"tnib-e005", "tnib-e006", "tnib-e001", "tnib-e002", "tnib-e003", "tnib-e004", "tnib-t041"}
 	if got := queueIDs(t, nibsPath, "tnib-m002"); !slices.Equal(got, want) {
 		t.Errorf("tnib-m002 queue = %v, want %v", got, want)
 	}
@@ -201,7 +201,7 @@ func TestCloseMilestoneMovesOpenWorkToAnotherQueue(t *testing.T) {
 	}
 	// Nothing of the old queue key survives: every moved nib sorts after the
 	// target's last pre-existing key.
-	for _, id := range []string{"tnib-e001", "tnib-e002", "tnib-e003", "tnib-e004"} {
+	for _, id := range []string{"tnib-e001", "tnib-e002", "tnib-e003", "tnib-e004", "tnib-t041"} {
 		ms, key := milestoneOf(t, nibsPath, id)
 		if ms != "tnib-m002" {
 			t.Errorf("%s milestone = %q, want tnib-m002", id, ms)
@@ -226,7 +226,7 @@ func TestCloseMilestoneUnassignsOpenWork(t *testing.T) {
 	if got := statusOf(t, nibsPath, "tnib-m001"); got != closeDefaultStatus() {
 		t.Errorf("milestone status = %q, want %q", got, closeDefaultStatus())
 	}
-	for _, id := range []string{"tnib-e001", "tnib-e002", "tnib-e003", "tnib-e004"} {
+	for _, id := range []string{"tnib-e001", "tnib-e002", "tnib-e003", "tnib-e004", "tnib-t041"} {
 		ms, key := milestoneOf(t, nibsPath, id)
 		if ms != "" || key != "" {
 			t.Errorf("%s = (%q, %q) after --unassign-open, want both empty", id, ms, key)
@@ -1271,9 +1271,9 @@ func TestCloseMilestoneMemberUndeclaredAreaDeadEndsBothEscapes(t *testing.T) {
 		t.Run(escape, func(t *testing.T) {
 			nibsPath := setupMilestoneCloseFixture(t)
 
-			// tnib-m001's open queue is tnib-e001..e004 in that order; the
-			// offender sits SECOND so a disposition that starts writing leaves
-			// tnib-e001 visibly rewritten.
+			// tnib-m001's open queue is tnib-e001..e004 then tnib-t041, in
+			// that order; the offender sits SECOND so a disposition that
+			// starts writing leaves tnib-e001 visibly rewritten.
 			queue := queueIDs(t, nibsPath, "tnib-m001")
 			if len(queue) < 2 || queue[1] != "tnib-e002" {
 				t.Fatalf("test setup: queue = %v, want tnib-e002 second", queue)

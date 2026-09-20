@@ -192,8 +192,11 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 	}
 	for _, b := range rem.Other {
 		// A backlog root carries its decomposition for the same reason a queue
-		// entry does: it is the only place that work appears at all.
-		if entry, ok := roadmapEntry(b, view.DirectMembers(b.ID), includeDone, cfg); ok {
+		// entry does: it is the only place that work appears at all — unless a
+		// child carries a milestone, which draws it in that milestone's section
+		// instead. Hence UnscheduledMembers and not DirectMembers: the same rule
+		// Backlog already applies to an unscheduled epic's items.
+		if entry, ok := roadmapEntry(b, view.UnscheduledMembers(b.ID), includeDone, cfg); ok {
 			backlog = append(backlog, entry)
 		}
 	}

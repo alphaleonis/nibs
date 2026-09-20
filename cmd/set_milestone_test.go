@@ -12,9 +12,10 @@ import (
 )
 
 // setupQueueCLITest copies the sample fixture — whose queues are
-// tnib-e001..e004 -> tnib-m001 (a..d) and tnib-e005/e006 -> tnib-m002 (a, b) —
-// and registers the flag resets every command these tests drive needs, so one
-// subtest's flags cannot leak into the next. Returns the store path.
+// tnib-e001..e004 and tnib-t041 -> tnib-m001 (a..e) and tnib-e005/e006 ->
+// tnib-m002 (a, b) — and registers the flag resets every command these tests
+// drive needs, so one subtest's flags cannot leak into the next. Returns the
+// store path.
 func setupQueueCLITest(t *testing.T) string {
 	t.Helper()
 	resetQueueCLIFlags()
@@ -74,17 +75,17 @@ func axisFields(t *testing.T, nibsPath, id string) (milestone, milestoneOrder, a
 func TestSetMilestoneAssignsAndQueues(t *testing.T) {
 	nibsPath := setupQueueCLITest(t)
 
-	if _, err := runRootWith(t, "--nibs-path", nibsPath, "set", "tnib-t041", "--milestone", "m001"); err != nil {
+	if _, err := runRootWith(t, "--nibs-path", nibsPath, "set", "tnib-t042", "--milestone", "m001"); err != nil {
 		t.Fatalf("set --milestone: %v", err)
 	}
-	ms, key, _ := axisFields(t, nibsPath, "tnib-t041")
+	ms, key, _ := axisFields(t, nibsPath, "tnib-t042")
 	if ms != "tnib-m001" {
 		t.Errorf("milestone = %q, want the normalized tnib-m001", ms)
 	}
-	if key <= "d" {
-		t.Errorf("milestone_order = %q, want a key after d (appended last)", key)
+	if key <= "e" {
+		t.Errorf("milestone_order = %q, want a key after e (appended last)", key)
 	}
-	if got, want := queueIDs(t, nibsPath, "tnib-m001"), []string{"tnib-e001", "tnib-e002", "tnib-e003", "tnib-e004", "tnib-t041"}; strings.Join(got, " ") != strings.Join(want, " ") {
+	if got, want := queueIDs(t, nibsPath, "tnib-m001"), []string{"tnib-e001", "tnib-e002", "tnib-e003", "tnib-e004", "tnib-t041", "tnib-t042"}; strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("queue = %v, want %v", got, want)
 	}
 
@@ -104,8 +105,8 @@ func TestSetMilestoneRefusals(t *testing.T) {
 		target  string
 		wantMsg []string
 	}{
-		{"unknown target", "tnib-t041", "nope", []string{"milestone nib not found", "nope"}},
-		{"non-milestone target names its type", "tnib-t041", "tnib-e001", []string{"tnib-e001", "epic", "not milestone"}},
+		{"unknown target", "tnib-t042", "nope", []string{"milestone nib not found", "nope"}},
+		{"non-milestone target names its type", "tnib-t042", "tnib-e001", []string{"tnib-e001", "epic", "not milestone"}},
 		{"milestone-typed subject", "tnib-m002", "tnib-m001", []string{"a milestone cannot be assigned to a milestone"}},
 		{"ancestor already assigned", "tnib-f001", "tnib-m002", []string{"tnib-f001", "ancestor tnib-e001", "tnib-m001"}},
 	}
@@ -129,12 +130,8 @@ func TestSetMilestoneRefusals(t *testing.T) {
 
 	t.Run("descendant already assigned", func(t *testing.T) {
 		nibsPath := setupQueueCLITest(t)
-		// tnib-t041 sits under tnib-f020 with no assigned ancestor; once it is
-		// queued, assigning its parent would put both on one chain.
-		if _, err := runRootWith(t, "--nibs-path", nibsPath, "set", "tnib-t041", "--milestone", "tnib-m001"); err != nil {
-			t.Fatalf("assigning the child: %v", err)
-		}
-		resetSetFlags()
+		// The fixture ships tnib-t041 queued to tnib-m001 under the unassigned
+		// tnib-f020, so assigning the parent would put both on one chain.
 		_, err := runRootWith(t, "--nibs-path", nibsPath, "set", "tnib-f020", "--milestone", "tnib-m002")
 		if err == nil {
 			t.Fatal("assigning the parent of an assigned nib succeeded, want refusal")
@@ -160,10 +157,12 @@ func TestSetMilestoneRefusals(t *testing.T) {
 func TestSetReparentWithMilestoneChange(t *testing.T) {
 	t.Run("--parent under an assigned chain with --clear milestone", func(t *testing.T) {
 		nibsPath := setupQueueCLITest(t)
-		if _, err := runRootWith(t, "--nibs-path", nibsPath, "set", "tnib-t041", "--milestone", "m002"); err != nil {
-			t.Fatalf("assigning the task: %v", err)
+		if ms, _, _ := axisFields(t, nibsPath, "tnib-t041"); ms != "tnib-m001" {
+			t.Fatalf("fixture precondition: tnib-t041 milestone = %q, want tnib-m001 — "+
+				"unassigned, --clear milestone clears nothing and the assertions below "+
+				"are satisfied by fields that were already empty", ms)
 		}
-		resetSetFlags()
+		resetQueueCLIFlags()
 		if _, err := runRootWith(t, "--nibs-path", nibsPath, "set", "tnib-t041", "--parent", "tnib-f001", "--clear", "milestone"); err != nil {
 			t.Fatalf("--parent with --clear milestone was refused: %v (the two as separate commands both succeed)", err)
 		}
@@ -183,20 +182,20 @@ func TestSetReparentWithMilestoneChange(t *testing.T) {
 	})
 
 	// Both block orderings refuse this one; only the fixed order blames the
-	// right half. tnib-t041 is unassigned, so the move on its own is legal —
+	// right half. tnib-t042 is unassigned, so the move on its own is legal —
 	// a refusal phrased as "cannot move" sends the caller to retry the step
 	// that was never the problem. The assignment, judged against the chain the
 	// nib will sit on, is.
 	t.Run("--parent under an assigned chain with --milestone is refused", func(t *testing.T) {
 		nibsPath := setupQueueCLITest(t)
-		_, err := runRootWith(t, "--nibs-path", nibsPath, "set", "tnib-t041", "--parent", "tnib-f001", "--milestone", "m002")
+		_, err := runRootWith(t, "--nibs-path", nibsPath, "set", "tnib-t042", "--parent", "tnib-f001", "--milestone", "m002")
 		if err == nil {
 			t.Fatal("assigning while moving under an assigned chain succeeded, want refusal")
 		}
 		if code := reportExitError(io.Discard, err); code != output.ExitValidation {
 			t.Errorf("exit = %d, want %d (validation)", code, output.ExitValidation)
 		}
-		for _, want := range []string{"cannot assign tnib-t041 to milestone tnib-m002", "its ancestor tnib-e001 is already assigned to milestone tnib-m001"} {
+		for _, want := range []string{"cannot assign tnib-t042 to milestone tnib-m002", "its ancestor tnib-e001 is already assigned to milestone tnib-m001"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("error = %q, want it to blame the assignment with %q", err.Error(), want)
 			}

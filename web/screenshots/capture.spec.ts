@@ -424,10 +424,13 @@ for (const theme of ["daylight", "graphite"] as const) {
   test(`drag affordance — band, indicator and badge — ${theme}`, async ({ page }) => {
     await openApp(page, "milestones", theme);
     await page.evaluate(() => {
-      document.querySelector('tr[data-nib-id="tnib-t041"]')?.scrollIntoView({ block: "center" });
+      document.querySelector('tr[data-nib-id="tnib-t014"]')?.scrollIntoView({ block: "center" });
     });
-    const source = await page.locator('tr[data-nib-id="tnib-t042"]').boundingBox();
-    const target = await page.locator('tr[data-nib-id="tnib-t041"]').boundingBox();
+    // Two children of tnib-f006. tnib-t041 no longer serves as one half of a
+    // sibling pair here: it carries a milestone, so this view draws it in that
+    // queue rather than beside tnib-t042.
+    const source = await page.locator('tr[data-nib-id="tnib-t015"]').boundingBox();
+    const target = await page.locator('tr[data-nib-id="tnib-t014"]').boundingBox();
     if (!source || !target) throw new Error("the drag rows are not laid out");
 
     await page.mouse.move(source.x + 300, source.y + source.height / 2);

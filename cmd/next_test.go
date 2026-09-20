@@ -22,7 +22,7 @@ func resetNextFlags() {
 
 // setupNextCLITest registers the flag resets `nibs next` tests need and hands
 // back the sample fixture's store, whose only in-progress milestone is
-// tnib-m001 (queue tnib-e001..e004; tnib-m002 is a draft).
+// tnib-m001 (queue tnib-e001..e004 then tnib-t041; tnib-m002 is a draft).
 func setupNextCLITest(t *testing.T) string {
 	t.Helper()
 	resetNextCLIFlags()
