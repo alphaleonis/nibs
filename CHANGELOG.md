@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **A nib's area is set from the web's detail panel** — a picker over the project's declared vocabulary, offered while creating as well as while editing, where before only `nibs set --area` could place a nib in one.
 - **`nibs rel` takes `-c` and `-q`** — the size of the related set as a bare integer and the related ids one per line, with list's semantics, which is what the cheat sheet's FILTER block already promised of both verbs.
 - **Areas are declared, edited and retired over the API** — a project that declares no vocabulary yet gets one from its first declaration, an area's name, description and color are changed in one call, and the work assigned beneath a renamed or retired area is reassigned or unassigned as the call directs.
+- **The web manages the areas vocabulary** — each row in the Areas view declares, renames, recolors and retires an area, and retiring one that holds work asks where that work should go.
 
 ### Changed
 - **The web's Tree view no longer lists milestones** — a milestone is a waypoint outside the parent graph, so a view spined on parentage had nothing to nest under it; Flat still shows every nib, and the Milestone column shows the assignment.
