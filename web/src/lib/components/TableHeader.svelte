@@ -91,10 +91,10 @@
       <!-- Raw buttons: two 12px icon controls must fit inside the 32px-wide
            actions column; smaller than the Button primitive's minimum size. -->
       <div class="flex items-center">
-        <button data-testid="expand-all" class="rounded-sm p-0.5 text-muted-foreground hover:text-foreground" onclick={onExpandAll} title="Expand all">
+        <button data-testid="expand-all" class="rounded-sm p-0.5 text-muted-foreground hover:text-foreground" onclick={onExpandAll} data-tooltip="Expand all" aria-label="Expand all">
           <CopyPlus size={12} />
         </button>
-        <button data-testid="collapse-all" class="rounded-sm p-0.5 text-muted-foreground hover:text-foreground" onclick={onCollapseAll} title="Collapse all">
+        <button data-testid="collapse-all" class="rounded-sm p-0.5 text-muted-foreground hover:text-foreground" onclick={onCollapseAll} data-tooltip="Collapse all" aria-label="Collapse all">
           <CopyMinus size={12} />
         </button>
       </div>

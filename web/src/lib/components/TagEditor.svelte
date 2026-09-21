@@ -202,7 +202,7 @@
           size="icon-sm"
           data-testid={addTestId}
           aria-label="Add tag"
-          title="Add tag"
+          data-tooltip="Add tag"
           onclick={reveal}
         >
           <Plus size={14} />

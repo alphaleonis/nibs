@@ -50,7 +50,8 @@
       <button
         class="detail-related-add-child"
         data-testid="detail-related-add-child"
-        title={actionLabel}
+        data-tooltip={actionLabel}
+        aria-label={actionLabel}
         onclick={(e) => onaction?.(e)}
       >
         <Plus size={14} />

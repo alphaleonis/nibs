@@ -6,6 +6,7 @@ import { SelectionState } from "../selection.svelte";
 import { DragState } from "../drag.svelte";
 import { makeTestContext } from "$lib/contexts";
 import { openSubmenu } from "$lib/testing/menu";
+import { expectNoNativeTitles } from "$lib/testing/nativeTitle";
 import type {
   ConfirmDialogState,
   ConfirmDialogOptions,
@@ -1119,6 +1120,37 @@ describe("RowContextMenu", () => {
       await openSubmenu(user, screen.getByTestId("ctx-milestone-trigger"));
 
       expect(await screen.findByTestId("ctx-milestone-nibs-m1")).toHaveAttribute("data-disabled");
+    });
+
+    // The refusal used to ride on a `title` attribute. These items are portaled
+    // out of the table's delegated tooltip, so each refused one carries its own
+    // root — driven here rather than asserted as an attribute, because nothing
+    // else proves the trigger survives DropdownMenu.RadioItem's prop merge.
+    it("explains a refused milestone through the app's styled tooltip", async () => {
+      renderMenu({ nib: makeNib({ status: "todo" }) });
+
+      await openSubmenu(user, screen.getByTestId("ctx-milestone-trigger"));
+      const refused = await screen.findByTestId("ctx-milestone-nibs-m1");
+      expect(refused).toHaveAttribute("data-disabled");
+
+      await user.hover(refused);
+
+      expect(
+        await screen.findByText(/Foundations is completed/, {
+          selector: '[data-slot="tooltip-content"]',
+        }),
+      ).toBeInTheDocument();
+    });
+
+    // This menu is a sibling of TreeTable, so no other sweep reaches it, and its
+    // items only exist once a submenu is open.
+    it("leans on no native tooltip, with the milestone submenu open", async () => {
+      renderMenu({ nib: makeNib({ status: "todo" }) });
+
+      await openSubmenu(user, screen.getByTestId("ctx-milestone-trigger"));
+      await screen.findByTestId("ctx-milestone-nibs-m1");
+
+      expectNoNativeTitles();
     });
 
     it("leaves every milestone enabled in bulk, where one row's status speaks for none", async () => {

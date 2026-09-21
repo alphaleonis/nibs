@@ -114,7 +114,7 @@
 
 {#snippet cellParent(ctx: RowContext)}
   {@const parentNib = ctx.parentNib}
-  <td data-testid="nib-parent" class="text-body px-3 cell-truncate row-cell" style="color: var(--text-secondary);" title={parentNib ? parentNib.id : undefined}>
+  <td data-testid="nib-parent" class="text-body px-3 cell-truncate row-cell" style="color: var(--text-secondary);" data-tooltip={parentNib ? `${parentNib.title} (${parentNib.id})` : undefined}>
     {#if parentNib}
       <TypeIcon type={parentNib.type} size={14} />
       {parentNib.title}
@@ -127,7 +127,7 @@
 {#snippet cellMilestone(ctx: RowContext)}
   {@const milestoneNib = ctx.milestoneNib}
   {@const assigned = ctx.nib.milestone}
-  <td data-testid="nib-milestone" class="text-body px-3 cell-truncate row-cell" style="color: var(--text-secondary);" title={milestoneNib ? milestoneNib.id : (assigned || undefined)}>
+  <td data-testid="nib-milestone" class="text-body px-3 cell-truncate row-cell" style="color: var(--text-secondary);" data-tooltip={milestoneNib ? `${milestoneNib.title} (${milestoneNib.id})` : (assigned || undefined)}>
     {#if milestoneNib}
       <TypeIcon type={milestoneNib.type} size={14} />
       {milestoneNib.title}
@@ -140,7 +140,7 @@
 <!-- The full stored path, not the leaf: a leaf is ambiguous across parents. -->
 {#snippet cellArea(ctx: RowContext)}
   {@const area = ctx.nib.area}
-  <td data-testid="nib-area" class="text-body px-3 cell-truncate row-cell" style="color: var(--text-secondary);" title={area || undefined}>{area}</td>
+  <td data-testid="nib-area" class="text-body px-3 cell-truncate row-cell" style="color: var(--text-secondary);" data-tooltip={area || undefined}>{area}</td>
 {/snippet}
 
 {#snippet cellType(ctx: RowContext)}
@@ -249,7 +249,7 @@
       <span
         class="inline-flex items-center gap-1"
         style="color: {RELATION_CONFIG.blocking.iconColor};"
-        title={nib.blockingIds.join(", ")}
+        data-tooltip={nib.blockingIds.join(", ")}
       ><BlockingIcon size={12} />{nib.blockingIds.length}</span>
     {/if}
   </td>
@@ -263,7 +263,7 @@
       <span
         class="inline-flex items-center gap-1"
         style="color: {RELATION_CONFIG.blocked.iconColor};"
-        title={nib.blockedByIds.join(", ")}
+        data-tooltip={nib.blockedByIds.join(", ")}
       ><BlockedIcon size={12} />{nib.blockedByIds.length}</span>
     {/if}
   </td>
@@ -273,12 +273,12 @@
      formats blank. -->
 {#snippet cellCreated(ctx: RowContext)}
   {@const nib = ctx.nib}
-  <td data-testid="nib-created" class="text-body px-3 cell-truncate row-cell" style="color: var(--muted-foreground);" title={formatAbsolute(nib.createdAt)}>{formatRelative(nib.createdAt)}</td>
+  <td data-testid="nib-created" class="text-body px-3 cell-truncate row-cell" style="color: var(--muted-foreground);" data-tooltip={formatAbsolute(nib.createdAt) || undefined}>{formatRelative(nib.createdAt)}</td>
 {/snippet}
 
 {#snippet cellModified(ctx: RowContext)}
   {@const nib = ctx.nib}
-  <td data-testid="nib-modified" class="text-body px-3 cell-truncate row-cell" style="color: var(--muted-foreground);" title={formatAbsolute(nib.updatedAt)}>{formatRelative(nib.updatedAt)}</td>
+  <td data-testid="nib-modified" class="text-body px-3 cell-truncate row-cell" style="color: var(--muted-foreground);" data-tooltip={formatAbsolute(nib.updatedAt) || undefined}>{formatRelative(nib.updatedAt)}</td>
 {/snippet}
 
 <style>

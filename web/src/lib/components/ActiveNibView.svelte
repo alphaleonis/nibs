@@ -48,6 +48,7 @@
   import AreaSelect from "./AreaSelect.svelte";
   import TagEditor from "./TagEditor.svelte";
   import RelationBadge from "./RelationBadge.svelte";
+  import DelegatedTooltip from "./DelegatedTooltip.svelte";
   import MarkdownEditor from "./MarkdownEditor.svelte";
   import RelatedNibGroup from "./RelatedNibGroup.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
@@ -401,7 +402,7 @@
         {#each detailNib.documents ?? [] as doc}
           <li class="anv-document-item" data-testid="anv-document">
             <FileText size={14} />
-            <span class="anv-document-path" title={doc}>{doc}</span>
+            <span class="anv-document-path" data-tooltip={doc}>{doc}</span>
           </li>
         {/each}
       </ul>
@@ -430,7 +431,7 @@
           {#if isCreating}
             <span class="anv-id anv-id-new" data-testid="anv-id">
               {#if form.dirty}
-                <span class="anv-unsaved-dot" title="Unsaved changes" data-testid="anv-unsaved-dot"></span>
+                <span class="anv-unsaved-dot" data-tooltip="Unsaved changes" aria-label="Unsaved changes" data-testid="anv-unsaved-dot"></span>
               {/if}
               New {currentType}
             </span>
@@ -440,12 +441,12 @@
               size="sm"
               class="-ml-2 cursor-pointer font-normal text-muted-foreground"
               data-testid="anv-id"
-              title={`Copy nib ID ${nibId}`}
+              data-tooltip={`Copy nib ID ${nibId}`}
               aria-label={`Copy nib ID ${nibId}`}
               onclick={handleCopyId}
             >
               {#if form.dirty}
-                <span class="anv-unsaved-dot" title="Unsaved changes" data-testid="anv-unsaved-dot"></span>
+                <span class="anv-unsaved-dot" data-tooltip="Unsaved changes" aria-label="Unsaved changes" data-testid="anv-unsaved-dot"></span>
               {/if}
               {nibId}
             </Button>
@@ -465,7 +466,7 @@
               variant="ghost"
               size="icon-sm"
               data-testid="anv-expand"
-              title="Expand to full screen"
+              data-tooltip="Expand to full screen"
               aria-label="Expand"
               onclick={() => view.expand()}
             >
@@ -476,7 +477,7 @@
               variant="ghost"
               size="icon-sm"
               data-testid="anv-collapse"
-              title="Collapse to sidebar"
+              data-tooltip="Collapse to sidebar"
               aria-label="Collapse"
               onclick={() => view.collapse()}
             >
@@ -494,7 +495,7 @@
                     variant="ghost"
                     size="icon-sm"
                     data-testid="anv-overflow"
-                    title="More actions"
+                    data-tooltip="More actions"
                     aria-label="More actions"
                   >
                     <Ellipsis size={16} />
@@ -541,7 +542,7 @@
             variant="ghost"
             size="icon-sm"
             data-testid="anv-close"
-            title="Close"
+            data-tooltip="Close"
             aria-label="Close detail panel"
             onclick={() => view.requestClose()}
           >
@@ -560,7 +561,7 @@
           data-testid="anv-title"
           aria-label="Title"
           placeholder="Nib title..."
-          title={form.title}
+          data-tooltip={form.title}
           bind:value={form.title}
           readonly={isGone}
           disabled={loadingUnseeded}
@@ -627,7 +628,7 @@
                 size="sm"
                 class="border-current bg-transparent text-current hover:bg-black/10 hover:text-current dark:bg-transparent dark:border-current dark:hover:bg-black/10"
                 data-testid="anv-gone-copy-body"
-                title="Copy the description's markdown source"
+                data-tooltip="Copy the description's markdown source"
                 onclick={handleCopyBody}
               >
                 <Copy size={14} />
@@ -816,6 +817,12 @@
           </aside>
         {/if}
       </div>
+
+    <!-- One tooltip for every `data-tooltip` in the panel, its own and those of
+         the shared components it renders (RelationBadge, TagEditor,
+         RelatedNibGroup). MilestoneSelect's items are portaled out of this
+         subtree and carry their own. -->
+    <DelegatedTooltip container={rootEl} />
   </div>
 {/if}
 

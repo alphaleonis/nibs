@@ -18,6 +18,7 @@
   import type { EtagResolver } from "$lib/mutations/commands";
   import { copyToClipboard } from "$lib/clipboard";
   import { getActionTargetIds, clearAfterMutation } from "$lib/actionTarget";
+  import WithTooltip from "./WithTooltip.svelte";
 
   interface Props {
     open: boolean;
@@ -199,17 +200,33 @@
   <!-- Declared outside DropdownMenu.Content, where it would become a prop. -->
   {#snippet metadataSubmenu(label: string, entries: readonly MenuEntry[], currentValue: string,
       onchange: (v: string) => void, testId: string)}
+    <!-- Declared outside DropdownMenu.Sub for the same reason metadataSubmenu sits
+         outside DropdownMenu.Content: a snippet inside a component is a prop of it.
+         `props` carries a tooltip trigger's handlers when the entry explains a
+         refusal, and is empty otherwise. -->
+    {#snippet radioItem(e: MenuEntry, props: Record<string, unknown>)}
+      <DropdownMenu.RadioItem
+        {...props}
+        data-testid="ctx-{testId}-{e.value}"
+        value={e.value}
+        disabled={e.disabled}
+      >
+        {e.label}
+      </DropdownMenu.RadioItem>
+    {/snippet}
     <DropdownMenu.Sub>
       <DropdownMenu.SubTrigger data-testid="ctx-{testId}-trigger">
         {label}
       </DropdownMenu.SubTrigger>
       <DropdownMenu.SubContent>
         {#if isBulk}
+          <!-- No refusal to explain, so no tooltip here: a bulk selection carries
+               no single status to judge a milestone against, and `title` is left
+               unset above. -->
           {#each entries as e (e.value)}
             <DropdownMenu.Item
               data-testid="ctx-{testId}-{e.value}"
               disabled={e.disabled}
-              title={e.title}
               onclick={() => { open = false; onchange(e.value); }}
             >
               {e.label}
@@ -221,14 +238,15 @@
             onValueChange={(v) => { if (v) { open = false; onchange(v); } }}
           >
             {#each entries as e (e.value)}
-              <DropdownMenu.RadioItem
-                data-testid="ctx-{testId}-{e.value}"
-                value={e.value}
-                disabled={e.disabled}
-                title={e.title}
-              >
-                {e.label}
-              </DropdownMenu.RadioItem>
+              {#if e.title}
+                <!-- Portaled out of the table, so the refusal carries its own
+                     tooltip rather than delegating. -->
+                <WithTooltip tooltip={e.title} triggerElement="other" side="right">
+                  {#snippet trigger({ props })}{@render radioItem(e, props)}{/snippet}
+                </WithTooltip>
+              {:else}
+                {@render radioItem(e, {})}
+              {/if}
             {/each}
           </DropdownMenu.RadioGroup>
         {/if}

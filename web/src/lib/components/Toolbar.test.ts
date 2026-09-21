@@ -14,6 +14,7 @@ import { createAreaVocabulary, LOADING_AREAS, UNAVAILABLE_AREAS } from "../areas
 import { MILESTONES_KEY } from "../contexts";
 import type { MilestoneOption } from "../milestones";
 import { reactiveBox } from "../testing/reactiveBox.svelte";
+import { expectNoNativeTitles, expectDelegatingElementsAreNamed } from "../testing/nativeTitle";
 
 // bits-ui scroll lock sets pointer-events: none on <body>, so disable the check
 const user = userEvent.setup({ pointerEventsCheck: 0 });
@@ -2687,5 +2688,34 @@ describe("Toolbar — the milestone axis tokens", () => {
     expect(prefs.filter.milestone).toBeUndefined();
     expect(prefs.filter.noMilestone).toBeUndefined();
     expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe("");
+  });
+});
+
+// ---- tooltips ------------------------------------------------------------
+describe("Toolbar — tooltips", () => {
+  const CONTENT = '[data-slot="tooltip-content"]';
+
+  it("hints the connection chip with the styled tooltip", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn(), connectionStatus: "disconnected" });
+
+    await user.hover(screen.getByTestId("connection-status"));
+
+    expect(
+      await screen.findByText(/Live updates are disconnected/, { selector: CONTENT })
+    ).toBeInTheDocument();
+  });
+
+  it("leaves nothing in the toolbar on the browser's native tooltip", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn(), connectionStatus: "disconnected" });
+
+    // A filter token and the connection chip are both hint-bearing and both
+    // conditional, so they are drawn before the sweep.
+    await user.type(screen.getByTestId("filter-keyword"), "type:bug login");
+    expect(screen.getByTestId("connection-status")).toBeInTheDocument();
+
+    expectNoNativeTitles();
+    expectDelegatingElementsAreNamed();
   });
 });

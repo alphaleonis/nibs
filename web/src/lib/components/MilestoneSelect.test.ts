@@ -105,4 +105,21 @@ describe("MilestoneSelect", () => {
 
     expect(screen.getAllByRole("option")).toHaveLength(1);
   });
+  // The refused entry's reason used to be a `title` attribute. Its items are
+  // portaled out of the detail panel's delegated tooltip, so each refused one
+  // carries its own root — driven here rather than asserted as an attribute,
+  // because nothing else proves the trigger survives Select.Item's prop merge.
+  it("explains a refusal through the app's styled tooltip", async () => {
+    renderSelect({ value: "", subjectStatus: "todo" });
+    await user.click(screen.getByTestId("milestone-select"));
+
+    const foundations = screen.getAllByRole("option").find((o) => o.getAttribute("data-value") === "nibs-m1")!;
+    expect(foundations).toHaveAttribute("data-disabled");
+    expect(foundations).not.toHaveAttribute("title");
+
+    await user.hover(foundations);
+
+    const tip = await screen.findByText(/completed/i, { selector: '[data-slot="tooltip-content"]' });
+    expect(tip).toBeInTheDocument();
+  });
 });

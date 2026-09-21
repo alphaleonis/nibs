@@ -1,6 +1,7 @@
 import { render } from "@testing-library/svelte";
 import { describe, it, expect } from "vitest";
 import RelationBadge from "./RelationBadge.svelte";
+import { expectDelegatingElementsAreNamed } from "$lib/testing/nativeTitle";
 
 describe("RelationBadge", () => {
   describe("kind='blocked'", () => {
@@ -10,7 +11,7 @@ describe("RelationBadge", () => {
       const badge = container.querySelector("[data-testid='blocked-badge']") as HTMLElement;
       expect(badge).toBeInTheDocument();
       expect(badge.textContent).toContain("Blocked");
-      expect(badge.getAttribute("title")).toBe("Blocked by 3 nib(s)");
+      expect(badge.getAttribute("data-tooltip")).toBe("Blocked by 3 nib(s)");
       // Lock icon renders as an SVG.
       expect(badge.querySelector("svg")).toBeInTheDocument();
       // The bare icon-only element must not be present in pill mode.
@@ -27,7 +28,7 @@ describe("RelationBadge", () => {
 
       const icon = container.querySelector("[data-testid='blocked-icon']") as HTMLElement;
       expect(icon).toBeInTheDocument();
-      expect(icon.getAttribute("title")).toBe("Blocked by 2 nib(s)");
+      expect(icon.getAttribute("data-tooltip")).toBe("Blocked by 2 nib(s)");
       expect(icon.textContent).not.toContain("Blocked");
       expect(icon.querySelector("svg")).toBeInTheDocument();
       // No pill in icon mode.
@@ -42,7 +43,7 @@ describe("RelationBadge", () => {
       const badge = container.querySelector("[data-testid='blocking-badge']") as HTMLElement;
       expect(badge).toBeInTheDocument();
       expect(badge.textContent).toContain("Blocking");
-      expect(badge.getAttribute("title")).toBe("Blocking 3 nib(s)");
+      expect(badge.getAttribute("data-tooltip")).toBe("Blocking 3 nib(s)");
       // Link icon renders as an SVG.
       expect(badge.querySelector("svg")).toBeInTheDocument();
       // The bare icon-only element must not be present in pill mode.
@@ -59,11 +60,22 @@ describe("RelationBadge", () => {
 
       const icon = container.querySelector("[data-testid='blocking-icon']") as HTMLElement;
       expect(icon).toBeInTheDocument();
-      expect(icon.getAttribute("title")).toBe("Blocking 2 nib(s)");
+      expect(icon.getAttribute("data-tooltip")).toBe("Blocking 2 nib(s)");
       expect(icon.textContent).not.toContain("Blocking");
       expect(icon.querySelector("svg")).toBeInTheDocument();
       // No pill in icon mode.
       expect(container.querySelector("[data-testid='blocking-badge']")).not.toBeInTheDocument();
     });
+  });
+
+  // The lucide icon is the span's only child and carries `aria-hidden`, so the
+  // count reaches assistive technology through the badge's own label or not at
+  // all. The pill's visible text covers it; the icon variant needs the label.
+  // The table's and detail panel's sweeps render whichever variant the
+  // blocked-emphasis preference picks, so neither is a home for this.
+  it.each(["blocked", "blocking"] as const)("names the %s icon variant for assistive technology", (kind) => {
+    const { container } = render(RelationBadge, { kind, count: 2, variant: "icon" });
+
+    expectDelegatingElementsAreNamed(container);
   });
 });
