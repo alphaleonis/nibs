@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { areaSectionRow } from "./areas";
 
 // nibs-zwnm: a config query that fails while the WEBSOCKET stays healthy used to
 // pin the session — the only re-ask was gated on socket recovery, and queries
@@ -57,7 +58,7 @@ test("a config query that fails with the socket healthy heals without a reload",
 
   // No reload, no navigation, no click: the backoff is the only thing that can
   // change this page.
-  await expect(page.getByRole("row", { name: /^web\b/ }).first()).toBeVisible({ timeout: 20_000 });
+  await expect(areaSectionRow(page, "web")).toBeVisible({ timeout: 20_000 });
   await expect(page.getByTestId("empty-areas-unavailable")).toBeHidden();
 
   // The heal came from a re-ask, not from the first request finally landing.
