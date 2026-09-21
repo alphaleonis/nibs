@@ -1,9 +1,11 @@
 import { test, expect } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { areaSectionRow } from "./areas";
 
-// A `nibs area rename` in another terminal rewrites the store's areas.yml. The
-// running server reloads it and pushes the new vocabulary, so the Areas view
+// A `nibs area set --name` in another terminal rewrites the store's areas.yml.
+// The running server reloads it and pushes the new vocabulary, so the Areas view
 // re-sections in an open page — no restart, no reload (nibs-5cuk).
 //
 // Only a real engine can close this: it needs a genuine WebSocket carrying a
@@ -19,10 +21,19 @@ const repoRoot = resolve(import.meta.dirname, "..", "..");
 function areaRename(from: string, to: string) {
   const store = process.env.NIBS_E2E_STORE;
   if (!store) throw new Error("NIBS_E2E_STORE is unset; playwright.config.ts sets it");
-  execFileSync("go", ["run", ".", "area", "rename", from, to, "--nibs-path", store], {
+  execFileSync("go", ["run", ".", "area", "set", from, "--name", to, "--nibs-path", store], {
     cwd: repoRoot,
     encoding: "utf8",
   });
+  // `nibs area <unknown-verb>` prints the group's help and exits 0, so a verb
+  // this test outgrows leaves the store untouched while execFileSync reports
+  // success — and the page assertion below then times out describing the
+  // browser rather than the command. Read the write back instead of trusting
+  // the exit code.
+  const declared = readFileSync(join(store, "areas.yml"), "utf8");
+  if (!declared.split("\n").some((line) => line.trim() === `- name: ${to}`)) {
+    throw new Error(`areas.yml declares no area named ${to} after renaming ${from}`);
+  }
 }
 
 test("an area renamed from another process re-sections the open page", async ({ page }) => {
@@ -40,18 +51,15 @@ test("an area renamed from another process re-sections the open page", async ({ 
     "View: Areas",
   );
 
-  const webSection = page.getByRole("row", { name: /^web\b/ }).first();
-  await expect(webSection).toBeVisible({ timeout: 10_000 });
+  await expect(areaSectionRow(page, "web")).toBeVisible({ timeout: 10_000 });
 
   try {
     areaRename("web", "frontend");
 
     // No reload and no navigation between the rename and this assertion: the
     // only thing that can change the page is the server's push.
-    await expect(page.getByRole("row", { name: /^frontend\b/ }).first()).toBeVisible({
-      timeout: 15_000,
-    });
-    await expect(page.getByRole("row", { name: /^web\b/ })).toHaveCount(0);
+    await expect(areaSectionRow(page, "frontend")).toBeVisible({ timeout: 15_000 });
+    await expect(areaSectionRow(page, "web")).toHaveCount(0);
   } finally {
     areaRename("frontend", "web");
   }

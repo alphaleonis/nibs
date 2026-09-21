@@ -322,11 +322,16 @@ tasks:
       - cp nibs ~/.local/bin/nibs
 
   playwright:
-    desc: Run Playwright e2e tests (requires built binary)
-    deps: [build]
+    desc: Run the Playwright e2e lane in Chromium (one-time setup; see CLAUDE.md)
+    # web:build rather than build: playwright.config.ts serves the fixture with
+    # `go run . serve`, so the lane needs web/dist for embed.go and never the
+    # ./nibs executable.
+    deps: [web:build]
     dir: web
     cmds:
-      - mise exec -- npx playwright test
+      # The config is named rather than defaulted, because the sibling task
+      # below runs the other one and a bare `playwright test` says neither.
+      - mise exec -- npx playwright test --config=playwright.config.ts
 
   screenshots:
     desc: Capture web UI screenshots for visual verification (web/screenshots/output)

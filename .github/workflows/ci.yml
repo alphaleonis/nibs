@@ -242,6 +242,36 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
       - run: cd web && npx vitest run --reporter=default
 
+  # The browser lane, which no other gate covers: `task test` deliberately
+  # leaves it out so a local run stays fast, so until this job existed a whole
+  # e2e file could go red while every gate stayed green — two did, for days
+  # (nibs-bgpm).
+  #
+  # Its own job rather than a step in `test`: that job is a two-OS matrix, and
+  # these assertions are about the app rather than the platform, so a second leg
+  # would double the browser download to re-answer the same question.
+  e2e:
+    runs-on: ubuntu-latest
+    # A backstop only: playwright already bounds each test and the server
+    # startup. It is here so a wedge outside those — teardown, or a browser that
+    # never exits — costs 20 minutes rather than the 6h default.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      # The browser is not in mise.toml: its version comes from @playwright/test
+      # in package-lock.json, so the install has to follow the npm tree rather
+      # than mise. web:install is all it needs — `task playwright` builds
+      # web/dist itself.
+      - run: task web:install
+      # --with-deps is safe here and only here: it installs the browser's shared
+      # libraries through apt, which the ubuntu runner has and a contributor's
+      # machine may not (CLAUDE.md prescribes the plain form locally).
+      - run: cd web && npx playwright install --with-deps chromium
+      - run: task playwright
+
   lint:
     runs-on: ubuntu-latest
     steps:
