@@ -25,11 +25,6 @@ function areaRename(from: string, to: string) {
     cwd: repoRoot,
     encoding: "utf8",
   });
-  // `nibs area <unknown-verb>` prints the group's help and exits 0, so a verb
-  // this test outgrows leaves the store untouched while execFileSync reports
-  // success — and the page assertion below then times out describing the
-  // browser rather than the command. Read the write back instead of trusting
-  // the exit code.
   const declared = readFileSync(join(store, "areas.yml"), "utf8");
   if (!declared.split("\n").some((line) => line.trim() === `- name: ${to}`)) {
     throw new Error(`areas.yml declares no area named ${to} after renaming ${from}`);

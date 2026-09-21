@@ -41,7 +41,13 @@ already declared also rewrite the nibs assigned to it, because a nib's area is a
 PATH: renaming a node moves every path below it, and retiring one leaves its
 members pointing at a path that no longer exists. Declaring a new one rewrites
 nothing — an area that does not exist yet has no members.`,
-	// Cobra auto-shows help when no subcommand is given — no RunE needed.
+	Args: codedUnknownSubcommand(nil),
+	// The bare `nibs area` prints this group's help and exits 0. Cobra would do
+	// that on its own, but only for a command it considers non-runnable — and a
+	// non-runnable command never reaches its Args validator, so an unrecognized
+	// verb would keep exiting 0. Printing the help here is what lets the
+	// validator run.
+	RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 }
 
 var areaListCmd = &cobra.Command{

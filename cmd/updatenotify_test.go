@@ -15,27 +15,31 @@ func TestUpdateNotifyEligible(t *testing.T) {
 		cmdName string
 		jsonSet bool
 		isTTY   bool
+		isGroup bool
 		want    bool
 	}{
-		{"interactive list on a tty", "list", false, true, true},
+		{"interactive list on a tty", "list", false, true, false, true},
 		// Real command names throughout: maybeNotifyUpdate passes cmd.Name(),
 		// which never returns an alias, so a row naming one would describe an
 		// input this function cannot receive. `get` is the command `nibs show`
 		// reaches.
-		{"get on a tty", "get", false, true, true},
-		{"not a tty (piped)", "list", false, false, false},
-		{"json output suppresses", "list", true, true, false},
-		{"json and non-tty", "list", true, false, false},
-		{"the web server is skipped", "web", false, true, false},
-		{"the query command is skipped", "query", false, true, false},
-		{"tui is skipped (in-app indicator)", "tui", false, true, false},
-		{"completion machinery is skipped", "__complete", false, true, false},
+		{"get on a tty", "get", false, true, false, true},
+		{"not a tty (piped)", "list", false, false, false, false},
+		{"json output suppresses", "list", true, true, false, false},
+		{"json and non-tty", "list", true, false, false, false},
+		{"the web server is skipped", "web", false, true, false, false},
+		{"the query command is skipped", "query", false, true, false, false},
+		{"tui is skipped (in-app indicator)", "tui", false, true, false, false},
+		{"completion machinery is skipped", "__complete", false, true, false, false},
+		// A group reached this function only after it was made runnable, so its
+		// name is on no skip list and nothing else would stay its hand.
+		{"a group typed bare is skipped", "area", false, true, true, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := updateNotifyEligible(tc.cmdName, tc.jsonSet, tc.isTTY); got != tc.want {
-				t.Errorf("updateNotifyEligible(%q, json=%v, tty=%v)=%v, want %v",
-					tc.cmdName, tc.jsonSet, tc.isTTY, got, tc.want)
+			if got := updateNotifyEligible(tc.cmdName, tc.jsonSet, tc.isTTY, tc.isGroup); got != tc.want {
+				t.Errorf("updateNotifyEligible(%q, json=%v, tty=%v, group=%v)=%v, want %v",
+					tc.cmdName, tc.jsonSet, tc.isTTY, tc.isGroup, got, tc.want)
 			}
 		})
 	}
@@ -175,7 +179,7 @@ func TestUpdateNotifySkipCoversSubtrees(t *testing.T) {
 			if err != nil {
 				t.Fatalf("completion %s is not a command: %v", shell, err)
 			}
-			if updateNotifyEligible(updateNotifyKey(cmd), false, true) {
+			if updateNotifyEligible(updateNotifyKey(cmd), false, true, cmd.HasSubCommands()) {
 				t.Errorf("`nibs completion %s` would print an update notice into the script it emits", shell)
 			}
 		})
@@ -186,10 +190,48 @@ func TestUpdateNotifySkipCoversSubtrees(t *testing.T) {
 		if err != nil {
 			t.Fatalf("finding list: %v", err)
 		}
-		if !updateNotifyEligible(updateNotifyKey(cmd), false, true) {
+		if !updateNotifyEligible(updateNotifyKey(cmd), false, true, cmd.HasSubCommands()) {
 			t.Error("`nibs list` stopped being eligible; the subtree walk is too broad")
 		}
 	})
+}
+
+// TestUpdateNotifyStaysQuietForGroups holds the gate against the groups it was
+// added for, and against the verbs it must not take with them.
+//
+// `nibs area` and `nibs config` carry a RunE so their Args validator can refuse
+// an unrecognized verb, and a runnable command reaches root's PersistentPostRun
+// — so the notifier, which had never run for either, now does. Their only own
+// output is help, which is the thing the "help" skip entry exists to keep clean.
+func TestUpdateNotifyStaysQuietForGroups(t *testing.T) {
+	quiet := []string{"area", "config"}
+	loud := [][]string{{"area", "list"}, {"config", "set-prefix"}}
+
+	for _, group := range quiet {
+		t.Run("bare "+group, func(t *testing.T) {
+			cmd, _, err := rootCmd.Find([]string{group})
+			if err != nil {
+				t.Fatalf("`nibs %s` is not a command: %v", group, err)
+			}
+			// isTTY and no --json: every other reason to stay quiet is off.
+			if updateNotifyEligible(updateNotifyKey(cmd), false, true, cmd.HasSubCommands()) {
+				t.Errorf("bare `nibs %s` would append an update notice to its help text", group)
+			}
+		})
+	}
+
+	for _, verb := range loud {
+		t.Run(strings.Join(verb, " "), func(t *testing.T) {
+			cmd, _, err := rootCmd.Find(verb)
+			if err != nil {
+				t.Fatalf("`nibs %s` is not a command: %v", strings.Join(verb, " "), err)
+			}
+			if !updateNotifyEligible(updateNotifyKey(cmd), false, true, cmd.HasSubCommands()) {
+				t.Errorf("`nibs %s` stopped being eligible; the group gate reaches too far",
+					strings.Join(verb, " "))
+			}
+		})
+	}
 }
 
 // TestUpdateNotifySkipsTheServerUnderEitherSpelling is the behavior the map
@@ -204,7 +246,7 @@ func TestUpdateNotifySkipsTheServerUnderEitherSpelling(t *testing.T) {
 			}
 			// isTTY and no --json: every other reason to stay quiet is off, so
 			// the skip map is the only thing that can answer.
-			if updateNotifyEligible(cmd.Name(), false, true) {
+			if updateNotifyEligible(cmd.Name(), false, true, cmd.HasSubCommands()) {
 				t.Errorf("`nibs %s` would print an update notice into the server's output", spelling)
 			}
 		})

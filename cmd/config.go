@@ -40,7 +40,10 @@ var reprefixExecuteFn = reprefix.Execute
 var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Manage project configuration",
-	// Cobra auto-shows help when no subcommand is given — no RunE needed.
+	Args:  codedUnknownSubcommand(nil),
+	// See areaCmd: the help print is what makes this group runnable, and only a
+	// runnable command reaches its Args validator.
+	RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 }
 
 var configSetPrefixCmd = &cobra.Command{
