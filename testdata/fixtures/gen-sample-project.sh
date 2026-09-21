@@ -1690,6 +1690,11 @@ ENDNIB
 # TASKS under Bulk Operations feature (tnib-f020)
 # ============================================================
 
+# tnib-t041 is the fixture's only assignment below a root: every other
+# `milestone:` sits on a root epic, so without this one no scheduled nib has an
+# unscheduled parent, and the milestone view never draws a row whose parent is
+# outside the section. Its chain (tnib-f020, a root) must stay unassigned:
+# assignment is exclusive along a chain and the server refuses both at once.
 cat > "$DIR/tnib-t041--bulk-selection-ui.md" << 'ENDNIB'
 ---
 # tnib-t041
@@ -1703,6 +1708,8 @@ created_at: 2026-03-18T09:00:00Z
 updated_at: 2026-03-20T10:00:00Z
 parent: tnib-f020
 order: a
+milestone: tnib-m001
+milestone_order: e
 ---
 
 ## Description

@@ -8,13 +8,13 @@ import (
 	"github.com/alphaleonis/nibs/internal/output"
 )
 
-// TestListMilestoneQueue pins `nibs list --milestone`: the queue in
+// TestListMilestoneQueue pins `nibs list --milestone-exact`: the queue in
 // milestone_order by default, short ids accepted, and an explicit --sort
 // winning over the queue-order default.
 func TestListMilestoneQueue(t *testing.T) {
 	nibsPath := setupQueueCLITest(t)
 
-	if got, want := queueIDs(t, nibsPath, "tnib-m001"), "tnib-e001 tnib-e002 tnib-e003 tnib-e004"; strings.Join(got, " ") != want {
+	if got, want := queueIDs(t, nibsPath, "tnib-m001"), "tnib-e001 tnib-e002 tnib-e003 tnib-e004 tnib-t041"; strings.Join(got, " ") != want {
 		t.Errorf("queue = %v, want %s", got, want)
 	}
 	if got, want := queueIDs(t, nibsPath, "m002"), "tnib-e005 tnib-e006"; strings.Join(got, " ") != want {
@@ -27,15 +27,15 @@ func TestListMilestoneQueue(t *testing.T) {
 	if _, err := runRootWith(t, "--nibs-path", nibsPath, "mv", "tnib-e003", "--queue", "--first"); err != nil {
 		t.Fatalf("mv --queue --first: %v", err)
 	}
-	if got, want := queueIDs(t, nibsPath, "tnib-m001"), "tnib-e003 tnib-e001 tnib-e002 tnib-e004"; strings.Join(got, " ") != want {
+	if got, want := queueIDs(t, nibsPath, "tnib-m001"), "tnib-e003 tnib-e001 tnib-e002 tnib-e004 tnib-t041"; strings.Join(got, " ") != want {
 		t.Errorf("queue after move = %v, want %s", got, want)
 	}
 	resetListFlags()
-	out, err := runRootWith(t, "--nibs-path", nibsPath, "list", "--milestone", "tnib-m001", "--sort", "id", "-q")
+	out, err := runRootWith(t, "--nibs-path", nibsPath, "list", "--milestone-exact", "tnib-m001", "--sort", "id", "-q")
 	if err != nil {
 		t.Fatalf("list --sort id: %v", err)
 	}
-	if got, want := strings.Join(strings.Fields(out), " "), "tnib-e001 tnib-e002 tnib-e003 tnib-e004"; got != want {
+	if got, want := strings.Join(strings.Fields(out), " "), "tnib-e001 tnib-e002 tnib-e003 tnib-e004 tnib-t041"; got != want {
 		t.Errorf("--sort id = %s, want %s (an explicit sort wins over queue order)", got, want)
 	}
 }
@@ -44,6 +44,10 @@ func TestListMilestoneQueue(t *testing.T) {
 // queue — an assigned nib is out, and so is its structural subtree (planned
 // work, not backlog), while an unassigned root and the milestones themselves
 // (in no queue) are in.
+//
+// tnib-t041 and its parent tnib-f020 are the pair that separates the two rules:
+// the assignment is the child's, so the child leaves the backlog and the parent
+// stays. Reading only the parent axis would take both.
 func TestListBacklog(t *testing.T) {
 	nibsPath := setupQueueCLITest(t)
 	out, err := runRootWith(t, "--nibs-path", nibsPath, "list", "--backlog", "--all", "-q")
@@ -51,12 +55,12 @@ func TestListBacklog(t *testing.T) {
 		t.Fatalf("list --backlog: %v", err)
 	}
 	ids := " " + strings.Join(strings.Fields(out), " ") + " "
-	for _, absent := range []string{"tnib-e001", "tnib-f001", "tnib-t001", "tnib-e005"} {
+	for _, absent := range []string{"tnib-e001", "tnib-f001", "tnib-t001", "tnib-e005", "tnib-t041"} {
 		if strings.Contains(ids, " "+absent+" ") {
 			t.Errorf("--backlog lists %s, which is assigned or under an assigned epic", absent)
 		}
 	}
-	for _, present := range []string{"tnib-t041", "tnib-m001"} {
+	for _, present := range []string{"tnib-f020", "tnib-t042", "tnib-m001"} {
 		if !strings.Contains(ids, " "+present+" ") {
 			t.Errorf("--backlog omits %s, which belongs to no milestone", present)
 		}

@@ -424,10 +424,13 @@ for (const theme of ["daylight", "graphite"] as const) {
   test(`drag affordance — band, indicator and badge — ${theme}`, async ({ page }) => {
     await openApp(page, "milestones", theme);
     await page.evaluate(() => {
-      document.querySelector('tr[data-nib-id="tnib-t041"]')?.scrollIntoView({ block: "center" });
+      document.querySelector('tr[data-nib-id="tnib-t014"]')?.scrollIntoView({ block: "center" });
     });
-    const source = await page.locator('tr[data-nib-id="tnib-t042"]').boundingBox();
-    const target = await page.locator('tr[data-nib-id="tnib-t041"]').boundingBox();
+    // Two children of tnib-f006. tnib-t041 no longer serves as one half of a
+    // sibling pair here: it carries a milestone, so this view draws it in that
+    // queue rather than beside tnib-t042.
+    const source = await page.locator('tr[data-nib-id="tnib-t015"]').boundingBox();
+    const target = await page.locator('tr[data-nib-id="tnib-t014"]').boundingBox();
     if (!source || !target) throw new Error("the drag rows are not laid out");
 
     await page.mouse.move(source.x + 300, source.y + source.height / 2);
@@ -867,3 +870,41 @@ test("areas — the panel stays with its row while the table scrolls", async ({ 
   expect(Math.abs((after?.y ?? 0) - (before?.y ?? 0))).toBeGreaterThan(20);
   await shot(page, "areas-panel-scrolled");
 });
+
+// A truncating cell's tooltip is the ONLY way to read a clipped value, so it has
+// to be legible on both palettes: the popover's own surface over the row beneath
+// it, at a readable size, anchored to the cell it explains. jsdom has no layout
+// and no theming, so this is the record — Playwright can assert the tooltip is
+// visible, not that it looks right.
+for (const theme of ["daylight", "graphite"] as const) {
+  test(`table — truncating cell tooltip — ${theme}`, async ({ page }) => {
+    await openApp(page, "flat", theme);
+
+    const cell = page.locator("td[data-testid='nib-parent'][data-tooltip]").first();
+    await cell.hover();
+    const tip = page.locator('[data-slot="tooltip-content"]');
+    await expect(tip).toBeVisible();
+    // The reveal is the parent's full title with its id, not the id alone.
+    await expect(tip).toHaveText(/\(tnib-[a-z0-9]+\)$/);
+    // Absence, not a non-empty value: `/./` cannot match a reintroduced `title=""`.
+    await expect(cell).not.toHaveAttribute("title");
+
+    const cellBox = await cell.boundingBox();
+    const tipBox = await tip.boundingBox();
+    if (!cellBox || !tipBox) throw new Error("cell or tooltip is not laid out");
+    // Portaled to <body>, so clip to the union: an element-scoped shot of the row
+    // would crop the tooltip away.
+    const x = Math.max(0, Math.min(cellBox.x, tipBox.x) - 24);
+    const y = Math.max(0, Math.min(cellBox.y, tipBox.y) - 24);
+    await page.screenshot({
+      path: join(OUT, `cell-tooltip-${theme}.png`),
+      clip: {
+        x,
+        y,
+        width: Math.max(cellBox.x + cellBox.width, tipBox.x + tipBox.width) - x + 24,
+        height: Math.max(cellBox.y + cellBox.height, tipBox.y + tipBox.height) - y + 24,
+      },
+      animations: "disabled",
+    });
+  });
+}

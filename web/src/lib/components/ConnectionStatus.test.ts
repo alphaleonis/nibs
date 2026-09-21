@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/svelte";
+import { userEvent } from "@testing-library/user-event";
 import { describe, it, expect } from "vitest";
 import ConnectionStatus from "./ConnectionStatus.svelte";
 
@@ -29,5 +30,22 @@ describe("ConnectionStatus", () => {
     const chip = screen.getByTestId("connection-status");
     expect(chip).toHaveAttribute("role", "status");
     expect(chip).toHaveAttribute("aria-live", "polite");
+  });
+
+  // A lone chip outside the table and the detail panel, so it carries its own
+  // tooltip root rather than delegating to a container's.
+  it("explains the drop through the app's styled tooltip, not a native title", async () => {
+    const user = userEvent.setup();
+    render(ConnectionStatus, { props: { status: "disconnected" } });
+    const chip = screen.getByTestId("connection-status");
+
+    await user.hover(chip);
+
+    expect(
+      await screen.findByText(/Live updates are disconnected/, {
+        selector: '[data-slot="tooltip-content"]',
+      })
+    ).toBeInTheDocument();
+    expect(chip).not.toHaveAttribute("title");
   });
 });

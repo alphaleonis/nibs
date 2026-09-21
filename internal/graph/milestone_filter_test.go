@@ -249,3 +249,112 @@ func TestNibAxisFieldsAreQueryable(t *testing.T) {
 		t.Errorf("area = %q, want %q", payload.Nib.Area, "web/ui")
 	}
 }
+
+// TestApplyFilterInMilestoneSelectsTheDerivedMembership is the difference
+// between the two milestone fields in one test: inMilestone answers with the
+// milestone's whole plan — the assigned epic e1 AND its unassigned child t1,
+// which rides along — where milestone answers with the direct assignees alone.
+// Both drop t4 and t5, whose assignments resolve to nothing.
+func TestApplyFilterInMilestoneSelectsTheDerivedMembership(t *testing.T) {
+	reader := milestoneFixture()
+	blocking := &stubBlockingChecker{}
+	ctx := context.Background()
+
+	derived := applyFilterOK(t, ctx, reader.allNibs, &model.NibFilter{InMilestone: strPtr("nibs-m1")}, reader, blocking)
+	assertNibIDs(t, derived, []string{"nibs-e1", "nibs-t1", "nibs-t2"})
+
+	direct := applyFilterOK(t, ctx, reader.allNibs, &model.NibFilter{Milestone: strPtr("nibs-m1")}, reader, blocking)
+	assertNibIDs(t, direct, []string{"nibs-e1", "nibs-t2"})
+
+	// The second milestone has no members at all, so a wrong target cannot pass
+	// by accident on the fixture's first one.
+	empty := applyFilterOK(t, ctx, reader.allNibs, &model.NibFilter{InMilestone: strPtr("nibs-m2")}, reader, blocking)
+	assertNibIDs(t, empty, nil)
+}
+
+// TestApplyFilterInMilestoneDerivesFromTheWholeStore pins the same rule
+// noMilestone carries: membership is read off the store, so an assigned
+// ancestor an earlier branch filtered out still places its subtree.
+func TestApplyFilterInMilestoneDerivesFromTheWholeStore(t *testing.T) {
+	reader := milestoneFixture()
+	child := reader.nibs["nibs-t1"]
+
+	got := applyFilterOK(t, context.Background(), []*nib.Nib{child},
+		&model.NibFilter{InMilestone: strPtr("nibs-m1")}, reader, &stubBlockingChecker{})
+	assertNibIDs(t, got, []string{"nibs-t1"})
+}
+
+// TestApplyFilterInMilestoneShortForm: the derived target is normalized like
+// every other id-valued filter.
+func TestApplyFilterInMilestoneShortForm(t *testing.T) {
+	reader := milestoneFixture()
+
+	got := applyFilterOK(t, context.Background(), reader.allNibs,
+		&model.NibFilter{InMilestone: strPtr("m1")}, reader, &stubBlockingChecker{})
+	assertNibIDs(t, got, []string{"nibs-e1", "nibs-t1", "nibs-t2"})
+}
+
+// TestApplyFilterInMilestoneNonMilestoneTargetIsRefused: the derived field
+// refuses a wrong-typed target as the direct one does. Nothing derives to a
+// non-milestone, so an empty answer would read as "this milestone's plan is
+// empty" for an id that names no milestone.
+func TestApplyFilterInMilestoneNonMilestoneTargetIsRefused(t *testing.T) {
+	reader := milestoneFixture()
+
+	got, err := ApplyFilter(context.Background(), reader.allNibs, &model.NibFilter{InMilestone: strPtr("t3")}, reader, &stubBlockingChecker{})
+	if err == nil {
+		t.Fatalf("got %d nibs and no error; a non-milestone target must be refused", len(got))
+	}
+	if got != nil {
+		t.Errorf("result = %v, want nil alongside the error", got)
+	}
+	var wrongType *FilterTargetTypeError
+	if !errors.As(err, &wrongType) {
+		t.Fatalf("error = %T (%v), want *FilterTargetTypeError", err, err)
+	}
+	if wrongType.Field != "inMilestone" || wrongType.ID != "nibs-t3" || wrongType.Got != "task" || wrongType.Want != "milestone" {
+		t.Errorf("refusal = %+v, want field inMilestone, the normalized id nibs-t3, got task, want milestone", *wrongType)
+	}
+}
+
+// TestApplyFilterInMilestoneWithBacklogIsRefused: the derived field carries the
+// same contradiction rule the direct one does. Every nib inMilestone matches
+// has a derived membership, and noMilestone: true is exactly the absence of
+// one, so the pair is empty by construction rather than by store state — and a
+// wrong-typed or unknown target must not be reported ahead of it.
+func TestApplyFilterInMilestoneWithBacklogIsRefused(t *testing.T) {
+	reader := milestoneFixture()
+	blocking := &stubBlockingChecker{}
+
+	for _, target := range []string{"nibs-m1", "nibs-t3", "nibs-ghost"} {
+		t.Run(target, func(t *testing.T) {
+			got, err := ApplyFilter(context.Background(), reader.allNibs,
+				&model.NibFilter{InMilestone: strPtr(target), NoMilestone: boolPtr(true)}, reader, blocking)
+			if err == nil {
+				t.Fatalf("got %d nibs and no error; inMilestone with noMilestone: true is unsatisfiable", len(got))
+			}
+			if got != nil {
+				t.Errorf("result = %v, want nil alongside the error", got)
+			}
+			var contradiction *FilterTargetContradictionError
+			if !errors.As(err, &contradiction) {
+				t.Fatalf("error = %T (%v), want *FilterTargetContradictionError", err, err)
+			}
+			if contradiction.Field != "inMilestone" || contradiction.PresenceField != "noMilestone" || !contradiction.PresenceValue {
+				t.Errorf("refusal = %+v, want inMilestone + noMilestone: true", *contradiction)
+			}
+		})
+	}
+}
+
+// TestApplyFilterInMilestoneWithBacklogFalseIsAnswered is the other half: only
+// the TRUE pairing is unsatisfiable, so noMilestone: false must still be a
+// query — and one that narrows nothing, since every derived member has a
+// membership.
+func TestApplyFilterInMilestoneWithBacklogFalseIsAnswered(t *testing.T) {
+	reader := milestoneFixture()
+
+	got := applyFilterOK(t, context.Background(), reader.allNibs,
+		&model.NibFilter{InMilestone: strPtr("nibs-m1"), NoMilestone: boolPtr(false)}, reader, &stubBlockingChecker{})
+	assertNibIDs(t, got, []string{"nibs-e1", "nibs-t1", "nibs-t2"})
+}

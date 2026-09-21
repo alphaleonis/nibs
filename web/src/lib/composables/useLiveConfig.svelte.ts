@@ -5,7 +5,7 @@
  * network-only re-execution fails. A failed query is re-asked on a bounded
  * backoff.
  *
- * With no vocabulary, `withSendableArea` (lib/filter.ts) withholds every
+ * With no vocabulary, `withSendableAreas` (lib/filter.ts) withholds every
  * `area:` value and the table answers for the whole store, so this heals on its
  * own rather than waiting for the retry button.
  */

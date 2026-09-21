@@ -1,6 +1,6 @@
 # Roadmap
 
-## Milestone: v1.0 MVP Launch — 0% (0/4) (tnib-m001)
+## Milestone: v1.0 MVP Launch — 0% (0/5) (tnib-m001)
 
 > Ship the minimum viable product with core task management, user authentication, basic dashboard, and API foundation.
 
@@ -29,6 +29,7 @@
   - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Slack integration (tnib-f012)
   - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) REST API v2 with OpenAPI (tnib-f013)
   - ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Webhook payloads missing updated_at timestamp (tnib-b006)
+- ![task](https://img.shields.io/badge/task-1d76db?style=flat-square) Design bulk selection UI (tnib-t041)
 
 ## Milestone: v1.1 Team Collaboration — 0% (0/2) (tnib-m002)
 
@@ -64,7 +65,6 @@
 - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) Keyboard shortcuts for power users (tnib-f019)
 - ![feature](https://img.shields.io/badge/feature-0e8a16?style=flat-square) **Bulk task operations** — 0% (0/2) (tnib-f020)
   > Select multiple tasks and perform bulk operations (assign, change status, move, delete).
-  - ![task](https://img.shields.io/badge/task-1d76db?style=flat-square) Design bulk selection UI (tnib-t041)
   - ![task](https://img.shields.io/badge/task-1d76db?style=flat-square) Implement batch API endpoint (tnib-t042)
 - ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) Search results not updating after task deletion (tnib-b012)
 - ![bug](https://img.shields.io/badge/bug-d73a4a?style=flat-square) File upload fails for names with special characters (tnib-b013)

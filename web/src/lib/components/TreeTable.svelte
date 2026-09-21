@@ -18,6 +18,7 @@
   import * as Popover from "$lib/components/ui/popover/index.js";
   import TreeTableRow from "./TreeTableRow.svelte";
   import TableHeader from "./TableHeader.svelte";
+  import DelegatedTooltip from "./DelegatedTooltip.svelte";
   import AreaDeclareForm from "./AreaDeclareForm.svelte";
   import AreaRowPanel from "./AreaRowPanel.svelte";
   import type { DropPlan } from "../ordering/dropPlan";
@@ -140,7 +141,7 @@
   );
 
   // Server and client parts of the filter. The vocabulary decides whether an
-  // `area` value is sent (withSendableArea in filter.ts); read inside the derived
+  // `area` value is sent (withSendableAreas in filter.ts); read inside the derived
   // so a withheld area is re-applied when the config lands.
   let prepared = $derived(prepareFilter(resolvedFilter, viewSpine().areas));
 
@@ -810,6 +811,10 @@
       {/each}
     </tbody>
   </table>
+  <!-- One tooltip for every `data-tooltip` in the table — header controls, row
+       buttons and the truncating cells — off the element that already delegates
+       this table's clicks. -->
+  <DelegatedTooltip container={scrollContainerEl} suppressed={() => drag.isDragging} />
   </div>
   {#if areaPanel}
     <!-- A Popover rather than a hand-placed div: Escape and an outside click

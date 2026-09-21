@@ -42,16 +42,21 @@ export interface NibFilter {
   blockedById?: string;
   mentionsId?: string;
   mentionedById?: string;
-  // `milestone` is DIRECT assignment (that milestone's queue). `noMilestone` is
-  // DERIVED membership: true keeps the backlog, false its complement. The query
-  // box spells them `milestone:<id>` and `is:backlog`; the false half has no
-  // spelling there.
+  // `inMilestone` is DERIVED membership (the milestone's whole plan, an assigned
+  // nib and the subtree riding along under it) and `milestone` the DIRECT
+  // assignment alone (its queue). `noMilestone` is the derived reading negated:
+  // true keeps the backlog, false its complement. The query box spells them
+  // `milestone:<id>`, `milestone-exact:<id>` and `is:backlog`; the false half of
+  // `noMilestone` has no spelling there.
   milestone?: string;
+  inMilestone?: string;
   noMilestone?: boolean;
-  // The area path and every area declared beneath it (`webhooks` is not within
-  // `web`). The server refuses an undeclared value, so what a list query may
-  // send is `withSendableArea`'s decision (filter.ts).
+  // `area` is the path and every area declared beneath it (`webhooks` is not
+  // within `web`); `areaExact` is the path alone. The server refuses an
+  // undeclared value on either, so what a list query may send is
+  // `withSendableAreas`' decision (filter.ts).
   area?: string;
+  areaExact?: string;
 }
 
 // Compile-time guard: the hand-written NibFilter and the generated one must have

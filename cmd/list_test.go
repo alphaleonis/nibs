@@ -99,8 +99,9 @@ var wantListSortRefusal = `invalid sort "bogus": must be one of ` + strings.Join
 
 // TestListSortRefusesUnknownValue pins that --sort is validated like every other
 // enum on this surface. An unrecognized key used to fall through to the order
-// key while also suppressing the --milestone queue-order default, so the caller
-// got a third order at exit 0 — a wrong answer that looked like a right one.
+// key while also suppressing the --milestone-exact queue-order default, so the
+// caller got a third order at exit 0 — a wrong answer that looked like a right
+// one.
 //
 // Each output mode is driven separately because -c and -q return before the
 // projection and the rendering: a check placed with either would let those two
@@ -213,13 +214,13 @@ func TestListSortInvalidValueDoesNotReorderTheQueue(t *testing.T) {
 	if _, err := runRootWith(t, "--nibs-path", nibsPath, "mv", "tnib-e003", "--queue", "--first"); err != nil {
 		t.Fatalf("mv --queue --first: %v", err)
 	}
-	const wantQueue = "tnib-e003 tnib-e001 tnib-e002 tnib-e004"
+	const wantQueue = "tnib-e003 tnib-e001 tnib-e002 tnib-e004 tnib-t041"
 	if got := strings.Join(queueIDs(t, nibsPath, "tnib-m001"), " "); got != wantQueue {
-		t.Fatalf("--milestone with no --sort = %s, want the queue %s", got, wantQueue)
+		t.Fatalf("--milestone-exact with no --sort = %s, want the queue %s", got, wantQueue)
 	}
 
 	resetListFlags()
-	out, err := runRootWith(t, "--nibs-path", nibsPath, "list", "--milestone", "tnib-m001", "--sort", "milestone-order", "-q")
+	out, err := runRootWith(t, "--nibs-path", nibsPath, "list", "--milestone-exact", "tnib-m001", "--sort", "milestone-order", "-q")
 	if err != nil {
 		t.Fatalf("list --sort milestone-order: %v", err)
 	}
@@ -228,7 +229,7 @@ func TestListSortInvalidValueDoesNotReorderTheQueue(t *testing.T) {
 	}
 
 	resetListFlags()
-	out, err = runRootWith(t, "--nibs-path", nibsPath, "list", "--milestone", "tnib-m001", "--sort", "bogus", "-q")
+	out, err = runRootWith(t, "--nibs-path", nibsPath, "list", "--milestone-exact", "tnib-m001", "--sort", "bogus", "-q")
 	if err == nil {
 		t.Fatalf("--sort bogus returned %q at exit 0; want a refusal", strings.Join(strings.Fields(out), " "))
 	}
@@ -581,8 +582,10 @@ func resetListFlags() {
 	listMentions = ""
 	listMentionedBy = ""
 	listMilestone = ""
+	listMilestoneEx = ""
 	listBacklog = false
 	listArea = ""
+	listAreaExact = ""
 	listReady = false
 	listAll = false
 	listOpen = false

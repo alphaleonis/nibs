@@ -1,13 +1,17 @@
 import { describe, it, expect } from "vitest";
 import {
   EXISTENCE_TOKENS,
+  MILESTONE_ID_TOKENS,
   REL_ID_FIELDS,
+  REL_ID_SEARCH_TYPES,
   REL_TOKEN_ORDER,
   clearHierarchyFilters,
   contradictionTokens,
   hierarchyTokens,
+  isRefusedMilestone,
   recognizeRelationship,
 } from "./relations";
+import type { MilestoneOption } from "../milestones";
 
 // `REL_TOKEN_ORDER` is the single source of truth for the rel/existence vocabulary:
 // `serialize.ts` emits from it, `complete.ts` offers from it, and the two recognition
@@ -109,11 +113,24 @@ describe("relations — the ordered vocabulary drives recognition", () => {
   });
 });
 
-// The assignment axis. `milestone:<id>` is direct assignment (the queue);
-// `is:backlog` is the complement of derived membership.
+// The assignment axis. `milestone:<id>` is DERIVED membership (the milestone's
+// whole plan), `milestone-exact:<id>` the DIRECT assignment alone (its queue),
+// and `is:backlog` the complement of the derived reading.
+//
+// Which key each of the two id tokens writes is the load-bearing part: they are
+// one suffix apart and select different sets, so a spelling wired to the other
+// field reads correctly in the box and answers the wrong question.
 describe("relations — the assignment axis", () => {
-  it("recognizes milestone:<id> as the scalar assignment field", () => {
+  it("recognizes milestone:<id> as the DERIVED field", () => {
     expect(recognizeRelationship("milestone:tnib-1")).toEqual({
+      kind: "id",
+      field: "inMilestone",
+      value: "tnib-1",
+    });
+  });
+
+  it("recognizes milestone-exact:<id> as the DIRECT field", () => {
+    expect(recognizeRelationship("milestone-exact:tnib-1")).toEqual({
       kind: "id",
       field: "milestone",
       value: "tnib-1",
@@ -126,7 +143,12 @@ describe("relations — the assignment axis", () => {
   // vocabulary, so the rejection can only be the empty value.
   it("does not recognize milestone: with an empty value", () => {
     expect(recognizeRelationship("milestone:")).toBeUndefined();
-    expect(REL_ID_FIELDS.get("milestone")).toBe("milestone");
+    expect(REL_ID_FIELDS.get("milestone")).toBe("inMilestone");
+  });
+
+  it("does not recognize milestone-exact: with an empty value", () => {
+    expect(recognizeRelationship("milestone-exact:")).toBeUndefined();
+    expect(REL_ID_FIELDS.get("milestone-exact")).toBe("milestone");
   });
 
   it("writes noMilestone TRUE for is:backlog — the backlog is the nibs no plan covers", () => {
@@ -158,10 +180,98 @@ describe("relations — the assignment axis", () => {
   // A nib in a milestone's queue belongs to that milestone, so it is never
   // backlog: the server refuses the pair, and the refused half is the `true` one.
   it("is a contradictory pair with backlog, and only with backlog set", () => {
-    expect(contradictionTokens({ milestone: "tnib-1", noMilestone: true })).toEqual([
+    expect(contradictionTokens({ inMilestone: "tnib-1", noMilestone: true })).toEqual([
       ["milestone:tnib-1", "is:backlog"],
     ]);
+    expect(contradictionTokens({ inMilestone: "tnib-1", noMilestone: false })).toEqual([]);
+  });
+
+  // The direct field carries the same refusal on the server, so the box must be
+  // able to name that pair too.
+  it("names the exact spelling's pair with backlog", () => {
+    expect(contradictionTokens({ milestone: "tnib-1", noMilestone: true })).toEqual([
+      ["milestone-exact:tnib-1", "is:backlog"],
+    ]);
     expect(contradictionTokens({ milestone: "tnib-1", noMilestone: false })).toEqual([]);
+  });
+
+  // Only this token constrains its typeahead, and the constraint has to live on
+  // the spec: the search behind it is the one every relationship token uses.
+  it("declares the milestone-only search constraint on both assignment specs", () => {
+    const constrained = new Set(["milestone", "milestone-exact"]);
+    for (const spec of REL_TOKEN_ORDER) {
+      if (spec.kind !== "id") continue;
+      const expected = constrained.has(spec.name) ? ["milestone"] : undefined;
+      expect(REL_ID_SEARCH_TYPES.get(spec.name)).toEqual(expected);
+    }
+  });
+});
+
+// The two tokens the box checks against the milestone list, derived from the
+// same constraint that narrows their typeahead rather than listed a second time.
+describe("relations — the assignment-axis token list", () => {
+  it("covers both spellings, each paired with the field it writes", () => {
+    expect(MILESTONE_ID_TOKENS).toEqual([
+      { field: "inMilestone", name: "milestone" },
+      { field: "milestone", name: "milestone-exact" },
+    ]);
+  });
+});
+
+// The typed-or-pasted half: the completion can only narrow what it OFFERS, and a
+// value the server will refuse still reaches the box by hand or by a shared link.
+describe("relations — milestone vocabulary refusal", () => {
+  const MILESTONES: MilestoneOption[] = [
+    { id: "tnib-m1", title: "v1", status: "todo" },
+    { id: "tnib-m2", title: "v2", status: "in-progress" },
+  ];
+
+  it("refuses an id no milestone carries", () => {
+    expect(isRefusedMilestone("tnib-abc1", MILESTONES, "tnib-")).toBe(true);
+  });
+
+  it("accepts a declared milestone id, whatever its status", () => {
+    expect(isRefusedMilestone("tnib-m1", MILESTONES, "tnib-")).toBe(false);
+    expect(isRefusedMilestone("tnib-m2", MILESTONES, "tnib-")).toBe(false);
+  });
+
+  // `normalizeIDInMap` prepends the store prefix, so `milestone:m1` is a WORKING
+  // filter, and the typeahead's own search matches short ids too. Refusing one
+  // would name an innocent token.
+  it("accepts the short form the server's prefix-prepend resolves", () => {
+    expect(isRefusedMilestone("m1", MILESTONES, "tnib-")).toBe(false);
+    expect(isRefusedMilestone("m9", MILESTONES, "tnib-")).toBe(true);
+    // A store with no prefix gets no prepend, server-side or here.
+    expect(isRefusedMilestone("m1", MILESTONES, "")).toBe(true);
+  });
+
+  // The prepend is skipped when the id already carries the prefix, so a doubled
+  // prefix resolves to nothing there and must resolve to nothing here.
+  it("does not prepend a prefix the value already carries", () => {
+    const doubled: MilestoneOption[] = [{ id: "tnib-tnib-m1", title: "v1", status: "todo" }];
+    expect(isRefusedMilestone("tnib-m1", doubled, "tnib-")).toBe(true);
+  });
+
+  // The server's map lookup is exact. The box lowercases a token's value, so an
+  // uppercase-prefix store — `ValidatePrefix` runs from `nibs init`/`set-prefix`,
+  // never on config load — has its query refused whatever is typed. Folding here
+  // would answer "accepted" for precisely that store.
+  it("compares ids exactly", () => {
+    const shouty: MilestoneOption[] = [{ id: "TNIB-M1", title: "v1", status: "todo" }];
+    expect(isRefusedMilestone("tnib-m1", shouty, "tnib-")).toBe(true);
+  });
+
+  // The population an "empty means loading" reading never flagged: here the
+  // server refuses every `milestone:` value, so every one is worth a marker.
+  it("refuses every value in a store that holds no milestones", () => {
+    expect(isRefusedMilestone("tnib-m1", [], "tnib-")).toBe(true);
+  });
+
+  // `MILESTONES_QUERY` and `CONFIG_QUERY` resolve on their own schedules, and a
+  // short id cannot be judged without the prefix at all.
+  it("withholds judgment until both the list and the prefix have arrived", () => {
+    expect(isRefusedMilestone("tnib-abc1", null, "tnib-")).toBe(false);
+    expect(isRefusedMilestone("tnib-abc1", MILESTONES, null)).toBe(false);
   });
 });
 

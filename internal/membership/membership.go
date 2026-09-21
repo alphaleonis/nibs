@@ -156,6 +156,25 @@ func (v *View) MilestoneOf(id string) string {
 	return ""
 }
 
+// UnscheduledMembers returns the container's DirectMembers that MilestoneOf
+// places in no milestone. It is what belongs to the container in the BACKLOG:
+// a member a milestone schedules is drawn in that milestone, so counting it
+// here too would place one nib in two sections and in two rollups.
+//
+// MilestoneOf is derived membership, not the member's own assignment — a
+// member inherits its container's — so this answers the backlog question
+// only for a container MilestoneOf itself places in no milestone, which is
+// what both call sites read.
+func (v *View) UnscheduledMembers(containerID string) []*nib.Nib {
+	var items []*nib.Nib
+	for _, b := range v.DirectMembers(containerID) {
+		if v.MilestoneOf(b.ID) == "" {
+			items = append(items, b)
+		}
+	}
+	return items
+}
+
 // EpicGroup is one epic and the Items grouped under it.
 type EpicGroup struct {
 	Epic  *nib.Nib
@@ -180,13 +199,7 @@ func (v *View) Backlog() Backlog {
 		case "milestone":
 		case "epic":
 			if v.MilestoneOf(b.ID) == "" {
-				var items []*nib.Nib
-				for _, child := range v.DirectMembers(b.ID) {
-					if v.MilestoneOf(child.ID) == "" {
-						items = append(items, child)
-					}
-				}
-				rem.Epics = append(rem.Epics, EpicGroup{Epic: b, Items: items})
+				rem.Epics = append(rem.Epics, EpicGroup{Epic: b, Items: v.UnscheduledMembers(b.ID)})
 			}
 		default:
 			if v.isRoot(b) && v.MilestoneOf(b.ID) == "" {

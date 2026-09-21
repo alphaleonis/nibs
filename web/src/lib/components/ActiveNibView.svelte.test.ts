@@ -12,6 +12,7 @@ import type { ViewState } from "$lib/composables/activeView";
 import { Preferences } from "$lib/preferences.svelte";
 import { editNibForm } from "$lib/nibForm.svelte";
 import ActiveNibView from "./ActiveNibView.svelte";
+import { expectNoNativeTitles, expectDelegatingElementsAreNamed } from "$lib/testing/nativeTitle";
 
 // bits-ui scroll lock sets pointer-events: none on <body>, so disable the check.
 const user = userEvent.setup({ pointerEventsCheck: 0 });
@@ -314,8 +315,8 @@ describe("ActiveNibView", () => {
 
       const title = screen.getByTestId("anv-title") as HTMLInputElement;
       expect(title.value).toBe(form.title);
-      // ellipsis + tooltip: full text carried in the title attribute, single-line class.
-      expect(title).toHaveAttribute("title", form.title);
+      // ellipsis + tooltip: full text carried by the delegated tooltip, single-line class.
+      expect(title).toHaveAttribute("data-tooltip", form.title);
       expect(title).toHaveClass("anv-title");
     });
 
@@ -414,7 +415,7 @@ describe("ActiveNibView", () => {
       const badge = screen.getByTestId("blocked-badge");
       expect(badge).toBeInTheDocument();
       expect(badge).toHaveTextContent("Blocked");
-      expect(badge).toHaveAttribute("title", "Blocked by 1 nib(s)");
+      expect(badge).toHaveAttribute("data-tooltip", "Blocked by 1 nib(s)");
     });
 
     it("hides the blocked badge when blockedBy is empty", () => {
@@ -452,7 +453,7 @@ describe("ActiveNibView", () => {
       const badge = screen.getByTestId("blocking-badge");
       expect(badge).toBeInTheDocument();
       expect(badge).toHaveTextContent("Blocking");
-      expect(badge).toHaveAttribute("title", "Blocking 1 nib(s)");
+      expect(badge).toHaveAttribute("data-tooltip", "Blocking 1 nib(s)");
     });
 
     it("hides the blocking badge when blocking is empty", () => {
@@ -1415,6 +1416,51 @@ describe("ActiveNibView", () => {
       flushSync();
 
       await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledWith("Nib updated"));
+    });
+  });
+  // ---- tooltips ------------------------------------------------------------
+  describe("tooltips", () => {
+    const CONTENT = '[data-slot="tooltip-content"]';
+
+    it("opens the styled tooltip for a header icon button", async () => {
+      renderView(makeView({ form: makeEditForm() }), confirmDialog);
+
+      await user.hover(screen.getByTestId("anv-close"));
+
+      expect(await screen.findByText("Close", { selector: CONTENT })).toBeInTheDocument();
+    });
+
+    it("opens the styled tooltip for a status indicator", async () => {
+      const detail = {
+        nib: makeDetailNib({ blockedBy: [ref("nibs-b1", "Blocker")] }),
+        fetching: false,
+      };
+      renderView(makeView({ detail }), confirmDialog);
+
+      await user.hover(screen.getByTestId("blocked-badge"));
+
+      expect(
+        await screen.findByText("Blocked by 1 nib(s)", { selector: CONTENT })
+      ).toBeInTheDocument();
+    });
+
+    it("leaves nothing in the detail panel on the browser's native tooltip", () => {
+      const detail = {
+        nib: makeDetailNib({
+          blockedBy: [ref("nibs-b1", "Blocker")],
+          blocking: [ref("nibs-b2", "Blocked")],
+          documents: ["docs/a-long-design-note.md"],
+        }),
+        fetching: false,
+      };
+      renderView(makeView({ form: makeEditForm({ dirty: true }), detail }), confirmDialog);
+
+      // The dirty marker, the documents list and both relation badges are drawn
+      // here, so the shared components render too.
+      expect(screen.getAllByTestId("anv-unsaved-dot").length).toBeGreaterThan(0);
+      expect(screen.getByTestId("anv-documents-section")).toBeInTheDocument();
+      expectNoNativeTitles();
+      expectDelegatingElementsAreNamed();
     });
   });
 });

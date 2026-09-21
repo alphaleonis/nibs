@@ -184,8 +184,10 @@ type scopeFilterInfo struct {
 func scopeFilterCatalogEntries() []scopeFilterInfo {
 	return []scopeFilterInfo{
 		{"--milestone <id>", flagUsage("list", "milestone")},
+		{"--milestone-exact <id>", flagUsage("list", "milestone-exact")},
 		{"--backlog", flagUsage("list", "backlog")},
 		{"--area <path>", flagUsage("list", "area")},
+		{"--area-exact <path>", flagUsage("list", "area-exact")},
 	}
 }
 
@@ -256,8 +258,8 @@ func catalogFilters() error {
 	}
 	_ = tw.Flush()
 
-	b.WriteString("\nScope filters — 'nibs list' only ('nibs rel' takes none of them). The two\n")
-	b.WriteString("milestone flags are mutually exclusive with each other:\n\n")
+	b.WriteString("\nScope filters — 'nibs list' only ('nibs rel' takes none of them). Each\n")
+	b.WriteString("milestone flag is mutually exclusive with --backlog:\n\n")
 	stw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(stw, "FLAG\tSELECTS")
 	for _, q := range scopeFilters {
@@ -295,9 +297,9 @@ func catalogFilters() error {
 	b.WriteString(strings.Join(sortKeys, ", "))
 	b.WriteString("\n\nA key outside that set is refused (exit 2) rather than defaulted. With no\n")
 	b.WriteString("--sort, rows come back in the order key (the sibling order), or in queue\n")
-	b.WriteString("order when --milestone selects a milestone's queue. created and updated are\n")
-	b.WriteString("newest first; the rest ascend. 'nibs rel' takes no --sort — it orders with\n")
-	b.WriteString("--order topo instead.\n")
+	b.WriteString("order when --milestone-exact selects a milestone's queue. created and\n")
+	b.WriteString("updated are newest first; the rest ascend. 'nibs rel' takes no --sort — it\n")
+	b.WriteString("orders with --order topo instead.\n")
 	fmt.Print(b.String())
 	return nil
 }
@@ -340,7 +342,7 @@ func catalogHierarchy() error {
 }
 
 // areaCommandCatalogEntries returns the area surface: the verbs that read and
-// edit the vocabulary, and the three flags that assign to it and filter by it.
+// edit the vocabulary, and the flags that assign to it and filter by it.
 // Every purpose is the command's own Short or the flag's own usage string, so
 // this table cannot drift from what the CLI accepts.
 func areaCommandCatalogEntries() []recipeInfo {
@@ -352,6 +354,7 @@ func areaCommandCatalogEntries() []recipeInfo {
 		{`nibs new "<title>" -t <type> --area <path>`, flagUsage("new", "area")},
 		{"nibs set <id> --area <path>", flagUsage("set", "area")},
 		{"nibs list --area <path>", flagUsage("list", "area")},
+		{"nibs list --area-exact <path>", flagUsage("list", "area-exact")},
 	}
 }
 
@@ -397,9 +400,9 @@ func catalogAreas() error {
 	b.WriteString("than a silently empty listing; a store that declares no areas says that\n")
 	b.WriteString("instead. 'nibs set <id> --clear area' unassigns.\n")
 	b.WriteString("\n'nibs list --area' is DOWNWARD-CLOSED over the declared tree: --area web\n")
-	b.WriteString("selects the nibs in web and those in every area declared beneath it. It is a\n")
-	b.WriteString("'nibs list' flag only ('nibs rel' takes no --area), and a milestone takes no\n")
-	b.WriteString("area at all.\n")
+	b.WriteString("selects the nibs in web and those in every area declared beneath it, while\n")
+	b.WriteString("--area-exact web selects the nibs in web alone. Both are 'nibs list' flags\n")
+	b.WriteString("only ('nibs rel' takes neither), and a milestone takes no area at all.\n")
 	b.WriteString("\n'nibs area add <path>' declares one, taking the FULL path of the new node\n")
 	b.WriteString("('add web/dashboard' nests it under an already-declared 'web') plus\n")
 	b.WriteString("--description and --color; a parent the store does not declare is refused\n")
@@ -484,7 +487,7 @@ func catalogOpenWorkRecipes() []recipeInfo {
 	return []recipeInfo{
 		{"nibs list", "open work everywhere (closed statuses hidden by default)"},
 		{"nibs rel <id> --rel descendants", "open work under a parent (add -t bug for open bugs only)"},
-		{"nibs list --milestone <id>", "open work in a milestone's queue, in queue order (--backlog: what no milestone holds)"},
+		{"nibs list --milestone <id>", "open work in a milestone's plan, inherited work included (--milestone-exact: its queue alone, in queue order; --backlog: what no milestone holds)"},
 		{"nibs list -s closed", "only closed nibs (an explicit -s overrides the open default)"},
 		{"nibs list --all", "every status, including the closed ones"},
 		{"nibs list --ready", flagUsage("list", "ready")},

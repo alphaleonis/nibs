@@ -21,6 +21,8 @@ import { makeTestContext } from "../contexts";
 import { switchViewLevel } from "../resolvePrefs";
 import { NibChangeTracker } from "../changeTracker.svelte";
 import { Preferences } from "../preferences.svelte";
+import { ALL_COLUMN_KEYS } from "../columns";
+import { expectNoNativeTitles, expectDelegatingElementsAreNamed } from "../testing/nativeTitle";
 
 function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
   return {
@@ -667,14 +669,26 @@ describe("TreeTable", () => {
     // The assignment pair's refused half is `is:backlog`, a true-valued token, and
     // the axis is outside the hierarchy the escape hatch clears.
     it("names a milestone/backlog pair but omits the hierarchy escape hatch", () => {
-      renderWithError(contradictionError("milestone filter: contradicts noMilestone: true"), {
-        filter: { milestone: "nibs-m", noMilestone: true },
+      renderWithError(contradictionError("inMilestone filter: contradicts noMilestone: true"), {
+        filter: { inMilestone: "nibs-m", noMilestone: true },
       });
 
       const explanation = screen.getByTestId("empty-contradiction");
       expect(explanation).toHaveTextContent("milestone:nibs-m");
       expect(explanation).toHaveTextContent("is:backlog");
       expect(screen.queryByRole("button", { name: /clear hierarchy filters/i })).not.toBeInTheDocument();
+    });
+
+    // The direct field carries the same refusal, and the explanation has to spell
+    // it back as the token that was typed rather than as the other spelling.
+    it("names the exact spelling's pair under its own token", () => {
+      renderWithError(contradictionError("milestone filter: contradicts noMilestone: true"), {
+        filter: { milestone: "nibs-m", noMilestone: true },
+      });
+
+      const explanation = screen.getByTestId("empty-contradiction");
+      expect(explanation).toHaveTextContent("milestone-exact:nibs-m");
+      expect(explanation).toHaveTextContent("is:backlog");
     });
 
     // The calm treatment is earned by the code AND by the client being able to
@@ -4903,5 +4917,121 @@ describe("TreeTable — the row context menu on a section header", () => {
       expect.objectContaining({ hasChildren: true }),
       expect.any(Function),
     );
+  });
+});
+
+// ---- tooltips ------------------------------------------------------------
+// The table's tooltips are delegated: cells and controls carry `data-tooltip`
+// and one <DelegatedTooltip> on the scroll container reveals them. These drive
+// the hover so a broken delegation fails here, rather than asserting the
+// attribute and calling that a tooltip.
+describe("TreeTable — tooltips", () => {
+  const CONTENT = '[data-slot="tooltip-content"]';
+
+  beforeEach(() => {
+    mockQueryStore.mockReset();
+    mockSubscriptionStore.mockReset();
+    mockSubscriptionStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: undefined, stale: false }) as any
+    );
+  });
+
+  function renderWith(nibs: TreeTableNib[], visibleColumns: ColumnKey[]) {
+    mockQueryStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+    );
+    return renderTreeTable({ filter: {}, viewLevel: "none" as ViewLevel, visibleColumns });
+  }
+
+  it("reveals the parent's full title with its id, not the id alone", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWith(
+      [
+        makeTreeTableNib({ id: "tnib-e002", title: "User Authentication", type: "epic" }),
+        makeTreeTableNib({ id: "tnib-t001", title: "Sign-in form", parentId: "tnib-e002" }),
+      ],
+      ["title", "parent"],
+    );
+
+    const cell = container.querySelector("[data-testid='nib-parent'][data-tooltip]") as HTMLElement;
+    expect(cell).toBeInTheDocument();
+    await user.hover(cell);
+
+    expect(
+      await screen.findByText("User Authentication (tnib-e002)", { selector: CONTENT })
+    ).toBeInTheDocument();
+    // The defect this replaces: the id alone, with the clipped title unreadable.
+    expect(screen.queryByText("tnib-e002", { selector: CONTENT })).not.toBeInTheDocument();
+  });
+
+  it("reveals the milestone's full title with its id", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWith(
+      [
+        makeTreeTableNib({ id: "tnib-m001", title: "Release vNext", type: "milestone" }),
+        makeTreeTableNib({ id: "tnib-t002", title: "Ship it", milestone: "tnib-m001" }),
+      ],
+      ["title", "milestone"],
+    );
+
+    const cell = container.querySelector("[data-testid='nib-milestone'][data-tooltip]") as HTMLElement;
+    expect(cell).toBeInTheDocument();
+    await user.hover(cell);
+
+    expect(
+      await screen.findByText("Release vNext (tnib-m001)", { selector: CONTENT })
+    ).toBeInTheDocument();
+  });
+
+  it("opens the styled tooltip for a row's icon button", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWith(
+      [makeTreeTableNib({ id: "tnib-e003", title: "An epic", type: "epic" })],
+      ["title"],
+    );
+
+    const addChild = container.querySelector("[data-testid='row-add-child']") as HTMLElement;
+    expect(addChild).toBeInTheDocument();
+    await user.hover(addChild);
+
+    expect(await screen.findByText("Add child", { selector: CONTENT })).toBeInTheDocument();
+  });
+
+  it("opens the styled tooltip for a status indicator", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWith(
+      [makeTreeTableNib({ id: "tnib-t003", title: "Waiting", blockedByIds: ["tnib-t004"] })],
+      ["title"],
+    );
+
+    const badge = container.querySelector("[data-testid='blocked-badge']") as HTMLElement;
+    expect(badge).toBeInTheDocument();
+    await user.hover(badge);
+
+    expect(await screen.findByText("Blocked by 1 nib(s)", { selector: CONTENT })).toBeInTheDocument();
+  });
+
+  it("leaves nothing in the table on the browser's native tooltip", () => {
+    renderWith(
+      [
+        makeTreeTableNib({ id: "tnib-e004", title: "An epic", type: "epic" }),
+        makeTreeTableNib({
+          id: "tnib-t005",
+          title: "Everything at once",
+          parentId: "tnib-e004",
+          milestone: "tnib-m002",
+          area: "engineering/web",
+          blockingIds: ["tnib-t006"],
+          blockedByIds: ["tnib-t007"],
+        }),
+      ],
+      [...ALL_COLUMN_KEYS],
+    );
+
+    // Every column visible, so each cell snippet is on screen; `document.body`
+    // rather than the container so portaled content counts too.
+    expect(document.querySelectorAll("[data-testid='tree-row']")).toHaveLength(2);
+    expectNoNativeTitles();
+    expectDelegatingElementsAreNamed();
   });
 });

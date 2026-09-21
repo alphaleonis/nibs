@@ -338,9 +338,15 @@ export const TREE_TABLE_QUERY = graphql(`
 // Typeahead for relationship-id tokens. `search` matches id fragments as well as
 // text. A separate operation from TREE_TABLE_QUERY so urql keeps their results
 // apart.
+//
+// `types` narrows the candidates for a token that names one kind of nib
+// (`milestone:`). It is a variable rather than a client-side filter so the
+// typeahead's eight-row cap (`NIB_SEARCH_LIMIT`) trims an already-narrowed list:
+// sieving the answer instead could come back empty while matching nibs sat below
+// that cap. Omitted, it filters nothing.
 export const SEARCH_NIBS_QUERY = graphql(`
-  query SearchNibs($search: String!) {
-    nibs(filter: { search: $search }) {
+  query SearchNibs($search: String!, $types: [String!]) {
+    nibs(filter: { search: $search, type: $types }) {
       id
       title
       type

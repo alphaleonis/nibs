@@ -147,7 +147,8 @@
           data-action="add-child"
           data-child-type={nib.type}
           class="row-add-child-btn"
-          title="Add child"
+          data-tooltip="Add child"
+          aria-label="Add child"
         >
           <Plus size={14} />
         </button>
@@ -158,7 +159,7 @@
           data-testid="row-area-actions"
           data-action="area-actions"
           class="row-add-child-btn"
-          title="Area actions"
+          data-tooltip="Area actions"
           aria-label="Area actions"
         >
           <Ellipsis size={14} />

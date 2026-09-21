@@ -14,11 +14,8 @@ import (
 // fixture. The goldens pin the v2-axes semantics: a milestone's members are
 // its `milestone:` assignees listed in milestone_order (its progress rolls
 // over them while childCount reports 0), and every other container keeps its
-// structural decomposition. The three ROOTED context goldens are byte-identical
-// to the pre-cutover captures — the queue preserved the old sibling order — so
-// they still witness nibs-a3fb's "output otherwise byte-identical" guarantee.
-// The two OVERVIEW goldens are outside that witness: that surface also names
-// the derived active milestone and what `nibs next` answers.
+// structural decomposition.
+//
 // Regenerate deliberately with NIBS_UPDATE_GOLDENS=1 when an output change is
 // intended and reviewed.
 func TestMembershipConsumerFixturePins(t *testing.T) {
@@ -35,9 +32,9 @@ func TestMembershipConsumerFixturePins(t *testing.T) {
 		{"context-overview", []string{"--nibs-path", nibsPath, "context"}},
 		{"context-milestone", []string{"--nibs-path", nibsPath, "context", "tnib-m001"}},
 		{"context-json", []string{"--nibs-path", nibsPath, "context", "--json"}},
-		// The two goldens below were captured by running the PRE-cutover binary
-		// (commit bdb7692, the branch base) against the fixture, so they pin
-		// base behavior even though they entered the tree after the cutover.
+		// context-epic was captured by running the PRE-cutover binary (commit
+		// bdb7692, the branch base) against the fixture, so it entered the tree
+		// already pinning base behavior.
 		{"context-epic", []string{"--nibs-path", nibsPath, "context", "tnib-e002"}},
 		{"context-milestone-json", []string{"--nibs-path", nibsPath, "context", "tnib-m001", "--json"}},
 		{"list-projection", []string{"--nibs-path", nibsPath, "list", "--all", "-f", "id,children,progress"}},

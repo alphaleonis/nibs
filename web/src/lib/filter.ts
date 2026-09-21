@@ -82,8 +82,12 @@ export function hasClientFilters(filter: NibFilter): boolean {
   );
 }
 
+/** The ownership keys, both checked against the vocabulary before they are sent. */
+const AREA_FIELDS = ["area", "areaExact"] as const;
+
 /**
- * `filter` with `area` withheld unless the vocabulary answers "declared" for it.
+ * `filter` with each ownership path withheld unless the vocabulary answers
+ * "declared" for it.
  *
  * The server refuses an undeclared area with `FilterAreaError`
  * (`refuseUndeclaredArea`, internal/graph/filters.go), which is not tagged
@@ -98,12 +102,17 @@ export function hasClientFilters(filter: NibFilter): boolean {
  * - The empty string is sent so the server refuses it; withholding it would widen
  *   the query to the whole store. The query box cannot produce one.
  */
-function withSendableArea(filter: NibFilter, areas: AreaVocabulary): NibFilter {
-  if (typeof filter.area !== "string") return filter;
-  if (filter.area === "") return filter;
-  if (areas.validity(filter.area) === "declared") return filter;
-  const { area, ...rest } = filter;
-  return rest;
+function withSendableAreas(filter: NibFilter, areas: AreaVocabulary): NibFilter {
+  let sendable = filter;
+  for (const field of AREA_FIELDS) {
+    const path = sendable[field];
+    if (typeof path !== "string" || path === "") continue;
+    if (areas.validity(path) === "declared") continue;
+    const next = { ...sendable };
+    delete next[field];
+    sendable = next;
+  }
+  return sendable;
 }
 
 /**
@@ -112,7 +121,7 @@ function withSendableArea(filter: NibFilter, areas: AreaVocabulary): NibFilter {
  * be withheld.
  */
 export function prepareFilter(filter: NibFilter, areas: AreaVocabulary): PreparedFilter {
-  const sendable = withSendableArea(filter, areas);
+  const sendable = withSendableAreas(filter, areas);
 
   if (!hasClientFilters(filter)) {
     return {

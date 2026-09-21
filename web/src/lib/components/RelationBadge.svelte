@@ -14,9 +14,13 @@
 
   let { kind, count, variant = "pill", class: className = "" }: Props = $props();
 
+  // The count is revealed through `data-tooltip`, so a badge only shows one under
+  // a <DelegatedTooltip> container — the table and the detail panel, its two
+  // callers. Its own root instead would be one per badge per row.
+
   const config = $derived(RELATION_CONFIG[kind]);
   const Icon = $derived(config.icon);
-  const title = $derived(config.title(count));
+  const tooltip = $derived(config.title(count));
 </script>
 
 {#if variant === "icon"}
@@ -24,7 +28,8 @@
     data-testid={`${kind}-icon`}
     class={cn("inline-flex items-center shrink-0", className)}
     style="color: {config.iconColor};"
-    {title}
+    data-tooltip={tooltip}
+    aria-label={tooltip}
   >
     <Icon size={12} />
   </span>
@@ -36,7 +41,7 @@
       config.pillClasses,
       className,
     )}
-    {title}
+    data-tooltip={tooltip}
   >
     <Icon size={12} />
     {config.label}

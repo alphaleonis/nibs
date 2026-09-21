@@ -43,11 +43,25 @@ describe("relTokenValueContext — recognizes a rel-id token value", () => {
     expect(ctx).toEqual({ field: "siblingId", name: "sibling", fragment: "tni", start: 8, end: 11 });
   });
 
-  // The assignment axis takes a nib id like the relationship tokens, so listing it
-  // in REL_TOKEN_ORDER as an `id` entry is what gives it the same typeahead.
-  it("milestone:tni → milestone + fragment 'tni' + replace range", () => {
+  // The assignment axis takes a nib id like the relationship tokens, so listing
+  // both spellings in REL_TOKEN_ORDER as `id` entries is what gives them the same
+  // typeahead — each narrowed to milestones, each writing its own field.
+  it("milestone:tni → inMilestone + fragment 'tni' + replace range", () => {
     const ctx = relTokenValueContext("milestone:tni", 13);
-    expect(ctx).toEqual({ field: "milestone", name: "milestone", fragment: "tni", start: 10, end: 13 });
+    expect(ctx).toEqual({ field: "inMilestone", name: "milestone", fragment: "tni", start: 10, end: 13, searchTypes: ["milestone"] });
+  });
+
+  it("milestone-exact:tni → milestone + fragment 'tni' + replace range", () => {
+    const ctx = relTokenValueContext("milestone-exact:tni", 19);
+    expect(ctx).toEqual({ field: "milestone", name: "milestone-exact", fragment: "tni", start: 16, end: 19, searchTypes: ["milestone"] });
+  });
+
+  // The constraint rides on the token spec, so it reaches the search for this one
+  // name and no other — the same search serves every relationship token.
+  it("carries no search constraint for the relationship tokens", () => {
+    expect(at("parent:tni")?.searchTypes).toBeUndefined();
+    expect(at("blocking:tni")?.searchTypes).toBeUndefined();
+    expect(at("mentions:tni")?.searchTypes).toBeUndefined();
   });
 
   it("takes the WHOLE post-colon run as the fragment even when the caret is mid-value", () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { AREA_FIELD, isRefusedArea, recognizeArea } from "./area";
+import { AREA_TOKEN_ORDER, isRefusedArea, recognizeArea } from "./area";
 import type { AreaMatch } from "./area";
 import {
   createAreaVocabulary,
@@ -23,16 +23,16 @@ describe("recognizeArea — the token shape, before any vocabulary", () => {
   // The whole shape axis. Recognition is pure: it decides WHICH tokens are area
   // tokens and what value each carries, and never whether that value is declared.
   const cases: { name: string; token: string; expected: AreaMatch | undefined }[] = [
-    { name: "a plain path", token: "area:web", expected: { kind: "area", value: "web" } },
+    { name: "a plain path", token: "area:web", expected: { kind: "area", field: "area", name: "area", value: "web" } },
     {
       name: "a nested path",
       token: "area:web/dashboard",
-      expected: { kind: "area", value: "web/dashboard" },
+      expected: { kind: "area", field: "area", name: "area", value: "web/dashboard" },
     },
     {
       name: "the field name case-insensitively",
       token: "AREA:web",
-      expected: { kind: "area", value: "web" },
+      expected: { kind: "area", field: "area", name: "area", value: "web" },
     },
     // Area names are only forbidden a `/` and outer whitespace (area.validateNodes),
     // so these characters are part of a path rather than grammar. The value is the
@@ -40,17 +40,17 @@ describe("recognizeArea — the token shape, before any vocabulary", () => {
     {
       name: "a comma inside the value, taken whole",
       token: "area:a,b",
-      expected: { kind: "area", value: "a,b" },
+      expected: { kind: "area", field: "area", name: "area", value: "a,b" },
     },
     {
       name: "a second colon inside the value",
       token: "area:a:b",
-      expected: { kind: "area", value: "a:b" },
+      expected: { kind: "area", field: "area", name: "area", value: "a:b" },
     },
     {
       name: "the value's own case",
       token: "area:Web",
-      expected: { kind: "area", value: "Web" },
+      expected: { kind: "area", field: "area", name: "area", value: "Web" },
     },
     // Negation has no `excludeArea` to write and must not reach free text, where
     // Bleve would read it as a MUST-NOT over an unindexed field and match everything.
@@ -69,6 +69,31 @@ describe("recognizeArea — the token shape, before any vocabulary", () => {
     { name: "a field this one is a prefix of", token: "areas:web", expected: undefined },
     { name: "a relationship token", token: "parent:tnib-1", expected: undefined },
     { name: "a bare word", token: "web", expected: undefined },
+    // The exact token is the same grammar under a second name, writing the other
+    // NibFilter key. `FIELD_TOKEN` cannot match a hyphenated name, so it reaches
+    // this recognizer the way `blocked-by` reaches the relationship one.
+    {
+      name: "the exact token",
+      token: "area-exact:web",
+      expected: { kind: "area", field: "areaExact", name: "area-exact", value: "web" },
+    },
+    {
+      name: "the exact token's nested path",
+      token: "area-exact:web/dashboard",
+      expected: { kind: "area", field: "areaExact", name: "area-exact", value: "web/dashboard" },
+    },
+    {
+      name: "the exact field name case-insensitively",
+      token: "AREA-EXACT:web",
+      expected: { kind: "area", field: "areaExact", name: "area-exact", value: "web" },
+    },
+    {
+      name: "a negated exact token, parked",
+      token: "-area-exact:web",
+      expected: { kind: "invalid", token: "-area-exact:web" },
+    },
+    { name: "the exact token with an empty value", token: "area-exact:", expected: undefined },
+    { name: "a name the exact token is a prefix of", token: "area-exactly:web", expected: undefined },
   ];
 
   for (const { name, token, expected } of cases) {
@@ -77,8 +102,13 @@ describe("recognizeArea — the token shape, before any vocabulary", () => {
     });
   }
 
-  it("names the field the same way every consumer spells it", () => {
-    expect(AREA_FIELD).toBe("area");
+  // The vocabulary is what serialize, complete and help all read, so a token
+  // missing from it is a token the box cannot round-trip.
+  it("declares both ownership tokens, broad reading first", () => {
+    expect(AREA_TOKEN_ORDER.map((spec) => [spec.name, spec.field])).toEqual([
+      ["area", "area"],
+      ["area-exact", "areaExact"],
+    ]);
   });
 });
 
@@ -123,7 +153,7 @@ describe("the token carries one path — closure is the server's", () => {
   // token that reaches it carrying the ancestor path unchanged, and a client-side
   // notion of "within" that agrees about the same three paths.
   it("does not widen the value to the subtree", () => {
-    expect(recognizeArea("area:web")).toEqual({ kind: "area", value: "web" });
+    expect(recognizeArea("area:web")).toEqual({ kind: "area", field: "area", name: "area", value: "web" });
   });
 
   it("agrees with the server about what is within web", () => {

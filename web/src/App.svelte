@@ -112,8 +112,12 @@
   // urql's document cache re-executes it after a `Nib`-returning mutation. A
   // subscription event invalidates only its `additionalTypenames`, so another
   // client's change can lag until the reconnect re-ask below.
+  //
+  // `?? null` means "no answer yet", never "this store has no milestones": an
+  // errored query and an empty store would otherwise be the same `[]`, and the
+  // box's `milestone:` marker reads the difference.
   const milestonesResult = queryStore({ client, query: MILESTONES_QUERY });
-  let milestones = $derived($milestonesResult.data?.nibs ?? []);
+  let milestones = $derived($milestonesResult.data?.nibs ?? null);
   provideMilestones(() => milestones);
 
   $effect(() => {
@@ -558,6 +562,7 @@
     {treeView}
     {projectName}
     {availableTags}
+    prefix={liveConfig?.prefix ?? null}
     areas={viewSpine.areas}
     connectionStatus={recovery.status}
     oncreatenew={(type) => view.startCreate({ type })}

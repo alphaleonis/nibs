@@ -141,6 +141,17 @@ export type NibFilter = {
    */
   area?: string | null | undefined;
   /**
+   * Include only the nibs whose `area:` is EXACTLY this path — `area` without its
+   * downward closure, so `areaExact: "web"` leaves `web/dashboard` out where
+   * `area: "web"` holds both.
+   *
+   * The value is a declared path and never a nib id, and an undeclared one, the
+   * empty string included, is refused exactly as `area` refuses it: same class,
+   * same wording, VALIDATION_ERROR (exit 2) on the CLI. Omit the field to leave it
+   * unfiltered.
+   */
+  areaExact?: string | null | undefined;
+  /**
    * Include only nibs blocked by this specific nib ID (via blocked_by field).
    *
    * An id naming no nib is refused with a NOT_FOUND error rather than matching
@@ -234,6 +245,35 @@ export type NibFilter = {
    * has a given parent or ancestor and has no parent. See parentId.
    */
   hasParent?: boolean | null | undefined;
+  /**
+   * Include only the milestone's whole plan: the nibs whose DERIVED membership is
+   * this milestone — an own resolved assignment, or one anywhere up the structural
+   * parent chain. An assigned epic and every nib beneath it are in the set, where
+   * `milestone` holds the epic alone. Resolution is the rule `milestone` states:
+   * a dangling or non-milestone assignment schedules nothing, here as there.
+   *
+   * This is the reading `noMilestone` complements. Assignment is exclusive along a
+   * parent chain (updateNib's milestone field enforces it), so a nib has at most
+   * one derived milestone and two milestones' sets never overlap.
+   *
+   * An id naming no nib is refused with a NOT_FOUND error rather than matching
+   * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+   * result. An empty string is refused as a malformed argument: it names no nib
+   * and never could. Unlike the not-found refusal above it carries no
+   * extensions.code, so a GraphQL client sees a generic error; the CLI reports
+   * VALIDATION_ERROR (exit 2). An id naming an existing NON-milestone nib is
+   * refused the same way, naming the nib's actual type, for the reason `milestone`
+   * gives. Omit the field to leave it unfiltered.
+   *
+   * Combining it with noMilestone: true is refused exactly as `milestone`'s pair
+   * with it is, with extensions.code = "FILTER_CONTRADICTION": every nib in this
+   * set belongs to that milestone, so none is in the backlog. The flag surface
+   * refuses `nibs list --milestone X --backlog` with the same exit status.
+   *
+   * Combining it with `milestone` naming a different milestone is refused, for the
+   * reason `milestone` gives.
+   */
+  inMilestone?: string | null | undefined;
   /** Tri-state: true keeps nibs with a blocker whose status has not released them, false keeps exactly the unblocked ones, null does not filter. A completed or scrapped nib is never blocked */
   isBlocked?: boolean | null | undefined;
   /**
@@ -285,7 +325,13 @@ export type NibFilter = {
    * Combining it with noMilestone: true is refused exactly as parentId's pair with
    * hasParent: false is, with extensions.code = "FILTER_CONTRADICTION": every nib
    * in this set belongs to that milestone, so none is in the backlog. The flag
-   * surface refuses `nibs list --milestone X --backlog` with the same exit status.
+   * surface refuses `nibs list --milestone-exact X --backlog` with the same exit
+   * status.
+   *
+   * Combining it with inMilestone naming a DIFFERENT milestone is refused too:
+   * every nib in this set derives its membership to the milestone named here, so
+   * no nib can satisfy both. The SAME milestone in both is satisfiable — it is
+   * this set — so the rule is the resolved targets, not the presence of the pair.
    */
   milestone?: string | null | undefined;
   /**
@@ -301,8 +347,8 @@ export type NibFilter = {
    * excludeType: ["milestone"] to keep them out. A dangling or non-milestone
    * assignment schedules nothing and leaves the nib in the true set.
    *
-   * Combining true with the milestone FILTER is refused: no nib is both in a given
-   * milestone's queue and in the backlog. See milestone.
+   * Combining true with either milestone filter is refused: no nib is both in a
+   * milestone and in the backlog. See milestone and inMilestone.
    */
   noMilestone?: boolean | null | undefined;
   /**
@@ -389,12 +435,12 @@ export type NibFilter = {
    * the term alongside any of the list and tri-state facets — status, excludeStatus,
    * type, excludeType, priority, excludePriority, estimate, excludeEstimate, tags,
    * excludeTags, hasParent, hasBlocking, isBlocked, hasBlockedBy, noMilestone — or
-   * alongside area, whose value is a declared PATH and not a nib, however few nibs
-   * an area holds. None of those names a nib, so the population they narrow is
+   * alongside area or areaExact, whose value is a declared PATH and not a nib,
+   * however few nibs an area holds. None of those names a nib, so the population they narrow is
    * still the store.
    * Combining the term with a field that DOES name one — parentId, ancestorId,
    * descendantId, siblingId, blockingId, blockedById, mentionsId, mentionedById,
-   * milestone — makes the read uncapped. Every relationship field (children,
+   * milestone, inMilestone — makes the read uncapped. Every relationship field (children,
    * blockedBy, blocking, mentions, mentionedBy) is uncapped for the same reason:
    * the relation it names is the bound.
    *
@@ -712,6 +758,7 @@ export type TreeTableQuery = { nibs: Array<{ id: string, title: string, status: 
 
 export type SearchNibsQueryVariables = Exact<{
   search: string;
+  types?: Array<string> | string | null | undefined;
 }>;
 
 
@@ -742,5 +789,5 @@ export const UpdateAreaDocument = {"kind":"Document","definitions":[{"kind":"Ope
 export const RemoveAreaDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"mutation","name":{"kind":"Name","value":"RemoveArea"},"variableDefinitions":[{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"input"}},"type":{"kind":"NonNullType","type":{"kind":"NamedType","name":{"kind":"Name","value":"RemoveAreaInput"}}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"removeArea"},"arguments":[{"kind":"Argument","name":{"kind":"Name","value":"input"},"value":{"kind":"Variable","name":{"kind":"Name","value":"input"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"config"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"projectName"}},{"kind":"Field","name":{"kind":"Name","value":"prefix"}},{"kind":"Field","name":{"kind":"Name","value":"areas"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"path"}},{"kind":"Field","name":{"kind":"Name","value":"name"}},{"kind":"Field","name":{"kind":"Name","value":"description"}},{"kind":"Field","name":{"kind":"Name","value":"color"}},{"kind":"Field","name":{"kind":"Name","value":"depth"}}]}}]}},{"kind":"Field","name":{"kind":"Name","value":"notes"}}]}}]}}]} as unknown as DocumentNode<RemoveAreaMutation, RemoveAreaMutationVariables>;
 export const AreaMembersDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"query","name":{"kind":"Name","value":"AreaMembers"},"variableDefinitions":[{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"area"}},"type":{"kind":"NonNullType","type":{"kind":"NamedType","name":{"kind":"Name","value":"String"}}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"nibs"},"arguments":[{"kind":"Argument","name":{"kind":"Name","value":"filter"},"value":{"kind":"ObjectValue","fields":[{"kind":"ObjectField","name":{"kind":"Name","value":"area"},"value":{"kind":"Variable","name":{"kind":"Name","value":"area"}}}]}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"id"}}]}}]}}]} as unknown as DocumentNode<AreaMembersQuery, AreaMembersQueryVariables>;
 export const TreeTableDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"query","name":{"kind":"Name","value":"TreeTable"},"variableDefinitions":[{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"filter"}},"type":{"kind":"NamedType","name":{"kind":"Name","value":"NibFilter"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"nibs"},"arguments":[{"kind":"Argument","name":{"kind":"Name","value":"filter"},"value":{"kind":"Variable","name":{"kind":"Name","value":"filter"}}},{"kind":"Argument","name":{"kind":"Name","value":"sort"},"value":{"kind":"ObjectValue","fields":[{"kind":"ObjectField","name":{"kind":"Name","value":"field"},"value":{"kind":"EnumValue","value":"ORDER"}},{"kind":"ObjectField","name":{"kind":"Name","value":"direction"},"value":{"kind":"EnumValue","value":"ASC"}}]}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"id"}},{"kind":"Field","name":{"kind":"Name","value":"title"}},{"kind":"Field","name":{"kind":"Name","value":"status"}},{"kind":"Field","name":{"kind":"Name","value":"type"}},{"kind":"Field","name":{"kind":"Name","value":"priority"}},{"kind":"Field","name":{"kind":"Name","value":"estimate"}},{"kind":"Field","name":{"kind":"Name","value":"tags"}},{"kind":"Field","name":{"kind":"Name","value":"createdAt"}},{"kind":"Field","name":{"kind":"Name","value":"updatedAt"}},{"kind":"Field","name":{"kind":"Name","value":"parentId"}},{"kind":"Field","name":{"kind":"Name","value":"milestone"}},{"kind":"Field","name":{"kind":"Name","value":"milestoneOrder"}},{"kind":"Field","name":{"kind":"Name","value":"area"}},{"kind":"Field","name":{"kind":"Name","value":"blockingIds"}},{"kind":"Field","name":{"kind":"Name","value":"blockedByIds"}},{"kind":"Field","name":{"kind":"Name","value":"etag"}}]}}]}}]} as unknown as DocumentNode<TreeTableQuery, TreeTableQueryVariables>;
-export const SearchNibsDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"query","name":{"kind":"Name","value":"SearchNibs"},"variableDefinitions":[{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"search"}},"type":{"kind":"NonNullType","type":{"kind":"NamedType","name":{"kind":"Name","value":"String"}}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"nibs"},"arguments":[{"kind":"Argument","name":{"kind":"Name","value":"filter"},"value":{"kind":"ObjectValue","fields":[{"kind":"ObjectField","name":{"kind":"Name","value":"search"},"value":{"kind":"Variable","name":{"kind":"Name","value":"search"}}}]}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"id"}},{"kind":"Field","name":{"kind":"Name","value":"title"}},{"kind":"Field","name":{"kind":"Name","value":"type"}},{"kind":"Field","name":{"kind":"Name","value":"status"}}]}}]}}]} as unknown as DocumentNode<SearchNibsQuery, SearchNibsQueryVariables>;
+export const SearchNibsDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"query","name":{"kind":"Name","value":"SearchNibs"},"variableDefinitions":[{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"search"}},"type":{"kind":"NonNullType","type":{"kind":"NamedType","name":{"kind":"Name","value":"String"}}}},{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"types"}},"type":{"kind":"ListType","type":{"kind":"NonNullType","type":{"kind":"NamedType","name":{"kind":"Name","value":"String"}}}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"nibs"},"arguments":[{"kind":"Argument","name":{"kind":"Name","value":"filter"},"value":{"kind":"ObjectValue","fields":[{"kind":"ObjectField","name":{"kind":"Name","value":"search"},"value":{"kind":"Variable","name":{"kind":"Name","value":"search"}}},{"kind":"ObjectField","name":{"kind":"Name","value":"type"},"value":{"kind":"Variable","name":{"kind":"Name","value":"types"}}}]}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"id"}},{"kind":"Field","name":{"kind":"Name","value":"title"}},{"kind":"Field","name":{"kind":"Name","value":"type"}},{"kind":"Field","name":{"kind":"Name","value":"status"}}]}}]}}]} as unknown as DocumentNode<SearchNibsQuery, SearchNibsQueryVariables>;
 export const NibChangedDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"subscription","name":{"kind":"Name","value":"NibChanged"},"variableDefinitions":[{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"id"}},"type":{"kind":"NamedType","name":{"kind":"Name","value":"ID"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"nibChanged"},"arguments":[{"kind":"Argument","name":{"kind":"Name","value":"id"},"value":{"kind":"Variable","name":{"kind":"Name","value":"id"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"type"}},{"kind":"Field","name":{"kind":"Name","value":"nibId"}},{"kind":"Field","name":{"kind":"Name","value":"nib"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"id"}},{"kind":"Field","name":{"kind":"Name","value":"title"}},{"kind":"Field","name":{"kind":"Name","value":"status"}},{"kind":"Field","name":{"kind":"Name","value":"type"}},{"kind":"Field","name":{"kind":"Name","value":"priority"}},{"kind":"Field","name":{"kind":"Name","value":"estimate"}},{"kind":"Field","name":{"kind":"Name","value":"milestone"}},{"kind":"Field","name":{"kind":"Name","value":"area"}},{"kind":"Field","name":{"kind":"Name","value":"tags"}},{"kind":"Field","name":{"kind":"Name","value":"body"}},{"kind":"Field","name":{"kind":"Name","value":"etag"}},{"kind":"Field","name":{"kind":"Name","value":"updatedAt"}},{"kind":"Field","name":{"kind":"Name","value":"parentId"}},{"kind":"Field","name":{"kind":"Name","value":"blockingIds"}},{"kind":"Field","name":{"kind":"Name","value":"blockedByIds"}}]}}]}}]}}]} as unknown as DocumentNode<NibChangedSubscription, NibChangedSubscriptionVariables>;

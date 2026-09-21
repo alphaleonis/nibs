@@ -225,10 +225,12 @@ describe("getCompletion — explicit trigger", () => {
     "mentions",
     "mentioned-by",
     "milestone",
+    "milestone-exact",
     "has",
     "no",
     "is",
     "area",
+    "area-exact",
   ];
 
   it("lists the whole vocabulary for an empty token", () => {
@@ -290,7 +292,34 @@ describe("getCompletion — area paths", () => {
     getCompletion(text, text.length, [], { areas });
 
   it("offers the field name itself", () => {
-    expect(complete("ar", READY)?.items).toEqual(["area"]);
+    expect(complete("ar", READY)?.items).toEqual(["area", "area-exact"]);
+  });
+
+  // Prefix matching, so the broad token's own name selects both spellings and
+  // typing past it narrows to the exact one.
+  it("narrows to the exact spelling once the hyphen is typed", () => {
+    expect(complete("area-", READY)?.items).toEqual(["area-exact"]);
+  });
+
+  it("offers declared paths for area-exact:, from the same vocabulary", () => {
+    const c = complete("area-exact:", READY);
+    expect(c?.kind).toBe("value");
+    expect(c?.items).toEqual(["web", "web/dashboard", "webhooks", "docs"]);
+  });
+
+  it("substring-matches an area-exact partial and inserts the declared spelling", () => {
+    const c = complete("area-exact:DASH", READY);
+    expect(c?.items).toEqual(["web/dashboard"]);
+    expect(c?.apply("web/dashboard")).toEqual({
+      text: "area-exact:web/dashboard",
+      caret: 24,
+    });
+  });
+
+  it("offers nothing for area-exact: while the vocabulary cannot answer", () => {
+    for (const areas of [LOADING_AREAS, UNAVAILABLE_AREAS, undefined, EMPTY_AREAS]) {
+      expect(complete("area-exact:", areas)).toBeNull();
+    }
   });
 
   it("does not offer it after a minus — negation has no area spelling", () => {
@@ -344,8 +373,8 @@ describe("getCompletion — area paths", () => {
   it("still offers the field name when the vocabulary cannot answer", () => {
     // The token is part of the language whether or not this project uses it; what
     // the vocabulary gates is the VALUE list.
-    expect(complete("ar", LOADING_AREAS)?.items).toEqual(["area"]);
-    expect(complete("ar")?.items).toEqual(["area"]);
+    expect(complete("ar", LOADING_AREAS)?.items).toEqual(["area", "area-exact"]);
+    expect(complete("ar")?.items).toEqual(["area", "area-exact"]);
   });
 
   // `area.validateNodes` rejects only an empty name, one

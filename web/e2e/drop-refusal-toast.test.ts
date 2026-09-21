@@ -32,16 +32,17 @@ test("a drop into a container that holds no children explains itself", async ({ 
   });
   await page.goto("/");
 
-  const leaf = page.locator('tr[data-nib-id="tnib-t041"]');
+  const leaf = page.locator('tr[data-nib-id="tnib-t014"]');
   await expect(leaf).toBeVisible({ timeout: 10_000 });
   // Centered, so the one-row-tall gesture below stays away from the scroll
   // container's auto-scroll edges. Boxes are read AFTER this.
   await page.evaluate(() => {
-    document.querySelector('tr[data-nib-id="tnib-t041"]')?.scrollIntoView({ block: "center" });
+    document.querySelector('tr[data-nib-id="tnib-t014"]')?.scrollIntoView({ block: "center" });
   });
 
-  // Its sibling, immediately below it.
-  const source = page.locator('tr[data-nib-id="tnib-t042"]');
+  // Its sibling, immediately below it. tnib-t041 no longer serves: it carries a
+  // milestone, so this view draws it in the m001 queue rather than beside tnib-t042.
+  const source = page.locator('tr[data-nib-id="tnib-t015"]');
   await expect(source).toBeVisible();
 
   const from = (await source.boundingBox())!;

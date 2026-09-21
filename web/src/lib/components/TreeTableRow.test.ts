@@ -199,7 +199,7 @@ describe("TreeTableRow", () => {
     const badge = container.querySelector("[data-testid='blocked-badge']") as HTMLElement;
     expect(badge).toBeInTheDocument();
     expect(badge.textContent).toContain("Blocked");
-    expect(badge.getAttribute("title")).toBe("Blocked by 2 nib(s)");
+    expect(badge.getAttribute("data-tooltip")).toBe("Blocked by 2 nib(s)");
     // Default is the pill, not the bare icon.
     expect(container.querySelector("[data-testid='blocked-icon']")).not.toBeInTheDocument();
   });
@@ -215,7 +215,7 @@ describe("TreeTableRow", () => {
 
     const icon = container.querySelector("[data-testid='blocked-icon']") as HTMLElement;
     expect(icon).toBeInTheDocument();
-    expect(icon.getAttribute("title")).toBe("Blocked by 2 nib(s)");
+    expect(icon.getAttribute("data-tooltip")).toBe("Blocked by 2 nib(s)");
     expect(container.querySelector("[data-testid='blocked-badge']")).not.toBeInTheDocument();
   });
 
@@ -269,7 +269,7 @@ describe("TreeTableRow", () => {
     const badge = container.querySelector("[data-testid='blocking-badge']") as HTMLElement;
     expect(badge).toBeInTheDocument();
     expect(badge.textContent).toContain("Blocking");
-    expect(badge.getAttribute("title")).toBe("Blocking 2 nib(s)");
+    expect(badge.getAttribute("data-tooltip")).toBe("Blocking 2 nib(s)");
     // Default is the pill, not the bare icon.
     expect(container.querySelector("[data-testid='blocking-icon']")).not.toBeInTheDocument();
   });
@@ -285,7 +285,7 @@ describe("TreeTableRow", () => {
 
     const icon = container.querySelector("[data-testid='blocking-icon']") as HTMLElement;
     expect(icon).toBeInTheDocument();
-    expect(icon.getAttribute("title")).toBe("Blocking 2 nib(s)");
+    expect(icon.getAttribute("data-tooltip")).toBe("Blocking 2 nib(s)");
     expect(container.querySelector("[data-testid='blocking-badge']")).not.toBeInTheDocument();
   });
 
@@ -332,7 +332,7 @@ describe("TreeTableRow", () => {
     // Lucide Lock icon renders as an SVG inside the cell.
     expect(cell.querySelector("svg")).toBeInTheDocument();
     // Tooltip lists the blocking nib IDs.
-    expect(cell.querySelector("[title='nibs-a, nibs-b']")).toBeInTheDocument();
+    expect(cell.querySelector("[data-tooltip='nibs-a, nibs-b']")).toBeInTheDocument();
   });
 
   it("renders an empty Blocked-by cell (no icon/count) when blockedByIds is empty", () => {
@@ -380,7 +380,7 @@ describe("TreeTableRow", () => {
     // Lucide Link icon renders as an SVG inside the cell.
     expect(cell.querySelector("svg")).toBeInTheDocument();
     // Tooltip lists the blocked nib IDs.
-    expect(cell.querySelector("[title='nibs-c, nibs-d, nibs-e']")).toBeInTheDocument();
+    expect(cell.querySelector("[data-tooltip='nibs-c, nibs-d, nibs-e']")).toBeInTheDocument();
   });
 
   it("renders an empty Blocking cell (no icon/count) when blockingIds is empty", () => {
@@ -443,7 +443,7 @@ describe("TreeTableRow", () => {
     // Observably different from the Created cell, so a field swap fails here.
     expect(modifiedRel).not.toBe(createdRel);
     // Hover title is the full ISO timestamp of updatedAt.
-    expect(modifiedCell.getAttribute("title")).toBe("2026-03-20T10:00:00.000Z");
+    expect(modifiedCell.getAttribute("data-tooltip")).toBe("2026-03-20T10:00:00.000Z");
   });
 
   it("does not render the Created cell when the created column is not visible", () => {
@@ -486,7 +486,7 @@ describe("TreeTableRow", () => {
     expect(createdRel).not.toBe("");
     expect(createdRel).toBe(formatRelative(nib.createdAt));
     expect(createdRel).not.toBe(modifiedRel);
-    expect(createdCell.getAttribute("title")).toBe("2020-01-01T00:00:00.000Z");
+    expect(createdCell.getAttribute("data-tooltip")).toBe("2020-01-01T00:00:00.000Z");
   });
 
   it("renders blank Created / Modified cells for a synthetic bucket row (empty dates)", () => {
@@ -502,9 +502,11 @@ describe("TreeTableRow", () => {
     const created = container.querySelector("[data-testid='nib-created']") as HTMLElement;
     const modified = container.querySelector("[data-testid='nib-modified']") as HTMLElement;
     expect(created.textContent?.trim()).toBe("");
-    expect(created.getAttribute("title")).toBe("");
+    // Absent rather than empty: an empty `data-tooltip` still matches the
+    // delegating `closest()` and would suppress an ancestor's tooltip.
+    expect(created.getAttribute("data-tooltip")).toBeNull();
     expect(modified.textContent?.trim()).toBe("");
-    expect(modified.getAttribute("title")).toBe("");
+    expect(modified.getAttribute("data-tooltip")).toBeNull();
   });
 
   it("renders parent info in the parent cell when parentNib is provided", () => {
@@ -520,8 +522,9 @@ describe("TreeTableRow", () => {
     const parentCell = container.querySelector("[data-testid='nib-parent']") as HTMLElement;
     expect(parentCell).toBeInTheDocument();
     expect(parentCell.textContent).toContain("Parent Epic");
-    // Should have a title attribute with the full parent ID
-    expect(parentCell.getAttribute("title")).toBe("nibs-p001");
+    // The cell truncates, so its tooltip has to reveal the full title; the id
+    // rides along in parentheses rather than standing in for it.
+    expect(parentCell.getAttribute("data-tooltip")).toBe("Parent Epic (nibs-p001)");
   });
 
   // ---- the assignment axes -------------------------------------------------
@@ -529,7 +532,7 @@ describe("TreeTableRow", () => {
   // waypoint outside the parent graph, an area is a declared path and not a nib
   // — so a column is the only way a non-grouping view shows them.
 
-  it("renders the assigned milestone's title, with its id as the tooltip", () => {
+  it("renders the assigned milestone's title, with title and id as the tooltip", () => {
     const milestoneNib = makeTreeTableNib({ id: "nibs-m001", title: "Release vNext", type: "milestone" });
     const { container } = renderRow({
       nib: makeTreeTableNib({ milestone: "nibs-m001" }),
@@ -541,9 +544,10 @@ describe("TreeTableRow", () => {
 
     const cell = container.querySelector("[data-testid='nib-milestone']") as HTMLElement;
     expect(cell.textContent).toContain("Release vNext");
-    // The TITLE is what shows; the id is the tooltip, as in the parent column.
+    // The TITLE is what shows; the tooltip reveals it in full with the id, as in
+    // the parent column.
     expect(cell.textContent).not.toContain("nibs-m001");
-    expect(cell.getAttribute("title")).toBe("nibs-m001");
+    expect(cell.getAttribute("data-tooltip")).toBe("Release vNext (nibs-m001)");
   });
 
   it("renders the area's FULL stored path, not its leaf segment", () => {
@@ -600,7 +604,7 @@ describe("TreeTableRow", () => {
 
     const cell = container.querySelector("[data-testid='nib-milestone']") as HTMLElement;
     expect(cell.textContent?.trim()).toBe("nibs-gone");
-    expect(cell.getAttribute("title")).toBe("nibs-gone");
+    expect(cell.getAttribute("data-tooltip")).toBe("nibs-gone");
   });
 
   it("renders empty parent cell when no parent", () => {

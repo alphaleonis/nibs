@@ -221,3 +221,137 @@ func TestAreaFilterKeepsTheStoreWideSearchCap(t *testing.T) {
 		t.Errorf("Core.SearchAll called %d times, want 0 — reading uncapped here would replace the top hits for the term with the whole match set", reader.searchAllCalls)
 	}
 }
+
+// TestAreaExactSelectsOnlyTheNamedPath is the un-closed half of the axis, run
+// over the same fixture as the closure test so the two answers are comparable
+// row by row: areaExact holds the nibs stored at exactly that path, and `area`
+// holds those plus everything declared beneath it.
+//
+// The rows with a declared subtree — `web` and `web/settings` — are the ones a
+// filter that quietly kept the closure would fail; the leaves alone cannot tell
+// the two readings apart.
+func TestAreaExactSelectsOnlyTheNamedPath(t *testing.T) {
+	reader := areaFilterFixture()
+	blocking := &stubBlockingChecker{}
+
+	tests := []struct {
+		path       string
+		wantExact  []string
+		wantWithin []string
+	}{
+		{"web", []string{"nibs-web"}, []string{"nibs-web", "nibs-dash", "nibs-set", "nibs-bill"}},
+		{"web/settings", []string{"nibs-set"}, []string{"nibs-set", "nibs-bill"}},
+		{"web/dashboard", []string{"nibs-dash"}, []string{"nibs-dash"}},
+		{"webhooks", []string{"nibs-hook"}, []string{"nibs-hook"}},
+		{"auth", []string{"nibs-auth"}, []string{"nibs-auth"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			path := tt.path
+			exact := applyFilterOK(t, context.Background(), reader.allNibs,
+				&model.NibFilter{AreaExact: &path}, reader, blocking)
+			assertAreaIDs(t, "areaExact "+tt.path, exact, tt.wantExact)
+
+			within := applyFilterOK(t, context.Background(), reader.allNibs,
+				&model.NibFilter{Area: &path}, reader, blocking)
+			assertAreaIDs(t, "area "+tt.path, within, tt.wantWithin)
+		})
+	}
+}
+
+// assertAreaIDs compares an area filter's answer by id, order-insensitively.
+func assertAreaIDs(t *testing.T, what string, got []*nib.Nib, want []string) {
+	t.Helper()
+	ids := nibIDs(got)
+	slices.Sort(ids)
+	expect := slices.Clone(want)
+	slices.Sort(expect)
+	if !slices.Equal(ids, expect) {
+		t.Errorf("%s selected %v, want %v", what, ids, expect)
+	}
+}
+
+// TestAreaExactRefusesAnUndeclaredValue: the exact field answers an undeclared
+// path and an empty one with the same class `area` does, so one user error
+// carries one verdict whichever half of the axis it was typed on.
+func TestAreaExactRefusesAnUndeclaredValue(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+		want string
+	}{
+		{"undeclared", "nosuch", "nosuch"},
+		{"retired but stored", "web/legacy", "web/legacy"},
+		{"empty", "", "empty"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := areaFilterFixture()
+			path := tc.path
+
+			got, err := ApplyFilter(context.Background(), reader.allNibs,
+				&model.NibFilter{AreaExact: &path}, reader, &stubBlockingChecker{})
+			if err == nil {
+				t.Fatalf("areaExact %q returned %d of %d nibs and no error", tc.path, len(got), len(reader.allNibs))
+			}
+			if got != nil {
+				t.Errorf("result = %v, want nil alongside the error", got)
+			}
+			var areaErr *FilterAreaError
+			if !errors.As(err, &areaErr) {
+				t.Fatalf("error = %T (%v), want *FilterAreaError", err, err)
+			}
+			if areaErr.Field != "areaExact" {
+				t.Errorf("Field = %q, want the schema spelling %q", areaErr.Field, "areaExact")
+			}
+			if errors.Is(err, nib.ErrNotFound) {
+				t.Error("the refusal unwraps to nib.ErrNotFound, which routes a malformed argument to exit 3 instead of exit 2")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %q, want substring %q", err.Error(), tc.want)
+			}
+		})
+	}
+}
+
+// reloadingAreasReader answers the FIRST Areas() with the vocabulary its
+// fixture declares and every later one with a vocabulary that declares nothing.
+// It stands in for the reload Core runs from a debounced fsnotify timer, which
+// swaps the atomic vocabulary pointer while a query is mid-flight.
+type reloadingAreasReader struct {
+	*stubReader
+	calls int
+}
+
+func (r *reloadingAreasReader) Areas() *area.Vocabulary {
+	r.calls++
+	if r.calls == 1 {
+		return r.areas
+	}
+	return &area.Vocabulary{}
+}
+
+// TestBothAreaFiltersReadOneVocabularySnapshot pins that a filter naming both
+// ownership readings asks the reader for the vocabulary ONCE. Core.Areas and
+// the NibReader interface both prescribe one snapshot per decision, and two
+// calls can straddle a reload: the second answers from a tree the first never
+// saw, so one half accepts a path the other half refuses as undeclared — a
+// query answered under two vocabularies at once.
+//
+// The wrong answer is what is asserted, not the call count: against a reader
+// whose second vocabulary declares nothing, a second snapshot turns this into a
+// FilterAreaError naming a path the same call already accepted.
+func TestBothAreaFiltersReadOneVocabularySnapshot(t *testing.T) {
+	reader := &reloadingAreasReader{stubReader: areaFilterFixture()}
+	path := "web"
+
+	got, err := ApplyFilter(context.Background(), reader.allNibs,
+		&model.NibFilter{Area: &path, AreaExact: &path}, reader, &stubBlockingChecker{})
+	if err != nil {
+		t.Fatalf("ApplyFilter: %v — the two halves read different vocabularies", err)
+	}
+	assertAreaIDs(t, "area+areaExact web", got, []string{"nibs-web"})
+	if reader.calls != 1 {
+		t.Errorf("Areas() called %d times, want 1 — one snapshot per decision", reader.calls)
+	}
+}

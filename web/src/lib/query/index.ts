@@ -1,12 +1,13 @@
 // GitHub-style query language for the web filter box: parsing and canonical
 // serialization between box text and NibFilter, completion, and highlighting.
 //
-// Every function is pure. Runtime vocabularies (area paths, tags) are passed in;
-// `../areas` is imported for types only.
+// Every function is pure. Runtime vocabularies (area paths, tags, milestones) are
+// passed in; `../areas` and `../milestones` are imported for types only.
 //
 // Token kinds: metadata facets `field:v1,v2` with `-` for exclusion (fields.ts),
-// relationship and existence tokens (relations.ts), and `area:<path>` (area.ts).
-// Everything else is free-text `search`.
+// relationship and existence tokens (relations.ts), and the ownership tokens
+// `area:<path>` / `area-exact:<path>` (area.ts). Everything else is free-text
+// `search`.
 export { parseQuery } from "./parse";
 export type { ParsedQuery } from "./parse";
 export { serializeQuery } from "./serialize";
@@ -32,5 +33,11 @@ export { contradictionTokens } from "./relations";
 export { relTokenValueContext } from "./relComplete";
 export type { RelValueContext, NibSuggestion } from "./relComplete";
 // The box asks `isRefusedArea` again when the vocabulary changes; `parseQuery`
-// asked once, with whatever vocabulary its caller had.
-export { AREA_FIELD, isRefusedArea } from "./area";
+// asked once, with whatever vocabulary its caller had. `AREA_TOKEN_ORDER` is how
+// it spells the refused value back as a token.
+export { AREA_TOKEN_ORDER, isRefusedArea } from "./area";
+export type { AreaKey } from "./area";
+// The same question for the two assignment-axis tokens, asked against the
+// milestone list and store prefix the client already holds, resolving the id the
+// way the server does.
+export { MILESTONE_ID_TOKENS, isRefusedMilestone } from "./relations";

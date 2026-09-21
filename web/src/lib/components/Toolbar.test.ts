@@ -11,6 +11,10 @@ import type { NibSuggestion } from "../query";
 import { FIELD_SPECS } from "../query/fields";
 import { REL_TOKEN_ORDER } from "../query/relations";
 import { createAreaVocabulary, LOADING_AREAS, UNAVAILABLE_AREAS } from "../areas";
+import { MILESTONES_KEY } from "../contexts";
+import type { MilestoneOption } from "../milestones";
+import { reactiveBox } from "../testing/reactiveBox.svelte";
+import { expectNoNativeTitles, expectDelegatingElementsAreNamed } from "../testing/nativeTitle";
 
 // bits-ui scroll lock sets pointer-events: none on <body>, so disable the check
 const user = userEvent.setup({ pointerEventsCheck: 0 });
@@ -1984,7 +1988,27 @@ describe("Toolbar — relationship-id async typeahead", () => {
 
     // Exactly one query, for the LAST fragment (the earlier keystroke coalesced).
     expect(searchNibs).toHaveBeenCalledTimes(1);
-    expect(searchNibs).toHaveBeenCalledWith("tn");
+    expect(searchNibs).toHaveBeenCalledWith("tn", undefined);
+  });
+
+  // The server refuses a whole query whose `milestone:` names a non-milestone, so
+  // offering one is offering a broken filter. The narrowing is declared on the
+  // token and must reach only that token: one search serves them all.
+  it("constrains the milestone token's search to milestones, and no other token's", async () => {
+    const searchNibs = vi.fn().mockResolvedValue([nib()]);
+    const { input } = setup(searchNibs);
+
+    await typeInto(input, "milestone:v1");
+    await vi.advanceTimersByTimeAsync(200);
+    expect(searchNibs).toHaveBeenLastCalledWith("v1", ["milestone"]);
+
+    await typeInto(input, "parent:v1");
+    await vi.advanceTimersByTimeAsync(200);
+    expect(searchNibs).toHaveBeenLastCalledWith("v1", undefined);
+
+    await typeInto(input, "blocking:v1");
+    await vi.advanceTimersByTimeAsync(200);
+    expect(searchNibs).toHaveBeenLastCalledWith("v1", undefined);
   });
 
   it("does not query until the debounce delay elapses", async () => {
@@ -2119,6 +2143,33 @@ describe("Toolbar — relationship-id async typeahead", () => {
     const list = screen.getByTestId("filter-suggestions");
     expect(within(list).getByText("Newest")).toBeInTheDocument();
     expect(within(list).queryByText("Oldest")).not.toBeInTheDocument();
+  });
+
+  // Only `milestone:` constrains its search, so a response that outlived its token
+  // would offer milestones alone under `parent:`. The fragment is held CONSTANT
+  // across the edit, so the fragment guard cannot be what drops it.
+  it("drops a response whose token the caret has since left", async () => {
+    const calls: { types?: readonly string[]; resolve: (v: NibSuggestion[]) => void }[] = [];
+    const searchNibs = vi.fn(
+      (_fragment: string, types?: readonly string[]) =>
+        new Promise<NibSuggestion[]>((resolve) => {
+          calls.push({ types, resolve });
+        }),
+    );
+    const { input } = setup(searchNibs);
+
+    await typeInto(input, "milestone:tn");
+    await vi.advanceTimersByTimeAsync(200);
+    expect(calls.map((c) => c.types)).toEqual([["milestone"]]);
+
+    // One edit replaces the token NAME and leaves the fragment alone; the
+    // milestone-constrained request is still in flight.
+    await typeInto(input, "parent:tn");
+    calls[0].resolve([nib({ id: "tnib-ms1", title: "Milestone only" })]);
+    await flush();
+
+    expect(screen.queryByText("Milestone only")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("filter-suggestions")).not.toBeInTheDocument();
   });
 
   it("does NOT take the async path for metadata tokens — static enum completion still shows, no search fires", async () => {
@@ -2304,7 +2355,7 @@ describe("Toolbar — the area token", () => {
 
   // `Preferences.setQuery` parses with NO vocabulary — that is every load, from
   // localStorage and from a shared `?q=` link alike — so an undeclared path lands
-  // on the filter unjudged rather than parked. `withSendableArea` then withholds it
+  // on the filter unjudged rather than parked. `withSendableAreas` then withholds it
   // from the wire once the config refuses it, so the table shows the whole store
   // while the box still displays an area filter. The chip is what tells the user.
   it("flags a restored path that the vocabulary refuses once it arrives", async () => {
@@ -2392,6 +2443,157 @@ describe("Toolbar — the area token", () => {
   });
 });
 
+// The completion narrows what is OFFERED; a value typed or pasted past it reaches
+// the same refusal, where the server rejects the WHOLE query and the table shows
+// an error with no rows. The client holds every milestone (MILESTONES_QUERY is
+// uncapped and unfiltered by status), so the box can say which token is at fault.
+describe("Toolbar — milestone token validity", () => {
+  const MILESTONES: MilestoneOption[] = [
+    { id: "tnib-m1", title: "v1.0", status: "in-progress" },
+    { id: "tnib-m2", title: "v2.0", status: "completed" },
+  ];
+
+  function renderWith(
+    milestones: readonly MilestoneOption[] | null,
+    prefix: string | null = "tnib-",
+  ) {
+    const prefs = new Preferences();
+    render(Toolbar, {
+      props: { prefs, prefix, oncreatenew: vi.fn() },
+      context: new Map<string, unknown>([[MILESTONES_KEY, () => milestones]]),
+    });
+    return { prefs, input: screen.getByTestId("filter-keyword") as HTMLInputElement };
+  }
+
+  it("flags a value naming a nib that is not a milestone", async () => {
+    const { prefs, input } = renderWith(MILESTONES);
+
+    await user.type(input, "milestone:tnib-abc1");
+
+    expect(screen.getByTestId("filter-invalid")).toHaveTextContent("milestone:tnib-abc1");
+    // Display only: the chip names the refusal without rewriting what was typed.
+    expect(prefs.filter.inMilestone).toBe("tnib-abc1");
+    expect(prefs.query).toBe("milestone:tnib-abc1");
+  });
+
+  // The exact spelling reaches the same server refusal, so it earns the same
+  // chip — and the chip must name the spelling that was typed, not the other one.
+  it("flags a refused value on the exact spelling too", async () => {
+    const { prefs, input } = renderWith(MILESTONES);
+
+    await user.type(input, "milestone-exact:tnib-abc1");
+
+    expect(screen.getByTestId("filter-invalid")).toHaveTextContent("milestone-exact:tnib-abc1");
+    expect(prefs.filter.milestone).toBe("tnib-abc1");
+    expect(prefs.query).toBe("milestone-exact:tnib-abc1");
+  });
+
+  it("flags nothing for a real milestone id, whatever its status", async () => {
+    const { prefs, input } = renderWith(MILESTONES);
+
+    await user.type(input, "milestone:tnib-m2");
+
+    expect(screen.queryByTestId("filter-invalid")).not.toBeInTheDocument();
+    expect(prefs.filter.inMilestone).toBe("tnib-m2");
+  });
+
+  // `null`, not `[]`, is the first paint: flagging before MILESTONES_QUERY
+  // resolves would mark every valid id invalid during startup.
+  it("flags nothing while the milestone list has not arrived", async () => {
+    const { input } = renderWith(null);
+
+    await user.type(input, "milestone:tnib-m1");
+
+    expect(screen.queryByTestId("filter-invalid")).not.toBeInTheDocument();
+  });
+
+  // …and the prefix is the other half of the answer: a short id resolves only
+  // once it is known, so judging without it could flag a working filter. The
+  // predicate therefore withholds on every value until the prefix arrives.
+  it("flags nothing while the store prefix has not arrived", async () => {
+    const { input } = renderWith(MILESTONES, null);
+
+    await user.type(input, "milestone:tnib-gone");
+
+    expect(screen.queryByTestId("filter-invalid")).not.toBeInTheDocument();
+  });
+
+  // An empty list is an ANSWER, and the population the marker matters most for:
+  // the server refuses every `milestone:` value a store with no milestones is
+  // given, which is the reported symptom — an error, no rows, no explanation.
+  it("flags a value in a store that declares no milestones", async () => {
+    const { input } = renderWith([]);
+
+    await user.type(input, "milestone:tnib-m1");
+
+    expect(screen.getByTestId("filter-invalid")).toHaveTextContent("milestone:tnib-m1");
+  });
+
+  // `normalizeIDInMap` prepends the prefix, so this is a working filter — and the
+  // typeahead teaches the short form by matching it.
+  it("flags nothing for the short id the server resolves", async () => {
+    const { prefs, input } = renderWith(MILESTONES);
+
+    await user.type(input, "milestone:m1");
+
+    expect(screen.queryByTestId("filter-invalid")).not.toBeInTheDocument();
+    expect(prefs.filter.inMilestone).toBe("m1");
+  });
+
+  // The transition `useMilestones()` is a GETTER for: the list arrives after first
+  // paint, and nothing re-parses when it does, so the marker has to come from
+  // asking the current list. The area block's counterpart re-renders a prop; a
+  // context is written once at mount, so this pushes through the getter instead.
+  it("flags a restored value once the milestone list arrives after mount", async () => {
+    const box = reactiveBox<readonly MilestoneOption[] | null>(null);
+    const prefs = new Preferences();
+    prefs.setQuery("milestone:tnib-gone");
+
+    render(Toolbar, {
+      props: { prefs, prefix: "tnib-", oncreatenew: vi.fn() },
+      context: new Map<string, unknown>([[MILESTONES_KEY, () => box.value]]),
+    });
+    expect(screen.queryByTestId("filter-invalid")).not.toBeInTheDocument();
+
+    box.value = MILESTONES;
+    await tick();
+
+    expect(screen.getByTestId("filter-invalid")).toHaveTextContent("milestone:tnib-gone");
+    // The value stays on the filter: the box keeps showing what the user stored.
+    expect(prefs.filter.inMilestone).toBe("tnib-gone");
+  });
+
+  // Nothing re-parses when the list arrives, so the flag has to come from asking
+  // the current list rather than from the parked-token sidecar — the same shape
+  // the area chip takes. A value restored from localStorage or a shared `?q=` is
+  // never parked, so this is the only thing that can name it.
+  it("flags a restored value the list refuses", () => {
+    const prefs = new Preferences();
+    prefs.setQuery("milestone:tnib-gone");
+    expect(prefs.invalidTokens).toEqual([]);
+
+    render(Toolbar, {
+      props: { prefs, prefix: "tnib-", oncreatenew: vi.fn() },
+      context: new Map<string, unknown>([[MILESTONES_KEY, () => MILESTONES]]),
+    });
+
+    expect(screen.getByTestId("filter-invalid")).toHaveTextContent("milestone:tnib-gone");
+  });
+
+  // The chip is a display concern: adding it must not change what the box
+  // serializes, or the stored query would carry the token twice.
+  it("does not double the token in the canonical query", async () => {
+    const { prefs, input } = renderWith(MILESTONES);
+
+    await user.type(input, "type:bug milestone:tnib-abc1");
+    await fireEvent.blur(input);
+    await tick();
+
+    expect(prefs.query).toBe("type:bug milestone:tnib-abc1");
+    expect(input.value).toBe("type:bug milestone:tnib-abc1");
+  });
+});
+
 // The scheduling axis, driven through the real component rather than through
 // `parseQuery`. The query-module tests already prove both tokens PARSE; what only
 // the Toolbar can answer is whether the parsed value is then copied onto the live
@@ -2399,14 +2601,15 @@ describe("Toolbar — the area token", () => {
 // nothing else, so a key absent from that list parses, completes, highlights, and
 // is dropped on the way to the filter (nibs-7bwy).
 describe("Toolbar — the milestone axis tokens", () => {
-  it("milestone:<id> reaches the filter and survives a blur", async () => {
+  it("milestone:<id> reaches the DERIVED field and survives a blur", async () => {
     const prefs = new Preferences();
     render(Toolbar, { prefs, oncreatenew: vi.fn() });
     const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
 
     await user.type(input, "milestone:tnib-1");
 
-    expect(prefs.filter.milestone).toBe("tnib-1");
+    expect(prefs.filter.inMilestone).toBe("tnib-1");
+    expect(prefs.filter.milestone).toBeUndefined();
     // Recognized as a token, so it does not leak into free text.
     expect(prefs.filter.search).toBeUndefined();
     expect(prefs.invalidTokens).toEqual([]);
@@ -2417,6 +2620,28 @@ describe("Toolbar — the milestone axis tokens", () => {
     await tick();
 
     expect(input.value).toBe("milestone:tnib-1");
+    expect(prefs.filter.inMilestone).toBe("tnib-1");
+  });
+
+  // `BOX_FIELD_KEYS` is what carries a parsed key onto the live filter, so each
+  // new key needs its own trip through the component: one left off that list
+  // parses, completes and highlights, then vanishes (nibs-7bwy).
+  it("milestone-exact:<id> reaches the DIRECT field and survives a blur", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+
+    await user.type(input, "milestone-exact:tnib-1");
+
+    expect(prefs.filter.milestone).toBe("tnib-1");
+    expect(prefs.filter.inMilestone).toBeUndefined();
+    expect(prefs.filter.search).toBeUndefined();
+    expect(prefs.invalidTokens).toEqual([]);
+
+    await fireEvent.blur(input);
+    await tick();
+
+    expect(input.value).toBe("milestone-exact:tnib-1");
     expect(prefs.filter.milestone).toBe("tnib-1");
   });
 
@@ -2444,12 +2669,12 @@ describe("Toolbar — the milestone axis tokens", () => {
     const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
 
     await user.type(input, "milestone:tnib-1 is:backlog");
-    expect(prefs.filter.milestone).toBe("tnib-1");
+    expect(prefs.filter.inMilestone).toBe("tnib-1");
     expect(prefs.filter.noMilestone).toBe(true);
 
     await user.clear(input);
 
-    expect(prefs.filter.milestone).toBeUndefined();
+    expect(prefs.filter.inMilestone).toBeUndefined();
     expect(prefs.filter.noMilestone).toBeUndefined();
   });
 
@@ -2463,5 +2688,34 @@ describe("Toolbar — the milestone axis tokens", () => {
     expect(prefs.filter.milestone).toBeUndefined();
     expect(prefs.filter.noMilestone).toBeUndefined();
     expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe("");
+  });
+});
+
+// ---- tooltips ------------------------------------------------------------
+describe("Toolbar — tooltips", () => {
+  const CONTENT = '[data-slot="tooltip-content"]';
+
+  it("hints the connection chip with the styled tooltip", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn(), connectionStatus: "disconnected" });
+
+    await user.hover(screen.getByTestId("connection-status"));
+
+    expect(
+      await screen.findByText(/Live updates are disconnected/, { selector: CONTENT })
+    ).toBeInTheDocument();
+  });
+
+  it("leaves nothing in the toolbar on the browser's native tooltip", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn(), connectionStatus: "disconnected" });
+
+    // A filter token and the connection chip are both hint-bearing and both
+    // conditional, so they are drawn before the sweep.
+    await user.type(screen.getByTestId("filter-keyword"), "type:bug login");
+    expect(screen.getByTestId("connection-status")).toBeInTheDocument();
+
+    expectNoNativeTitles();
+    expectDelegatingElementsAreNamed();
   });
 });

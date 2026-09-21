@@ -50,12 +50,17 @@ export function useViewSpine(): () => ViewSpine {
 /**
  * The milestones a nib can be assigned to, as a getter: the list arrives after
  * first paint and grows as milestones are created.
+ *
+ * `null` is "no answer yet", never "this store has no milestones" — the same
+ * distinction `declaredAreas` keeps, and for the same reason: a consumer judging
+ * a value against the list must not read startup as a refusal. A picker has no
+ * use for the difference and reads `?? []`.
  */
-export function provideMilestones(get: () => readonly MilestoneOption[]) { setContext(MILESTONES_KEY, get); }
-export function useMilestones(): () => readonly MilestoneOption[] {
-  const g = getContext<() => readonly MilestoneOption[]>(MILESTONES_KEY);
-  // Optional: without a provider, no milestone is offered.
-  return g ?? (() => []);
+export function provideMilestones(get: () => readonly MilestoneOption[] | null) { setContext(MILESTONES_KEY, get); }
+export function useMilestones(): () => readonly MilestoneOption[] | null {
+  const g = getContext<() => readonly MilestoneOption[] | null>(MILESTONES_KEY);
+  // Optional: without a provider there is no list and no answer.
+  return g ?? (() => null);
 }
 
 export function provideConnection(c: ConnectionRecovery) { setContext(CONNECTION_KEY, c); }
@@ -114,7 +119,7 @@ export function makeTestContext(
     historyNav?: HistoryNav;
     activeView?: ActiveView;
     viewSpine?: ViewSpine;
-    milestones?: readonly MilestoneOption[];
+    milestones?: readonly MilestoneOption[] | null;
     configRetry?: () => void;
   },
 ): Map<string, unknown> {
@@ -127,8 +132,8 @@ export function makeTestContext(
   // Default: a spine declaring no areas.
   const spine = opts?.viewSpine ?? EMPTY_SPINE;
   m.set(VIEW_SPINE_KEY, () => spine);
-  // Default: no milestones.
-  const milestones = opts?.milestones ?? [];
+  // Default: the list has not arrived, which is what a component sees at mount.
+  const milestones = opts?.milestones ?? null;
   m.set(MILESTONES_KEY, () => milestones);
   m.set(TREE_VIEW_KEY, opts?.treeView ?? new TreeViewState(DEFAULT_VIEW_LEVEL));
   // Only when supplied; omitting it tests the no-retry path.

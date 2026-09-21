@@ -184,16 +184,22 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 	// collect into one list and sort once by that scope's key — the tree's own
 	// arrangement, rather than one the renderer invented by ranking epics
 	// ahead of everything else.
+	//
+	// A backlog container carries its decomposition for the same reason a queue
+	// entry does: it is the only place that work appears at all — unless a child
+	// carries a milestone, which draws it in that milestone's section instead.
+	// So the DRAWN set is the unscheduled members (eg.Items is already that set
+	// for an epic), while the COUNTED set stays the whole decomposition: a
+	// container's progress measures how much of it is done, which scheduling a
+	// child elsewhere does not change.
 	var backlog []queueEntry
 	for _, eg := range rem.Epics {
-		if entry, ok := roadmapEntry(eg.Epic, eg.Items, includeDone, cfg); ok {
+		if entry, ok := roadmapEntry(eg.Epic, eg.Items, view.DirectMembers(eg.Epic.ID), includeDone, cfg); ok {
 			backlog = append(backlog, entry)
 		}
 	}
 	for _, b := range rem.Other {
-		// A backlog root carries its decomposition for the same reason a queue
-		// entry does: it is the only place that work appears at all.
-		if entry, ok := roadmapEntry(b, view.DirectMembers(b.ID), includeDone, cfg); ok {
+		if entry, ok := roadmapEntry(b, view.UnscheduledMembers(b.ID), view.DirectMembers(b.ID), includeDone, cfg); ok {
 			backlog = append(backlog, entry)
 		}
 	}
@@ -233,7 +239,8 @@ func buildMilestoneGroup(m *nib.Nib, view *membership.View, includeDone bool, cf
 	nib.SortByMilestoneOrder(members)
 
 	for _, member := range members {
-		if entry, ok := roadmapEntry(member, view.DirectMembers(member.ID), includeDone, cfg); ok {
+		decomposition := view.DirectMembers(member.ID)
+		if entry, ok := roadmapEntry(member, decomposition, decomposition, includeDone, cfg); ok {
 			group.Queue = append(group.Queue, entry)
 		}
 	}
@@ -260,14 +267,17 @@ func buildMilestoneGroup(m *nib.Nib, view *membership.View, includeDone bool, cf
 // child; and an open container whose children are all closed still appears,
 // because it is open work the milestone's own progress is already counting.
 //
-// The decomposition takes the PARENT-scope order key. It is a different axis
-// from the queue its container stands in, and the rollup is computed over the
-// unfiltered decomposition so the display filters cannot move the arithmetic.
-func roadmapEntry(member *nib.Nib, decomposition []*nib.Nib, includeDone bool, cfg *config.Config) (queueEntry, bool) {
-	items := filterChildren(decomposition, includeDone, cfg)
+// The decomposition arrives as two sets, because what a container SHOWS and
+// what it COUNTS are different questions. drawn is what the block renders and
+// takes the PARENT-scope order key, a different axis from the queue its
+// container stands in; counted is the member's whole decomposition, so neither
+// the display filters here nor the caller's narrowing of the drawn set can move
+// the arithmetic.
+func roadmapEntry(member *nib.Nib, drawn, counted []*nib.Nib, includeDone bool, cfg *config.Config) (queueEntry, bool) {
+	items := filterChildren(drawn, includeDone, cfg)
 	if len(items) > 0 {
 		nib.SortByOrder(items)
-		return queueContainer(member, progress.ByCount(childStatuses(decomposition)), items), true
+		return queueContainer(member, progress.ByCount(childStatuses(counted)), items), true
 	}
 	if !staysOnRoadmap(member.Status, includeDone, cfg) {
 		return queueEntry{}, false

@@ -1,4 +1,4 @@
-import { REL_ID_FIELDS, type RelIdKey } from "./relations";
+import { REL_ID_FIELDS, REL_ID_SEARCH_TYPES, type RelIdKey } from "./relations";
 
 // The synchronous half of the relationship-id typeahead: whether the caret sits
 // in the value of a token named in `REL_ID_FIELDS`. The Toolbar runs the search.
@@ -24,6 +24,9 @@ export interface RelValueContext {
   start: number;
   /** Replace-range end: the token's end (next whitespace or end of text). */
   end: number;
+  /** The nib types this token's candidates are drawn from, from its
+   *  `REL_TOKEN_ORDER` spec; undefined where any nib may be named. */
+  searchTypes?: readonly string[];
 }
 
 /**
@@ -57,5 +60,6 @@ export function relTokenValueContext(text: string, caret: number): RelValueConte
     fragment: text.slice(valueStart, end),
     start: valueStart,
     end,
+    searchTypes: REL_ID_SEARCH_TYPES.get(name),
   };
 }

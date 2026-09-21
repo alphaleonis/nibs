@@ -51,6 +51,9 @@ func resolveFilterTarget(reader NibReader, field, id string) (string, error) {
 //   - milestone + noMilestone: true. milestone matches a resolved direct
 //     assignment, and View.MilestoneOf answers a nib's own resolved assignment
 //     first, so every match belongs to a milestone.
+//   - inMilestone + noMilestone: true. Both read View.MilestoneOf, one for a
+//     named milestone and one for the empty answer, so the pair asks for a nib
+//     whose derived membership is two things at once.
 //
 // Do not add blockingId + hasBlocking: false. hasBlocking asks whether a nib is
 // ACTIVELY blocking (nibcore's isBlockingInMap releases on the status at BOTH
@@ -87,7 +90,8 @@ func hasBoundingFilter(filter *model.NibFilter) bool {
 		filter.BlockedByID != nil ||
 		filter.MentionsID != nil ||
 		filter.MentionedByID != nil ||
-		filter.Milestone != nil
+		filter.Milestone != nil ||
+		filter.InMilestone != nil
 }
 
 // ApplyFilter applies NibFilter to a slice of nibs and returns filtered
@@ -119,6 +123,9 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 		return nil, err
 	}
 	if err := refuseContradiction("milestone", filter.Milestone, "noMilestone", filter.NoMilestone, true); err != nil {
+		return nil, err
+	}
+	if err := refuseContradiction("inMilestone", filter.InMilestone, "noMilestone", filter.NoMilestone, true); err != nil {
 		return nil, err
 	}
 
@@ -217,6 +224,10 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 	// membership.ResolvedMilestoneID's reading, the one the ordering engine's
 	// queue scope groups by — so a dangling or non-milestone assignment matches
 	// nothing here exactly as it schedules nothing there.
+	//
+	// milestoneTarget carries the resolved id to the inMilestone branch below,
+	// which refuses the pair when the two name DIFFERENT milestones.
+	var milestoneTarget string
 	if filter.Milestone != nil {
 		fullID, err := resolveFilterTarget(reader, "milestone", *filter.Milestone)
 		if err != nil {
@@ -229,8 +240,47 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 		if typ := target.EffectiveType(); typ != "milestone" {
 			return nil, newFilterTargetTypeError("milestone", fullID, typ, "milestone")
 		}
+		milestoneTarget = fullID
 		result = filterByField(result, []string{fullID}, func(b *nib.Nib) string {
 			return resolvedMilestoneID(b, reader)
+		})
+	}
+
+	// inMilestone is the same DERIVED membership named positively: the
+	// milestone's whole plan, an assigned nib together with the subtree that
+	// rides along with it. The target is checked the way milestone's is, because
+	// nothing derives to a non-milestone either.
+	if filter.InMilestone != nil {
+		fullID, err := resolveFilterTarget(reader, "inMilestone", *filter.InMilestone)
+		if err != nil {
+			return nil, err
+		}
+		target, err := reader.Get(fullID)
+		if err != nil {
+			return nil, &FilterTargetUnreadableError{Field: "inMilestone", ID: fullID, ReaderErr: err}
+		}
+		if typ := target.EffectiveType(); typ != "milestone" {
+			return nil, newFilterTargetTypeError("inMilestone", fullID, typ, "milestone")
+		}
+		// The two read ONE axis at two depths, so two DIFFERENT targets select
+		// nothing by construction: View.MilestoneOf answers a nib's own resolved
+		// assignment first, so everything the milestone branch keeps derives to
+		// the milestone it named, and inMilestone can then never keep it. Refused
+		// rather than answered with an empty list, for the reason every other
+		// contradiction here is.
+		//
+		// The SAME target is satisfiable — it is the queue — so the rule is the
+		// targets, not the presence of the pair, and it is decided on the
+		// RESOLVED ids because `m001` and `tnib-m001` are one milestone.
+		if milestoneTarget != "" && milestoneTarget != fullID {
+			return nil, &FilterTargetsDisjointError{
+				Field: "milestone", ID: milestoneTarget,
+				Other: "inMilestone", OtherID: fullID,
+			}
+		}
+		view := cachedMembershipView(ctx, reader)
+		result = filterByField(result, []string{fullID}, func(b *nib.Nib) string {
+			return view.MilestoneOf(b.ID)
 		})
 	}
 
@@ -249,15 +299,30 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 	// web/dashboard too; Vocabulary.IsWithin owns that closure. It names no nib, so
 	// there is no target to resolve and nothing here bounds a search (see
 	// hasBoundingFilter).
-	if filter.Area != nil {
-		// ONE snapshot for both steps: the vocabulary reloads while the server
-		// runs, so asking twice could refuse against one tree and filter against
-		// another, accepting a path and returning nothing for it.
+	//
+	// areaExact is the same path without the closure: the stored value equal to
+	// it, nothing below it. It takes the same refusals for the same reasons.
+	//
+	// ONE snapshot for the whole operation, taken only when an area branch runs:
+	// the vocabulary reloads while the server runs, so asking twice could refuse
+	// against one tree and filter against another — accepting a path and
+	// returning nothing for it, or refusing one the other branch just accepted.
+	// Core.Areas and the NibReader interface both prescribe one snapshot per
+	// decision, and these two branches are one decision.
+	if filter.Area != nil || filter.AreaExact != nil {
 		areas := reader.Areas()
-		if err := refuseUndeclaredArea(areas, "area", *filter.Area); err != nil {
-			return nil, err
+		if filter.Area != nil {
+			if err := refuseUndeclaredArea(areas, "area", *filter.Area); err != nil {
+				return nil, err
+			}
+			result = filterByAreaWithin(result, areas, *filter.Area)
 		}
-		result = filterByAreaWithin(result, areas, *filter.Area)
+		if filter.AreaExact != nil {
+			if err := refuseUndeclaredArea(areas, "areaExact", *filter.AreaExact); err != nil {
+				return nil, err
+			}
+			result = filterByField(result, []string{*filter.AreaExact}, func(b *nib.Nib) string { return b.Area })
+		}
 	}
 
 	if filter.MentionsID != nil {

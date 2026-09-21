@@ -1,14 +1,14 @@
 import { FIELD_SPECS, collapseToTokens } from "./fields";
 import type { FieldSpec, QueryFilter } from "./fields";
 import { REL_TOKEN_ORDER } from "./relations";
-import { AREA_FIELD } from "./area";
+import { AREA_TOKEN_ORDER } from "./area";
 
 /**
  * Render the box-owned filter fields and invalid tokens as canonical query text:
  *  1. Metadata in `FIELD_SPECS` order, each `field:…` then `-field:…`, values
  *     via `collapseToTokens`.
  *  2. Relationship/existence tokens in `REL_TOKEN_ORDER`.
- *  3. `area:<path>`.
+ *  3. The ownership tokens in `AREA_TOKEN_ORDER`.
  *  4. Free-text `search`.
  *  5. `invalidTokens`.
  *
@@ -43,8 +43,9 @@ export function serializeQuery(query: { filter: QueryFilter; invalidTokens?: str
   }
 
   // Verbatim: the parser reads the whole post-colon run back as the path.
-  if (filter.area) {
-    parts.push(`${AREA_FIELD}:${filter.area}`);
+  for (const spec of AREA_TOKEN_ORDER) {
+    const path = filter[spec.field];
+    if (path) parts.push(`${spec.name}:${path}`);
   }
 
   if (filter.search) {
