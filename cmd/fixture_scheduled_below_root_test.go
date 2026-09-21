@@ -2,12 +2,14 @@ package cmd
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/membership"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
+	"github.com/alphaleonis/nibs/internal/progress"
 	"github.com/alphaleonis/nibs/testdata/fixtures"
 )
 
@@ -144,5 +146,75 @@ func TestSampleProjectRoadmapDrawsAScheduledChildApartFromItsParent(t *testing.T
 	if has(backlog, fixtureScheduledChildID) {
 		t.Errorf("%s is drawn both in %s's section and in the backlog under its parent",
 			fixtureScheduledChildID, fixtureChildMilestoneID)
+	}
+}
+
+// TestSampleProjectProgressAgreesAcrossRoadmapAndList reads tnib-f020's
+// progress from `roadmap` and from `list -f progress` — two commands, two
+// renderings, one number — and holds both to the whole decomposition.
+//
+// tnib-f020 has two children and one of them, tnib-t041, is scheduled into
+// tnib-m001. Progress measures decomposition rather than schedule, so both
+// surfaces count 2: a feature does not appear to shrink as its children are
+// scheduled into milestones. Each surface is read from its own command run, so
+// a change that moves one of them alone fails here rather than agreeing with
+// itself.
+func TestSampleProjectProgressAgreesAcrossRoadmapAndList(t *testing.T) {
+	t.Cleanup(resetMembershipPinFlags)
+
+	nibsDir := fixtures.NibsPath(fixtures.CopySampleProject(t))
+
+	resetMembershipPinFlags()
+	roadmapOut, err := runRootWith(t, "--nibs-path", nibsDir, "roadmap", "--json")
+	if err != nil {
+		t.Fatalf("roadmap --json: %v", err)
+	}
+	var data roadmapData
+	if err := json.Unmarshal([]byte(roadmapOut), &data); err != nil {
+		t.Fatalf("decoding roadmap --json: %v", err)
+	}
+	var fromRoadmap *progress.Rollup
+	for _, e := range data.Backlog.Queue {
+		if e.Nib.ID == fixtureUnscheduledParentID {
+			fromRoadmap = e.Progress
+		}
+	}
+	if fromRoadmap == nil {
+		t.Fatalf("roadmap carries no progress for %s", fixtureUnscheduledParentID)
+	}
+
+	resetMembershipPinFlags()
+	listOut, err := runRootWith(t, "--nibs-path", nibsDir, "list", "--all", "-f", "id,progress")
+	if err != nil {
+		t.Fatalf("list -f progress: %v", err)
+	}
+	var fromList *progress.Rollup
+	for _, line := range strings.Split(listOut, "\n") {
+		id, payload, ok := strings.Cut(strings.TrimSpace(line), "\t")
+		if !ok || id != fixtureUnscheduledParentID {
+			continue
+		}
+		var rollup progress.Rollup
+		if err := json.Unmarshal([]byte(strings.TrimSpace(payload)), &rollup); err != nil {
+			t.Fatalf("decoding %s's progress from list: %v", fixtureUnscheduledParentID, err)
+		}
+		fromList = &rollup
+	}
+	if fromList == nil {
+		t.Fatalf("list -f progress has no row for %s:\n%s", fixtureUnscheduledParentID, listOut)
+	}
+
+	const wantTotal = 2
+	if fromRoadmap.Total != wantTotal {
+		t.Errorf("roadmap reports total %d for %s, want %d — %s is scheduled into %s, but it is still part of the decomposition",
+			fromRoadmap.Total, fixtureUnscheduledParentID, wantTotal, fixtureScheduledChildID, fixtureChildMilestoneID)
+	}
+	if fromList.Total != wantTotal {
+		t.Errorf("list -f progress reports total %d for %s, want %d",
+			fromList.Total, fixtureUnscheduledParentID, wantTotal)
+	}
+	if *fromRoadmap != *fromList {
+		t.Errorf("roadmap says %+v and list -f progress says %+v for the same nib %s",
+			*fromRoadmap, *fromList, fixtureUnscheduledParentID)
 	}
 }

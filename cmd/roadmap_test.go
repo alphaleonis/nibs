@@ -1106,3 +1106,74 @@ func TestRenderRoadmapMarkdown_QueueReadsAsOneList(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildRoadmap_RollupCountsTheWholeDecomposition holds the progress
+// arithmetic to a container's FULL decomposition while only the unscheduled
+// part of it is drawn. A child that carries a milestone of its own is drawn in
+// that milestone's section, so the backlog does not redraw it — but progress
+// measures decomposition, not schedule, and a container does not shrink as its
+// children are scheduled away.
+//
+// Both backlog branches are covered. The epic branch is unreachable from the
+// sample fixture, which has no unscheduled epic holding a scheduled child, so
+// the shape is built here rather than left to whichever fixture row happens to
+// exist.
+func TestBuildRoadmap_RollupCountsTheWholeDecomposition(t *testing.T) {
+	cfg := config.Default()
+	now := time.Now()
+
+	nibs := []*nib.Nib{
+		{ID: "m1", Type: "milestone", Title: "v1.0", Status: "in-progress", CreatedAt: &now},
+		// An unscheduled epic, one child scheduled into m1 and one not.
+		{ID: "e1", Type: "epic", Title: "Backlog epic", Status: "todo"},
+		{ID: "e1t1", Type: "task", Title: "Scheduled", Status: "todo", Parent: "e1", Milestone: "m1"},
+		{ID: "e1t2", Type: "task", Title: "Unscheduled", Status: "todo", Parent: "e1"},
+		// The same shape one type over: a root feature, which reaches the
+		// backlog through Other rather than through Epics.
+		{ID: "f1", Type: "feature", Title: "Backlog feature", Status: "todo"},
+		{ID: "f1t1", Type: "task", Title: "Scheduled", Status: "todo", Parent: "f1", Milestone: "m1"},
+		{ID: "f1t2", Type: "task", Title: "Unscheduled", Status: "todo", Parent: "f1"},
+	}
+
+	result := buildRoadmap(nibs, false, nil, nil, cfg)
+	if result.Backlog == nil {
+		t.Fatal("no backlog group")
+	}
+
+	byID := make(map[string]queueEntry)
+	for _, e := range result.Backlog.Queue {
+		byID[e.Nib.ID] = e
+	}
+
+	for _, tc := range []struct {
+		container string
+		drawn     string
+		hidden    string
+	}{
+		{container: "e1", drawn: "e1t2", hidden: "e1t1"},
+		{container: "f1", drawn: "f1t2", hidden: "f1t1"},
+	} {
+		t.Run(tc.container, func(t *testing.T) {
+			entry, ok := byID[tc.container]
+			if !ok {
+				t.Fatalf("%s is not in the backlog at all", tc.container)
+			}
+			var items []string
+			for _, item := range entry.Items {
+				items = append(items, item.ID)
+			}
+			if !slices.Equal(items, []string{tc.drawn}) {
+				t.Errorf("%s draws %v, want only %s — the scheduled child is drawn in m1's section",
+					tc.container, items, tc.drawn)
+			}
+			if entry.Progress == nil {
+				t.Fatalf("%s carries no rollup", tc.container)
+			}
+			want := progress.Rollup{Total: 2, Done: 0, Percent: 0}
+			if *entry.Progress != want {
+				t.Errorf("%s progress = %+v, want %+v — the rollup counts %s too, though the backlog does not draw it",
+					tc.container, *entry.Progress, want, tc.hidden)
+			}
+		})
+	}
+}
