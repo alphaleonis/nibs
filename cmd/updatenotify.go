@@ -32,10 +32,6 @@ var updateNotifySkip = map[string]bool{
 	"__complete": true, // also reached as `__completeNoDesc`, its alias
 }
 
-// updateNotifyEligible reports whether the notifier may print for a command.
-// It stays quiet unless stdout is an interactive terminal, the command is not
-// emitting JSON, and the command is not on the skip list — so scripts, pipes,
-// and JSON consumers never see the line.
 // updateNotifyKey is the skip-map key for cmd: its own name, or the nearest
 // ancestor's when that ancestor is on the list.
 //
@@ -52,8 +48,18 @@ func updateNotifyKey(cmd *cobra.Command) string {
 	return cmd.Name()
 }
 
-func updateNotifyEligible(cmdName string, jsonSet, isTTY bool) bool {
-	if !isTTY || jsonSet {
+// updateNotifyEligible reports whether the notifier may print for a command.
+// It stays quiet unless stdout is an interactive terminal, the command is not
+// emitting JSON, the executed command is not a group, and the command is not on
+// the skip list — so scripts, pipes, and JSON consumers never see the line.
+//
+// hasSubcommands stands in for "this invocation's whole output is help": a
+// group is the executed command only when it was typed bare, because any verb
+// resolves to the child instead, and both groups answer a bare invocation with
+// their help text. That is the same thing the "help" entry above is for, and
+// without this gate `nibs help area` stays quiet while `nibs area` does not.
+func updateNotifyEligible(cmdName string, jsonSet, isTTY, hasSubcommands bool) bool {
+	if !isTTY || jsonSet || hasSubcommands {
 		return false
 	}
 	return !updateNotifySkip[cmdName]
@@ -71,7 +77,8 @@ func jsonFlagSet(cmd *cobra.Command) bool {
 // gating, cache miss, or network failure results in silence, never an error or
 // a delay beyond the check's own short timeout.
 func maybeNotifyUpdate(cmd *cobra.Command) {
-	eligible := updateNotifyEligible(updateNotifyKey(cmd), jsonFlagSet(cmd), term.IsTerminal(int(os.Stdout.Fd())))
+	eligible := updateNotifyEligible(updateNotifyKey(cmd), jsonFlagSet(cmd),
+		term.IsTerminal(int(os.Stdout.Fd())), cmd.HasSubCommands())
 	if !eligible {
 		return
 	}

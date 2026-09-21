@@ -89,8 +89,15 @@ func commandNeedsNoStore(cmd *cobra.Command) bool {
 	// Name() is never an ALIAS, so these must be real names: `query` is the real
 	// name of the command also reached as `nibs graphql`. Keying an alias here
 	// silently exempts nothing.
+	//
+	// area and config are the two GROUPS, and only the bare invocation reaches
+	// here: their RunE prints the group help, which needs no store, and every
+	// verb below them is matched by its own name (list, add, set, rm,
+	// set-prefix) and so still resolves one. They earn a place here only
+	// because that RunE exists — a group cobra considers non-runnable returns
+	// flag.ErrHelp before any hook runs.
 	switch cmd.Name() {
-	case "init", "prime", "version", "catalog", "cheat", "upgrade", "migrate":
+	case "init", "prime", "version", "catalog", "cheat", "upgrade", "migrate", "area", "config":
 		return true
 	case "query":
 		return querySchemaOnly

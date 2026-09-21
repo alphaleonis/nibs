@@ -45,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **The web opens on the milestone-grouped view** — the Milestones view groups work by its milestone assignment instead of by type, each queue in its own order with a Backlog tail for whatever is in none, a nib's milestone is set from the detail panel or the row context menu, and a drag reorders within a queue or assigns into one; a stored view preference still wins, and the hierarchical view is still there as Tree.
 
 ### Fixed
+- **`nibs config` refuses a subcommand it does not recognize** (exit 2, naming it and suggesting the nearest match) instead of printing the group help and exiting 0, which reported success to any script checking the status.
 - **A filesystem-watcher error is warned about** instead of being discarded silently by a long-lived `nibs serve` or `nibs tui`.
 - **`nibs list --sort` refuses a value it does not recognize** (exit 2, naming the legal keys) instead of exiting 0 with an order matching neither the default nor any legal key.
 - **`nibs check --json` returns broken links, self links and broken documents in a stable order**, where each of the three previously came back in the map's iteration order.

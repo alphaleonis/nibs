@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -67,6 +70,69 @@ func codedNoArgs(jsonMode *bool) cobra.PositionalArgs {
 		}
 		return nil
 	}
+}
+
+// codedUnknownSubcommand rejects any positional argument as an unrecognized
+// verb, while accepting none at all. Cobra's own "unknown command" error comes
+// from legacyArgs, which raises it only for the ROOT command (`!cmd.HasParent()`),
+// so a first argument matching no child of a GROUP resolves the group itself and
+// its help prints at exit 0 — a retired or misspelled verb reads as success to
+// anything checking the exit status.
+//
+// codedNoArgs is deliberately NOT the helper for that shape: it rejects the
+// bare invocation too, and `nibs area` with no verb printing its help and
+// exiting 0 is correct.
+//
+// The group must be RUNNABLE for this to fire at all. Command.execute returns
+// flag.ErrHelp on `!c.Runnable()` before it reaches ValidateArgs, so attaching
+// this to a group with neither Run nor RunE is a silent no-op — measured on
+// areaCmd, which still exited 0 with the validator wired. Both groups therefore
+// carry a RunE that prints their help.
+func codedUnknownSubcommand(jsonMode *bool) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return nil
+		}
+		// Cobra builds its `help` command once, on the ROOT — ExecuteC returns
+		// early for any command with a parent, so InitDefaultHelpCmd never runs
+		// for a group and `nibs area help` arrives here as an unrecognized verb
+		// rather than resolving. It is a help request, and this group's RunE
+		// answers exactly that, so it is accepted: dead-ending the commonest way
+		// to ask a group for its usage is not what this refusal is for.
+		if args[0] == "help" {
+			return nil
+		}
+		msg := fmt.Sprintf("unknown command %q for %q", args[0], invokedName(cmd))
+		// Only when cobra has something to offer: a wholly unrelated word
+		// matches neither by Levenshtein nor by prefix, and the message has to
+		// read correctly with no suggestion at all.
+		if suggestions := suggestionsFor(cmd, args[0]); len(suggestions) > 0 {
+			quoted := make([]string, len(suggestions))
+			for i, s := range suggestions {
+				quoted[i] = fmt.Sprintf("%q", s)
+			}
+			msg += "; did you mean " + strings.Join(quoted, " or ") + "?"
+		}
+		return cmdError(jsonModeOf(jsonMode), output.ErrValidation, "%s", msg)
+	}
+}
+
+// suggestionsFor names the subcommands close enough to typedName to offer, by
+// the same measure cobra's own unknown-command message uses.
+//
+// The minimum distance has to be filled in here: cobra stores it on the command
+// and defaults it lazily, inside the findSuggestions path this validator stands
+// in for, so it is still 0 when SuggestionsFor reads it — which admits only an
+// exact Levenshtein match and leaves prefix matching to carry every suggestion
+// on its own. Assigning it mirrors what findSuggestions does, and is idempotent.
+func suggestionsFor(cmd *cobra.Command, typedName string) []string {
+	if cmd.DisableSuggestions {
+		return nil
+	}
+	if cmd.SuggestionsMinimumDistance <= 0 {
+		cmd.SuggestionsMinimumDistance = 2
+	}
+	return cmd.SuggestionsFor(typedName)
 }
 
 // codedExactArgs requires exactly n positional arguments. Coded replacement for
