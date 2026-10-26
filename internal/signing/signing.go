@@ -3,10 +3,9 @@
 //
 // # Why a hand-written validator
 //
-// go-selfupdate ships five validators and none of them fits. PGPValidator is
-// hardcoded to golang.org/x/crypto/openpgp, which the Go team deprecated as
-// "unsafe by design" (GO-2026-5932) and which rejects Ed25519 keys outright.
-// ECDSAValidator uses only standard-library crypto, but holds exactly one
+// go-selfupdate ships five validators and none of them fits. PGPValidator runs
+// the downloaded signature through a full OpenPGP packet parser where Verify
+// accepts only 64 raw bytes. ECDSAValidator uses only standard-library crypto, but holds exactly one
 // *ecdsa.PublicKey — and PatternValidator cannot compensate, because its
 // findValidator returns the first matching validator, so a second one
 // registered against the same filename is dead code. That would mean one key,
