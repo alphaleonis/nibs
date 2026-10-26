@@ -116,12 +116,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Security
 - **`nibs serve` now bounds how deep and how wide a query may recurse, and refuses a disallowed origin instead of answering it** — a page at any origin could otherwise make it resolve a tree that multiplied at every level.
 - **The release workflow no longer pastes its version input into the shell programs it runs**, where a dispatched value could run as code on the job that holds the signing key.
-- Bump `golang.org/x/crypto` to v0.57.0 (from v0.55.0) to clear two denial-of-service advisories in its SSH package ([GO-2026-6354](https://pkg.go.dev/vuln/GO-2026-6354), [GO-2026-6355](https://pkg.go.dev/vuln/GO-2026-6355)); it reaches nibs transitively through `go-selfupdate` and nothing here calls the SSH code, and the bump raises the module's minimum Go to 1.26.0.
-- Bump `vitest` to 4.1.12 and `js-yaml` to 4.3.2 in the web lockfile to clear a path-traversal advisory in `@vitest/mocker` ([GHSA-82fw-gwwq-j7x9](https://github.com/advisories/GHSA-82fw-gwwq-j7x9)) and a CPU-exhaustion one in `js-yaml` ([GHSA-2883-xcg3-v3hh](https://github.com/advisories/GHSA-2883-xcg3-v3hh)). Both are build- and test-time only and neither reaches a browser.
-- **Built with Go 1.26.10 and `golang.org/x/net` v0.60.0**, clearing fourteen standard-library and `x/net` advisories reported by govulncheck, among them [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809).
+
+## v0.8.4 - 2026-10-26
+
+### Security
+- **Built with Go 1.26.10 (from 1.26.5)**, clearing nineteen standard-library advisories present in v0.8.3, seventeen of them in code nibs calls — chiefly `net/http` and `crypto/tls`, which `nibs serve` and `nibs upgrade` use.
 - **`nibs upgrade` no longer links the deprecated `golang.org/x/crypto/openpgp`** — `go-selfupdate` v1.7.0 moved to the maintained ProtonMail fork, retiring [GO-2026-5932](https://pkg.go.dev/vuln/GO-2026-5932).
+- Bump `golang.org/x/crypto` to v0.57.0 (from v0.54.0), clearing three advisories in packages nibs links but never calls; the bump raises the module's minimum Go to 1.26.0.
 - **The web UI's HTML sanitizer, DOMPurify, is updated to 3.4.17**, clearing five advisories ([GHSA-cg2g-xh64-v4q7](https://github.com/advisories/GHSA-cg2g-xh64-v4q7) among them) in sanitizer modes nibs does not use.
-- Bump the rest of the web build toolchain — `vite` 8.3.5, `@graphql-codegen` and `@graphql-tools`, `undici`, `shell-quote` and others — to clear the rest of `npm audit`'s findings, all build- and test-time only.
+- Bump the web build toolchain — `vite`, `vitest`, `@graphql-codegen`, `js-yaml`, `shell-quote` and others — to clear the rest of `npm audit`'s findings, all build- and test-time only.
 
 ## v0.8.3 - 2026-08-13
 
