@@ -9,17 +9,30 @@ import (
 	"testing"
 )
 
+// The innermost trace frame at each govulncheck finding level: module (the
+// module is required), package (a vulnerable package is imported) and symbol (a
+// vulnerable function is reachable).
+const (
+	moduleFrame  = `{"module":"example.com/mod","version":"v1.0.0"}`
+	packageFrame = `{"module":"example.com/mod","version":"v1.0.0","package":"example.com/mod/p"}`
+	symbolFrame  = `{"module":"example.com/mod","version":"v1.0.0","package":"example.com/mod/p","function":"F"}`
+)
+
 // govulncheckJSON builds a govulncheck `-format json` stream reporting one
-// finding per id. The real output interleaves config, SBOM, progress and osv
-// objects around the findings; a couple are included so the jq filter is
-// exercised against noise rather than a clean list.
+// symbol-level finding per id. The real output interleaves config, SBOM,
+// progress and osv objects around the findings; a couple are included so the jq
+// filter is exercised against noise rather than a clean list.
 func govulncheckJSON(ids ...string) string {
+	return govulncheckJSONAt(symbolFrame, ids...)
+}
+
+func govulncheckJSONAt(frame string, ids ...string) string {
 	var b strings.Builder
 	b.WriteString(`{"config":{"protocol_version":"v1.0.0"}}`)
 	b.WriteString(`{"progress":{"message":"Scanning your code..."}}`)
 	for _, id := range ids {
 		b.WriteString(`{"osv":{"id":"` + id + `","summary":"noise the filter must ignore"}}`)
-		b.WriteString(`{"finding":{"osv":"` + id + `","trace":[{"module":"example.com/mod","function":"F"}]}}`)
+		b.WriteString(`{"finding":{"osv":"` + id + `","trace":[` + frame + `]}}`)
 	}
 	return b.String()
 }
@@ -94,6 +107,27 @@ func TestVulncheckGate(t *testing.T) {
 			name:      "stale allowlist entry fails",
 			json:      govulncheckJSON("GO-2026-5932"),
 			allow:     "GO-2026-5932\nGO-2020-0001\n",
+			wantExit:  1,
+			wantInOut: "STALE",
+		},
+		{
+			name:      "module-level finding is ignored",
+			json:      govulncheckJSONAt(moduleFrame, "GO-2026-9999"),
+			allow:     "# nothing suppressed\n",
+			wantExit:  0,
+			wantInOut: "no new vulnerabilities",
+		},
+		{
+			name:      "package-level finding fails",
+			json:      govulncheckJSONAt(packageFrame, "GO-2026-9999"),
+			allow:     "# nothing suppressed\n",
+			wantExit:  1,
+			wantInOut: "GO-2026-9999",
+		},
+		{
+			name:      "allowlisted id reported only at module level is stale",
+			json:      govulncheckJSONAt(moduleFrame, "GO-2026-5932"),
+			allow:     "GO-2026-5932\n",
 			wantExit:  1,
 			wantInOut: "STALE",
 		},

@@ -44,7 +44,9 @@ if ! mise exec -- govulncheck -format json ./... >"$raw" 2>/dev/null; then
 fi
 
 # govulncheck streams concatenated JSON objects; jq consumes that natively.
-found=$(jq -r 'select(has("finding")) | .finding.osv' "$raw" | sort -u)
+# Only package- and symbol-level findings count: a module-level finding means the
+# module is in the graph, not that any of its vulnerable code is linked.
+found=$(jq -r 'select(has("finding")) | select((.finding.trace[0].package // "") != "") | .finding.osv' "$raw" | sort -u)
 allowed=$(sed -e 's/#.*//' -e 's/[[:space:]]//g' "$allowfile" | grep -v '^$' | sort -u || true)
 
 unexpected=$(comm -23 <(printf '%s\n' "$found" | grep -v '^$' || true) <(printf '%s\n' "$allowed") || true)

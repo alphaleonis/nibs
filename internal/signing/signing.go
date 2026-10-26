@@ -1,9 +1,9 @@
 // Package signing verifies Ed25519 signatures over release artifacts against the
 // public keys compiled into the binary.
 //
-// go-selfupdate's validators do not fit: PGPValidator depends on the deprecated
-// golang.org/x/crypto/openpgp, and ECDSAValidator holds a single key, which would
-// leave no way to rotate.
+// go-selfupdate's validators do not fit: ECDSAValidator holds a single key, which
+// would leave no way to rotate, and PGPValidator runs the downloaded signature
+// through a full OpenPGP packet parser where Verify accepts only 64 raw bytes.
 //
 // A binary trusts only the keys compiled into it, so ship spare public keys ahead
 // of any rotation. A key cannot be un-trusted in binaries already shipped.

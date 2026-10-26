@@ -11,9 +11,7 @@ import (
 //
 // The adapter lives here so internal/signing stays free of the go-selfupdate
 // dependency: it is the thing a released binary
-// trusts, and the fewer things it pulls in the better. Notably go-selfupdate
-// links golang.org/x/crypto/openpgp, which the Go team deprecated as unsafe and
-// unmaintained (GO-2026-5932) — internal/signing deliberately touches none of it.
+// trusts, and the fewer things it pulls in the better.
 type signatureValidator struct {
 	verifier *signing.Verifier
 }
