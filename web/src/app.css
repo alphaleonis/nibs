@@ -182,7 +182,7 @@
   --muted-foreground: oklch(0.551 0.02 264); /* gray-500 */
   --accent: oklch(0.269 0.015 264);
   --accent-foreground: oklch(0.96 0.005 286);
-  --destructive: oklch(0.577 0.245 27);     /* red-500 */
+  --destructive: oklch(0.704 0.191 22.216); /* red-400: error text sits on these dark surfaces */
   --destructive-foreground: oklch(0.96 0.005 286);
   --border: oklch(0.322 0.015 264);         /* gray-700 */
   --input: oklch(0.322 0.015 264);
@@ -439,6 +439,7 @@
   --border: oklch(0.405 0.028 280);         /* #44475a */
   --input: oklch(0.43 0.03 280);
   --ring: oklch(0.70 0.17 300);
+  --destructive: oklch(0.74 0.17 22);       /* red-400 lifted for the lighter purple-gray surfaces */
   --text-secondary: oklch(0.75 0.05 280);
 
   /* Domain accents — kept purple-family for cohesion */

@@ -420,7 +420,7 @@ describe("editing an area", () => {
 
     expect(d().getByTestId("area-name-input")).toHaveValue("web");
     expect(d().getByTestId("area-description-input")).toHaveValue("The browser surface");
-    expect(d().getByTestId("area-color-input")).toHaveValue("blue");
+    expect(d().getByRole("button", { name: "Blue" })).toHaveAttribute("aria-pressed", "true");
   });
 
   // The input carries all three, and the resolver applies them as one node update.
@@ -430,7 +430,7 @@ describe("editing an area", () => {
 
     await replace(user, d().getByTestId("area-name-input"), "platform");
     await replace(user, d().getByTestId("area-description-input"), "Everything in the browser");
-    await replace(user, d().getByTestId("area-color-input"), "#4488ff");
+    await user.click(d().getByRole("button", { name: "Teal" }));
     await user.click(d().getByRole("button", { name: /^save$/i }));
 
     expect(dispatchedCommands()).toEqual([
@@ -439,7 +439,7 @@ describe("editing an area", () => {
         path: "web",
         newName: "platform",
         description: "Everything in the browser",
-        color: "#4488ff",
+        color: "teal",
       },
     ]);
     await waitFor(() => expect(screen.queryByTestId("area-form-dialog")).toBeNull());
@@ -451,7 +451,7 @@ describe("editing an area", () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     const d = await openEdit(user);
 
-    await replace(user, d().getByTestId("area-color-input"), "red");
+    await user.click(d().getByRole("button", { name: "Red" }));
     await user.click(d().getByRole("button", { name: /^save$/i }));
 
     const cmd = dispatchedCommand() as Record<string, unknown>;
@@ -502,7 +502,7 @@ describe("editing an area", () => {
     const d = await openEdit(user);
 
     await replace(user, d().getByTestId("area-name-input"), "  web  ");
-    await replace(user, d().getByTestId("area-color-input"), "red");
+    await user.click(d().getByRole("button", { name: "Red" }));
     await user.click(d().getByRole("button", { name: /^save$/i }));
 
     expect(dispatchedCommand()).toEqual({ kind: "update-area", path: "web", color: "red" });
@@ -523,7 +523,7 @@ describe("editing an area", () => {
     const d = await openEdit(user);
 
     await replace(user, d().getByTestId("area-name-input"), "   ");
-    await replace(user, d().getByTestId("area-color-input"), "red");
+    await user.click(d().getByRole("button", { name: "Red" }));
     await user.click(d().getByRole("button", { name: /^save$/i }));
 
     expect(d().getByTestId("area-edit-error")).toHaveTextContent(/name/i);

@@ -27,7 +27,7 @@ function renderField(initial: string) {
 const label = (name: string) => name[0].toUpperCase() + name.slice(1);
 const swatch = (name: string) => screen.getByRole("button", { name: label(name) });
 const noColor = () => screen.getByRole("button", { name: "No color" });
-const input = () => screen.getByTestId("area-color-input");
+const custom = () => screen.queryByTestId("area-swatch-custom");
 
 describe("AreaColorField", () => {
   it("picking a swatch stores its name", async () => {
@@ -36,7 +36,6 @@ describe("AreaColorField", () => {
     await user.click(swatch("teal"));
 
     expect(box.value).toBe("teal");
-    expect(input()).toHaveValue("teal");
   });
 
   it("No color stores the empty string", async () => {
@@ -45,7 +44,6 @@ describe("AreaColorField", () => {
     await user.click(noColor());
 
     expect(box.value).toBe("");
-    expect(input()).toHaveValue("");
   });
 
   it("the current palette color is marked selected", async () => {
@@ -57,28 +55,33 @@ describe("AreaColorField", () => {
       expect(swatch(name)).toHaveAttribute("aria-pressed", "false");
     }
     expect(noColor()).toHaveAttribute("aria-pressed", "false");
+    expect(custom()).toBeNull();
 
     await user.click(noColor());
     expect(noColor()).toHaveAttribute("aria-pressed", "true");
     expect(swatch("teal")).toHaveAttribute("aria-pressed", "false");
-
-    await user.type(input(), "#4488ff");
-    for (const name of AREA_PALETTE) expect(swatch(name)).toHaveAttribute("aria-pressed", "false");
-    expect(noColor()).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("a custom value is kept verbatim", async () => {
-    const seeded = renderField("#4488ff80");
-    expect(input()).toHaveValue("#4488ff80");
-    expect(seeded.value).toBe("#4488ff80");
+  it("a color outside the palette gets its own swatch, selected and kept verbatim", async () => {
+    const box = renderField("#4488ff80");
 
-    await user.clear(input());
-    await user.type(input(), "rebeccapurple");
-    expect(seeded.value).toBe("rebeccapurple");
+    expect(custom()).toHaveAttribute("aria-pressed", "true");
+    expect(custom()).toHaveAccessibleName("Custom color #4488ff80");
+    expect(custom()!.style.backgroundColor).not.toBe("");
+    for (const name of AREA_PALETTE) expect(swatch(name)).toHaveAttribute("aria-pressed", "false");
+    expect(noColor()).toHaveAttribute("aria-pressed", "false");
 
-    await user.clear(input());
-    await user.type(input(), "#4488ff80");
-    expect(seeded.value).toBe("#4488ff80");
+    await user.click(swatch("teal"));
+    expect(box.value).toBe("teal");
+    expect(custom()).toHaveAttribute("aria-pressed", "false");
+
+    await user.click(custom()!);
+    expect(box.value).toBe("#4488ff80");
+  });
+
+  it("no custom swatch is drawn for an empty value", () => {
+    renderField("");
+    expect(custom()).toBeNull();
   });
 
   // A write-back would make the Edit dialog send a color the user never changed.
@@ -95,40 +98,28 @@ describe("AreaColorField", () => {
     }
   });
 
-  it("the preview hints when the color cannot be drawn", async () => {
-    renderField("teal");
-    const preview = screen.getByTestId("area-color-preview");
-    expect(preview.style.backgroundColor).toBe("var(--area-teal)");
-    expect(screen.queryByTestId("area-color-hint")).toBeNull();
-
+  it("a custom color the browser cannot draw shows an empty dashed swatch", () => {
     // A name in letters that no browser knows, then a shape `cssColor` refuses.
     for (const undrawable of ["notacolor", "rgb(1, 2, 3)"]) {
-      await user.clear(input());
-      await user.type(input(), undrawable);
-      expect(screen.getByTestId("area-color-hint")).toBeVisible();
-      expect(preview.style.backgroundColor).toBe("");
-      expect(input()).toHaveAccessibleDescription(screen.getByTestId("area-color-hint").textContent!);
+      renderField(undrawable);
+      expect(custom()).toHaveAttribute("aria-pressed", "true");
+      expect(custom()!.style.backgroundColor).toBe("");
+      expect(custom()).toHaveClass("border-dashed");
+      cleanup();
     }
-
-    // No color is a choice, not a fault.
-    await user.clear(input());
-    expect(screen.queryByTestId("area-color-hint")).toBeNull();
   });
 
   it("swatches are keyboard reachable and named", async () => {
     const box = renderField("");
 
-    // Tab order: No color, then the palette in order, then the text input.
+    // Tab order: No color, then the palette in order.
     await user.tab();
     expect(noColor()).toHaveFocus();
     for (const name of AREA_PALETTE) {
       await user.tab();
       expect(swatch(name)).toHaveFocus();
     }
-    await user.tab();
-    expect(input()).toHaveFocus();
 
-    await user.tab({ shift: true });
     await user.keyboard(" ");
     expect(box.value).toBe("gray");
 
