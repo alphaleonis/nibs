@@ -340,8 +340,21 @@ test("detail panel — area picker open", async ({ page }) => {
   await page.locator('tr[data-nib-id="tnib-f008"]').locator('[data-action="title"]').click();
   await expect(page.locator('[data-testid="anv-area"]')).toHaveText(/web\/dashboard/);
   await page.locator('[data-testid="anv-area"]').click();
-  await expect(page.getByRole("option").first()).toBeVisible({ timeout: 5_000 });
+  await expect(page.getByRole("option", { name: "New area…" })).toBeVisible({ timeout: 5_000 });
   await shot(page, "detail-panel-area-open");
+});
+
+// The create-area dialog raised from "+ New area…" over the expanded editor, so
+// one frame shows the dialog stacked above the editor's own modal surface.
+test("active view — expanded, create area from the Area field", async ({ page }) => {
+  await openApp(page);
+  await page.locator('tr[data-nib-id="tnib-f008"]').locator('[data-action="title"]').click();
+  await page.locator('[data-testid="anv-expand"]').click();
+  await expect(page.locator('[data-testid="active-nib-modal"]')).toBeVisible({ timeout: 5_000 });
+  await page.locator('[data-testid="anv-area"]').click();
+  await page.getByRole("option", { name: "New area…" }).click();
+  await expect(page.locator('[data-testid="new-area-dialog"]')).toBeVisible({ timeout: 5_000 });
+  await shot(page, "active-view-expanded-new-area");
 });
 
 // Task-list checkboxes in rendered nib body: clickable + theme-styled.

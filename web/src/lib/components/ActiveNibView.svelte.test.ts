@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/svelte";
+import { render, screen, waitFor, within } from "@testing-library/svelte";
 import { userEvent } from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { flushSync } from "svelte";
@@ -22,15 +22,20 @@ const { mockExecute, mockIsMutating } = vi.hoisted(() => ({
   mockExecute: vi.fn().mockResolvedValue({ ok: true, data: {} }),
   mockIsMutating: vi.fn().mockReturnValue(false),
 }));
-vi.mock("$lib/mutations", () => ({
-  getMutationStore: () => ({
-    execute: mockExecute,
-    isMutating: mockIsMutating,
-    get pending() {
-      return false;
-    },
-  }),
-}));
+// Spread the real module: the create-area form builds its command with `addArea`.
+vi.mock("$lib/mutations", async () => {
+  const actual = await vi.importActual<typeof import("$lib/mutations")>("$lib/mutations");
+  return {
+    ...actual,
+    getMutationStore: () => ({
+      execute: mockExecute,
+      isMutating: mockIsMutating,
+      get pending() {
+        return false;
+      },
+    }),
+  };
+});
 
 const { mockToastError, mockToastSuccess } = vi.hoisted(() => ({
   mockToastError: vi.fn(),
@@ -642,6 +647,99 @@ describe("ActiveNibView", () => {
 
       expect(screen.getByTestId("anv-area")).toBeTruthy();
       expect(screen.queryByTestId("anv-milestone")).toBeNull();
+    });
+
+    describe("+ New area…", () => {
+      /** Opens the create-area dialog from the Area field's "+ New area…" item. */
+      async function openCreateDialog(): Promise<HTMLElement> {
+        await user.click(screen.getByTestId("anv-area"));
+        await user.click(screen.getByRole("option", { name: "New area…" }));
+        return screen.getByTestId("new-area-dialog");
+      }
+
+      async function createArea(dialog: HTMLElement, path: string) {
+        await user.type(within(dialog).getByTestId("area-path-input"), path);
+        await user.click(within(dialog).getByRole("button", { name: "Create" }));
+      }
+
+      it("creates the typed area and selects it on the buffer", async () => {
+        const form = makeEditForm({ area: "web" });
+        renderView(makeView({ form }), confirmDialog, {}, AREA_SPINE);
+
+        const dialog = await openCreateDialog();
+        await createArea(dialog, "mobile");
+
+        expect(mockExecute).toHaveBeenCalledWith({ kind: "add-area", path: "mobile" }, { suppressToast: true });
+        await waitFor(() => expect(form.area).toBe("mobile"));
+        expect(screen.queryByTestId("new-area-dialog")).toBeNull();
+        // The assignment itself is buffered like a pick: add-area was the only write.
+        expect(mockExecute).toHaveBeenCalledOnce();
+      });
+
+      it("shows a refusal in the dialog and leaves the area unchanged", async () => {
+        mockExecute.mockResolvedValue({ ok: false, error: '[GraphQL] area "web" already exists' });
+        const form = makeEditForm({ area: "web/dashboard" });
+        renderView(makeView({ form }), confirmDialog, {}, AREA_SPINE);
+
+        const dialog = await openCreateDialog();
+        await createArea(dialog, "web");
+
+        await waitFor(() =>
+          expect(within(dialog).getByTestId("area-edit-error")).toHaveTextContent('area "web" already exists'),
+        );
+        expect(screen.getByTestId("new-area-dialog")).toBe(dialog);
+        expect(form.area).toBe("web/dashboard");
+      });
+
+      it("leaves the area unchanged on Cancel and returns focus to the Area field", async () => {
+        const form = makeEditForm({ area: "web" });
+        renderView(makeView({ form }), confirmDialog, {}, AREA_SPINE);
+
+        const dialog = await openCreateDialog();
+        await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+        expect(screen.queryByTestId("new-area-dialog")).toBeNull();
+        expect(form.area).toBe("web");
+        expect(mockExecute).not.toHaveBeenCalled();
+        await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId("anv-area")));
+      });
+
+      it("consumes the Escape that closes it, so the app's Escape does not also close the editor", async () => {
+        // The app's global Escape handler skips an event that is already defaultPrevented.
+        const prevented: boolean[] = [];
+        const listener = (e: KeyboardEvent) => {
+          if (e.key === "Escape") prevented.push(e.defaultPrevented);
+        };
+        const form = makeEditForm({ area: "web" });
+        renderView(makeView({ form, presentation: "expanded" }), confirmDialog, {}, AREA_SPINE);
+        await openCreateDialog();
+
+        window.addEventListener("keydown", listener);
+        try {
+          await user.keyboard("{Escape}");
+        } finally {
+          window.removeEventListener("keydown", listener);
+        }
+
+        await waitFor(() => expect(screen.queryByTestId("new-area-dialog")).toBeNull());
+        expect(prevented).toEqual([true]);
+        expect(form.area).toBe("web");
+      });
+
+      it("writes the new area to the buffer it was picked from, not one swapped in while the dialog is open", async () => {
+        const formA = makeEditForm({ id: "nibs-A", area: "" });
+        const formB = makeEditForm({ id: "nibs-B", area: "" });
+        const view = makeView({ form: formA });
+        renderView(view, confirmDialog, {}, AREA_SPINE);
+
+        const dialog = await openCreateDialog();
+        view.form = formB;
+        flushSync();
+        await createArea(dialog, "mobile");
+
+        await waitFor(() => expect(formA.area).toBe("mobile"));
+        expect(formB.area).toBe("");
+      });
     });
 
     it("is absent for a milestone, which takes no area of its own", () => {

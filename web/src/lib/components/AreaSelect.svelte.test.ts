@@ -22,7 +22,10 @@ function ctx(areas: AreaNode[] = AREAS) {
   return new Map<string, unknown>([[VIEW_SPINE_KEY, () => spine]]);
 }
 
-function renderSelect(props: { value: string; onchange?: () => void }, areas = AREAS) {
+function renderSelect(
+  props: { value: string; onchange?: () => void; oncreatearea?: () => void },
+  areas = AREAS,
+) {
   return render(AreaSelect, {
     props: { onchange: vi.fn(), ...props },
     context: ctx(areas),
@@ -131,10 +134,69 @@ describe("AreaSelect", () => {
     expect(within(option("cli")).queryByTestId("area-color")).toBeNull();
   });
 
-  it("offers only None when the project declares no areas", async () => {
+  it("offers only None when the project declares no areas and the host cannot create one", async () => {
     renderSelect({ value: "" }, []);
     await user.click(screen.getByTestId("area-select"));
 
     expect(screen.getAllByRole("option")).toHaveLength(1);
+  });
+
+  describe("+ New area…", () => {
+    it("is offered last when the host can create an area", async () => {
+      renderSelect({ value: "", oncreatearea: vi.fn() });
+      await user.click(screen.getByTestId("area-select"));
+
+      const options = screen.getAllByRole("option");
+      expect(options).toHaveLength(5);
+      expect(options.at(-1)).toHaveTextContent("New area…");
+    });
+
+    it("is offered beside None when the project declares no areas yet", async () => {
+      renderSelect({ value: "", oncreatearea: vi.fn() }, []);
+      await user.click(screen.getByTestId("area-select"));
+
+      const names = screen.getAllByRole("option").map((o) => o.textContent?.trim());
+      expect(names).toEqual(["None", "New area…"]);
+    });
+
+    it("asks the host to create an area, and its sentinel never reaches onchange", async () => {
+      const onchange = vi.fn();
+      const oncreatearea = vi.fn();
+      renderSelect({ value: "web", onchange, oncreatearea });
+
+      await user.click(screen.getByTestId("area-select"));
+      await user.click(screen.getByRole("option", { name: "New area…" }));
+
+      expect(oncreatearea).toHaveBeenCalledOnce();
+      expect(onchange).not.toHaveBeenCalled();
+    });
+
+    it("leaves the stored area selected when the picker opens again", async () => {
+      // The host has not changed `value`, as after a Cancel.
+      renderSelect({ value: "web", oncreatearea: vi.fn() });
+
+      await user.click(screen.getByTestId("area-select"));
+      await user.click(screen.getByRole("option", { name: "New area…" }));
+      await user.click(screen.getByTestId("area-select"));
+
+      expect(option("web")).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("option", { name: "New area…" })).not.toHaveAttribute("aria-selected", "true");
+    });
+  });
+
+  it("lists an area as soon as the vocabulary declares it", async () => {
+    // The app swaps the spine when a new config arrives, as one does after a create.
+    let spine = $state(makeViewSpine(createAreaVocabulary(AREAS)));
+    render(AreaSelect, {
+      props: { value: "mobile", onchange: vi.fn() },
+      context: new Map<string, unknown>([[VIEW_SPINE_KEY, () => spine]]),
+    });
+
+    spine = makeViewSpine(
+      createAreaVocabulary([...AREAS, { path: "mobile", name: "mobile", description: "", color: "", depth: 0 }]),
+    );
+    await user.click(screen.getByTestId("area-select"));
+
+    expect(option("mobile")).toHaveAttribute("aria-selected", "true");
   });
 });

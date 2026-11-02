@@ -25,9 +25,11 @@
      * the toast has no action, for a host where the new area is already shown.
      */
     onshow?: () => void;
+    /** Take the full path of the area a create just made. Called before `onclose`. */
+    oncreated?: (path: string) => void;
   }
 
-  let { parentPath = "", onclose, oncancel, onshow }: Props = $props();
+  let { parentPath = "", onclose, oncancel, onshow, oncreated }: Props = $props();
 
   const mutations = getMutationStore();
 
@@ -55,6 +57,7 @@
         const show = onshow;
         toast.success(`Created area ${full}`, show ? { action: { label: "Show", onClick: () => show() } } : undefined);
         path = "";
+        oncreated?.(full);
         onclose?.();
       }
     } finally {
