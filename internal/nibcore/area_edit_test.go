@@ -581,7 +581,7 @@ func TestAreaUndeclaredErrorWordsAnEmptyVocabularyApart(t *testing.T) {
 	if !errors.As(err, &undeclared) {
 		t.Fatalf("error = %v (%T), want *AreaUndeclaredError", err, err)
 	}
-	if got, want := undeclared.Error(), "this store declares no areas"; got != want {
+	if got, want := undeclared.Error(), "this store has no areas"; got != want {
 		t.Errorf("empty vocabulary: Error() = %q, want %q", got, want)
 	}
 
@@ -590,7 +590,7 @@ func TestAreaUndeclaredErrorWordsAnEmptyVocabularyApart(t *testing.T) {
 	if !errors.As(err, &undeclared) {
 		t.Fatalf("error = %v (%T), want *AreaUndeclaredError", err, err)
 	}
-	if got := undeclared.Error(); !strings.Contains(got, `declares no area "nosuch": the declared areas are`) {
+	if got := undeclared.Error(); !strings.Contains(got, `has no area "nosuch". Its areas are`) {
 		t.Errorf("declared vocabulary: Error() = %q, want it to name the path and list the declared areas", got)
 	}
 }

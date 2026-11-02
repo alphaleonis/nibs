@@ -126,7 +126,7 @@ func areaDisposition(input model.RemoveAreaInput) (nibcore.AreaDisposition, erro
 	switch {
 	case input.MoveTo != nil && input.Unassign != nil && *input.Unassign:
 		return nibcore.AreaDisposition{}, fmt.Errorf(
-			"moveTo and unassign: true are two different dispositions for the same nibs — send one")
+			"moveTo and unassign: true ask for two different things to happen to the same nibs. Use only one of them")
 	case input.MoveTo != nil:
 		return nibcore.MoveAreaMembersTo(*input.MoveTo), nil
 	case input.Unassign != nil && *input.Unassign:
@@ -173,18 +173,16 @@ func (r *mutationResolver) areaEditNotes(res nibcore.AreaEditResult) []string {
 func wordAreaAddFailure(err error) error {
 	var declared *nibcore.AreaAlreadyDeclaredError
 	if errors.As(err, &declared) {
-		return wordAreaRefusal(err, "cannot declare area %q: this store already declares it, and two siblings with one name make one path mean two nodes",
+		return wordAreaRefusal(err, "cannot create area %q, because it already exists. Choose a different name",
 			area.RenderPath(declared.Path))
 	}
-	// wordAreaEditFailure's undeclared-path wording is not reused: its
-	// no-vocabulary branch sends the caller to write an `areas:` block by hand,
-	// where THIS mutation is the remedy, and its other branch speaks about a node
-	// to act on rather than one to nest under. The remedy names the mutation
-	// rather than `nibs area add` — a caller reaching this surface has no CLI.
+	// wordAreaEditFailure's undeclared-path wording speaks about an area to act
+	// on, not a parent to create under. The remedy names no CLI command: a caller
+	// of this surface has no shell.
 	var parent *nibcore.AreaParentUndeclaredError
 	if errors.As(err, &parent) {
-		return wordAreaRefusal(err, "cannot declare area %q: this store declares no area %q to nest it under, and a parent is never created on the way — declare it with addArea first, then send this one again",
-			area.RenderPath(parent.Path), area.RenderPath(parent.Parent))
+		return wordAreaRefusal(err, "cannot create area %q, because area %q does not exist. Create %q first, then try again",
+			area.RenderPath(parent.Path), area.RenderPath(parent.Parent), area.RenderPath(parent.Parent))
 	}
 	var ioErr *nibcore.AreaEditIOError
 	if errors.As(err, &ioErr) && ioErr.Phase == nibcore.AreaEditPhaseWrite {
@@ -194,19 +192,18 @@ func wordAreaAddFailure(err error) error {
 		// and its cascade and confirm phases are unreachable — the plan carries
 		// neither a rewrite nor an emptied path.
 		return wordAreaRefusal(ioErr,
-			"area %q could not be declared: the store's areas.yml could not be updated: %v — nothing else was written, so the store is as it was; rerun the same mutation once that is fixed",
+			"area %q was not created, because the store's areas.yml could not be written: %v. Nothing was changed. Fix the problem, then try again",
 			area.RenderPath(ioErr.Path), ioErr.Cause)
 	}
-	return wordAreaEditFailure(err, "declare")
+	return wordAreaEditFailure(err, "create")
 }
 
 func wordAreaUpdateFailure(err error) error {
-	// An update given nothing to set. Worded here rather than left to the shared
-	// arm because it names the three fields a caller may send, which is the whole
-	// repair.
+	// An update given nothing to set. Its repair is the three fields a caller may
+	// set, which the shared arm does not know.
 	var empty *nibcore.AreaUpdateEmptyError
 	if errors.As(err, &empty) {
-		return wordAreaRefusal(err, "nothing to change on area %q: send a newName, a description or a color — an update that sets none of them would report success over an edit that never happened",
+		return wordAreaRefusal(err, "nothing to change on area %q. Give a new name (newName), a description or a color",
 			area.RenderPath(empty.Path))
 	}
 	var unchanged *nibcore.AreaNameUnchangedError
@@ -216,7 +213,7 @@ func wordAreaUpdateFailure(err error) error {
 	}
 	var taken *nibcore.AreaNameTakenError
 	if errors.As(err, &taken) {
-		return wordAreaRefusal(err, "cannot rename area %q to %q: this store already declares %q, and two siblings with one name make one path mean two nodes",
+		return wordAreaRefusal(err, "cannot rename area %q to %q, because area %q already exists. Choose a different name",
 			area.RenderPath(taken.Path), area.RenderPath(taken.NewName), area.RenderPath(taken.Sibling))
 	}
 	var ioErr *nibcore.AreaEditIOError
@@ -224,46 +221,44 @@ func wordAreaUpdateFailure(err error) error {
 		switch ioErr.Phase {
 		case nibcore.AreaEditPhaseCascade:
 			return wordAreaRefusal(ioErr,
-				"rewrote %d of the %s assigned at or below area %q, then %v — the vocabulary still declares %q and those writes are persisted; rerun the same mutation to finish it, since a nib already rewritten is no longer a member and the rerun starts where this stopped",
-				len(ioErr.Written), areaNibCount(len(ioErr.Members)), area.RenderPath(ioErr.Path),
-				ioErr.Cause, area.RenderPath(ioErr.Path))
+				"renaming area %q to %q stopped part way: it moved %d of the %s assigned to it or to an area beneath it, then failed: %v. The area is still named %q, and the moved nibs are saved.%s Rename it again to finish; the retry starts where this one stopped",
+				area.RenderPath(ioErr.Path), area.RenderPath(ioErr.NewPath), len(ioErr.Written),
+				areaNibCount(len(ioErr.Members)), ioErr.Cause, area.RenderPath(ioErr.Path),
+				areaCascadeStranded(ioErr.NewPath, len(ioErr.Written)))
 		case nibcore.AreaEditPhaseWrite:
-			return wordAreaRefusal(ioErr,
-				"rewrote %s from area %q to %q, then the store's areas.yml could not be updated: %v — the vocabulary still declares %q and those writes are persisted; rerun the same mutation to finish it, since the rewritten nibs are no longer members and the rerun only renames the declaration",
-				areaNibCount(len(ioErr.Written)), area.RenderPath(ioErr.Path), area.RenderPath(ioErr.NewPath),
-				ioErr.Cause, area.RenderPath(ioErr.Path))
+			return areaUpdateWriteFailure(ioErr)
 		}
 	}
-	return wordAreaEditFailure(err, "rename")
+	return wordAreaEditFailure(err, "change")
 }
 
 func wordAreaRetireFailure(err error) error {
 	var members *nibcore.AreaMembersPresentError
 	if errors.As(err, &members) {
 		return wordAreaRefusal(err,
-			"cannot retire area %q: %s assigned at or below it (%s) — reassign them with moveTo, drop their assignment with unassign: true, or leave the declaration in place",
+			"cannot retire area %q: %s assigned to it or to an area beneath it (%s). Move them to another area (moveTo), clear their area (unassign: true), or keep the area",
 			area.RenderPath(members.Path), areaNibsAre(len(members.Members)), namedMembers(members.Members))
 	}
 	var empty *nibcore.AreaDispositionEmptyError
 	if errors.As(err, &empty) {
-		return wordAreaRefusal(err, "nothing to %s: no nib is assigned at or below area %q — drop %s to retire it",
-			areaDispositionAction(empty.Disposition), area.RenderPath(empty.Path),
+		return wordAreaRefusal(err, "no nib is assigned to area %q or to an area beneath it, so there are none to %s. Retire it without %s",
+			area.RenderPath(empty.Path), areaDispositionAction(empty.Disposition),
 			areaDispositionField(empty.Disposition))
 	}
 	var within *nibcore.AreaMoveTargetWithinError
 	if errors.As(err, &within) {
 		return wordAreaRefusal(err,
-			"cannot move members to %q: it is declared at or below %q, which this mutation is retiring — name an area outside it, or send unassign: true to drop their assignment",
-			area.RenderPath(within.Target), area.RenderPath(within.Path))
+			"cannot move the nibs to %q, because retiring %q retires it too. Choose an area outside %q, or clear their area (unassign: true)",
+			area.RenderPath(within.Target), area.RenderPath(within.Path), area.RenderPath(within.Path))
 	}
 	var ioErr *nibcore.AreaEditIOError
 	if errors.As(err, &ioErr) {
 		switch ioErr.Phase {
 		case nibcore.AreaEditPhaseCascade:
 			return wordAreaRefusal(ioErr,
-				"%s %d of the %s assigned at or below area %q, then %v — %q is still declared and those writes are persisted; rerun the same mutation to finish it, since a nib already disposed of is no longer a member and the rerun starts where this stopped",
-				areaDispositionVerb(ioErr.Disposition), len(ioErr.Written), areaNibCount(len(ioErr.Members)),
-				area.RenderPath(ioErr.Path), ioErr.Cause, area.RenderPath(ioErr.Path))
+				"retiring area %q stopped part way: it %s %d of the %s assigned to it or to an area beneath it, then failed: %v. Area %q still exists, and those changes are saved. Retire it again the same way to finish; the retry starts where this one stopped",
+				area.RenderPath(ioErr.Path), areaDispositionVerb(ioErr.Disposition), len(ioErr.Written),
+				areaNibCount(len(ioErr.Members)), ioErr.Cause, area.RenderPath(ioErr.Path))
 		case nibcore.AreaEditPhaseConfirm:
 			// A retire that named a disposition is past its cascade here and
 			// reports that; one that named none rewrote nothing, and the shared
@@ -284,11 +279,11 @@ func wordAreaEditFailure(err error, verb string) error {
 	var undeclared *nibcore.AreaUndeclaredError
 	if errors.As(err, &undeclared) {
 		if undeclared.Areas.IsEmpty() {
-			return wordAreaRefusal(err, "this store declares no areas, so there is none to %s — declare an `areas:` block in the store's areas.yml first",
+			return wordAreaRefusal(err, "this store has no areas, so there is none to %s. Create an area first",
 				areaPathVerb(undeclared.Role, verb))
 		}
-		return wordAreaRefusal(err, "this store declares no area %q: the declared areas are %s",
-			area.RenderPath(undeclared.Path), undeclared.Areas.List())
+		return wordAreaRefusal(err, "this store has no area %q%s. Its areas are %s",
+			area.RenderPath(undeclared.Path), areaPathPurpose(undeclared.Role), undeclared.Areas.List())
 	}
 	var retired *nibcore.AreaRetiredWhileWaitingError
 	if errors.As(err, &retired) {
@@ -296,13 +291,13 @@ func wordAreaEditFailure(err error, verb string) error {
 	}
 	var vanished *nibcore.AreaVocabularyVanishedError
 	if errors.As(err, &vanished) {
-		return wordAreaRefusal(err, "nothing was written: this store's areas vocabulary could not be read under its write lock — the file does not exist; restore it before editing the areas it declares")
+		return wordAreaRefusal(err, "nothing was changed: the store's areas.yml was deleted. Restore the file before you change its areas")
 	}
 	var arrived *nibcore.AreaMembersArrivedError
 	if errors.As(err, &arrived) {
 		return wordAreaRefusal(err,
-			"the vocabulary was left as it was: this edit did not see %s assigned at or below area %q (%s) when it read the store — a writer that does not take the store's lock landed it, a `git pull` in the store being the usual one; %srerun the same mutation, which decides from the store as it now stands%s",
-			areaNibCount(len(arrived.Members)), area.RenderPath(arrived.Path),
+			"area %q was left as it was: %s assigned to it or to an area beneath it (%s) appeared after this edit read the store, usually from a git pull in the store's folder.%s Try again; the retry uses the store as it is now.%s",
+			area.RenderPath(arrived.Path), areaNibCount(len(arrived.Members)),
 			namedMembers(arrived.Members), areaCascadePersisted(len(arrived.Written)),
 			areaCascadeStranded(arrived.NewPath, len(arrived.Written)))
 	}
@@ -313,20 +308,20 @@ func wordAreaEditFailure(err error, verb string) error {
 			var waitEnded *nibcore.StoreLockWaitEndedError
 			if errors.As(ioErr.Cause, &waitEnded) {
 				return wordAreaRefusal(ioErr,
-					"nothing was written: this request ended after %s, while this edit was still waiting for the store's write lock — rerun the same mutation, which decides from the store as it then stands",
+					"nothing was changed: this request ended after %s, while it waited for another edit to the store to finish. Try again",
 					waitEnded.Waited.Round(time.Millisecond))
 			}
 			return wordAreaRefusal(ioErr,
-				"this store's write lock could not be taken, and an areas edit rewrites both the nibs and the vocabulary so it must hold one: %v", ioErr.Cause)
+				"nothing was changed: the store could not be locked for this edit: %v", ioErr.Cause)
 		case nibcore.AreaEditPhaseLoadVocabulary:
 			return wordAreaRefusal(ioErr,
-				"nothing was written: re-reading this store's areas vocabulary under its write lock failed: %v", ioErr.Cause)
+				"nothing was changed: the store's areas.yml could not be read: %v", ioErr.Cause)
 		case nibcore.AreaEditPhaseLoadNibs:
 			return wordAreaRefusal(ioErr,
-				"nothing was written: re-reading this store's nibs under its write lock failed: %v", ioErr.Cause)
+				"nothing was changed: the store's nibs could not be read: %v", ioErr.Cause)
 		case nibcore.AreaEditPhaseConfirm:
 			return wordAreaRefusal(ioErr,
-				"the vocabulary was left as it was: re-reading this store's nibs to confirm that nothing is assigned at or below area %q failed: %v — %srerun the same mutation once that is fixed%s",
+				"area %q was left as it was: the check that no nib is still assigned to it or to an area beneath it failed: %v.%s Fix the problem, then try again.%s",
 				area.RenderPath(ioErr.Path), ioErr.Cause, areaCascadePersisted(len(ioErr.Written)),
 				areaCascadeStranded(ioErr.NewPath, len(ioErr.Written)))
 		case nibcore.AreaEditPhaseReload:
@@ -334,7 +329,7 @@ func wordAreaEditFailure(err error, verb string) error {
 			// with the stale vocabulary and calling the mutation a success
 			// renders in a client as the edit not having happened.
 			return wordAreaRefusal(ioErr,
-				"both halves of this edit landed on disk, and re-reading the vocabulary it just wrote then failed: %v — there is nothing to rerun; until that file can be read again this store answers from the vocabulary as it was before the edit",
+				"the edit was saved, but the store's areas.yml could not be read back afterwards: %v. Do not repeat the edit. Until the file can be read again, the areas show as they were before it",
 				ioErr.Cause)
 		}
 	}
@@ -345,23 +340,46 @@ func wordAreaEditFailure(err error, verb string) error {
 }
 
 func areaRetiredWhileWaiting(err error, e *nibcore.AreaRetiredWhileWaitingError) error {
-	return wordAreaRefusal(err, "nothing was written: this store declared area %q when this edit began and does not declare it now — another nibs process retired or renamed it while this one waited for the store's write lock; read the store's config for the vocabulary as it now stands",
+	return wordAreaRefusal(err, "nothing was changed: area %q was retired or renamed by another edit. Check the current areas, then try again",
 		area.RenderPath(e.Path))
 }
 
+// areaUpdateWriteFailure reports an update whose areas.yml write failed. Only
+// a rename can have moved nibs before that write; an edit to the description or
+// color moved none, so nothing was changed.
+func areaUpdateWriteFailure(e *nibcore.AreaEditIOError) error {
+	if e.NewPath == "" || len(e.Written) == 0 {
+		return wordAreaRefusal(e,
+			"area %q was not %s, because the store's areas.yml could not be written: %v. Nothing was changed. Fix the problem, then try again",
+			area.RenderPath(e.Path), areaUpdateVerb(e.NewPath), e.Cause)
+	}
+	return wordAreaRefusal(e,
+		"renaming area %q to %q stopped part way: it moved %s, then the store's areas.yml could not be written: %v. The area is still named %q, and the moved nibs are saved.%s Fix the problem, then rename it again to finish",
+		area.RenderPath(e.Path), area.RenderPath(e.NewPath), areaNibCount(len(e.Written)), e.Cause,
+		area.RenderPath(e.Path), areaCascadeStranded(e.NewPath, len(e.Written)))
+}
+
+// areaUpdateVerb is the past participle for an update that changed nothing.
+func areaUpdateVerb(newPath string) string {
+	if newPath == "" {
+		return "updated"
+	}
+	return "renamed"
+}
+
 // areaRetireWriteFailure reports a retire whose members are disposed of and
-// whose config write then failed. It branches on whether a disposition was
+// whose areas.yml write then failed. It branches on whether a disposition was
 // NAMED, not on which one: with none there is nothing to report as done and no
 // argument to drop.
 func areaRetireWriteFailure(e *nibcore.AreaEditIOError) error {
 	if e.Disposition.Kind == nibcore.AreaDispositionNone {
 		return wordAreaRefusal(e,
-			"area %q could not be retired: the store's areas.yml could not be updated: %v — nothing is assigned at or below it, so nothing was rewritten and the store is as it was; rerun the same mutation once that is fixed",
+			"area %q was not retired, because the store's areas.yml could not be written: %v. No nib is assigned to it, so nothing was changed. Fix the problem, then try again",
 			area.RenderPath(e.Path), e.Cause)
 	}
 	return wordAreaRefusal(e,
-		"%s %s from area %q, then the store's areas.yml could not be updated: %v — %q is still declared and those writes are persisted; rerun WITHOUT %s to retire it, which is what finishes the job now that nothing is assigned below it",
-		areaDispositionVerb(e.Disposition), areaNibCount(len(e.Written)), area.RenderPath(e.Path), e.Cause,
+		"retiring area %q stopped part way: it %s %s, then the store's areas.yml could not be written: %v. Area %q still exists, and those changes are saved. Fix the problem, then retire it again without %s to finish",
+		area.RenderPath(e.Path), areaDispositionVerb(e.Disposition), areaNibCount(len(e.Written)), e.Cause,
 		area.RenderPath(e.Path), areaDispositionField(e.Disposition))
 }
 
@@ -371,8 +389,8 @@ func areaRetireWriteFailure(e *nibcore.AreaEditIOError) error {
 // window refuses it.
 func areaRetireConfirmFailure(e *nibcore.AreaEditIOError) error {
 	return wordAreaRefusal(e,
-		"%s %s from area %q, then re-reading this store's nibs to confirm that nothing is assigned at or below it failed: %v — %q is still declared and those writes are persisted; rerun WITHOUT %s once that is fixed, which decides from the store as it then stands",
-		areaDispositionVerb(e.Disposition), areaNibCount(len(e.Written)), area.RenderPath(e.Path), e.Cause,
+		"retiring area %q stopped part way: it %s %s, then the check that no nib is still assigned to it failed: %v. Area %q still exists, and those changes are saved. Fix the problem, then retire it again without %s",
+		area.RenderPath(e.Path), areaDispositionVerb(e.Disposition), areaNibCount(len(e.Written)), e.Cause,
 		area.RenderPath(e.Path), areaDispositionField(e.Disposition))
 }
 
@@ -398,9 +416,18 @@ func wordAreaRefusal(cause error, format string, a ...any) error {
 // about.
 func areaPathVerb(role nibcore.AreaPathRole, verb string) string {
 	if role == nibcore.AreaPathMoveTarget {
-		return "move work to"
+		return "move nibs to"
 	}
 	return verb
+}
+
+// areaPathPurpose names what a move target was for, and nothing for the path
+// the verb acts on.
+func areaPathPurpose(role nibcore.AreaPathRole) string {
+	if role == nibcore.AreaPathMoveTarget {
+		return " to move the nibs to"
+	}
+	return ""
 }
 
 // areaDispositionField is the input field that asked for a disposition, for a
@@ -415,7 +442,7 @@ func areaDispositionField(d nibcore.AreaDisposition) string {
 // areaDispositionVerb is the past tense a completed disposition reports in.
 func areaDispositionVerb(d nibcore.AreaDisposition) string {
 	if d.Kind == nibcore.AreaDispositionMove {
-		return "reassigned"
+		return "moved"
 	}
 	return "unassigned"
 }
@@ -423,7 +450,7 @@ func areaDispositionVerb(d nibcore.AreaDisposition) string {
 // areaDispositionAction is the bare verb a refusal says there is nothing to do.
 func areaDispositionAction(d nibcore.AreaDisposition) string {
 	if d.Kind == nibcore.AreaDispositionMove {
-		return "reassign"
+		return "move"
 	}
 	return "unassign"
 }
@@ -458,16 +485,16 @@ func areaNibsAre(n int) string {
 }
 
 // areaCascadePersisted names what an edit had already written, empty when the
-// cascade wrote nothing. It carries its own trailing separator, so no format
-// string holding it has to.
+// cascade wrote nothing. It is a whole sentence with its own leading space, so
+// a format string places it straight after the previous sentence's period.
 func areaCascadePersisted(n int) string {
 	switch n {
 	case 0:
 		return ""
 	case 1:
-		return "the nib it had already rewritten is persisted, so "
+		return " The nib this edit had already updated stays updated."
 	}
-	return fmt.Sprintf("the %d nibs it had already rewritten are persisted, so ", n)
+	return fmt.Sprintf(" The %d nibs this edit had already updated stay updated.", n)
 }
 
 // areaCascadeStranded says what the persisted clause otherwise reads as
@@ -478,7 +505,7 @@ func areaCascadeStranded(newPath string, written int) string {
 	if newPath == "" || written == 0 {
 		return ""
 	}
-	return " — until that rerun those nibs carry an undeclared path, so every write to them is refused"
+	return " Until the rename finishes, those nibs carry an area that does not exist yet, so every change to them is refused."
 }
 
 func areaNibCount(n int) string {

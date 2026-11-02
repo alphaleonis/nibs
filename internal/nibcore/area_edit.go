@@ -105,9 +105,9 @@ type AreaUndeclaredError struct {
 
 func (e *AreaUndeclaredError) Error() string {
 	if e.Areas.IsEmpty() {
-		return "this store declares no areas"
+		return "this store has no areas"
 	}
-	return fmt.Sprintf("this store declares no area %q: the declared areas are %s",
+	return fmt.Sprintf("this store has no area %q. Its areas are %s",
 		area.RenderPath(e.Path), e.Areas.List())
 }
 
@@ -126,7 +126,7 @@ type AreaRetiredWhileWaitingError struct {
 }
 
 func (e *AreaRetiredWhileWaitingError) Error() string {
-	return fmt.Sprintf("this store declared area %q when this edit began and does not declare it now",
+	return fmt.Sprintf("area %q was retired or renamed by another edit",
 		area.RenderPath(e.Path))
 }
 
@@ -147,7 +147,7 @@ type AreaVocabularyVanishedError struct {
 }
 
 func (e *AreaVocabularyVanishedError) Error() string {
-	return "this store's areas vocabulary could not be read under its write lock: the file does not exist"
+	return "this store's areas.yml was deleted"
 }
 
 // AreaNameUnchangedError refuses renaming a node to the name it already has.
@@ -176,7 +176,7 @@ type AreaNameTakenError struct {
 }
 
 func (e *AreaNameTakenError) Error() string {
-	return fmt.Sprintf("this store already declares area %q", area.RenderPath(e.Sibling))
+	return fmt.Sprintf("area %q already exists", area.RenderPath(e.Sibling))
 }
 
 // AreaAlreadyDeclaredError refuses declaring an area at a path the store already
@@ -184,7 +184,7 @@ func (e *AreaNameTakenError) Error() string {
 type AreaAlreadyDeclaredError struct{ Path string }
 
 func (e *AreaAlreadyDeclaredError) Error() string {
-	return fmt.Sprintf("this store already declares area %q", area.RenderPath(e.Path))
+	return fmt.Sprintf("area %q already exists", area.RenderPath(e.Path))
 }
 
 // AreaParentUndeclaredError refuses a nested declaration whose parent the store
@@ -195,8 +195,8 @@ type AreaParentUndeclaredError struct {
 }
 
 func (e *AreaParentUndeclaredError) Error() string {
-	return fmt.Sprintf("this store declares no area %q to nest %q under",
-		area.RenderPath(e.Parent), area.RenderPath(e.Path))
+	return fmt.Sprintf("cannot create area %q, because area %q does not exist",
+		area.RenderPath(e.Path), area.RenderPath(e.Parent))
 }
 
 // AreaMembersPresentError refuses retiring an area work is still assigned to
@@ -209,7 +209,7 @@ type AreaMembersPresentError struct {
 }
 
 func (e *AreaMembersPresentError) Error() string {
-	return fmt.Sprintf("cannot retire area %q: %d nib(s) are assigned at or below it",
+	return fmt.Sprintf("cannot retire area %q: %d nib(s) are assigned to it or to an area beneath it",
 		area.RenderPath(e.Path), len(e.Members))
 }
 
@@ -224,7 +224,7 @@ type AreaDispositionEmptyError struct {
 }
 
 func (e *AreaDispositionEmptyError) Error() string {
-	return fmt.Sprintf("no nib is assigned at or below area %q, so there is nothing to dispose of",
+	return fmt.Sprintf("no nib is assigned to area %q or to an area beneath it, so there are no nibs to move or unassign",
 		area.RenderPath(e.Path))
 }
 
@@ -249,7 +249,7 @@ type AreaMoveTargetWithinError struct {
 }
 
 func (e *AreaMoveTargetWithinError) Error() string {
-	return fmt.Sprintf("cannot move members to %q: it is declared at or below %q, which is being retired",
+	return fmt.Sprintf("cannot move the nibs to %q, because retiring %q retires it too",
 		area.RenderPath(e.Target), area.RenderPath(e.Path))
 }
 
@@ -276,7 +276,7 @@ type AreaMembersArrivedError struct {
 }
 
 func (e *AreaMembersArrivedError) Error() string {
-	return fmt.Sprintf("%d nib(s) are assigned at or below area %q and this edit did not see them when it read the store",
+	return fmt.Sprintf("%d nib(s) assigned to area %q or to an area beneath it appeared after this edit read the store",
 		len(e.Members), area.RenderPath(e.Path))
 }
 
@@ -327,7 +327,7 @@ type AreaEditIOError struct {
 }
 
 func (e *AreaEditIOError) Error() string {
-	return fmt.Sprintf("this area edit failed while %s: %v", e.Phase.describe(), e.Cause)
+	return fmt.Sprintf("the area edit failed while %s: %v", e.Phase.describe(), e.Cause)
 }
 
 // describe names a phase for AreaEditIOError's own message.
@@ -338,21 +338,21 @@ func (e *AreaEditIOError) Error() string {
 func (p AreaEditPhase) describe() string {
 	switch p {
 	case AreaEditPhaseLock:
-		return "taking the store's write lock"
+		return "locking the store"
 	case AreaEditPhaseLoadVocabulary:
-		return "re-reading the store's areas vocabulary under its write lock"
+		return "reading the store's areas.yml"
 	case AreaEditPhaseLoadNibs:
-		return "re-reading the store's nibs under its write lock"
+		return "reading the store's nibs"
 	case AreaEditPhaseCascade:
-		return "rewriting the nibs assigned to the area"
+		return "updating the nibs assigned to the area"
 	case AreaEditPhaseConfirm:
-		return "re-reading the store's nibs to confirm the vocabulary write strands none of them"
+		return "checking that no nib is still assigned to the area"
 	case AreaEditPhaseWrite:
 		return "writing the store's areas.yml"
 	case AreaEditPhaseReload:
-		return "re-reading the areas.yml it had just written"
+		return "reading back the areas.yml it had just written"
 	}
-	return fmt.Sprintf("in a phase of the edit this build cannot name (%d)", int(p))
+	return fmt.Sprintf("in a step this build cannot name (%d)", int(p))
 }
 
 // reloadAreasAfterEdit is Core.loadAreasLocked, indirected so a test can fail

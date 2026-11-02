@@ -394,18 +394,18 @@ func TestRemoveAreaDispositionRefusals(t *testing.T) {
 		{
 			name:  "moveTo for an area nothing is assigned to",
 			input: model.RemoveAreaInput{Path: "web", MoveTo: strptr("auth")},
-			want:  []string{"nothing to reassign", "moveTo"},
+			want:  []string{"none to move", "moveTo"},
 		},
 		{
 			name:  "unassign for an area nothing is assigned to",
 			input: model.RemoveAreaInput{Path: "web", Unassign: boolptr(true)},
-			want:  []string{"nothing to unassign", "unassign"},
+			want:  []string{"none to unassign", "unassign"},
 		},
 		{
 			name:    "moveTo names an undeclared area",
 			members: map[string]string{"dr2": "web"},
 			input:   model.RemoveAreaInput{Path: "web", MoveTo: strptr("nosuch")},
-			want:    []string{"nosuch", "web/dashboard"},
+			want:    []string{`has no area "nosuch" to move the nibs to`, "web/dashboard"},
 		},
 		{
 			name:    "moveTo names an area inside the subtree being retired",
@@ -420,7 +420,7 @@ func TestRemoveAreaDispositionRefusals(t *testing.T) {
 			name:    "moveTo names the area being retired",
 			members: map[string]string{"dr4": "web"},
 			input:   model.RemoveAreaInput{Path: "web", MoveTo: strptr("web")},
-			want:    []string{"web", "name an area outside it"},
+			want:    []string{"web", "Choose an area outside"},
 		},
 	}
 
@@ -653,14 +653,15 @@ func TestAreaMutationsWordEveryIOPhase(t *testing.T) {
 		name     string
 		err      *nibcore.AreaEditIOError
 		retire   bool
+		describe bool
 		want     []string
 		unwanted []string
 	}{
 		{
 			name:     "the write lock",
 			err:      &nibcore.AreaEditIOError{Phase: nibcore.AreaEditPhaseLock, Cause: cause},
-			want:     []string{"write lock could not be taken", "disk on fire"},
-			unwanted: []string{"still waiting"},
+			want:     []string{"the store could not be locked", "disk on fire"},
+			unwanted: []string{"while it waited"},
 		},
 		{
 			// The same phase, and a different sentence, because nothing failed:
@@ -672,20 +673,20 @@ func TestAreaMutationsWordEveryIOPhase(t *testing.T) {
 				Phase: nibcore.AreaEditPhaseLock,
 				Cause: &nibcore.StoreLockWaitEndedError{Waited: 1500 * time.Millisecond, Cause: context.Canceled},
 			},
-			want:     []string{"nothing was written", "1.5s", "still waiting for the store's write lock", "rerun the same mutation"},
-			unwanted: []string{"could not be taken"},
+			want:     []string{"nothing was changed", "1.5s", "while it waited for another edit to the store to finish", "Try again"},
+			unwanted: []string{"could not be locked"},
 		},
 		{
 			name:     "the vocabulary half of the re-read",
 			err:      &nibcore.AreaEditIOError{Phase: nibcore.AreaEditPhaseLoadVocabulary, Cause: cause},
-			want:     []string{"nothing was written", "areas vocabulary"},
-			unwanted: []string{"this store's nibs"},
+			want:     []string{"nothing was changed", "areas.yml could not be read"},
+			unwanted: []string{"store's nibs"},
 		},
 		{
 			name:     "the nib half of the re-read",
 			err:      &nibcore.AreaEditIOError{Phase: nibcore.AreaEditPhaseLoadNibs, Cause: cause},
-			want:     []string{"nothing was written", "this store's nibs"},
-			unwanted: []string{"areas vocabulary"},
+			want:     []string{"nothing was changed", "the store's nibs could not be read"},
+			unwanted: []string{"areas.yml"},
 		},
 		{
 			name: "a rename's cascade",
@@ -693,7 +694,7 @@ func TestAreaMutationsWordEveryIOPhase(t *testing.T) {
 				Phase: nibcore.AreaEditPhaseCascade, Path: "web", NewPath: "platform",
 				Written: []string{"a"}, Members: []string{"a", "b"}, Cause: cause,
 			},
-			want: []string{"rewrote 1 of the 2 nibs", `area "web"`, "rerun the same mutation"},
+			want: []string{"moved 1 of the 2 nibs", `area "web"`, `still named "web"`, "Rename it again to finish"},
 		},
 		{
 			name: "a rename's vocabulary write",
@@ -701,7 +702,27 @@ func TestAreaMutationsWordEveryIOPhase(t *testing.T) {
 				Phase: nibcore.AreaEditPhaseWrite, Path: "web", NewPath: "platform",
 				Written: []string{"a", "b"}, Members: []string{"a", "b"}, Cause: cause,
 			},
-			want: []string{"rewrote 2 nibs", `to "platform"`, "rerun the same mutation"},
+			want: []string{"moved 2 nibs", `to "platform"`, `still named "web"`, "rename it again to finish"},
+		},
+		{
+			// Nothing moved before the write, so nothing is half done.
+			name: "a rename's vocabulary write, with nothing assigned",
+			err: &nibcore.AreaEditIOError{
+				Phase: nibcore.AreaEditPhaseWrite, Path: "web", NewPath: "platform", Cause: cause,
+			},
+			want:     []string{`area "web" was not renamed`, "Nothing was changed", "try again"},
+			unwanted: []string{"moved", "stopped part way"},
+		},
+		{
+			// A description or color edit moves no nib, so a rename's sentence
+			// would report a rename that was never asked for.
+			name: "a description edit's vocabulary write",
+			err: &nibcore.AreaEditIOError{
+				Phase: nibcore.AreaEditPhaseWrite, Path: "web", Cause: cause,
+			},
+			describe: true,
+			want:     []string{`area "web" was not updated`, "disk on fire", "Nothing was changed", "try again"},
+			unwanted: []string{"renam", "moved", `""`},
 		},
 		{
 			name: "a retire's cascade",
@@ -711,7 +732,7 @@ func TestAreaMutationsWordEveryIOPhase(t *testing.T) {
 				Written:     []string{"a"}, Members: []string{"a", "b"}, Cause: cause,
 			},
 			retire: true,
-			want:   []string{"unassigned 1 of the 2 nibs", "rerun the same mutation"},
+			want:   []string{"unassigned 1 of the 2 nibs", `Area "web" still exists`, "Retire it again the same way"},
 		},
 		{
 			name: "a retire's vocabulary write, with a disposition",
@@ -721,7 +742,7 @@ func TestAreaMutationsWordEveryIOPhase(t *testing.T) {
 				Written:     []string{"a", "b"}, Members: []string{"a", "b"}, Cause: cause,
 			},
 			retire: true,
-			want:   []string{"reassigned 2 nibs", "rerun WITHOUT moveTo"},
+			want:   []string{"moved 2 nibs", "retire it again without moveTo"},
 		},
 		{
 			// The no-disposition branch is reachable only for an area nothing was
@@ -733,11 +754,11 @@ func TestAreaMutationsWordEveryIOPhase(t *testing.T) {
 				Phase: nibcore.AreaEditPhaseWrite, Path: "web", Cause: cause,
 			},
 			retire:   true,
-			want:     []string{"nothing is assigned at or below it", "the store is as it was"},
+			want:     []string{"No nib is assigned to it", "nothing was changed"},
 			unwanted: []string{"unassign", "moveTo", "persisted"},
 		},
 		{
-			// The one phase whose sentence must NOT say "nothing was written":
+			// The one phase whose sentence must NOT say "nothing was changed":
 			// the cascade is already durable by then, and a rename's members are
 			// sitting on a path the vocabulary does not declare yet.
 			name: "the confirming re-read before the vocabulary write",
@@ -745,9 +766,9 @@ func TestAreaMutationsWordEveryIOPhase(t *testing.T) {
 				Phase: nibcore.AreaEditPhaseConfirm, Path: "web", NewPath: "platform",
 				Written: []string{"a", "b"}, Members: []string{"a", "b"}, Cause: cause,
 			},
-			want: []string{"the vocabulary was left as it was", "2 nibs it had already rewritten are persisted", "rerun the same mutation",
-				"every write to them is refused"},
-			unwanted: []string{"nothing was written"},
+			want: []string{`area "web" was left as it was`, "2 nibs this edit had already updated stay updated", "try again",
+				"every change to them is refused"},
+			unwanted: []string{"nothing was changed"},
 		},
 		{
 			// A retire that named none rewrote nothing, so the shared arm words
@@ -758,8 +779,8 @@ func TestAreaMutationsWordEveryIOPhase(t *testing.T) {
 				Phase: nibcore.AreaEditPhaseConfirm, Path: "web", Cause: cause,
 			},
 			retire:   true,
-			want:     []string{"the vocabulary was left as it was", "rerun the same mutation once that is fixed"},
-			unwanted: []string{"rerun WITHOUT", "unassign", "moveTo", "persisted", "every write to them is refused"},
+			want:     []string{`area "web" was left as it was`, "Fix the problem, then try again"},
+			unwanted: []string{"without", "unassign", "moveTo", "stay updated", "every change to them is refused"},
 		},
 		{
 			// A retire that carried a disposition is past its cascade here too,
@@ -772,8 +793,8 @@ func TestAreaMutationsWordEveryIOPhase(t *testing.T) {
 				Written:     []string{"a", "b"}, Members: []string{"a", "b"}, Cause: cause,
 			},
 			retire:   true,
-			want:     []string{"unassigned 2 nibs", "rerun WITHOUT unassign"},
-			unwanted: []string{"rerun the same mutation", "now that nothing is assigned"},
+			want:     []string{"unassigned 2 nibs", "retire it again without unassign"},
+			unwanted: []string{"the same way"},
 		},
 		{
 			name: "the confirming re-read, after a reassignment",
@@ -783,15 +804,15 @@ func TestAreaMutationsWordEveryIOPhase(t *testing.T) {
 				Written:     []string{"a", "b"}, Members: []string{"a", "b"}, Cause: cause,
 			},
 			retire:   true,
-			want:     []string{"reassigned 2 nibs", "rerun WITHOUT moveTo"},
-			unwanted: []string{"rerun the same mutation", "now that nothing is assigned"},
+			want:     []string{"moved 2 nibs", "retire it again without moveTo"},
+			unwanted: []string{"the same way"},
 		},
 		{
 			name: "the re-read of the file it just wrote",
 			err: &nibcore.AreaEditIOError{
 				Phase: nibcore.AreaEditPhaseReload, Path: "web", Cause: cause,
 			},
-			want: []string{"both halves of this edit landed on disk", "nothing to rerun"},
+			want: []string{"the edit was saved", "Do not repeat the edit"},
 		},
 	}
 	for _, tt := range tests {
@@ -800,9 +821,13 @@ func TestAreaMutationsWordEveryIOPhase(t *testing.T) {
 			resolver.AreaWriter = &stubAreaWriter{err: tt.err}
 
 			var err error
-			if tt.retire {
+			switch {
+			case tt.retire:
 				_, err = resolver.Mutation().RemoveArea(context.Background(), model.RemoveAreaInput{Path: "web"})
-			} else {
+			case tt.describe:
+				_, err = resolver.Mutation().UpdateArea(context.Background(),
+					model.UpdateAreaInput{Path: "web", Description: ptr("Frontend work")})
+			default:
 				_, err = resolver.Mutation().UpdateArea(context.Background(),
 					model.UpdateAreaInput{Path: "web", NewName: ptr("platform")})
 			}
@@ -868,12 +893,12 @@ func TestAreaMutationsWordANibThatArrivedUnderTheArea(t *testing.T) {
 		{
 			name:    "after a cascade",
 			written: []string{"nibs-a2"},
-			want:    []string{"the nib it had already rewritten is persisted, so rerun"},
+			want:    []string{"The nib this edit had already updated stays updated. Try again"},
 		},
 		{
 			name:     "with nothing cascaded",
-			want:     []string{"usual one; rerun the same mutation"},
-			unwanted: []string{"rewritten", "  "},
+			want:     []string{"store's folder. Try again"},
+			unwanted: []string{"stays updated", "  "},
 		},
 	}
 	for _, tt := range calls {
@@ -892,7 +917,7 @@ func TestAreaMutationsWordANibThatArrivedUnderTheArea(t *testing.T) {
 				if !errors.As(err, &got) {
 					t.Fatalf("error = %v (%T), want the arrival class so `nibs query` exits 5", err, err)
 				}
-				want := append([]string{"the vocabulary was left as it was", `area "web"`, "nibs-a1"}, c.want...)
+				want := append([]string{`area "web" was left as it was`, "nibs-a1"}, c.want...)
 				for _, w := range want {
 					if !strings.Contains(err.Error(), w) {
 						t.Errorf("error = %q, want substring %q", err.Error(), w)
@@ -907,7 +932,7 @@ func TestAreaMutationsWordANibThatArrivedUnderTheArea(t *testing.T) {
 				// members are on a path the vocabulary does not declare until the
 				// rerun. Nothing else strands one, so nothing else says it.
 				stranded := tt.newPath != "" && len(c.written) > 0
-				if got := strings.Contains(err.Error(), "every write to them is refused"); got != stranded {
+				if got := strings.Contains(err.Error(), "every change to them is refused"); got != stranded {
 					t.Errorf("error = %q, carries the stranded-member clause = %v, want %v", err.Error(), got, stranded)
 				}
 			})
@@ -932,7 +957,7 @@ func TestAreaMutationsAnswerArgumentsWithoutTheStore(t *testing.T) {
 				_, err := r.Mutation().UpdateArea(context.Background(), model.UpdateAreaInput{Path: "web", NewName: ptr("")})
 				return err
 			},
-			want: "none was given",
+			want: "the area name is empty",
 		},
 		{
 			name: "a padded new name",
@@ -957,7 +982,7 @@ func TestAreaMutationsAnswerArgumentsWithoutTheStore(t *testing.T) {
 					model.UpdateAreaInput{Path: "web", NewName: ptr(strings.Repeat("x", 201))})
 				return err
 			},
-			want: "bounded at 200",
+			want: "at most 200 characters",
 		},
 		{
 			name: "both dispositions at once",
@@ -967,7 +992,7 @@ func TestAreaMutationsAnswerArgumentsWithoutTheStore(t *testing.T) {
 					model.RemoveAreaInput{Path: "web", MoveTo: &target, Unassign: &unassign})
 				return err
 			},
-			want: "two different dispositions",
+			want: "ask for two different things to happen to the same nibs",
 		},
 	}
 	for _, tt := range tests {

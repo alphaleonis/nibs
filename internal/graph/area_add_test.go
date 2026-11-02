@@ -107,7 +107,7 @@ func TestAddAreaRefusesAPathAlreadyDeclared(t *testing.T) {
 	if err == nil {
 		t.Fatal("declaring an area the store already declares was accepted")
 	}
-	if !strings.Contains(err.Error(), "already declares") {
+	if !strings.Contains(err.Error(), "already exists") {
 		t.Errorf("error = %q, want the already-declared refusal", err.Error())
 	}
 	if after := storedAreasFile(t, core.Root()); after != before {
@@ -120,9 +120,9 @@ func TestAddAreaRefusesAPathAlreadyDeclared(t *testing.T) {
 // would otherwise mint two permanent areas, and the vocabulary is what authorizes
 // an `area:` value at all.
 //
-// The refusal has to name the parent and prescribe the remedy in THIS surface's
-// terms — a caller reaching the API over HTTP has no `nibs area add` to run — and
-// the remedy has to work.
+// The refusal has to name the parent and a remedy with no CLI command in it — a
+// caller reaching the API over HTTP has no `nibs area add` to run — and the
+// remedy has to work.
 func TestAddAreaRefusesAnUndeclaredParent(t *testing.T) {
 	resolver, core := setupTestResolverWithAreas(t)
 	before := storedAreasFile(t, core.Root())
@@ -131,7 +131,7 @@ func TestAddAreaRefusesAnUndeclaredParent(t *testing.T) {
 	if err == nil {
 		t.Fatal("declaring an area under an undeclared parent was accepted")
 	}
-	for _, want := range []string{"wbe", "addArea"} {
+	for _, want := range []string{"wbe", `Create "wbe" first`} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error = %q, want substring %q", err.Error(), want)
 		}
@@ -169,12 +169,12 @@ func TestAddAreaAnswersArgumentsWithoutTheStore(t *testing.T) {
 		{
 			name:  "no path at all",
 			input: model.AddAreaInput{Path: ""},
-			want:  "none was given",
+			want:  "the area path is empty",
 		},
 		{
 			name:  "a path with an empty segment",
 			input: model.AddAreaInput{Path: "web//panel"},
-			want:  "no name in it",
+			want:  "has an empty name in it",
 		},
 		{
 			name:  "a name with trailing whitespace",
@@ -184,7 +184,7 @@ func TestAddAreaAnswersArgumentsWithoutTheStore(t *testing.T) {
 		{
 			name:  "a name no store could read back",
 			input: model.AddAreaInput{Path: strings.Repeat("x", 201)},
-			want:  "bounded at 200",
+			want:  "at most 200 characters",
 		},
 		{
 			name:  "a color the vocabulary cannot hold",
@@ -237,7 +237,7 @@ func TestAddAreaWordsAFailedWrite(t *testing.T) {
 	if err == nil {
 		t.Fatal("a failed areas.yml write was reported as a success")
 	}
-	for _, want := range []string{"platform", "disk on fire", "nothing else was written", "rerun"} {
+	for _, want := range []string{"platform", "disk on fire", "Nothing was changed", "try again"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error = %q, want substring %q", err.Error(), want)
 		}

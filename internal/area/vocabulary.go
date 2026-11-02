@@ -183,12 +183,12 @@ func ValidateColor(color string) error {
 		switch len(rest) {
 		case 3, 4, 6, 8:
 		default:
-			return fmt.Errorf("color %q is not a usable hex code; use #RGB, #RGBA, #RRGGBB or #RRGGBBAA", safetext.StripBounded(color))
+			return fmt.Errorf("color %q is not a valid hex code. Use #RGB, #RGBA, #RRGGBB or #RRGGBBAA, such as #3b82f6", safetext.StripBounded(color))
 		}
 		for _, r := range rest {
 			isHex := (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
 			if !isHex {
-				return fmt.Errorf("color %q is not a usable hex code; use #RGB, #RGBA, #RRGGBB or #RRGGBBAA", safetext.StripBounded(color))
+				return fmt.Errorf("color %q is not a valid hex code. Use #RGB, #RGBA, #RRGGBB or #RRGGBBAA, such as #3b82f6", safetext.StripBounded(color))
 			}
 		}
 		return nil
@@ -196,7 +196,7 @@ func ValidateColor(color string) error {
 	for _, r := range color {
 		isLetter := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
 		if !isLetter {
-			return fmt.Errorf("color %q is neither a color name nor a hex code", safetext.StripBounded(color))
+			return fmt.Errorf("color %q is neither a color name nor a hex code. Use a name such as teal, or a hex code such as #3b82f6", safetext.StripBounded(color))
 		}
 	}
 	return nil

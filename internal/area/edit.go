@@ -260,11 +260,11 @@ func planEdit(data []byte, exists bool, missing missingVocabulary, edit func(are
 		if err != nil {
 			if errors.Is(err, yamlfile.ErrMultipleDocuments) {
 				return nil, refuseEditAbout(func(file string) string {
-					return fmt.Sprintf("%s holds more than one YAML document, and editing its areas would rewrite the file from the first one alone — move anything after the `---` into its own file, or delete the marker if nothing follows it, then rerun", file)
+					return fmt.Sprintf("%s holds more than one YAML document, and an area edit would keep only the first one. Move anything after the `---` line into its own file, or delete that line if nothing follows it, then try again", file)
 				})
 			}
 			return nil, refuseEditAbout(func(file string) string {
-				return fmt.Sprintf("parsing %s: %v", file, err)
+				return fmt.Sprintf("%s is not valid YAML (%v). Fix the file, then try again", file, err)
 			})
 		}
 		doc = parsed
@@ -273,7 +273,7 @@ func planEdit(data []byte, exists bool, missing missingVocabulary, edit func(are
 		data = nil
 	default:
 		return nil, refuseEditAbout(func(file string) string {
-			return fmt.Sprintf("no areas vocabulary at %s to edit; a store declares its areas there, beside its config.yml", file)
+			return fmt.Sprintf("%s does not exist, so there are no areas to change. Create an area first", file)
 		})
 	}
 
@@ -281,7 +281,7 @@ func planEdit(data []byte, exists bool, missing missingVocabulary, edit func(are
 	// this tree's "absent" answer would override a merged one it could not see.
 	if found := inheritsContent(&doc); found != nil {
 		return nil, refuseEditAbout(func(file string) string {
-			return fmt.Sprintf("%s uses %s at line %d, and these edits cannot safely change a file that inherits any of its content — rewrite it without anchors, aliases or merge keys, writing out in place whatever they stand for, then rerun",
+			return fmt.Sprintf("%s uses %s at line %d, and an area edit cannot safely change a file that uses anchors, aliases or merge keys. Replace each one with the values it stands for, then try again",
 				file, found.construct, found.line)
 		})
 	}
@@ -289,7 +289,7 @@ func planEdit(data []byte, exists bool, missing missingVocabulary, edit func(are
 		// On the file as read, so an already-broken file is not reported as the
 		// edit breaking it; the re-read below answers for the output.
 		return nil, refuseEditAbout(func(file string) string {
-			return fmt.Sprintf("%s cannot be read as an areas vocabulary (%v) — repair it, then rerun", file, err)
+			return fmt.Sprintf("%s is not a valid areas file (%v). Fix the file, then try again", file, err)
 		})
 	}
 
@@ -297,7 +297,7 @@ func planEdit(data []byte, exists bool, missing missingVocabulary, edit func(are
 	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
 		if !bootstrap {
 			return nil, refuseEditAbout(func(file string) string {
-				return fmt.Sprintf("%s declares no areas to edit", file)
+				return fmt.Sprintf("%s has no areas to change", file)
 			})
 		}
 		// Nothing parsed, so these bytes are all anybody wrote; yaml.v3 re-emits
@@ -327,7 +327,7 @@ func planEdit(data []byte, exists bool, missing missingVocabulary, edit func(are
 	}
 	if areas == nil || areas.Kind != yaml.SequenceNode {
 		return nil, refuseEditAbout(func(file string) string {
-			return fmt.Sprintf("%s declares no `areas:` block", file)
+			return fmt.Sprintf("%s has no `areas:` list, so it has no areas to change", file)
 		})
 	}
 	if err := edit(areas); err != nil {
@@ -342,7 +342,7 @@ func planEdit(data []byte, exists bool, missing missingVocabulary, edit func(are
 	// it on an edit that adds nothing.
 	if len(out) > yamlfile.MaxBytes {
 		return nil, refuseEditAbout(func(file string) string {
-			return fmt.Sprintf("the edit would leave %s at %d bytes, past the %d-byte configuration limit, and a store whose areas.yml is over that limit cannot be opened by any command — declare fewer areas, or shorter names, then rerun",
+			return fmt.Sprintf("this change would make %s %d bytes long, and no command can open an areas file over %d bytes. Shorten the descriptions or names, or remove areas you no longer need, then try again",
 				file, len(out), yamlfile.MaxBytes)
 		})
 	}
@@ -352,12 +352,12 @@ func planEdit(data []byte, exists bool, missing missingVocabulary, edit func(are
 	var edited Vocabulary
 	if err := yaml.Unmarshal(out, &edited); err != nil {
 		return nil, refuseEditAbout(func(file string) string {
-			return fmt.Sprintf("the edit would leave %s unreadable: %v", file, err)
+			return fmt.Sprintf("this change was not made, because it would leave %s unreadable: %v", file, err)
 		})
 	}
 	if err := edited.Validate(); err != nil {
 		return nil, refuseEditAbout(func(file string) string {
-			return fmt.Sprintf("the edit would leave %s declaring an unusable vocabulary: %v", file, err)
+			return fmt.Sprintf("this change was not made, because it would leave %s with invalid areas: %v", file, err)
 		})
 	}
 	return out, nil
@@ -396,7 +396,9 @@ func findStored(areas *yaml.Node, path string) (storedNode, error) {
 }
 
 func missingStored(path string) error {
-	return refuseEdit("%s declares no area %q", storedAreasNoun, RenderPath(path))
+	return refuseEditAbout(func(file string) string {
+		return fmt.Sprintf("%s has no area %q", file, RenderPath(path))
+	})
 }
 
 // appendMappingEntry appends unconditionally: a key already present is
@@ -423,21 +425,19 @@ func removeMappingKey(node *yaml.Node, key string) {
 }
 
 func refuseNameWhitespace(name string) error {
-	return refuseEdit(
-		"the area name %q has leading or trailing whitespace; an `area:` value would have to carry the same spaces to match it",
-		RenderPath(name))
+	return refuseEdit("the area name %q starts or ends with whitespace. Remove it from the name", RenderPath(name))
 }
 
 // ValidateNewPath refuses a path that could never name an area, without reading
 // the file.
 func ValidateNewPath(path string) error {
 	if path == "" {
-		return refuseEdit("an area is declared at a path, and none was given")
+		return refuseEdit("the area path is empty. Give the new area a name, or a path such as web/dashboard to create it under another area")
 	}
 	for _, segment := range strings.Split(path, PathSeparator) {
 		trimmed := strings.TrimSpace(segment)
 		if trimmed == "" {
-			return refuseEdit("the area path %q has a segment with no name in it; every declared area needs one",
+			return refuseEdit("the area path %q has an empty name in it. Every \"/\" needs an area name on both sides",
 				RenderPath(path))
 		}
 		if trimmed != segment {
@@ -462,15 +462,14 @@ const maxNameRunes = safetext.MaxBoundedRunes
 func ValidateName(name string) error {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
-		return refuseEdit("an area is declared under a name, and none was given")
+		return refuseEdit("the area name is empty. Give the area a name")
 	}
 	if trimmed != name {
 		return refuseNameWhitespace(name)
 	}
 	// The name is not echoed: quoting it says nothing the count does not.
 	if n := utf8.RuneCountInString(name); n > maxNameRunes {
-		return refuseEdit("the area name is %d characters long, and a declared name is bounded at %d — a longer one only writes an areas.yml no command could read back",
-			n, maxNameRunes)
+		return refuseEdit("the area name is %d characters long. Use a name of at most %d characters", n, maxNameRunes)
 	}
 	return nil
 }
@@ -487,9 +486,10 @@ func storedChildren(node *yaml.Node, path string) (*yaml.Node, error) {
 	case children.Kind == yaml.SequenceNode:
 		return children, nil
 	default:
-		return nil, refuseEdit(
-			"the declared area %q has a `children:` key that is not a sequence, so there is nothing to declare a child in",
-			RenderPath(path))
+		return nil, refuseEditAbout(func(file string) string {
+			return fmt.Sprintf("cannot create an area under %q, because its `children:` entry in %s is not a list. Make it a list or remove it, then try again",
+				RenderPath(path), file)
+		})
 	}
 }
 

@@ -794,35 +794,35 @@ func remedySurfaces() []remedySurface {
 			name:         "a disposition with nothing to dispose of names the bare retire",
 			store:        remedyStore(nil),
 			diagnose:     remedyAreaRetireRefusal([]string{"rm", "docs", "--unassign"}),
-			mustName:     []string{"nothing to unassign"},
+			mustName:     []string{"there are none to unassign"},
 			wantCommands: 1,
 		},
 		{
 			name:         "moving members into the subtree being retired names the other escape",
 			store:        remedyStore(nil),
 			diagnose:     remedyAreaRetireRefusal([]string{"rm", "web", "--move-to", "web/dashboard"}),
-			mustName:     []string{"which this command is retiring"},
+			mustName:     []string{"retires it too"},
 			wantCommands: 1,
 		},
 		{
 			name:         "a path where a name belongs names the rename that works",
 			store:        remedyStore(nil),
 			diagnose:     remedyAreaRetireRefusal([]string{"set", "web/dashboard", "--name", "web/panel"}),
-			mustName:     []string{"is not a name"},
+			mustName:     []string{"so give only the new name"},
 			wantCommands: 1,
 		},
 		{
 			name:         "a rename across parents points at the listing",
 			store:        remedyStore(nil),
 			diagnose:     remedyAreaRetireRefusal([]string{"set", "web/dashboard", "--name", "api/panel"}),
-			mustName:     []string{"never moves it between parents"},
+			mustName:     []string{"cannot move it to another"},
 			wantCommands: 1,
 		},
 		{
 			name:     "retiring a path the vocabulary does not declare",
 			store:    remedyStore(nil),
 			diagnose: remedyAreaRetireRefusal([]string{"rm", "nosuch"}),
-			mustName: []string{`declares no area "nosuch"`, "web/dashboard"},
+			mustName: []string{`has no area "nosuch"`, "web/dashboard"},
 			// The declared set IS the repair and it is already in the message, so
 			// this refusal names no command. The row enrolls the surface: one
 			// added later is executed rather than trusted.
@@ -834,7 +834,7 @@ func remedySurfaces() []remedySurface {
 			// The one branch that must NOT report a disposition or name a flag:
 			// nothing was assigned below the area, so nothing was rewritten.
 			diagnose:     remedyAreaVocabularyWriteFailure([]string{"rm", "docs"}),
-			mustName:     []string{`area "docs" could not be retired`, "nothing is assigned at or below it"},
+			mustName:     []string{`area "docs" was not retired`, "No nib is assigned to it"},
 			wantCommands: 1,
 		},
 		{

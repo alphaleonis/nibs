@@ -87,7 +87,7 @@ func TestAreaMutationErrorClassesMatchTheAreaCommands(t *testing.T) {
 		if got := output.ExitCode(ce.Code); got != output.ExitIO {
 			t.Errorf("exit code = %d, want %d", got, output.ExitIO)
 		}
-		if !strings.Contains(ce.Error(), "nothing was written") {
+		if !strings.Contains(ce.Error(), "nothing was changed") {
 			t.Errorf("the message does not say the store was left alone: %s", ce.Error())
 		}
 	})
@@ -144,7 +144,7 @@ func TestAreaMutationErrorClassesMatchTheAreaCommands(t *testing.T) {
 		if ce.Code != output.ErrFileError {
 			t.Errorf("code = %q, want %q — the same class `nibs area set --name` gives this race", ce.Code, output.ErrFileError)
 		}
-		if !strings.Contains(ce.Error(), "another nibs process") {
+		if !strings.Contains(ce.Error(), "retired or renamed by another edit") {
 			t.Errorf("the message does not name what moved: %s", ce.Error())
 		}
 	})

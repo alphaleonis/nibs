@@ -482,7 +482,7 @@ func TestEditsRefuseAnInheritedVocabulary(t *testing.T) {
 					// by default because the same sentence reaches an HTTP client
 					// through the area mutations.
 					named := refusal.Naming(someAreasFile)
-					for _, want := range []string{someAreasFile, tt.construct, "anchors, aliases or merge keys", "then rerun"} {
+					for _, want := range []string{someAreasFile, tt.construct, "anchors, aliases or merge keys", "then try again"} {
 						if !strings.Contains(named, want) {
 							t.Errorf("Naming = %q, want it to carry %q", named, want)
 						}
@@ -521,7 +521,7 @@ areas:
 		t.Run(edit.verb, func(t *testing.T) {
 			refusal := mustRefuse(t)(edit.plan())
 			named := refusal.Naming(someAreasFile)
-			for _, want := range []string{someAreasFile, "cannot be read as an areas vocabulary", "repair it, then rerun"} {
+			for _, want := range []string{someAreasFile, "is not a valid areas file", "Fix the file, then try again"} {
 				if !strings.Contains(named, want) {
 					t.Errorf("Naming = %q, want it to carry %q", named, want)
 				}
@@ -595,7 +595,7 @@ extra: true
 			// yaml.v3 reads a bare trailing `---` as a second, null document, so
 			// this refusal also lands on a file with nothing after the marker to
 			// move. The remedy has to fit that case.
-			if !strings.Contains(refusal.Error(), "delete the marker if nothing follows it") {
+			if !strings.Contains(refusal.Error(), "delete that line if nothing follows it") {
 				t.Errorf("error = %q, want a remedy that fits a marker with nothing after it", refusal)
 			}
 		})
@@ -899,7 +899,7 @@ func TestEditsStillRefuseAMissingFile(t *testing.T) {
 	} {
 		t.Run(edit.verb, func(t *testing.T) {
 			refusal := mustRefuse(t)(edit.plan())
-			if !strings.Contains(refusal.Error(), "no areas vocabulary at") {
+			if !strings.Contains(refusal.Error(), "does not exist, so there are no areas to change") {
 				t.Errorf("error = %q, want the missing-vocabulary refusal", refusal)
 			}
 		})
@@ -1041,7 +1041,7 @@ func TestCreateKeepsEverythingElse(t *testing.T) {
 // validateNodes still accepts a name of any length on load.
 func TestEditRefusesANameNoStoreCouldReadBack(t *testing.T) {
 	refusal := mustRefuse(t)(planRename(areaEditFixture, "web", strings.Repeat("x", maxNameRunes+1)))
-	if !strings.Contains(refusal.Error(), "bounded at 200") {
+	if !strings.Contains(refusal.Error(), "at most 200 characters") {
 		t.Errorf("error = %q, want it to name the bound", refusal)
 	}
 
@@ -1072,7 +1072,7 @@ func TestEditRefusesAnOutputPastTheConfigLimit(t *testing.T) {
 	}
 
 	refusal := mustRefuse(t)(planRename(vocab, "web", "ui"))
-	if !strings.Contains(refusal.Error(), "configuration limit") {
+	if !strings.Contains(refusal.Error(), fmt.Sprintf("over %d bytes", yamlfile.MaxBytes)) {
 		t.Errorf("error = %q, want it to name the limit it would pass", refusal)
 	}
 	assertEditRefusalRendering(t, refusal, false)
@@ -1108,7 +1108,7 @@ func TestEditRefusalsNameNoPathUntilAsked(t *testing.T) {
 			plan: func(string) ([]byte, error) {
 				return PlanUpdate(nil, false, "web", NodeUpdate{NewName: ptrTo("frontend")})
 			},
-			want: "no areas vocabulary at",
+			want: "does not exist, so there are no areas to change",
 		},
 		{
 			name:  "an edit whose output the loader cannot read",
@@ -1116,29 +1116,29 @@ func TestEditRefusalsNameNoPathUntilAsked(t *testing.T) {
 			plan:  create("platform"),
 			want:  "would leave this store's areas.yml unreadable",
 		},
-		{name: "an undeclared area", vocab: plainVocab, plan: rename("api", "v2"), want: "declares no area", pathFree: true},
-		{name: "a children key that is not a sequence", vocab: "areas:\n    - name: web\n      children:\n", plan: create("web/panel"), want: "not a sequence", pathFree: true},
-		{name: "no new path", vocab: plainVocab, plan: create(""), want: "at a path, and none was given", pathFree: true},
-		{name: "a new path segment with no name", vocab: plainVocab, plan: create("web//panel"), want: "segment with no name", pathFree: true},
-		{name: "a padded new path segment", vocab: plainVocab, plan: create("web/ panel"), want: "leading or trailing whitespace", pathFree: true},
-		{name: "no new name", vocab: plainVocab, plan: rename("web", ""), want: "under a name, and none was given", pathFree: true},
-		{name: "a padded new name", vocab: plainVocab, plan: rename("web", " frontend"), want: "leading or trailing whitespace", pathFree: true},
+		{name: "an undeclared area", vocab: plainVocab, plan: rename("api", "v2"), want: `has no area "api"`},
+		{name: "a children key that is not a sequence", vocab: "areas:\n    - name: web\n      children:\n", plan: create("web/panel"), want: "is not a list"},
+		{name: "no new path", vocab: plainVocab, plan: create(""), want: "the area path is empty", pathFree: true},
+		{name: "a new path segment with no name", vocab: plainVocab, plan: create("web//panel"), want: "has an empty name in it", pathFree: true},
+		{name: "a padded new path segment", vocab: plainVocab, plan: create("web/ panel"), want: "starts or ends with whitespace", pathFree: true},
+		{name: "no new name", vocab: plainVocab, plan: rename("web", ""), want: "the area name is empty", pathFree: true},
+		{name: "a padded new name", vocab: plainVocab, plan: rename("web", " frontend"), want: "starts or ends with whitespace", pathFree: true},
 		{name: "a new name past the bound", vocab: plainVocab, plan: rename("web", strings.Repeat("a", maxNameRunes+1)), want: "characters long", pathFree: true},
-		{name: "a file that is not YAML", vocab: "areas: [\n", want: "parsing"},
+		{name: "a file that is not YAML", vocab: "areas: [\n", want: "is not valid YAML"},
 		{name: "more than one document", vocab: "areas:\n    - name: web\n---\nother: 1\n", want: "more than one YAML document"},
 		{
 			name:  "a vocabulary that inherits its content",
 			vocab: "defaults: &d\n    description: shared\nareas:\n    - name: web\n      <<: *d\n",
 			want:  "anchors, aliases or merge keys",
 		},
-		{name: "a file the loader cannot read as a vocabulary", vocab: "areas: 5\n", want: "cannot be read as an areas vocabulary"},
-		{name: "a file declaring no areas to edit", vocab: "# just a comment\n", want: "declares no areas to edit"},
-		{name: "a file with no `areas:` block", vocab: "other: 1\n", want: "declares no `areas:` block"},
+		{name: "a file the loader cannot read as a vocabulary", vocab: "areas: 5\n", want: "is not a valid areas file"},
+		{name: "a file declaring no areas to edit", vocab: "# just a comment\n", want: "has no areas to change"},
+		{name: "a file with no `areas:` block", vocab: "other: 1\n", want: "has no `areas:` list"},
 		{
 			name:  "an edit the loader would reject",
 			vocab: "areas:\n    - name: web\n    - name: auth\n",
 			plan:  rename("web", "auth"),
-			want:  "declaring an unusable vocabulary",
+			want:  "would leave this store's areas.yml with invalid areas",
 		},
 	}
 	for _, tt := range tests {
