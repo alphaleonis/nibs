@@ -145,6 +145,26 @@ async function openAreaDialog(user: User, label: string, item: RegExp) {
   return dialog;
 }
 
+/** Open the empty-areas panel's dialog from its "Create an area" button. */
+async function openNewAreaDialog(user: User) {
+  await user.click(screen.getByRole("button", { name: /create an area/i }));
+  const el = await screen.findByTestId("new-area-dialog");
+  await waitFor(() => expect(el.contains(document.activeElement)).toBe(true));
+  return () => within(screen.getByTestId("new-area-dialog"));
+}
+
+/** Assert the create form's layout: the path input above a footer band holding Cancel and a primary Create. */
+function expectCreateFooter(d: ReturnType<typeof within>) {
+  const cancels = d.getAllByRole("button", { name: /^cancel$/i });
+  expect(cancels).toHaveLength(1);
+  const create = d.getByRole("button", { name: /^create$/i });
+  const footer = create.closest('[data-slot="dialog-footer"]');
+  expect(footer).not.toBeNull();
+  expect(cancels[0].closest('[data-slot="dialog-footer"]')).toBe(footer);
+  expect(d.getByTestId("area-path-input").closest('[data-slot="dialog-footer"]')).toBeNull();
+  expect(create).toHaveClass("bg-primary");
+}
+
 /** The commands of every `execute` call, in order. */
 function dispatchedCommands(): Array<Record<string, unknown>> {
   return mockExecute.mock.calls.map((call) => call[0] as Record<string, unknown>);
@@ -196,9 +216,9 @@ describe("declaring an area from the empty-areas state", () => {
     const user = userEvent.setup();
     renderAreas(EMPTY_AREAS);
 
-    await user.click(screen.getByRole("button", { name: /create an area/i }));
-    await user.type(screen.getByTestId("area-path-input"), "web");
-    await user.click(screen.getByRole("button", { name: /^create$/i }));
+    const d = await openNewAreaDialog(user);
+    await user.type(d().getByTestId("area-path-input"), "web");
+    await user.click(d().getByRole("button", { name: /^create$/i }));
 
     expect(dispatchedCommand()).toEqual(expect.objectContaining({ kind: "add-area", path: "web" }));
   });
@@ -397,6 +417,15 @@ describe("declaring a child area from a section row", () => {
       expect.objectContaining({ kind: "add-area", path: "web/dashboard" }),
     ]);
     await waitFor(() => expect(screen.queryByTestId("area-form-dialog")).toBeNull());
+  });
+
+  it("puts Cancel and a primary Create on one action row", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    renderAreas(webAreas, [makeTreeTableNib({ id: "nibs-001", area: "web" })]);
+
+    const d = await openAreaDialog(user, "web", /add child/i);
+
+    expectCreateFooter(d());
   });
 });
 
@@ -1063,7 +1092,7 @@ describe("an area going away while its menu or dialog is open", () => {
   });
 });
 
-describe("backing out of the empty-areas declare form", () => {
+describe("the empty-areas panel's create dialog", () => {
   beforeEach(() => {
     mockExecute.mockReset().mockResolvedValue({ ok: true, data: {} });
     mockQueryStore.mockReset();
@@ -1076,28 +1105,34 @@ describe("backing out of the empty-areas declare form", () => {
     );
   });
 
-  // Opening the form must not take away the escape the user arrived with: this
-  // panel is the whole view when no areas are declared.
-  it("keeps Switch to Tree reachable while the form is open", async () => {
+  it("opens the form in a dialog, not on the panel", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     renderAreas(EMPTY_AREAS);
 
-    await user.click(screen.getByRole("button", { name: /create an area/i }));
+    const d = await openNewAreaDialog(user);
 
-    expect(screen.getByTestId("area-declare-form")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /switch to tree/i })).toBeInTheDocument();
+    expect(d().getByTestId("area-declare-form")).toBeInTheDocument();
+    expect(within(screen.getByTestId("empty-areas-none")).queryByTestId("area-declare-form")).toBeNull();
   });
 
-  // `onclose` fires only on a successful declaration, so without a cancel the
-  // form cannot be closed by a user who changed their mind.
-  it("returns to the empty state when the form is canceled", async () => {
+  it("puts Cancel and a primary Create on one action row", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     renderAreas(EMPTY_AREAS);
 
-    await user.click(screen.getByRole("button", { name: /create an area/i }));
-    await user.click(screen.getByRole("button", { name: /^cancel$/i }));
+    const d = await openNewAreaDialog(user);
 
-    await waitFor(() => expect(screen.queryByTestId("area-declare-form")).not.toBeInTheDocument());
+    expectCreateFooter(d());
+  });
+
+  // `onclose` fires only on a successful declaration, so Cancel is the form's own way out.
+  it("returns to the empty state when the dialog is canceled", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    renderAreas(EMPTY_AREAS);
+
+    const d = await openNewAreaDialog(user);
+    await user.click(d().getByRole("button", { name: /^cancel$/i }));
+
+    await waitFor(() => expect(screen.queryByTestId("new-area-dialog")).toBeNull());
     expect(screen.getByRole("button", { name: /create an area/i })).toBeInTheDocument();
     expect(mockExecute).not.toHaveBeenCalled();
   });

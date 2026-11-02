@@ -721,13 +721,7 @@
         A running server picks the file up, so this view fills in without a reload.
       </span>
       <div class="flex items-center gap-2">
-        {#if declaringArea}
-          <AreaDeclareForm onclose={() => (declaringArea = false)} />
-        {:else}
-          <Button variant="outline" size="sm" onclick={() => (declaringArea = true)}>Create an area</Button>
-        {/if}
-        <!-- Outside the branch: opening the form must not take away the escape
-             the user arrived with, since this panel is the whole view. -->
+        <Button variant="outline" size="sm" onclick={() => (declaringArea = true)}>Create an area</Button>
         <Button variant="outline" size="sm" onclick={leaveAreasView}>Switch to Tree</Button>
       </div>
     </div>
@@ -836,6 +830,12 @@
       <AreaRowMenu anchor={areaMenu.anchor} onclose={() => (areaMenu = null)} onselect={openAreaDialog} />
     {/key}
   {/if}
+{/if}
+{#if declaringArea}
+  <!-- The same dialog as the toolbar's New → Area. -->
+  <FormDialog testId="new-area-dialog" title="New area" onclose={() => (declaringArea = false)}>
+    <AreaDeclareForm onclose={() => (declaringArea = false)} />
+  </FormDialog>
 {/if}
 {#if areaDialog}
   {@const { target, action } = areaDialog}

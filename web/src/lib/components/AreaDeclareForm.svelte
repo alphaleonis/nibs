@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Button } from "$lib/components/ui/button/index.js";
+  import * as Dialog from "$lib/components/ui/dialog/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import { addArea, getMutationStore } from "$lib/mutations";
   import { runAreaEdit } from "../areaEdit";
@@ -55,30 +56,31 @@
 
 <form
   data-testid="area-declare-form"
-  class="flex flex-col gap-2"
+  class="flex flex-col gap-3"
   onsubmit={(e) => {
     e.preventDefault();
     void submit();
   }}
 >
-  <div class="flex items-center gap-2">
-  <Input
-    data-testid="area-path-input"
-    bind:value={path}
-    placeholder={parentPath === "" ? "web/dashboard" : "name"}
-    aria-label={parentPath === "" ? "Area path" : `New area under ${parentPath}`}
-    class="h-7 w-56 min-w-0"
-  />
-  <Button type="submit" variant="outline" size="sm" disabled={submitting}>Create</Button>
-  <Button
-    type="button"
-    variant="ghost"
-    size="sm"
-    disabled={submitting}
-    onclick={() => (oncancel ?? onclose)?.()}
-  >
-    Cancel
-  </Button>
+  <div class="flex flex-col gap-1">
+    <label class="text-caption text-muted-foreground" for="area-declare-path">
+      {parentPath === "" ? "Path" : "Name"}
+    </label>
+    <Input
+      id="area-declare-path"
+      data-testid="area-path-input"
+      bind:value={path}
+      placeholder={parentPath === "" ? "web/dashboard" : "name"}
+      aria-label={parentPath === "" ? "Area path" : `New area under ${parentPath}`}
+      class="h-7"
+    />
   </div>
   <AreaEditError message={error} />
+  <!-- The dialog's footer band, so the actions sit where ConfirmDialog's do. -->
+  <Dialog.Footer class="mt-1">
+    <Button type="button" variant="outline" disabled={submitting} onclick={() => (oncancel ?? onclose)?.()}>
+      Cancel
+    </Button>
+    <Button type="submit" disabled={submitting}>Create</Button>
+  </Dialog.Footer>
 </form>
