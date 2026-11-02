@@ -262,6 +262,17 @@ test("filter box — token hover affordance", async ({ page }) => {
   });
 });
 
+// The fixture nests webhooks under api and dashboard under web, so the indent shows.
+test("filter band — Area menu with a selection", async ({ page }) => {
+  await openApp(page);
+  await page.getByTestId("filter-area").click();
+  await page.getByRole("menuitemradio", { name: "web/dashboard" }).click();
+  await expect(page.locator('tr[data-nib-id="tnib-t001"]')).toHaveCount(0, { timeout: 5_000 });
+  await page.getByTestId("filter-area").click();
+  await expect(page.getByRole("menuitemradio", { name: "web/dashboard" })).toHaveAttribute("aria-checked", "true");
+  await shot(page, "filter-area-menu");
+});
+
 // Invalid-token marker must read as an attached element over the table, not as
 // bare "mid-air" text. status:xyz is invalid (and not a completion prefix).
 test("filter box — invalid token marker over table rows", async ({ page }) => {

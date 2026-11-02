@@ -22,9 +22,9 @@
   import type { TypeIconInfo } from "../icons";
   import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnOrder, emitFilter as emitFilterHelper, switchViewLevel } from "../resolvePrefs";
   import type { TreeViewState } from "../treeView.svelte";
-  import { parseQuery, serializeQuery, getCompletion, tokenGroups, tokenSegments, relTokenValueContext, AREA_TOKEN_ORDER, isRefusedArea, MILESTONE_ID_TOKENS, isRefusedMilestone } from "../query";
+  import { parseQuery, serializeQuery, getCompletion, tokenGroups, tokenSegments, relTokenValueContext, AREA_TOKEN_ORDER, isRefusedArea, recognizeArea, MILESTONE_ID_TOKENS, isRefusedMilestone } from "../query";
   import type { Completion, QueryFilter, SpanKind, RelValueContext, NibSuggestion } from "../query";
-  import type { AreaVocabulary } from "../areas";
+  import { areaColor, type AreaVocabulary } from "../areas";
   import { createNibSearch, type SearchNibsFn } from "../searchNibs";
   import { useMilestones } from "../contexts";
   import { getContextClient } from "@urql/svelte";
@@ -260,7 +260,7 @@
 
   // --- Filter bar logic ---
   type FilterField = "type" | "priority" | "status" | "estimate" | "tags";
-  type DropdownId = "type" | "priority" | "status" | "estimate" | "tags";
+  type DropdownId = "type" | "priority" | "status" | "estimate" | "tags" | "area";
 
   interface DropdownConfig {
     id: DropdownId;
@@ -269,8 +269,8 @@
     values: readonly string[];
   }
 
-  // Include/exclude pairs over static values. `area` has no dropdown: it is a
-  // single path in a runtime tree, with no `excludeArea`.
+  // Include/exclude pairs over static values. `area` is one path in a runtime
+  // tree, with no `excludeArea`, so its single-select dropdown is separate.
   let dropdowns = $derived<DropdownConfig[]>([
     { id: "type", label: "Type", field: "type", values: TYPES },
     { id: "priority", label: "Priority", field: "priority", values: PRIORITIES },
@@ -285,6 +285,7 @@
     status: false,
     estimate: false,
     tags: false,
+    area: false,
   });
 
   function handleFilterOpenChange(id: DropdownId, open: boolean) {
@@ -735,6 +736,38 @@
     return resolvedFilter[field]?.includes(value) ?? false;
   }
 
+  // --- Area dropdown ---
+  // The dropdown owns the box's `area:` token: a pick replaces it and Clear
+  // removes it. An `area-exact:` token is left as typed.
+  let areaNodes = $derived(areas?.sections() ?? []);
+  // Empty for an undeclared path, which no item can show as selected.
+  let selectedArea = $derived(resolvedFilter.area && areas?.resolve(resolvedFilter.area) ? resolvedFilter.area : "");
+
+  // An undeclared `area:` typed against a loaded vocabulary is parked here, not
+  // on the filter (`parseQuery`).
+  function isParkedAreaToken(token: string): boolean {
+    const match = recognizeArea(token);
+    return match?.kind === "area" && match.field === "area";
+  }
+
+  // Whether the box reads back the token a pick writes. A path with whitespace
+  // fails, because the box splits tokens on whitespace.
+  function isWritableArea(path: string): boolean {
+    return parseQuery(serializeQuery({ filter: { area: path } })).filter.area === path;
+  }
+  const areaHintId = $props.id();
+
+  let hasAreaToken = $derived(!!resolvedFilter.area || resolvedInvalidTokens.some(isParkedAreaToken));
+
+  function setArea(path: string | undefined) {
+    setInvalidTokens(resolvedInvalidTokens.filter((token) => !isParkedAreaToken(token)));
+    const updated: NibFilter = { ...resolvedFilter };
+    if (path) updated.area = path;
+    else delete updated.area;
+    emitFilter(updated);
+    filterOpenStates.area = false;
+  }
+
   // The trigger badge counts TICKED boxes, so it stays include-only.
   function getCount(field: FilterField): number {
     return resolvedFilter[field]?.length ?? 0;
@@ -746,6 +779,10 @@
   }
 
 </script>
+
+{#snippet countBadge(count: number)}
+  <span class="ml-0.5 inline-flex h-4.5 min-w-4.5 items-center justify-center rounded-full px-1 text-label {count ? 'bg-primary text-primary-foreground' : 'invisible'}">{count || 0}</span>
+{/snippet}
 
 <!-- This <header> and the filter band below are both root children of App's flex
      column. Do not wrap them in a gapped container. -->
@@ -1033,7 +1070,7 @@
         class="{buttonVariants({ variant: 'outline', size: 'default' })} shrink-0 text-muted-foreground"
       >
         {dd.label}
-        <span class="ml-0.5 inline-flex h-4.5 min-w-4.5 items-center justify-center rounded-full px-1 text-label {count ? 'bg-primary text-primary-foreground' : 'invisible'}">{count || 0}</span>
+        {@render countBadge(count)}
         <ChevronDown size={14} class="text-muted-foreground" />
       </DropdownMenu.Trigger>
       <DropdownMenu.Content align="start">
@@ -1084,6 +1121,48 @@
       </DropdownMenu.Content>
     </DropdownMenu.Root>
   {/each}
+  {#if areaNodes.length > 0}
+    <DropdownMenu.Root open={filterOpenStates.area} onOpenChange={(open) => handleFilterOpenChange("area", open)}>
+      <DropdownMenu.Trigger
+        data-testid="filter-area"
+        class="{buttonVariants({ variant: 'outline', size: 'default' })} shrink-0 text-muted-foreground"
+      >
+        Area
+        {@render countBadge(selectedArea ? 1 : 0)}
+        <ChevronDown size={14} class="text-muted-foreground" />
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Content align="start">
+        <DropdownMenu.RadioGroup value={selectedArea} onValueChange={(v) => { if (v) setArea(v); }}>
+          {#each areaNodes as node, i (node.path)}
+            {@const swatch = areaColor(node.color)}
+            {@const writable = isWritableArea(node.path)}
+            <!-- Named by path: a segment alone can repeat under different parents. -->
+            <DropdownMenu.RadioItem
+              value={node.path}
+              aria-label={node.path}
+              disabled={!writable}
+              aria-describedby={writable ? undefined : `${areaHintId}-${i}`}
+            >
+              <span data-area-depth={node.depth} class="flex items-center gap-1.5" style:padding-left={`${node.depth * 0.75}rem`}>
+                <!-- Always present, so names at one depth align whether or not they
+                     have a color. `areaColor` is what makes config text safe in this style. -->
+                <span class="size-2.5 shrink-0 rounded-full {swatch ? 'border border-border' : ''}" style:background-color={swatch}></span>
+                {node.name}
+              </span>
+              {#if !writable}
+                <span id="{areaHintId}-{i}" class="text-caption text-muted-foreground">can't be typed in the query box</span>
+              {/if}
+            </DropdownMenu.RadioItem>
+          {/each}
+        </DropdownMenu.RadioGroup>
+        <DropdownMenu.Separator />
+        <DropdownMenu.Item disabled={!hasAreaToken} onSelect={() => setArea(undefined)}>
+          <X size={13} />
+          Clear
+        </DropdownMenu.Item>
+      </DropdownMenu.Content>
+    </DropdownMenu.Root>
+  {/if}
   <!-- Last in the row: help for the whole band, not the query box. -->
   <QueryHelp />
 </div>

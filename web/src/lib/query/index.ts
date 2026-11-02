@@ -34,8 +34,9 @@ export { relTokenValueContext } from "./relComplete";
 export type { RelValueContext, NibSuggestion } from "./relComplete";
 // The box asks `isRefusedArea` again when the vocabulary changes; `parseQuery`
 // asked once, with whatever vocabulary its caller had. `AREA_TOKEN_ORDER` is how
-// it spells the refused value back as a token.
-export { AREA_TOKEN_ORDER, isRefusedArea } from "./area";
+// it spells the refused value back as a token. The Area dropdown asks
+// `recognizeArea` which parked token is its own.
+export { AREA_TOKEN_ORDER, isRefusedArea, recognizeArea } from "./area";
 export type { AreaKey } from "./area";
 // The same question for the two assignment-axis tokens, asked against the
 // milestone list and store prefix the client already holds, resolving the id the

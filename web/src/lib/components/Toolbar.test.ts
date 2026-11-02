@@ -7,10 +7,10 @@ import { Preferences } from "../preferences.svelte";
 import { ALL_COLUMN_KEYS, DEFAULT_VISIBLE_COLUMNS, VIEW_LEVELS, VIEW_LEVEL_LABELS } from "../types";
 import { OPEN_STATUSES } from "../constants";
 import type { NibFilter, ViewLevel, ColumnKey } from "../types";
-import type { NibSuggestion } from "../query";
+import { parseQuery, type NibSuggestion } from "../query";
 import { FIELD_SPECS } from "../query/fields";
 import { REL_TOKEN_ORDER } from "../query/relations";
-import { createAreaVocabulary, LOADING_AREAS, UNAVAILABLE_AREAS } from "../areas";
+import { createAreaVocabulary, EMPTY_AREAS, LOADING_AREAS, UNAVAILABLE_AREAS } from "../areas";
 import { MILESTONES_KEY } from "../contexts";
 import type { MilestoneOption } from "../milestones";
 import { reactiveBox } from "../testing/reactiveBox.svelte";
@@ -2466,6 +2466,201 @@ describe("Toolbar — the area token", () => {
     expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe(
       "type:bug area:retired",
     );
+  });
+});
+
+describe("Toolbar — the Area dropdown", () => {
+  const READY = createAreaVocabulary([
+    { path: "web", name: "web", description: "", color: "", depth: 0 },
+    { path: "web/dashboard", name: "dashboard", description: "", color: "", depth: 1 },
+    { path: "webhooks", name: "webhooks", description: "", color: "", depth: 0 },
+  ]);
+
+  const box = () => screen.getByTestId("filter-keyword") as HTMLInputElement;
+  const trigger = () => screen.getByTestId("filter-area");
+  const radio = (path: string) => screen.getByRole("menuitemradio", { name: path });
+
+  async function typeInBox(text: string) {
+    await user.type(box(), text);
+    await fireEvent.blur(box());
+    await tick();
+  }
+
+  async function pick(path: string) {
+    await user.click(trigger());
+    await user.click(radio(path));
+  }
+
+  function renderWith(prefs: Preferences, areas = READY) {
+    render(Toolbar, { prefs, oncreatenew: vi.fn(), areas });
+  }
+
+  it.each([
+    ["no vocabulary", undefined],
+    ["a project with no areas", EMPTY_AREAS],
+    ["a vocabulary still loading", LOADING_AREAS],
+    ["an unavailable vocabulary", UNAVAILABLE_AREAS],
+  ])("is hidden with %s", (_label, areas) => {
+    render(Toolbar, { ...defaultToolbarProps, areas });
+    expect(screen.queryByTestId("filter-area")).not.toBeInTheDocument();
+  });
+
+  it("lists the declared tree in order, indenting each area by its depth", async () => {
+    render(Toolbar, { ...defaultToolbarProps, areas: READY });
+
+    await user.click(trigger());
+
+    const items = screen.getAllByRole("menuitemradio");
+    expect(items.map((el) => el.getAttribute("aria-label"))).toEqual(["web", "web/dashboard", "webhooks"]);
+    expect(items.map((el) => el.textContent?.trim())).toEqual(["web", "dashboard", "webhooks"]);
+    const indent = (path: string) => radio(path).querySelector<HTMLElement>("[data-area-depth]")!.style.paddingLeft;
+    expect(indent("web")).toBe("0rem");
+    expect(indent("web/dashboard")).not.toBe("0rem");
+    expect(indent("webhooks")).toBe("0rem");
+  });
+
+  it("writes the picked area as one area: token in the box", async () => {
+    const prefs = new Preferences();
+    renderWith(prefs);
+
+    await pick("web/dashboard");
+
+    expect(prefs.filter.area).toBe("web/dashboard");
+    expect(box().value).toBe("area:web/dashboard");
+    expect(trigger()).toHaveTextContent("1");
+  });
+
+  it("shows an area typed in the box as the selected item", async () => {
+    const prefs = new Preferences();
+    renderWith(prefs);
+
+    await typeInBox("area:web");
+    await user.click(trigger());
+
+    expect(radio("web")).toHaveAttribute("aria-checked", "true");
+    expect(radio("web/dashboard")).toHaveAttribute("aria-checked", "false");
+    expect(radio("webhooks")).toHaveAttribute("aria-checked", "false");
+    expect(trigger()).toHaveTextContent("1");
+  });
+
+  it("replaces the area when another one is picked", async () => {
+    const prefs = new Preferences();
+    renderWith(prefs);
+    await typeInBox("type:bug area:web");
+
+    await pick("webhooks");
+
+    expect(prefs.filter.area).toBe("webhooks");
+    expect(prefs.filter.type).toEqual(["bug"]);
+    expect(box().value).toBe("type:bug area:webhooks");
+  });
+
+  it("Clear removes the area: token and leaves the rest of the box", async () => {
+    const prefs = new Preferences();
+    renderWith(prefs);
+    await typeInBox("type:bug area:web");
+
+    await user.click(trigger());
+    await user.click(screen.getByRole("menuitem", { name: /clear/i }));
+
+    expect(prefs.filter.area).toBeUndefined();
+    expect(box().value).toBe("type:bug");
+    expect(trigger().querySelector("span")?.classList.contains("invisible")).toBe(true);
+  });
+
+  it("disables Clear when the box holds no area: token", async () => {
+    renderWith(new Preferences());
+
+    await user.click(trigger());
+
+    expect(screen.getByRole("menuitem", { name: /clear/i })).toHaveAttribute("data-disabled", "");
+  });
+
+  // An undeclared path is parked in invalidTokens when typed against a loaded
+  // vocabulary. No item matches it, but it is still the box's area: token.
+  it("selects nothing for a typed undeclared area, and replaces it on a pick", async () => {
+    const prefs = new Preferences();
+    renderWith(prefs);
+    await typeInBox("area:retired");
+
+    await user.click(trigger());
+    for (const item of screen.getAllByRole("menuitemradio")) {
+      expect(item).toHaveAttribute("aria-checked", "false");
+    }
+    expect(trigger().querySelector("span")?.classList.contains("invisible")).toBe(true);
+    expect(screen.getByRole("menuitem", { name: /clear/i })).not.toHaveAttribute("data-disabled");
+
+    await user.click(radio("web"));
+
+    expect(prefs.filter.area).toBe("web");
+    expect(prefs.invalidTokens).toEqual([]);
+    expect(box().value).toBe("area:web");
+  });
+
+  // A restored query is parsed with no vocabulary, so the undeclared path sits on
+  // the filter itself rather than in invalidTokens.
+  it("Clear removes a restored undeclared area", async () => {
+    const prefs = new Preferences();
+    prefs.setQuery("area:retired");
+    renderWith(prefs);
+
+    await user.click(trigger());
+    for (const item of screen.getAllByRole("menuitemradio")) {
+      expect(item).toHaveAttribute("aria-checked", "false");
+    }
+    await user.click(screen.getByRole("menuitem", { name: /clear/i }));
+
+    expect(prefs.filter.area).toBeUndefined();
+    expect(box().value).toBe("");
+  });
+
+  // The box splits tokens on whitespace and has no quoting, but a declared name
+  // may hold interior whitespace (`area.validateNodes`).
+  it("disables an area the query box cannot read back, and writes only paths it can", async () => {
+    const SPACED = createAreaVocabulary([
+      { path: "front end", name: "front end", description: "", color: "", depth: 0 },
+      { path: "web", name: "web", description: "", color: "", depth: 0 },
+      { path: "web/dashboard", name: "dashboard", description: "", color: "", depth: 1 },
+      { path: "web/tab\there", name: "tab\there", description: "", color: "", depth: 1 },
+    ]);
+    const prefs = new Preferences();
+    renderWith(prefs, SPACED);
+    const byPath = (path: string) =>
+      screen.getAllByRole("menuitemradio").find((el) => el.getAttribute("aria-label") === path)!;
+
+    await user.click(trigger());
+    for (const path of ["front end", "web/tab\there"]) {
+      expect(byPath(path)).toHaveAttribute("aria-disabled", "true");
+      expect(byPath(path)).toHaveAccessibleDescription(/query box/i);
+    }
+    await user.click(byPath("front end"));
+    expect(prefs.filter.area).toBeUndefined();
+
+    for (const path of ["web", "web/dashboard"]) {
+      if (!screen.queryByRole("menu")) await user.click(trigger());
+      expect(byPath(path)).not.toHaveAttribute("aria-disabled", "true");
+      await user.click(byPath(path));
+      expect(parseQuery(prefs.query, SPACED).filter.area).toBe(path);
+    }
+  });
+
+  it("leaves an area-exact: token in place on a pick and on Clear", async () => {
+    const prefs = new Preferences();
+    renderWith(prefs);
+    await typeInBox("area-exact:web/dashboard");
+
+    await user.click(trigger());
+    expect(screen.getByRole("menuitem", { name: /clear/i })).toHaveAttribute("data-disabled", "");
+    await user.click(radio("web"));
+
+    expect(prefs.filter.areaExact).toBe("web/dashboard");
+    expect(box().value).toBe("area:web area-exact:web/dashboard");
+
+    await user.click(trigger());
+    await user.click(screen.getByRole("menuitem", { name: /clear/i }));
+
+    expect(prefs.filter.area).toBeUndefined();
+    expect(box().value).toBe("area-exact:web/dashboard");
   });
 });
 
