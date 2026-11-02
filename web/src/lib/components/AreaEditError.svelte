@@ -8,5 +8,5 @@
 </script>
 
 {#if message}
-  <span data-testid="area-edit-error" class="px-2 text-caption text-destructive">{message}</span>
+  <span data-testid="area-edit-error" class="text-destructive">{message}</span>
 {/if}

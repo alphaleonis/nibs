@@ -4,7 +4,7 @@
   import type { NibFilter, ViewLevel, RowDensity, BlockedEmphasis, RegionBandMode, OpenDetailGesture, RowSubtreeActions, TreeTableNib, TableSort, SortField } from "../types";
   import type { ColumnKey } from "../columns";
   import type { Preferences } from "../preferences.svelte";
-  import { isSyntheticRowId } from "../tree";
+  import { headsDeclaredArea, isSyntheticRowId } from "../tree";
   import { applySort, nextTableSort } from "../tableSort";
   import { prepareFilter, matchesFilter } from "../filter";
   import { DRAG_BLOCK_TOAST_ID, FLAT_BLOCK_REMEDY_VIEW } from "../dragBlock";
@@ -15,12 +15,15 @@
   import { hierarchyTokens, clearHierarchyFilters, contradictionTokens } from "../query";
   import { graphqlErrorCode, graphqlErrorMessage } from "../graphqlError";
   import { Button } from "$lib/components/ui/button/index.js";
-  import * as Popover from "$lib/components/ui/popover/index.js";
   import TreeTableRow from "./TreeTableRow.svelte";
   import TableHeader from "./TableHeader.svelte";
   import DelegatedTooltip from "./DelegatedTooltip.svelte";
   import AreaDeclareForm from "./AreaDeclareForm.svelte";
-  import AreaRowPanel from "./AreaRowPanel.svelte";
+  import AreaRowMenu from "./AreaRowMenu.svelte";
+  import type { AreaMenuAction, AreaMenuAnchor } from "./AreaRowMenu.svelte";
+  import FormDialog from "./FormDialog.svelte";
+  import AreaEditForm from "./AreaEditForm.svelte";
+  import AreaRemoveForm from "./AreaRemoveForm.svelte";
   import type { DropPlan } from "../ordering/dropPlan";
   import { regionBandAt, type BandAxis } from "../ordering/regionBand";
   import type { PanelPolicy } from "../selection.svelte";
@@ -522,29 +525,9 @@
     }
 
     if (action === "area-actions") {
-      // The area path comes off the section's KEY, which is the declared path.
-      // The fabricated row id is an escaped form and is not a path.
-      const row = rows.find((r) => r.nib.id === nibId);
-      const section = row?.drawsSection;
-      if (section) {
-        // A second click on the same row's [⋯] closes the panel: that is the
-        // gesture a user reaches for to get the menu back, and closing is also
-        // what drops the sub-form and draft the panel was left in.
-        if (areaPanel?.path === section.key) {
-          areaPanel = null;
-        } else {
-          // The node's own segment comes from the section's LABEL rather than from
-          // splitting the path, which is what a rename sets.
-          areaPanel = {
-            path: section.key,
-            name: section.display.label,
-            description: section.display.description,
-            color: section.display.color,
-            anchorEl: actionResult!.el,
-          };
-        }
-      }
-      return; // Don't toggle the section: this click was for its editor.
+      const target = areaTargetFor(nibId);
+      if (target) areaMenu = { target, anchor: actionResult!.el };
+      return; // Don't toggle the section: this click was for its menu.
     }
 
     // Any click on a bucket row, modified or not, toggles its group. SelectionState
@@ -592,10 +575,13 @@
     const nibId = getNibIdFromEvent(e);
     if (!nibId) return;
 
-    // A section row names no nib, so there is nothing for the menu to act on.
-    // preventDefault, or the browser's own menu appears.
+    // A section row names no nib, so the row menu has nothing to act on; a
+    // declared area's row opens the area menu instead. preventDefault either
+    // way, or the browser's own menu appears.
     if (isSyntheticRowId(nibId)) {
       e.preventDefault();
+      const target = areaTargetFor(nibId);
+      if (target) areaMenu = { target, anchor: { x: e.clientX, y: e.clientY } };
       return;
     }
 
@@ -652,24 +638,52 @@
   // without one.
   let declaringArea = $state(false);
 
-  // The area whose row panel is open, or null. Mounted only once opened, for the
-  // same reason the declare form is. `anchorEl` is the [⋯] button itself rather
-  // than its rect, so the panel stays on it while the table scrolls.
-  let areaPanel:
-    | { path: string; name: string; description: string; color: string; anchorEl: HTMLElement }
-    | null = $state(null);
+  /** The declared area a menu or dialog acts on, as its section row shows it. */
+  interface AreaTarget {
+    path: string;
+    /** The node's own segment, which is what a rename sets. */
+    name: string;
+    description: string;
+    color: string;
+  }
 
-  // A push that retires or renames the open area destroys its section row and the
-  // [⋯] the panel hangs off. bits-ui answers a vanished anchor by HIDING the
-  // floating wrapper rather than closing, so the panel would stay mounted and
-  // invisible over a draft the user can no longer reach. Keyed on the vocabulary
-  // rather than on `anchorEl`: the push is what changes, and a node going
-  // detached is not something an effect can wake on.
+  // The path is the section's KEY: the fabricated row id is an escaped form, not
+  // a path. The name is the section's LABEL, the node's own segment.
+  function areaTargetFor(rowId: string): AreaTarget | null {
+    const row = rows.find((r) => r.nib.id === rowId);
+    const section = row?.drawsSection ?? null;
+    if (!section || !headsDeclaredArea(rowId, section)) return null;
+    return {
+      path: section.key,
+      name: section.display.label,
+      description: section.display.description,
+      color: section.display.color,
+    };
+  }
+
+  // The menu and the dialog it opens are separate states, so closing one never
+  // reopens the other. Each is mounted only while open, as the declare form is.
+  let areaMenu: { target: AreaTarget; anchor: AreaMenuAnchor } | null = $state.raw(null);
+  let areaDialog: { target: AreaTarget; action: AreaMenuAction } | null = $state.raw(null);
+
+  // A push that retires or renames the area destroys its section row, and every
+  // form in the dialog sends the old path. An effect cannot wake on a node going
+  // detached, so this watches the vocabulary the push changes.
   $effect(() => {
-    if (areaPanel !== null && viewSpine().areas.validity(areaPanel.path) !== "declared") {
-      areaPanel = null;
-    }
+    const areas = viewSpine().areas;
+    if (areaMenu !== null && areas.validity(areaMenu.target.path) !== "declared") areaMenu = null;
+    if (areaDialog !== null && areas.validity(areaDialog.target.path) !== "declared") areaDialog = null;
   });
+
+  function openAreaDialog(action: AreaMenuAction) {
+    if (areaMenu !== null) areaDialog = { target: areaMenu.target, action };
+  }
+
+  const AREA_DIALOG_TITLES: Record<AreaMenuAction, string> = {
+    edit: "Edit area",
+    "add-child": "Add child area",
+    remove: "Remove area",
+  };
 </script>
 
 <div data-testid="tree-table" class="h-full">
@@ -816,34 +830,38 @@
        this table's clicks. -->
   <DelegatedTooltip container={scrollContainerEl} suppressed={() => drag.isDragging} />
   </div>
-  {#if areaPanel}
-    <!-- A Popover rather than a hand-placed div: Escape and an outside click
-         dismiss it, and `customAnchor` tracks the button instead of freezing the
-         viewport coordinates it had when clicked. -->
-    <Popover.Root
-      open={true}
-      onOpenChange={(open) => {
-        if (!open) areaPanel = null;
-      }}
-    >
-      <Popover.Content
-        customAnchor={areaPanel.anchorEl}
-        align="start"
-        class="w-auto min-w-56 p-1"
-      >
-        <!-- Keyed by path so opening the panel on another area remounts it: its
-             open entry and each form's draft belong to the area they were opened on. -->
-        {#key areaPanel.path}
-          <AreaRowPanel
-            path={areaPanel.path}
-            name={areaPanel.name}
-            description={areaPanel.description}
-            color={areaPanel.color}
-            onclose={() => (areaPanel = null)}
-          />
-        {/key}
-      </Popover.Content>
-    </Popover.Root>
+  {#if areaMenu}
+    <!-- Keyed so a menu re-pointed at another row repositions on its anchor. -->
+    {#key areaMenu}
+      <AreaRowMenu anchor={areaMenu.anchor} onclose={() => (areaMenu = null)} onselect={openAreaDialog} />
+    {/key}
   {/if}
+{/if}
+{#if areaDialog}
+  {@const { target, action } = areaDialog}
+  {@const close = () => (areaDialog = null)}
+  <!-- Keyed so each opening starts from the store's values, not an abandoned draft. -->
+  {#key areaDialog}
+    <FormDialog
+      testId="area-form-dialog"
+      title={AREA_DIALOG_TITLES[action]}
+      description={target.path}
+      onclose={close}
+    >
+      {#if action === "edit"}
+        <AreaEditForm
+          path={target.path}
+          name={target.name}
+          description={target.description}
+          color={target.color}
+          onclose={close}
+        />
+      {:else if action === "add-child"}
+        <AreaDeclareForm parentPath={target.path} onclose={close} />
+      {:else}
+        <AreaRemoveForm path={target.path} onclose={close} />
+      {/if}
+    </FormDialog>
+  {/key}
 {/if}
 </div>

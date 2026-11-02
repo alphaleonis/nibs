@@ -2,6 +2,7 @@
   import { untrack } from "svelte";
   import { getContextClient, queryStore } from "@urql/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
+  import * as Dialog from "$lib/components/ui/dialog/index.js";
   import * as RadioGroup from "$lib/components/ui/radio-group/index.js";
   import { getMutationStore, removeArea } from "$lib/mutations";
   import type { AreaDisposition } from "$lib/mutations";
@@ -26,9 +27,8 @@
   // Asked of the SERVER rather than counted from the table's rows: the `area:`
   // filter is downward-closed, so this covers the whole subtree, and the table's
   // own rows are narrowed by whatever filter is active.
-  // Read once: one instance of this form serves one area, because TreeTable keys
-  // the panel by path and so a different section row remounts it rather than
-  // re-pointing this query at a new area underneath an open form.
+  // Read once: TreeTable remounts the dialog for each area it opens on, so one
+  // instance of this form serves one area.
   // network-only: urql's document cache never invalidates a result that came back
   // EMPTY, because an empty list carries no Nib typename for a later nib mutation
   // to match. A cached zero would arm the no-disposition retirement on an area
@@ -55,12 +55,17 @@
   let excluded = $derived(new Set(spine().areas.subtreeOf(path).map((n) => n.path)));
   let targets = $derived(spine().areas.sections().filter((n) => !excluded.has(n.path)));
 
+  // The primitive's `border-input` ring all but vanishes on the dark palettes.
+  const RADIO_CLASS = "border-muted-foreground";
+
   const UNASSIGN = "unassign";
   const MOVE_PREFIX = "move:";
 
   let choice: string = $state("");
   let submitting = $state(false);
   let error = $state("");
+  // Presentation only: submit() holds the same preconditions on its own.
+  let armed = $derived(countKnown && !submitting && (memberCount === 0 || choice !== ""));
 
   function chosenDisposition(): AreaDisposition | undefined {
     if (choice === UNASSIGN) return { unassign: true };
@@ -91,34 +96,36 @@
   }
 </script>
 
-<div data-testid="area-remove-form" class="flex flex-col gap-2">
+<!-- wrap-break-word because an area path has no spaces to wrap at. -->
+<div data-testid="area-remove-form" class="flex flex-col gap-3 text-body wrap-break-word">
   {#if fetching}
-    <span class="px-2 text-caption text-muted-foreground">Checking what is assigned…</span>
+    <span class="text-muted-foreground">Checking what is assigned…</span>
   {:else if !countKnown}
     <!-- Ahead of the count: the no-members copy asserts that nothing else is
          affected, which is a claim there is no evidence for here. -->
-    <span data-testid="area-remove-unknown" class="px-2 text-caption text-foreground">
+    <span data-testid="area-remove-unknown" class="text-foreground">
       What is assigned to {path} could not be read, so this retirement is not offered.
     </span>
-    <Button variant="outline" size="sm" disabled>Retire</Button>
     <AreaEditError message={membersMessage} />
   {:else if memberCount === 0}
-    <span class="px-2 text-caption text-muted-foreground">
+    <span class="text-muted-foreground">
       Retire {path} and every area declared beneath it.
     </span>
-    <Button variant="outline" size="sm" disabled={submitting} onclick={() => void submit()}>
-      Retire
-    </Button>
   {:else}
-    <span data-testid="area-remove-count" class="px-2 text-caption text-foreground">
+    <span data-testid="area-remove-count" class="text-foreground">
       {memberCount}
       {memberCount === 1 ? "nib is" : "nibs are"} assigned to {path} or an area beneath it.
       Choose what becomes of them.
     </span>
-    <RadioGroup.Root bind:value={choice} class="gap-1 px-2">
+    <RadioGroup.Root bind:value={choice} class="gap-2">
       <div class="flex items-center gap-2">
-        <RadioGroup.Item value={UNASSIGN} id="area-disposition-unassign" aria-label="Clear their area" />
-        <label class="text-caption" for="area-disposition-unassign">Clear their area</label>
+        <RadioGroup.Item
+          value={UNASSIGN}
+          id="area-disposition-unassign"
+          aria-label="Clear their area"
+          class={RADIO_CLASS}
+        />
+        <label class="min-w-0" for="area-disposition-unassign">Clear their area</label>
       </div>
       {#each targets as target (target.path)}
         <div class="flex items-center gap-2">
@@ -126,21 +133,23 @@
             value={`${MOVE_PREFIX}${target.path}`}
             id={`area-disposition-move-${target.path}`}
             aria-label={`Move them to ${target.path}`}
+            class={RADIO_CLASS}
           />
-          <label class="text-caption" for={`area-disposition-move-${target.path}`}>
+          <label class="min-w-0" for={`area-disposition-move-${target.path}`}>
             Move them to {target.path}
           </label>
         </div>
       {/each}
     </RadioGroup.Root>
-    <Button
-      variant="outline"
-      size="sm"
-      disabled={submitting || choice === ""}
-      onclick={() => void submit()}
-    >
-      Retire
-    </Button>
   {/if}
   <AreaEditError message={error} />
+  <!-- The dialog's footer band, so the actions sit where ConfirmDialog's do. -->
+  <Dialog.Footer class="mt-1">
+    <Button type="button" variant="outline" disabled={submitting} onclick={() => onclose?.()}>
+      Cancel
+    </Button>
+    {#if !fetching}
+      <Button variant="destructive" disabled={!armed} onclick={() => void submit()}>Retire</Button>
+    {/if}
+  </Dialog.Footer>
 </div>

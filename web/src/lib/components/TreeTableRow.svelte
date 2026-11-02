@@ -6,7 +6,7 @@
   import type { RowSection } from "../tableData";
   import { Plus, Ellipsis } from "@lucide/svelte";
   import { canHaveChildren } from "../typeHierarchy";
-  import { isSyntheticRowId } from "../tree";
+  import { headsDeclaredArea } from "../tree";
   import { useSelection, useDrag } from "../contexts";
   import { useColumnAdapters } from "../ColumnAdapters.svelte";
 
@@ -84,16 +84,7 @@
   // which would color an assignment like a parent-axis drop.
   let treatment = $derived(dropValid ? dropTreatment(drag.dropAccepted) : null);
 
-  // A fabricated row heading a DECLARED area, which is what the vocabulary
-  // editor acts on. The "No area" leftover is GOVERNS_NOTHING, so it carries a
-  // `byRow` entry rather than an `assign` one and offers no editor — there is no
-  // declaration behind it to rename or retire.
-  let drawsAreaSection = $derived(
-    drawsSection !== null &&
-      isSyntheticRowId(nib.id) &&
-      drawsSection.onEnter.kind === "assign" &&
-      drawsSection.onEnter.field === "area",
-  );
+  let drawsAreaSection = $derived(headsDeclaredArea(nib.id, drawsSection));
 
   const isBlocked = $derived(nib.blockedByIds.length > 0);
   // Suppressed while dragged, a drop target, or pulsing, so the dim does not mute those.

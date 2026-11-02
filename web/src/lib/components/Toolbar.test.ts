@@ -1,4 +1,4 @@
-import { render, screen, within, fireEvent } from "@testing-library/svelte";
+import { render, screen, within, fireEvent, waitFor } from "@testing-library/svelte";
 import { userEvent } from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { tick } from "svelte";
@@ -15,6 +15,25 @@ import { MILESTONES_KEY } from "../contexts";
 import type { MilestoneOption } from "../milestones";
 import { reactiveBox } from "../testing/reactiveBox.svelte";
 import { expectNoNativeTitles, expectDelegatingElementsAreNamed } from "../testing/nativeTitle";
+
+// Only the New → Area dialog reaches the mutation store, so the real module is
+// spread and only the store is replaced.
+const { mockExecute } = vi.hoisted(() => ({
+  mockExecute: vi.fn().mockResolvedValue({ ok: true, data: {} }),
+}));
+vi.mock("$lib/mutations", async () => {
+  const actual = await vi.importActual<typeof import("$lib/mutations")>("$lib/mutations");
+  return {
+    ...actual,
+    getMutationStore: () => ({
+      execute: mockExecute,
+      isMutating: () => false,
+      get pending() {
+        return false;
+      },
+    }),
+  };
+});
 
 // bits-ui scroll lock sets pointer-events: none on <body>, so disable the check
 const user = userEvent.setup({ pointerEventsCheck: 0 });
@@ -2717,5 +2736,105 @@ describe("Toolbar — tooltips", () => {
 
     expectNoNativeTitles();
     expectDelegatingElementsAreNamed();
+  });
+});
+
+// ---- New → Area ----------------------------------------------------------
+describe("Toolbar — declaring a root area from the New menu", () => {
+  const declaredAreas = createAreaVocabulary([
+    { path: "web", name: "web", description: "", color: "", depth: 0 },
+    { path: "web/dashboard", name: "dashboard", description: "", color: "", depth: 1 },
+    { path: "cli", name: "cli", description: "", color: "", depth: 0 },
+  ]);
+
+  beforeEach(() => {
+    mockExecute.mockReset().mockResolvedValue({ ok: true, data: {} });
+  });
+
+  function renderIn(viewLevel: ViewLevel) {
+    render(Toolbar, { ...defaultToolbarProps, viewLevel, areas: declaredAreas });
+  }
+
+  async function openAreaDialog() {
+    await user.click(screen.getByTestId("toolbar-add"));
+    await user.click(screen.getByTestId("toolbar-add-area"));
+    return within(screen.getByTestId("new-area-dialog"));
+  }
+
+  it("offers Area in the Areas view", async () => {
+    renderIn("areas");
+
+    await user.click(screen.getByTestId("toolbar-add"));
+
+    expect(screen.getByRole("menuitem", { name: "Area" })).toBeInTheDocument();
+  });
+
+  it("does not offer Area in the Tree view", async () => {
+    renderIn("none");
+
+    await user.click(screen.getByTestId("toolbar-add"));
+
+    expect(screen.getAllByRole("menuitem")).toHaveLength(6);
+    expect(screen.queryByTestId("toolbar-add-area")).not.toBeInTheDocument();
+  });
+
+  it("does not create a nib when Area is picked", async () => {
+    const oncreatenew = vi.fn();
+    render(Toolbar, { ...defaultToolbarProps, viewLevel: "areas", areas: declaredAreas, oncreatenew });
+
+    await openAreaDialog();
+
+    expect(oncreatenew).not.toHaveBeenCalled();
+  });
+
+  // Other areas exist, so the empty-state form is gone and nothing else can
+  // declare a root: the typed segment must reach addArea with no parent prefix.
+  it("declaring through New → Area while other areas exist sends addArea with the typed single-segment path", async () => {
+    renderIn("areas");
+
+    const d = await openAreaDialog();
+    await user.type(d.getByTestId("area-path-input"), "ops");
+    await user.click(d.getByRole("button", { name: /^declare$/i }));
+
+    expect(mockExecute.mock.calls.map((call) => call[0])).toEqual([
+      expect.objectContaining({ kind: "add-area", path: "ops" }),
+    ]);
+    await waitFor(() => expect(screen.queryByTestId("new-area-dialog")).toBeNull());
+  });
+
+  it("keeps the dialog open with the refusal inline when the server refuses", async () => {
+    mockExecute.mockResolvedValue({ ok: false, error: '[GraphQL] area "web" already exists' });
+    renderIn("areas");
+
+    const d = await openAreaDialog();
+    await user.type(d.getByTestId("area-path-input"), "web");
+    await user.click(d.getByRole("button", { name: /^declare$/i }));
+
+    await waitFor(() =>
+      expect(d.getByTestId("area-edit-error")).toHaveTextContent('area "web" already exists'),
+    );
+    expect(screen.getByTestId("new-area-dialog")).toBeInTheDocument();
+  });
+
+  it("Cancel closes the dialog without sending anything", async () => {
+    renderIn("areas");
+
+    const d = await openAreaDialog();
+    await user.click(d.getByRole("button", { name: /^cancel$/i }));
+
+    expect(screen.queryByTestId("new-area-dialog")).toBeNull();
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
+
+  it("opens empty after a dismissed draft", async () => {
+    renderIn("areas");
+
+    let d = await openAreaDialog();
+    await user.type(d.getByTestId("area-path-input"), "draft");
+    await user.keyboard("{Escape}");
+    expect(screen.queryByTestId("new-area-dialog")).toBeNull();
+
+    d = await openAreaDialog();
+    expect(d.getByTestId("area-path-input")).toHaveValue("");
   });
 });

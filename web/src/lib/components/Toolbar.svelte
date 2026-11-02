@@ -41,6 +41,8 @@
   import TooltipButton from "./TooltipButton.svelte";
   import WithTooltip from "./WithTooltip.svelte";
   import ConnectionStatus from "./ConnectionStatus.svelte";
+  import FormDialog from "./FormDialog.svelte";
+  import AreaDeclareForm from "./AreaDeclareForm.svelte";
   import type { ConnectionStatus as ConnectionStatusValue } from "../connectionRecovery";
 
   let {
@@ -222,6 +224,7 @@
   const tokenHint = "Click to select · Delete to remove";
 
   let addMenuOpen = $state(false);
+  let declaringArea = $state(false);
   let viewLevelOpen = $state(false);
   let columnsOpen = $state(false);
   let viewLevelIconInfo = $derived(VIEW_LEVEL_ICON_INFO[resolvedViewLevel]);
@@ -788,8 +791,26 @@
             {nibType}
           </DropdownMenu.Item>
         {/each}
+        <!-- Areas view only: elsewhere a declaration lands with nothing visibly changing. -->
+        {#if resolvedViewLevel === "areas"}
+          <DropdownMenu.Separator />
+          <DropdownMenu.Item
+            data-testid="toolbar-add-area"
+            class="flex items-center gap-2 text-sm"
+            onclick={() => { declaringArea = true; }}
+          >
+            <LayoutGrid size={14} style="color: {VIEW_LEVEL_ICON_INFO.areas.color};" />
+            Area
+          </DropdownMenu.Item>
+        {/if}
       </DropdownMenu.Content>
     </DropdownMenu.Root>
+
+    {#if declaringArea}
+      <FormDialog testId="new-area-dialog" title="New area" onclose={() => (declaringArea = false)}>
+        <AreaDeclareForm onclose={() => (declaringArea = false)} />
+      </FormDialog>
+    {/if}
 
     <!-- Separator -->
     <div class="mx-1 h-5 w-px bg-border shrink-0"></div>

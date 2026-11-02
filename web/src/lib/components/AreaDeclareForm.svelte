@@ -67,7 +67,7 @@
     bind:value={path}
     placeholder={parentPath === "" ? "web/dashboard" : "name"}
     aria-label={parentPath === "" ? "Area path" : `New area under ${parentPath}`}
-    class="h-7 w-56"
+    class="h-7 w-56 min-w-0"
   />
   <Button type="submit" variant="outline" size="sm" disabled={submitting}>Declare</Button>
   <Button

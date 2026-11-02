@@ -1523,6 +1523,13 @@ describe("TreeTableRow section metadata", () => {
     expect(dot.style.backgroundColor).not.toBe("");
   });
 
+  it("draws a palette color through its theme token", () => {
+    const { container } = sectionRow({ label: "Auth", description: "", color: "teal" });
+
+    const dot = container.querySelector("[data-testid='section-color']") as HTMLElement;
+    expect(dot.style.backgroundColor).toBe("var(--area-teal)");
+  });
+
   it("draws no dot at all for a color carrying a second declaration", () => {
     // The color is config text reaching an inline style, and `setProperty` does
     // not stop this: written straight through, the CSSOM here applies the
