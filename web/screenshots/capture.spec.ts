@@ -54,6 +54,13 @@ for (const level of VIEW_LEVELS) {
   });
 }
 
+// The loop above runs in the default dark palette. The area dots carry theme
+// colors, so they need the light one too.
+test("table — areas view level — daylight", async ({ page }) => {
+  await openApp(page, "areas", "daylight");
+  await shot(page, "table-areas-daylight");
+});
+
 // The one thing the loop above cannot reach: the `area:` filter is
 // DOWNWARD-CLOSED over the declared tree, so `area:web` keeps the nib assigned
 // to `web/dashboard` alongside `web`'s own member instead of matching the path
