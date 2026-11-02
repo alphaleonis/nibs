@@ -205,10 +205,13 @@ func TestFileSourcedTextNeverReachesAnEchoSurfaceRaw(t *testing.T) {
 				}
 				writeFileT(t, filepath.Join(storeDir, "config.yml"), string(data))
 
+				// An area name cannot carry whitespace, so the name joins the
+				// payload's words with "-" and keeps every deceptive rune.
+				name := strings.ReplaceAll(deceptivePayload, " ", "-")
 				vocab := &area.Vocabulary{Nodes: []area.Node{{
-					Name:        deceptivePayload,
+					Name:        name,
 					Description: deceptivePayload,
-					Children:    []area.Node{{Name: deceptivePayload + "-child"}},
+					Children:    []area.Node{{Name: name + "-child"}},
 				}}}
 				writeAreasVocabulary(t, storeDir, vocab)
 

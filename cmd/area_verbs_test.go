@@ -328,7 +328,67 @@ func TestAreaSetRefusals(t *testing.T) {
 		{
 			name: "a new name that is only whitespace padding",
 			args: []string{"set", "web", "--name", " frontend"},
-			want: []string{"whitespace"},
+			want: []string{"contains whitespace", `such as "frontend"`},
+		},
+		{
+			name: "a new name of only spaces",
+			args: []string{"set", "web", "--name", "   "},
+			want: []string{"--name is empty"},
+		},
+		{
+			name: "a new name of only U+FEFF",
+			args: []string{"set", "web", "--name", "\ufeff"},
+			want: []string{"--name is empty"},
+		},
+		{
+			name: "a spaced path where a name belongs",
+			args: []string{"set", "web/dashboard", "--name", "web/my panel"},
+			want: []string{`contains "/"`, "`nibs area set web/dashboard --name my-panel`"},
+		},
+		{
+			name: "a padded path where a name belongs",
+			args: []string{"set", "web/dashboard", "--name", "web/ panel"},
+			want: []string{`contains "/"`, "`nibs area set web/dashboard --name panel`"},
+		},
+		{
+			name: "a path where a name belongs, with a padded tail",
+			args: []string{"set", "web/dashboard", "--name", "web/panel "},
+			want: []string{"`nibs area set web/dashboard --name panel`"},
+		},
+		{
+			name: "a path under a padded parent",
+			args: []string{"set", "web/dashboard", "--name", " web/panel"},
+			want: []string{`contains "/"`, "cannot move it to another"},
+		},
+		{
+			name: "a spaced path whose hyphenated tail is at the bound",
+			args: []string{"set", "web/dashboard", "--name", "web/a " + strings.Repeat("b", 198)},
+			want: []string{"--name a-" + strings.Repeat("b", 198) + "`"},
+		},
+		{
+			name: "a spaced path whose hyphenated tail is past the bound",
+			args: []string{"set", "web/dashboard", "--name", "web/a " + strings.Repeat("b", 199)},
+			want: []string{`contains "/"`, "`nibs area list` prints the areas"},
+		},
+		{
+			name: "a path where a name belongs, with only whitespace after the parent",
+			args: []string{"set", "web/dashboard", "--name", "web/   "},
+			want: []string{`contains "/"`, "`nibs area list` prints the areas"},
+		},
+		{
+			name: "a new name with an interior space",
+			args: []string{"set", "web", "--name", "front end"},
+			want: []string{`"front end" contains whitespace`, `such as "front-end"`},
+		},
+		{
+			name: "a new name with an interior tab",
+			args: []string{"set", "web", "--name", "front\tend"},
+			want: []string{"contains whitespace", `such as "front-end"`},
+		},
+		{
+			name: "a new name with an interior U+FEFF",
+			args: []string{"set", "web", "--name", "front\ufeffend"},
+			want: []string{"contains whitespace", `such as "front-end"`},
 		},
 		{
 			// A name past the bound an edit may write. The bound is not on what a
@@ -1320,10 +1380,15 @@ func TestAreaAddRefusesItsArgumentsBeforeTakingTheStoreLock(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
+		want []string
 	}{
 		{name: "no path at all", args: []string{"add", ""}},
+		{name: "a path of only spaces", args: []string{"add", "   "}, want: []string{"has an empty name in it"}},
 		{name: "a path with an empty segment", args: []string{"add", "web//panel"}},
-		{name: "a name with trailing whitespace", args: []string{"add", "platform "}},
+		{name: "a name with trailing whitespace", args: []string{"add", "platform "}, want: []string{"contains whitespace", `such as "platform"`}},
+		{name: "a name with an interior space", args: []string{"add", "front end"}, want: []string{`"front end" contains whitespace`, `such as "front-end"`}},
+		{name: "a name with an interior tab", args: []string{"add", "front\tend"}, want: []string{"contains whitespace", `such as "front-end"`}},
+		{name: "a leaf with an interior U+00A0", args: []string{"add", "web/front\u00a0end"}, want: []string{"contains whitespace", `such as "front-end"`}},
 		{name: "a color the vocabulary cannot hold", args: []string{"add", "platform", "--color", "#xyz"}},
 	}
 	for _, tt := range tests {
@@ -1349,6 +1414,11 @@ func TestAreaAddRefusesItsArgumentsBeforeTakingTheStoreLock(t *testing.T) {
 			}
 			if code := areaErrCode(t, cmdErr); code != output.ErrValidation {
 				t.Errorf("code = %q, want %q", code, output.ErrValidation)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(cmdErr.Error(), want) {
+					t.Errorf("error = %q, want substring %q", cmdErr.Error(), want)
+				}
 			}
 		})
 	}

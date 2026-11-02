@@ -376,31 +376,4 @@ describe("getCompletion — area paths", () => {
     expect(complete("ar", LOADING_AREAS)?.items).toEqual(["area", "area-exact"]);
     expect(complete("ar")?.items).toEqual(["area", "area-exact"]);
   });
-
-  // `area.validateNodes` rejects only an empty name, one
-  // with padding, and one containing "/" — so a declared path may carry interior
-  // whitespace, and the grammar splits on it with no quoting to escape it.
-  // Accepting `Web UI` would produce `area:Web` plus a bare `UI` in free text: the
-  // area filter lost, drag reorder disabled, and the chip naming the wrong token.
-  describe("paths the grammar cannot express", () => {
-    const SPACEY = createAreaVocabulary([
-      { path: "web", name: "web", description: "", color: "", depth: 0 },
-      { path: "Web UI", name: "Web UI", description: "", color: "", depth: 0 },
-      { path: "Web UI/panel", name: "panel", description: "", color: "", depth: 1 },
-      { path: "docs", name: "docs", description: "", color: "", depth: 0 },
-    ]);
-
-    it("does not offer a path containing whitespace", () => {
-      expect(complete("area:", SPACEY)?.items).toEqual(["web", "docs"]);
-    });
-
-    it("offers nothing at all when every match carries whitespace", () => {
-      expect(complete("area:panel", SPACEY)).toBeNull();
-      expect(complete("area:Web U", SPACEY)).toBeNull();
-    });
-
-    it("still offers the typeable siblings of an untypeable match", () => {
-      expect(complete("area:we", SPACEY)?.items).toEqual(["web"]);
-    });
-  });
 });

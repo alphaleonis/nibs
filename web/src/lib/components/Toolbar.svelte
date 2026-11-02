@@ -750,13 +750,6 @@
     return match?.kind === "area" && match.field === "area";
   }
 
-  // Whether the box reads back the token a pick writes. A path with whitespace
-  // fails, because the box splits tokens on whitespace.
-  function isWritableArea(path: string): boolean {
-    return parseQuery(serializeQuery({ filter: { area: path } })).filter.area === path;
-  }
-  const areaHintId = $props.id();
-
   let hasAreaToken = $derived(!!resolvedFilter.area || resolvedInvalidTokens.some(isParkedAreaToken));
 
   function setArea(path: string | undefined) {
@@ -1133,25 +1126,16 @@
       </DropdownMenu.Trigger>
       <DropdownMenu.Content align="start">
         <DropdownMenu.RadioGroup value={selectedArea} onValueChange={(v) => { if (v) setArea(v); }}>
-          {#each areaNodes as node, i (node.path)}
+          {#each areaNodes as node (node.path)}
             {@const swatch = areaColor(node.color)}
-            {@const writable = isWritableArea(node.path)}
             <!-- Named by path: a segment alone can repeat under different parents. -->
-            <DropdownMenu.RadioItem
-              value={node.path}
-              aria-label={node.path}
-              disabled={!writable}
-              aria-describedby={writable ? undefined : `${areaHintId}-${i}`}
-            >
+            <DropdownMenu.RadioItem value={node.path} aria-label={node.path}>
               <span data-area-depth={node.depth} class="flex items-center gap-1.5" style:padding-left={`${node.depth * 0.75}rem`}>
                 <!-- Always present, so names at one depth align whether or not they
                      have a color. `areaColor` is what makes config text safe in this style. -->
                 <span class="size-2.5 shrink-0 rounded-full {swatch ? 'border border-border' : ''}" style:background-color={swatch}></span>
                 {node.name}
               </span>
-              {#if !writable}
-                <span id="{areaHintId}-{i}" class="text-caption text-muted-foreground">can't be typed in the query box</span>
-              {/if}
             </DropdownMenu.RadioItem>
           {/each}
         </DropdownMenu.RadioGroup>

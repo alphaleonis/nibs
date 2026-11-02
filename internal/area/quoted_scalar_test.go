@@ -27,6 +27,7 @@ func TestAreasYMLScalarsAreStrippedInMessages(t *testing.T) {
 		nodes []Node
 	}{
 		{"name with surrounding whitespace", []Node{{Name: " " + spanBreakingScalar}}},
+		{"name with interior whitespace", []Node{{Name: "a " + spanBreakingScalar}}},
 		{"name holding the separator", []Node{{Name: spanBreakingScalar + "/b"}}},
 		{"duplicate sibling", []Node{{Name: spanBreakingScalar}, {Name: spanBreakingScalar}}},
 		{"unusable color", []Node{{Name: "web", Color: spanBreakingScalar}}},

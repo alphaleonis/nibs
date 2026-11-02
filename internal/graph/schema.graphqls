@@ -262,7 +262,7 @@ type Mutation {
 
   Refused over an untouched store when `path` is already declared, when its parent
   is not, and when no area could answer to it — a segment with no name in it, one
-  padded with whitespace, or a name longer than a store could read back.
+  containing whitespace, or a name longer than a store could read back.
 
   A filesystem failure carries extensions.code = "AREA_EDIT_FAILED", for the
   reason updateArea gives — but with none of its ambiguity about what is on disk:

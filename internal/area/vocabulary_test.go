@@ -74,14 +74,74 @@ func TestParseRejectsMalformedAreas(t *testing.T) {
 			want: []string{"area #1", "at the top level", "has no name"},
 		},
 		{
-			name: "name padded with whitespace",
-			body: "areas:\n    - name: \" web \"\n",
-			want: []string{`" web "`, "leading or trailing whitespace"},
+			name: "name of only U+FEFF",
+			body: "areas:\n    - name: \"\\uFEFF\"\n",
+			want: []string{"area #1", "at the top level", "has no name"},
 		},
 		{
-			name: "nested name padded with whitespace",
+			name: "name padded with spaces",
+			body: "areas:\n    - name: \" web \"\n",
+			want: []string{`" web "`, "contains whitespace", `"web"`},
+		},
+		{
+			name: "nested name padded with a space",
 			body: "areas:\n    - name: web\n      children:\n        - name: \"dashboard \"\n",
-			want: []string{`"dashboard "`, `under "web"`, "leading or trailing whitespace"},
+			want: []string{`"dashboard "`, `under "web"`, "contains whitespace", `"dashboard"`},
+		},
+		{
+			name: "name padded with a tab",
+			body: "areas:\n    - name: \"\\tweb\"\n",
+			want: []string{"contains whitespace", `such as "web"`},
+		},
+		{
+			name: "name padded with U+00A0",
+			body: "areas:\n    - name: \"web\\u00A0\"\n",
+			want: []string{"contains whitespace", `such as "web"`},
+		},
+		{
+			name: "name padded with U+FEFF",
+			body: "areas:\n    - name: \"\\uFEFFweb\"\n",
+			want: []string{"contains whitespace", `such as "web"`},
+		},
+		{
+			name: "name with an interior space",
+			body: "areas:\n    - name: front end\n",
+			want: []string{`"front end"`, "at the top level", "contains whitespace", `"front-end"`},
+		},
+		{
+			name: "nested name with an interior space",
+			body: "areas:\n    - name: web\n      children:\n        - name: front end\n",
+			want: []string{`"front end"`, `under "web"`, "contains whitespace", `"front-end"`},
+		},
+		{
+			name: "name with an interior tab",
+			body: "areas:\n    - name: \"front\\tend\"\n",
+			want: []string{"contains whitespace", `"front-end"`},
+		},
+		{
+			name: "name with an interior U+00A0",
+			body: "areas:\n    - name: \"front\\u00A0end\"\n",
+			want: []string{"contains whitespace", `"front-end"`},
+		},
+		{
+			name: "name with an interior U+FEFF",
+			body: "areas:\n    - name: \"front\\uFEFFend\"\n",
+			want: []string{"contains whitespace", `"front-end"`},
+		},
+		{
+			name: "spaced name carrying the path separator",
+			body: "areas:\n    - name: \"a /b\"\n",
+			want: []string{`"a /b"`, "contains whitespace", "Use a name without it"},
+		},
+		{
+			name: "spaced name whose hyphenated form is past the edit bound",
+			body: "areas:\n    - name: \"a " + strings.Repeat("b", maxNameRunes-1) + "\"\n",
+			want: []string{"contains whitespace", "Use a name without it"},
+		},
+		{
+			name: "spaced name whose hyphenated form is at the edit bound",
+			body: "areas:\n    - name: \"a " + strings.Repeat("b", maxNameRunes-2) + "\"\n",
+			want: []string{"contains whitespace", fmt.Sprintf("such as %q", "a-"+strings.Repeat("b", maxNameRunes-2))},
 		},
 		{
 			name: "name carries the path separator",
@@ -289,16 +349,16 @@ func TestValidateAcceptsWellFormedColors(t *testing.T) {
 // than a raw echo. Areas are the one vocabulary a PROJECT authors, so a declared
 // name is file-sourced text of arbitrary length and content — an escape
 // sequence, a backtick that closes the code span a message put around the list,
-// a newline that turns one line into several.
+// a bidi override that reorders the text after it.
 func TestAreaListRendersFileSourcedNames(t *testing.T) {
-	vocab := parseVocab(t, "areas:\n    - name: \"a\\eb\"\n    - name: \"c`d\"\n    - name: \"e\\nf\"\n")
+	vocab := parseVocab(t, "areas:\n    - name: \"a\\eb\"\n    - name: \"c`d\"\n    - name: \"e\\u202ef\"\n")
 
 	if got, want := vocab.List(), "a b, c d, e f"; got != want {
 		t.Errorf("List() = %q, want %q", got, want)
 	}
 	// Paths is the data accessor and must stay verbatim: resolution compares
 	// a nib's `area:` value against it byte for byte.
-	wantPaths := []string{"a\x1bb", "c`d", "e\nf"}
+	wantPaths := []string{"a\x1bb", "c`d", "e\u202ef"}
 	if got := vocab.Paths(); !slices.Equal(got, wantPaths) {
 		t.Errorf("Paths() = %q, want %q", got, wantPaths)
 	}

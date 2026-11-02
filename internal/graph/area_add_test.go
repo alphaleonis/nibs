@@ -179,7 +179,12 @@ func TestAddAreaAnswersArgumentsWithoutTheStore(t *testing.T) {
 		{
 			name:  "a name with trailing whitespace",
 			input: model.AddAreaInput{Path: "platform "},
-			want:  "whitespace",
+			want:  "contains whitespace",
+		},
+		{
+			name:  "a name with interior whitespace",
+			input: model.AddAreaInput{Path: "front end"},
+			want:  `such as "front-end"`,
 		},
 		{
 			name:  "a name no store could read back",

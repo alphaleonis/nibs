@@ -73,7 +73,7 @@ export interface Completion {
  * - `tags:partial` → matching `availableTags` (substring);
  * - `has:` / `no:` / `is:` → the values that word accepts (substring);
  * - `area:partial` and `area-exact:partial` → declared paths from
- *   `options.areas` that contain no whitespace (case-insensitive substring);
+ *   `options.areas` (case-insensitive substring);
  * - any other field (`title:`, `parent:`) → `null`; relationship ids come from the
  *   caller's async typeahead;
  * - an empty token → `null`, unless `options.explicit`, which yields every field.
@@ -124,10 +124,7 @@ export function getCompletion(
   // paths are case-sensitive.
   if (!negated && AREA_TOKEN_NAMES.has(name.toLowerCase())) {
     const segment = body.slice(colon + 1);
-    // `area.validateNodes` allows interior whitespace in
-    // a declared name, but the grammar splits on whitespace and has no quoting:
-    // inserting `Web UI` would write `area:Web` plus free text `UI`.
-    const items = (options.areas?.completions(segment) ?? []).filter((p) => !/\s/.test(p));
+    const items = [...(options.areas?.completions(segment) ?? [])];
     if (items.length === 0) return null;
     const before = text.slice(0, caret - segment.length);
     const after = text.slice(caret);

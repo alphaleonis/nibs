@@ -424,8 +424,17 @@ func removeMappingKey(node *yaml.Node, key string) {
 	}
 }
 
-func refuseNameWhitespace(name string) error {
-	return refuseEdit("the area name %q starts or ends with whitespace. Remove it from the name", RenderPath(name))
+// validateNameSpacing refuses a name with whitespace anywhere in it, because the
+// query box cannot read such a name back as one `area:` value.
+func validateNameSpacing(name string) error {
+	if !strings.ContainsFunc(name, isNameSpace) {
+		return nil
+	}
+	if suggestion := SuggestName(name); suggestion != "" {
+		return refuseEdit("the area name %q contains whitespace. Use a name without it, such as %q",
+			RenderPath(name), RenderPath(suggestion))
+	}
+	return refuseEdit("the area name %q contains whitespace. Give the area a name without it", RenderPath(name))
 }
 
 // ValidateNewPath refuses a path that could never name an area, without reading
@@ -435,16 +444,12 @@ func ValidateNewPath(path string) error {
 		return refuseEdit("the area path is empty. Give the new area a name, or a path such as web/dashboard to create it under another area")
 	}
 	for _, segment := range strings.Split(path, PathSeparator) {
-		trimmed := strings.TrimSpace(segment)
-		if trimmed == "" {
+		if IsBlankName(segment) {
 			return refuseEdit("the area path %q has an empty name in it. Every \"/\" needs an area name on both sides",
 				RenderPath(path))
 		}
-		if trimmed != segment {
-			return refuseNameWhitespace(segment)
-		}
-		// Only the length clause can fire; the two above answer for an empty or
-		// padded segment, in wording that names the whole path.
+		// ValidateName's empty clause cannot fire here; the one above answers in
+		// wording that names the whole path.
 		if err := ValidateName(segment); err != nil {
 			return err
 		}
@@ -460,12 +465,11 @@ const maxNameRunes = safetext.MaxBoundedRunes
 // The length clause is what it adds over the load-time rule, which bounds no
 // name.
 func ValidateName(name string) error {
-	trimmed := strings.TrimSpace(name)
-	if trimmed == "" {
+	if IsBlankName(name) {
 		return refuseEdit("the area name is empty. Give the area a name")
 	}
-	if trimmed != name {
-		return refuseNameWhitespace(name)
+	if err := validateNameSpacing(name); err != nil {
+		return err
 	}
 	// The name is not echoed: quoting it says nothing the count does not.
 	if n := utf8.RuneCountInString(name); n > maxNameRunes {

@@ -919,31 +919,60 @@ func TestCreateRefusesADuplicateSibling(t *testing.T) {
 	}
 }
 
+// whitespaceNames are names that carry whitespace, padded or interior, each with
+// the hyphenated name a refusal suggests for it.
+var whitespaceNames = []struct{ name, value, suggestion string }{
+	{"a leading space", " web", "web"},
+	{"a trailing space", "web ", "web"},
+	{"a leading tab", "\tweb", "web"},
+	{"a trailing U+00A0", "web\u00a0", "web"},
+	{"a leading U+FEFF", "\ufeffweb", "web"},
+	{"an interior space", "front end", "front-end"},
+	{"an interior tab", "front\tend", "front-end"},
+	{"an interior U+00A0", "front\u00a0end", "front-end"},
+	{"an interior U+FEFF", "front\ufeffend", "front-end"},
+	{"an interior U+2028", "front\u2028end", "front-end"},
+	{"an interior U+3000", "front\u3000end", "front-end"},
+	{"a run of mixed whitespace", "front \t\u00a0\ufeffend", "front-end"},
+}
+
 // TestCreateRefusesAMalformedPath holds the create to the rule validateNodes
-// applies on load: a name that is empty, is whitespace, or carries leading or
-// trailing whitespace is one no `area:` value can match.
+// applies on load: a name that is empty or carries whitespace anywhere is one no
+// `area:` value in the query box can match.
 //
 // The empty SEGMENT rows are how a stray separator arrives, and they are the
 // reason the whole path is judged rather than its last segment alone: `/web`
 // otherwise reads as a root named `web` and declares one.
 func TestCreateRefusesAMalformedPath(t *testing.T) {
-	tests := []struct {
+	type row struct {
 		name string
 		path string
-	}{
-		{"no path at all", ""},
-		{"whitespace only", "   "},
-		{"a leading space in the name", " web"},
-		{"a trailing space in the name", "web "},
-		{"a trailing separator", "web/"},
-		{"a leading separator", "/infra"},
-		{"an empty interior segment", "web//panel"},
-		{"only a separator", "/"},
-		{"a leading space in the leaf", "web/ panel"},
+		want []string
+	}
+	tests := []row{
+		{name: "no path at all", path: ""},
+		{name: "whitespace only", path: "   ", want: []string{"has an empty name in it"}},
+		{name: "only U+FEFF", path: "\ufeff", want: []string{"has an empty name in it"}},
+		{name: "a trailing separator", path: "web/"},
+		{name: "a leading separator", path: "/infra"},
+		{name: "an empty interior segment", path: "web//panel"},
+		{name: "only a separator", path: "/"},
+	}
+	for _, ws := range whitespaceNames {
+		want := []string{"contains whitespace", fmt.Sprintf("such as %q", ws.suggestion)}
+		tests = append(tests,
+			row{name: ws.name + " in a root", path: ws.value, want: want},
+			row{name: ws.name + " in the leaf", path: "web/" + ws.value, want: want},
+		)
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_ = mustRefuse(t)(planCreate(areaEditFixture, tt.path, "", ""))
+			refusal := mustRefuse(t)(planCreate(areaEditFixture, tt.path, "", ""))
+			for _, want := range tt.want {
+				if !strings.Contains(refusal.Error(), want) {
+					t.Errorf("error = %q, want substring %q", refusal, want)
+				}
+			}
 		})
 	}
 }
@@ -1094,7 +1123,7 @@ func TestEditRefusalsNameNoPathUntilAsked(t *testing.T) {
 		return func(vocab string) ([]byte, error) { return planCreate(vocab, path, "", "") }
 	}
 	const plainVocab = "areas:\n    - name: web\n"
-	tests := []struct {
+	type row struct {
 		name  string
 		vocab string
 		plan  func(vocab string) ([]byte, error)
@@ -1102,7 +1131,8 @@ func TestEditRefusalsNameNoPathUntilAsked(t *testing.T) {
 		// pathFree marks a refusal that is not about the file, so Naming renders
 		// exactly what Error does.
 		pathFree bool
-	}{
+	}
+	tests := []row{
 		{
 			name: "a store with no areas.yml",
 			plan: func(string) ([]byte, error) {
@@ -1120,9 +1150,23 @@ func TestEditRefusalsNameNoPathUntilAsked(t *testing.T) {
 		{name: "a children key that is not a sequence", vocab: "areas:\n    - name: web\n      children:\n", plan: create("web/panel"), want: "is not a list"},
 		{name: "no new path", vocab: plainVocab, plan: create(""), want: "the area path is empty", pathFree: true},
 		{name: "a new path segment with no name", vocab: plainVocab, plan: create("web//panel"), want: "has an empty name in it", pathFree: true},
-		{name: "a padded new path segment", vocab: plainVocab, plan: create("web/ panel"), want: "starts or ends with whitespace", pathFree: true},
 		{name: "no new name", vocab: plainVocab, plan: rename("web", ""), want: "the area name is empty", pathFree: true},
-		{name: "a padded new name", vocab: plainVocab, plan: rename("web", " frontend"), want: "starts or ends with whitespace", pathFree: true},
+		{name: "a new name of only U+FEFF", vocab: plainVocab, plan: rename("web", "\ufeff"), want: "the area name is empty", pathFree: true},
+		{name: "a new name of only spaces", vocab: plainVocab, plan: rename("web", "   "), want: "the area name is empty", pathFree: true},
+		{name: "a spaced new name carrying the separator", vocab: plainVocab, plan: rename("web", "web/my panel"), want: "contains whitespace. Give the area a name without it", pathFree: true},
+		{
+			name: "a spaced new name whose hyphenated form is past the bound", vocab: plainVocab,
+			plan: rename("web", "a "+strings.Repeat("b", maxNameRunes-1)), want: "contains whitespace. Give the area a name without it", pathFree: true,
+		},
+		{
+			name: "a spaced new path segment whose hyphenated form is past the bound", vocab: plainVocab,
+			plan: create("web/a " + strings.Repeat("b", maxNameRunes-1)), want: "contains whitespace. Give the area a name without it", pathFree: true,
+		},
+		{
+			name: "a spaced new name whose hyphenated form is at the bound", vocab: plainVocab,
+			plan: rename("web", "a "+strings.Repeat("b", maxNameRunes-2)),
+			want: fmt.Sprintf("such as %q", "a-"+strings.Repeat("b", maxNameRunes-2)), pathFree: true,
+		},
 		{name: "a new name past the bound", vocab: plainVocab, plan: rename("web", strings.Repeat("a", maxNameRunes+1)), want: "characters long", pathFree: true},
 		{name: "a file that is not YAML", vocab: "areas: [\n", want: "is not valid YAML"},
 		{name: "more than one document", vocab: "areas:\n    - name: web\n---\nother: 1\n", want: "more than one YAML document"},
@@ -1140,6 +1184,13 @@ func TestEditRefusalsNameNoPathUntilAsked(t *testing.T) {
 			plan:  rename("web", "auth"),
 			want:  "would leave this store's areas.yml with invalid areas",
 		},
+	}
+	for _, ws := range whitespaceNames {
+		want := fmt.Sprintf("contains whitespace. Use a name without it, such as %q", ws.suggestion)
+		tests = append(tests,
+			row{name: "a new path segment with " + ws.name, vocab: plainVocab, plan: create("web/" + ws.value), want: want, pathFree: true},
+			row{name: "a new name with " + ws.name, vocab: plainVocab, plan: rename("web", ws.value), want: want, pathFree: true},
+		)
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

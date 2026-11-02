@@ -965,7 +965,23 @@ func TestAreaMutationsAnswerArgumentsWithoutTheStore(t *testing.T) {
 				_, err := r.Mutation().UpdateArea(context.Background(), model.UpdateAreaInput{Path: "web", NewName: ptr(" ui")})
 				return err
 			},
-			want: "whitespace",
+			want: "contains whitespace",
+		},
+		{
+			name: "a new name of only whitespace",
+			call: func(r *Resolver) error {
+				_, err := r.Mutation().UpdateArea(context.Background(), model.UpdateAreaInput{Path: "web", NewName: ptr("  \t")})
+				return err
+			},
+			want: "the area name is empty",
+		},
+		{
+			name: "a new name with interior whitespace",
+			call: func(r *Resolver) error {
+				_, err := r.Mutation().UpdateArea(context.Background(), model.UpdateAreaInput{Path: "web", NewName: ptr("front end")})
+				return err
+			},
+			want: `such as "front-end"`,
 		},
 		{
 			name: "a new name carrying the separator",

@@ -796,7 +796,8 @@ func TestAreaSetRefusesABadNameWithoutTakingTheStoreLock(t *testing.T) {
 		unwanted string
 	}{
 		{name: "an empty new name", args: []string{"web", ""}, want: "--name is empty"},
-		{name: "a new name that is only whitespace padding", args: []string{"web", " frontend"}, want: "whitespace"},
+		{name: "a new name that is only whitespace padding", args: []string{"web", " frontend"}, want: "contains whitespace"},
+		{name: "a new name with interior whitespace", args: []string{"web", "front end"}, want: `such as "front-end"`},
 		{name: "a new name over the bound an edit may write", args: []string{"web", strings.Repeat("a", 201)}, want: "at most 200 characters"},
 		{name: "a path where a name belongs", args: []string{"web/dashboard", "web/panel"}, want: `contains "/"`},
 		// Both clauses match this one, and only the separator clause can print a

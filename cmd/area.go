@@ -519,24 +519,22 @@ func areaSetNameRefusal(err error) bool {
 // on their own, in the order a caller can act on: the shape of the name first,
 // then whether it changes anything.
 //
-// All five read `path` and `newName` and nothing else — no vocabulary, no store — so
-// no vocabulary can change their answer and runAreaSet asks them before the
-// store's write lock. The vocabulary question a rename also has — does a sibling
-// already answer to the new name? — is nibcore's, under that lock.
+// Every clause reads `path` and `newName` and nothing else — no vocabulary, no
+// store — so no vocabulary can change its answer and runAreaSet asks them before
+// the store's write lock. The vocabulary question a rename also has — does a
+// sibling already answer to the new name? — is nibcore's, under that lock.
 //
-// Two of the five nonetheless SPEAK about the node at `path`, so the refusal
-// they return is only correct over a path the store declares; when to print it
-// is runAreaSet's call and not this function's.
+// Some of them nonetheless SPEAK about the node at `path`, so the refusal they
+// return is only correct over a path the store declares; when to print it is
+// runAreaSet's call and not this function's.
 //
-// The LENGTH clause is area.ValidateName's and is CALLED rather than
-// copied, which is the whole reason that function exists — the wire surface
-// calls it too. It is asked LAST of the shape clauses, because it is the only
-// one that cannot name a remedy: a path given where a name belongs is refused
-// above with the `nibs area set` that would work, and a bound shared with a
-// create can only report a count. Asked earlier, a long path-as-name reported
-// the length of the whole path and the runnable spelling was never printed.
-// Its own empty and padded clauses are unreachable from here — this function's
-// two answer first, in wording that names the node being renamed.
+// The WHITESPACE and LENGTH clauses are area.ValidateName's and are CALLED
+// rather than copied, which is the whole reason that function exists — the wire
+// surface calls it too. They are asked LAST of the shape clauses, because only
+// the separator clause can print the `nibs area set` that would work. Asked
+// earlier, either one answers a path given where a name belongs without that
+// spelling. ValidateName's own empty clause is unreachable from here, because
+// the clause above applies the same area.IsBlankName test first.
 //
 // area.PlanUpdate re-checks the RESULT before it hands back an edit
 // to write, so none of this is what keeps a broken vocabulary off disk. What it
@@ -544,22 +542,19 @@ func areaSetNameRefusal(err error) bool {
 // unusable, where these can name the runnable spelling, or the fact that nothing
 // would change.
 func validateAreaSetArgument(jsonMode bool, path, parent, oldName, newName string) error {
-	if newName == "" {
+	if area.IsBlankName(newName) {
 		return cmdError(jsonMode, output.ErrValidation,
 			"cannot rename area %s: --name is empty. Give the new name",
 			quotedArea(path))
 	}
-	if strings.TrimSpace(newName) != newName {
-		return cmdError(jsonMode, output.ErrValidation,
-			"the new name %s starts or ends with whitespace. Remove it from the name",
-			quotedArea(newName))
-	}
 	if strings.Contains(newName, area.PathSeparator) {
+		// SuggestName hyphenates a spaced tail, so the printed name passes every
+		// shape clause.
 		newParent, tail := area.SplitPath(newName)
-		if newParent == parent && tail != "" {
+		if name := area.SuggestName(tail); newParent == parent && name != "" {
 			return cmdError(jsonMode, output.ErrValidation,
 				"%s contains \"/\", which separates the areas in a path. A rename keeps an area under its parent, so give only the new name: `nibs area set %s --name %s`",
-				quotedArea(newName), area.RenderPath(path), area.RenderPath(tail))
+				quotedArea(newName), area.RenderPath(path), area.RenderPath(name))
 		}
 		return cmdError(jsonMode, output.ErrValidation,
 			"%s contains \"/\", which separates the areas in a path. A rename keeps an area under its parent and cannot move it to another, so give only the new name. `nibs area list` prints the areas",

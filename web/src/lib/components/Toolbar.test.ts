@@ -7,7 +7,7 @@ import { Preferences } from "../preferences.svelte";
 import { ALL_COLUMN_KEYS, DEFAULT_VISIBLE_COLUMNS, VIEW_LEVELS, VIEW_LEVEL_LABELS } from "../types";
 import { OPEN_STATUSES } from "../constants";
 import type { NibFilter, ViewLevel, ColumnKey } from "../types";
-import { parseQuery, type NibSuggestion } from "../query";
+import type { NibSuggestion } from "../query";
 import { FIELD_SPECS } from "../query/fields";
 import { REL_TOKEN_ORDER } from "../query/relations";
 import { createAreaVocabulary, EMPTY_AREAS, LOADING_AREAS, UNAVAILABLE_AREAS } from "../areas";
@@ -2612,36 +2612,6 @@ describe("Toolbar — the Area dropdown", () => {
 
     expect(prefs.filter.area).toBeUndefined();
     expect(box().value).toBe("");
-  });
-
-  // The box splits tokens on whitespace and has no quoting, but a declared name
-  // may hold interior whitespace (`area.validateNodes`).
-  it("disables an area the query box cannot read back, and writes only paths it can", async () => {
-    const SPACED = createAreaVocabulary([
-      { path: "front end", name: "front end", description: "", color: "", depth: 0 },
-      { path: "web", name: "web", description: "", color: "", depth: 0 },
-      { path: "web/dashboard", name: "dashboard", description: "", color: "", depth: 1 },
-      { path: "web/tab\there", name: "tab\there", description: "", color: "", depth: 1 },
-    ]);
-    const prefs = new Preferences();
-    renderWith(prefs, SPACED);
-    const byPath = (path: string) =>
-      screen.getAllByRole("menuitemradio").find((el) => el.getAttribute("aria-label") === path)!;
-
-    await user.click(trigger());
-    for (const path of ["front end", "web/tab\there"]) {
-      expect(byPath(path)).toHaveAttribute("aria-disabled", "true");
-      expect(byPath(path)).toHaveAccessibleDescription(/query box/i);
-    }
-    await user.click(byPath("front end"));
-    expect(prefs.filter.area).toBeUndefined();
-
-    for (const path of ["web", "web/dashboard"]) {
-      if (!screen.queryByRole("menu")) await user.click(trigger());
-      expect(byPath(path)).not.toHaveAttribute("aria-disabled", "true");
-      await user.click(byPath(path));
-      expect(parseQuery(prefs.query, SPACED).filter.area).toBe(path);
-    }
   });
 
   it("leaves an area-exact: token in place on a pick and on Clear", async () => {

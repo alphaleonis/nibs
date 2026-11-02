@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/alphaleonis/nibs/internal/safetext"
 	"gopkg.in/yaml.v3"
@@ -138,16 +140,18 @@ func sortedNodes(nodes []Node) []Node {
 func validateNodes(nodes []Node, parent string) error {
 	seen := make(map[string]struct{}, len(nodes))
 	for i, node := range nodes {
-		name := strings.TrimSpace(node.Name)
-		if name == "" {
+		name := node.Name
+		if IsBlankName(name) {
 			return fmt.Errorf("area #%d %s has no name; every declared area needs one", i+1, location(parent))
 		}
-		if name != node.Name {
-			return fmt.Errorf("area %q %s has leading or trailing whitespace in its name; an `area:` value would have to carry the same spaces to match it",
-				RenderPath(node.Name), location(parent))
+		if strings.ContainsFunc(name, isNameSpace) {
+			fault := fmt.Sprintf("area %q %s contains whitespace in its name; the query box cannot read it back as one `area:` value",
+				RenderPath(name), location(parent))
+			if suggestion := SuggestName(name); suggestion != "" {
+				return fmt.Errorf("%s. Use a name such as %q", fault, RenderPath(suggestion))
+			}
+			return fmt.Errorf("%s. Use a name without it", fault)
 		}
-		// INTERIOR whitespace is permitted: this runs on every load, so tightening
-		// it would fail a config valid today.
 		path := JoinPath(parent, name)
 		if strings.Contains(name, PathSeparator) {
 			return fmt.Errorf("area %q %s has a %q in its name; nest the child under its parent instead, which is what makes the path",
@@ -165,6 +169,25 @@ func validateNodes(nodes []Node, parent string) error {
 		}
 	}
 	return nil
+}
+
+// isNameSpace reports whether r is Go whitespace or matches JavaScript's \s,
+// which the web query box splits tokens on. U+FEFF is the one rune only \s matches.
+func isNameSpace(r rune) bool { return unicode.IsSpace(r) || r == '\uFEFF' }
+
+// IsBlankName reports whether name holds nothing but whitespace, which makes it
+// an empty name.
+func IsBlankName(name string) bool { return strings.TrimFunc(name, isNameSpace) == "" }
+
+// SuggestName returns name with each run of whitespace replaced by "-" and none
+// left at either end. It returns "" when the result is not a name an edit could
+// write: one that is empty, holds PathSeparator, or is longer than maxNameRunes.
+func SuggestName(name string) string {
+	suggestion := strings.Join(strings.FieldsFunc(name, isNameSpace), "-")
+	if suggestion == "" || strings.Contains(suggestion, PathSeparator) || utf8.RuneCountInString(suggestion) > maxNameRunes {
+		return ""
+	}
+	return suggestion
 }
 
 func location(parent string) string {
