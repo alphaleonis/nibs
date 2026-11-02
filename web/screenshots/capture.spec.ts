@@ -854,6 +854,24 @@ test("areas — the edit dialog", async ({ page }) => {
   await shot(page, "areas-edit-dialog");
 });
 
+test("areas — the New menu, with Area below the nib types", async ({ page }) => {
+  await openApp(page, "areas");
+  await page.locator('[data-testid="toolbar-add"]').click();
+  await expect(page.locator('[data-testid="toolbar-add-area"]')).toBeVisible();
+  await shot(page, "areas-new-menu");
+});
+
+// Opened and never submitted, so the shared fixture keeps its declared areas.
+for (const theme of ["daylight", "graphite"] as const) {
+  test(`areas — the New → Area dialog — ${theme}`, async ({ page }) => {
+    await openApp(page, "areas", theme);
+    await page.locator('[data-testid="toolbar-add"]').click();
+    await page.locator('[data-testid="toolbar-add-area"]').click();
+    await expect(page.locator('[data-testid="new-area-dialog"] [data-testid="area-path-input"]')).toBeVisible();
+    await shot(page, `areas-new-area-dialog-${theme}`);
+  });
+}
+
 // The affected count is over the whole SUBTREE, not the node, and it has to be
 // on screen BEFORE the user is asked to choose a disposition.
 test("areas — retiring an area that has members", async ({ page }) => {
