@@ -50,7 +50,7 @@ export function queryHelpSections(): HelpSection[] {
     },
     {
       title: "Areas",
-      note: "Takes an area path. It matches that area and the areas nested under it, not every path that starts the same way, so webhooks is not within web.",
+      note: "Takes an area path. area: matches that area and the areas nested under it, not every path that starts the same way, so webhooks is not within web.",
       rows: AREA_TOKEN_ORDER.map((spec) => ({
         token: `${spec.name}:<path>`,
         description: spec.description,
