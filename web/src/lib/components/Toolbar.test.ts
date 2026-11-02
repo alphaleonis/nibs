@@ -35,6 +35,13 @@ vi.mock("$lib/mutations", async () => {
   };
 });
 
+// Spreads the real toast object, so only `success` is replaced.
+const { mockToastSuccess } = vi.hoisted(() => ({ mockToastSuccess: vi.fn() }));
+vi.mock("svelte-sonner", async () => {
+  const actual = await vi.importActual<typeof import("svelte-sonner")>("svelte-sonner");
+  return { ...actual, toast: { ...actual.toast, success: mockToastSuccess } };
+});
+
 // bits-ui scroll lock sets pointer-events: none on <body>, so disable the check
 const user = userEvent.setup({ pointerEventsCheck: 0 });
 
@@ -168,14 +175,14 @@ describe("Toolbar", () => {
     expect(screen.queryAllByRole("menuitemradio")).toHaveLength(0);
   });
 
-  it("opens type dropdown with all 6 nib types when New item is clicked", async () => {
+  it("opens the New menu with all 6 nib types and Area when New is clicked", async () => {
     render(Toolbar, { ...defaultToolbarProps });
 
     await user.click(screen.getByTestId("toolbar-add"));
 
-    // All 6 nib types should appear as menu items
     const items = screen.getAllByRole("menuitem");
-    expect(items).toHaveLength(6);
+    expect(items).toHaveLength(7);
+    expect(screen.getByTestId("toolbar-add-area")).toBeInTheDocument();
     expect(screen.getByTestId("toolbar-add-milestone")).toBeInTheDocument();
     expect(screen.getByTestId("toolbar-add-epic")).toBeInTheDocument();
     expect(screen.getByTestId("toolbar-add-bug")).toBeInTheDocument();
@@ -2749,6 +2756,7 @@ describe("Toolbar — declaring a root area from the New menu", () => {
 
   beforeEach(() => {
     mockExecute.mockReset().mockResolvedValue({ ok: true, data: {} });
+    mockToastSuccess.mockReset();
   });
 
   function renderIn(viewLevel: ViewLevel) {
@@ -2769,13 +2777,52 @@ describe("Toolbar — declaring a root area from the New menu", () => {
     expect(screen.getByRole("menuitem", { name: "Area" })).toBeInTheDocument();
   });
 
-  it("does not offer Area in the Tree view", async () => {
+  it("offers Area in the Tree view", async () => {
     renderIn("none");
 
     await user.click(screen.getByTestId("toolbar-add"));
 
-    expect(screen.getAllByRole("menuitem")).toHaveLength(6);
-    expect(screen.queryByTestId("toolbar-add-area")).not.toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Area" })).toBeInTheDocument();
+  });
+
+  async function createArea(path: string) {
+    const d = await openAreaDialog();
+    await user.type(d.getByTestId("area-path-input"), path);
+    await user.click(d.getByRole("button", { name: /^create$/i }));
+    await waitFor(() => expect(screen.queryByTestId("new-area-dialog")).toBeNull());
+  }
+
+  it("confirms a create outside the Areas view with a toast that offers Show", async () => {
+    renderIn("none");
+
+    await createArea("web/settings");
+
+    expect(mockToastSuccess).toHaveBeenCalledTimes(1);
+    const [message, options] = mockToastSuccess.mock.calls[0];
+    expect(message).toBe("Created area web/settings");
+    expect(options?.action?.label).toBe("Show");
+  });
+
+  it("switches to the Areas view when the toast's Show is clicked", async () => {
+    const onviewlevelchange = vi.fn();
+    render(Toolbar, { ...defaultToolbarProps, viewLevel: "none", onviewlevelchange, areas: declaredAreas });
+
+    await createArea("ops");
+    expect(onviewlevelchange).not.toHaveBeenCalled();
+    mockToastSuccess.mock.calls[0][1].action.onClick(new MouseEvent("click"));
+
+    expect(onviewlevelchange).toHaveBeenCalledWith("areas");
+  });
+
+  it("confirms a create in the Areas view with a toast and no Show", async () => {
+    renderIn("areas");
+
+    await createArea("ops");
+
+    expect(mockToastSuccess).toHaveBeenCalledTimes(1);
+    const [message, options] = mockToastSuccess.mock.calls[0];
+    expect(message).toBe("Created area ops");
+    expect(options?.action).toBeUndefined();
   });
 
   it("does not create a nib when Area is picked", async () => {
@@ -2814,6 +2861,7 @@ describe("Toolbar — declaring a root area from the New menu", () => {
       expect(d.getByTestId("area-edit-error")).toHaveTextContent('area "web" already exists'),
     );
     expect(screen.getByTestId("new-area-dialog")).toBeInTheDocument();
+    expect(mockToastSuccess).not.toHaveBeenCalled();
   });
 
   it("Cancel closes the dialog without sending anything", async () => {

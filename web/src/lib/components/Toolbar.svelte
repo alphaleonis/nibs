@@ -791,24 +791,24 @@
             {nibType}
           </DropdownMenu.Item>
         {/each}
-        <!-- Areas view only: elsewhere a declaration lands with nothing visibly changing. -->
-        {#if resolvedViewLevel === "areas"}
-          <DropdownMenu.Separator />
-          <DropdownMenu.Item
-            data-testid="toolbar-add-area"
-            class="flex items-center gap-2 text-sm"
-            onclick={() => { declaringArea = true; }}
-          >
-            <LayoutGrid size={14} style="color: {VIEW_LEVEL_ICON_INFO.areas.color};" />
-            Area
-          </DropdownMenu.Item>
-        {/if}
+        <DropdownMenu.Separator />
+        <DropdownMenu.Item
+          data-testid="toolbar-add-area"
+          class="flex items-center gap-2 text-sm"
+          onclick={() => { declaringArea = true; }}
+        >
+          <LayoutGrid size={14} style="color: {VIEW_LEVEL_ICON_INFO.areas.color};" />
+          Area
+        </DropdownMenu.Item>
       </DropdownMenu.Content>
     </DropdownMenu.Root>
 
     {#if declaringArea}
       <FormDialog testId="new-area-dialog" title="New area" onclose={() => (declaringArea = false)}>
-        <AreaDeclareForm onclose={() => (declaringArea = false)} />
+        <AreaDeclareForm
+          onclose={() => (declaringArea = false)}
+          onshow={resolvedViewLevel === "areas" ? undefined : () => handleSelectViewLevel("areas")}
+        />
       </FormDialog>
     {/if}
 

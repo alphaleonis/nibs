@@ -50,10 +50,13 @@ vi.mock("$lib/mutations", async () => {
 // Spreads the real toast object: `warning` genuinely exists on svelte-sonner
 // 1.1.1, so overriding it here replaces a real method rather than inventing one
 // the app would fail on outside the test.
-const { mockToastWarning } = vi.hoisted(() => ({ mockToastWarning: vi.fn() }));
+const { mockToastWarning, mockToastSuccess } = vi.hoisted(() => ({
+  mockToastWarning: vi.fn(),
+  mockToastSuccess: vi.fn(),
+}));
 vi.mock("svelte-sonner", async () => {
   const actual = await vi.importActual<typeof import("svelte-sonner")>("svelte-sonner");
-  return { ...actual, toast: { ...actual.toast, warning: mockToastWarning } };
+  return { ...actual, toast: { ...actual.toast, warning: mockToastWarning, success: mockToastSuccess } };
 });
 
 // jsdom has no elementFromPoint, which the drag move handler calls.
@@ -114,6 +117,7 @@ function renderAreas(
 function resetMocks() {
   mockExecute.mockReset().mockResolvedValue({ ok: true, data: {} });
   mockToastWarning.mockReset();
+  mockToastSuccess.mockReset();
   mockQueryStore.mockReset();
   mockSubscriptionStore.mockReset();
   mockSubscriptionStore.mockReturnValue(
@@ -221,6 +225,20 @@ describe("declaring an area from the empty-areas state", () => {
     await user.click(d().getByRole("button", { name: /^create$/i }));
 
     expect(dispatchedCommand()).toEqual(expect.objectContaining({ kind: "add-area", path: "web" }));
+  });
+
+  // This panel is drawn only in the Areas view, where the new area is already in sight.
+  it("confirms the create with a toast that offers no Show", async () => {
+    mockToastSuccess.mockReset();
+    const user = userEvent.setup();
+    renderAreas(EMPTY_AREAS);
+
+    const d = await openNewAreaDialog(user);
+    await user.type(d().getByTestId("area-path-input"), "web");
+    await user.click(d().getByRole("button", { name: /^create$/i }));
+
+    await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledTimes(1));
+    expect(mockToastSuccess).toHaveBeenCalledWith("Created area web", undefined);
   });
 });
 
@@ -417,6 +435,8 @@ describe("declaring a child area from a section row", () => {
       expect.objectContaining({ kind: "add-area", path: "web/dashboard" }),
     ]);
     await waitFor(() => expect(screen.queryByTestId("area-form-dialog")).toBeNull());
+    // Section rows exist only in the Areas view, so the toast offers no Show.
+    expect(mockToastSuccess).toHaveBeenCalledWith("Created area web/dashboard", undefined);
   });
 
   it("puts Cancel and a primary Create on one action row", async () => {

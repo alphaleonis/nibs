@@ -2,6 +2,7 @@
   import { Button } from "$lib/components/ui/button/index.js";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
+  import { toast } from "svelte-sonner";
   import { addArea, getMutationStore } from "$lib/mutations";
   import { runAreaEdit } from "../areaEdit";
   import AreaEditError from "./AreaEditError.svelte";
@@ -19,9 +20,14 @@
      * `onclose` — which is what a host with nowhere to go back TO wants.
      */
     oncancel?: () => void;
+    /**
+     * Bring the Areas view into sight: the success toast's Show action. Absent,
+     * the toast has no action, for a host where the new area is already shown.
+     */
+    onshow?: () => void;
   }
 
-  let { parentPath = "", onclose, oncancel }: Props = $props();
+  let { parentPath = "", onclose, oncancel, onshow }: Props = $props();
 
   const mutations = getMutationStore();
 
@@ -45,6 +51,9 @@
       const outcome = await runAreaEdit(mutations, addArea(full));
       error = outcome.message;
       if (outcome.ok) {
+        // The form toasts, so every host confirms a create the same way.
+        const show = onshow;
+        toast.success(`Created area ${full}`, show ? { action: { label: "Show", onClick: () => show() } } : undefined);
         path = "";
         onclose?.();
       }

@@ -58,3 +58,38 @@ test("New → Area declares a second top-level area and its section row appears"
     if (declares(newArea)) areaRemove(newArea);
   }
 });
+
+test("New → Area from the Tree view confirms with a toast whose Show opens the Areas view", async ({ page }) => {
+  test.setTimeout(120_000);
+  const area = "desktop";
+  expect(declares(area)).toBe(false);
+
+  await page.goto("/");
+  await expect(page.locator("tr[data-nib-id]").first()).toBeVisible({ timeout: 10_000 });
+
+  const viewButton = page.locator('button[aria-label^="View:"]');
+  await viewButton.click();
+  await page.getByRole("menuitemradio", { name: "Tree" }).click();
+  await expect(viewButton).toHaveAttribute("aria-label", "View: Tree");
+
+  try {
+    await page.getByTestId("toolbar-add").click();
+    await page.getByTestId("toolbar-add-area").click();
+    const dialog = page.getByTestId("new-area-dialog");
+    await dialog.getByTestId("area-path-input").fill(area);
+    await dialog.getByRole("button", { name: "Create", exact: true }).click();
+
+    await expect(dialog).toHaveCount(0);
+    const toast = page.locator("[data-sonner-toast]").filter({ hasText: `Created area ${area}` });
+    await expect(toast).toBeVisible({ timeout: 15_000 });
+    // The create alone leaves the user in their view.
+    await expect(viewButton).toHaveAttribute("aria-label", "View: Tree");
+
+    await toast.getByRole("button", { name: "Show", exact: true }).click();
+
+    await expect(viewButton).toHaveAttribute("aria-label", "View: Areas");
+    await expect(areaSectionRow(page, area)).toBeVisible({ timeout: 15_000 });
+  } finally {
+    if (declares(area)) areaRemove(area);
+  }
+});
