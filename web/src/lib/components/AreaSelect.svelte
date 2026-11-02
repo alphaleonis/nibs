@@ -1,6 +1,6 @@
 <script lang="ts">
   import * as Select from "$lib/components/ui/select/index.js";
-  import { NO_AREA, cssColor, fromSelectValue, toSelectValue } from "../areas";
+  import { NO_AREA, areaColor, fromSelectValue, toSelectValue } from "../areas";
   import { useViewSpine } from "../contexts";
 
   interface Props {
@@ -33,11 +33,11 @@
   <Select.Content>
     <Select.Item value={NO_AREA}>None</Select.Item>
     {#each nodes as node (node.path)}
-      {@const swatch = cssColor(node.color)}
+      {@const swatch = areaColor(node.color)}
       <Select.Item value={node.path}>
         <span style:padding-left={`${node.depth * 0.75}rem`}>
           {#if swatch}
-            <!-- `cssColor` is what makes config text safe in this style. -->
+            <!-- `areaColor` is what makes config text safe in this style. -->
             <span
               data-testid="area-color"
               class="shrink-0 size-2.5 rounded-full border border-border"

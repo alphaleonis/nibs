@@ -22,7 +22,7 @@
   import { RELATION_CONFIG } from "./relations";
   import { formatRelative, formatAbsolute } from "./date";
   import { isSyntheticRowId } from "./tree";
-  import { cssColor } from "./areas";
+  import { areaColor } from "./areas";
   import { blockedVariantFor } from "./types";
 
   /** The two snippets that render one column: its header content and its cell. */
@@ -152,7 +152,7 @@
   <!-- Section facts are drawn only on a synthetic row; a section headed by a real
        nib renders that nib's own columns. -->
   {@const section = ctx.drawsSection !== null && isSyntheticRowId(nib.id) ? ctx.drawsSection : null}
-  {@const sectionColor = section === null ? null : cssColor(section.display.color)}
+  {@const sectionColor = section === null ? null : areaColor(section.display.color)}
   {@const priorityIndicator = priorityIndicators[nib.priority] ?? null}
   {@const isBlocked = nib.blockedByIds.length > 0}
   {@const blockedVariant = blockedVariantFor(blockedEmphasis)}
@@ -173,7 +173,7 @@
       <!-- TypeIcon takes no class, so the gap lives on a wrapper. -->
       <span class="type-icon-gap"><TypeIcon type={nib.type} /></span>
       {#if sectionColor}
-        <!-- `cssColor` is what makes config text safe in this style. -->
+        <!-- `areaColor` is what makes config text safe in this style. -->
         <span
           data-testid="section-color"
           class="shrink-0 size-2.5 rounded-full border border-border"

@@ -9,7 +9,7 @@ import { createAreaVocabulary, type AreaNode } from "../areas";
 const user = userEvent.setup({ pointerEventsCheck: 0 });
 
 // A parent with one child plus a sibling root, so the flat list carries a real
-// depth run. `rgb(...)` on `cli` is a color `cssColor` refuses — legal in
+// depth run. `rgb(...)` on `cli` is a color `areaColor` refuses — legal in
 // areas.yml, but not narrow enough to reach an inline style.
 const AREAS: AreaNode[] = [
   { path: "web", name: "web", description: "The web UI", color: "#3366ff", depth: 0 },
@@ -115,7 +115,7 @@ describe("AreaSelect", () => {
     expect(screen.getByTestId("area-select")).toHaveTextContent("web/legacy");
   });
 
-  it("draws a swatch for a declared color, and none for one cssColor refuses", async () => {
+  it("draws a swatch for a declared color, and none for one areaColor refuses", async () => {
     renderSelect({ value: "" });
     await user.click(screen.getByTestId("area-select"));
 
@@ -123,7 +123,8 @@ describe("AreaSelect", () => {
     // resolves a named color to rgb() and `rem` to px, so a computed comparison
     // would test that resolution rather than what the component wrote.
     expect(swatch(option("web")).style.backgroundColor).toBe("rgb(51, 102, 255)");
-    expect(swatch(option("web/dashboard")).style.backgroundColor).toBe("teal");
+    // A palette name draws through its theme token.
+    expect(swatch(option("web/dashboard")).style.backgroundColor).toBe("var(--area-teal)");
     // `rgb(1, 2, 3)` is legal in areas.yml but not one of the two shapes
     // `cssColor` narrows to, so nothing is drawn rather than an inline style
     // carrying config text.

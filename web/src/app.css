@@ -95,6 +95,19 @@
   --color-type-feature: var(--type-feature);
   --color-type-task: var(--type-task);
   --color-type-research: var(--type-research);
+  --color-area-red: var(--area-red);
+  --color-area-orange: var(--area-orange);
+  --color-area-amber: var(--area-amber);
+  --color-area-yellow: var(--area-yellow);
+  --color-area-lime: var(--area-lime);
+  --color-area-green: var(--area-green);
+  --color-area-teal: var(--area-teal);
+  --color-area-cyan: var(--area-cyan);
+  --color-area-blue: var(--area-blue);
+  --color-area-indigo: var(--area-indigo);
+  --color-area-purple: var(--area-purple);
+  --color-area-pink: var(--area-pink);
+  --color-area-gray: var(--area-gray);
   --color-status-draft-text: var(--status-draft-text);
   --color-status-todo-text: var(--status-todo-text);
   --color-status-in-progress-text: var(--status-in-progress-text);
@@ -191,6 +204,22 @@
   --type-feature: oklch(0.765 0.177 163.223);   /* emerald-400 (config "green") */
   --type-task: oklch(0.746 0.16 232.661);       /* sky-400 (config "blue") */
   --type-research: oklch(0.828 0.189 84.429);   /* amber-400 (config "yellow") */
+
+  /* Area palette — the swatches of the Edit Area dialog, and the color a stored
+     palette name draws in (`areaColor` in lib/areas.ts). ~-400 for the dark UI. */
+  --area-red: oklch(0.704 0.191 22.216);      /* red-400 */
+  --area-orange: oklch(0.705 0.213 47.604);   /* orange-500, so it sits apart from amber */
+  --area-amber: oklch(0.769 0.188 70.08);     /* amber-500 */
+  --area-yellow: oklch(0.905 0.182 98.111);   /* yellow-300, so it sits apart from amber */
+  --area-lime: oklch(0.841 0.238 128.85);     /* lime-400 */
+  --area-green: oklch(0.792 0.209 151.711);   /* green-400 */
+  --area-teal: oklch(0.704 0.14 182.503);     /* teal-500, darker than cyan */
+  --area-cyan: oklch(0.789 0.154 211.53);     /* cyan-400 */
+  --area-blue: oklch(0.707 0.165 254.624);    /* blue-400 */
+  --area-indigo: oklch(0.673 0.182 276.935);  /* indigo-400 */
+  --area-purple: oklch(0.714 0.203 305.504);  /* purple-400 */
+  --area-pink: oklch(0.718 0.202 349.761);    /* pink-400 */
+  --area-gray: oklch(0.707 0.022 261.325);    /* gray-400 */
 
   /* Status colors — mirror the TUI/config convention (in-progress=yellow,
      todo=green, draft=blue, completed=gray, scrapped=gray). The *-text token
@@ -471,6 +500,22 @@
   --type-feature: oklch(0.52 0.13 160);      /* emerald */
   --type-task: oklch(0.52 0.16 245);         /* blue */
   --type-research: oklch(0.58 0.13 68);      /* amber */
+
+  /* Area palette — darker variants (~-600) that hold on the light surface. A few
+     stay lighter, so neighbors in hue differ in lightness too. */
+  --area-red: oklch(0.577 0.245 27.325);      /* red-600 */
+  --area-orange: oklch(0.646 0.222 41.116);   /* orange-600 */
+  --area-amber: oklch(0.72 0.185 66);         /* between amber-500 and -600, apart from orange */
+  --area-yellow: oklch(0.852 0.199 91.936);   /* yellow-400, so it sits apart from amber */
+  --area-lime: oklch(0.648 0.2 131.684);      /* lime-600 */
+  --area-green: oklch(0.627 0.194 149.214);   /* green-600 */
+  --area-teal: oklch(0.6 0.118 184.704);      /* teal-600 */
+  --area-cyan: oklch(0.715 0.143 215.221);    /* cyan-500, lighter than teal */
+  --area-blue: oklch(0.623 0.214 259.815);    /* blue-500, lighter than indigo */
+  --area-indigo: oklch(0.457 0.24 277.023);   /* indigo-700, darker than blue */
+  --area-purple: oklch(0.558 0.288 302.321);  /* purple-600 */
+  --area-pink: oklch(0.592 0.249 0.584);      /* pink-600 */
+  --area-gray: oklch(0.551 0.027 264.364);    /* gray-500 */
 
   /* Status colors — darker *-text for the light surface. */
   --status-draft-text: oklch(0.52 0.16 250);

@@ -57,6 +57,48 @@ export function cssColor(color: string): string | null {
   return /^[a-zA-Z]+$|^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(color) ? color : null;
 }
 
+/**
+ * The color names the Edit Area dialog offers as swatches, each backed by an
+ * `--area-<name>` token in `app.css` that every theme tunes. A swatch stores the
+ * bare name, because the server accepts a name only in letters (`area.ValidateColor`).
+ */
+export const AREA_PALETTE = Object.freeze([
+  "red",
+  "orange",
+  "amber",
+  "yellow",
+  "lime",
+  "green",
+  "teal",
+  "cyan",
+  "blue",
+  "indigo",
+  "purple",
+  "pink",
+  "gray",
+] as const);
+
+export type AreaPaletteName = (typeof AREA_PALETTE)[number];
+
+const PALETTE_NAMES: ReadonlySet<string> = new Set(AREA_PALETTE);
+
+/** Returns the palette name a declared color means, matched in any letter case, or null. */
+export function paletteName(color: string): AreaPaletteName | null {
+  const lower = color.toLowerCase();
+  return PALETTE_NAMES.has(lower) ? (lower as AreaPaletteName) : null;
+}
+
+/**
+ * Returns the CSS value that draws a declared area color, or null when
+ * `cssColor` refuses it. A palette name becomes its theme token, so a stored
+ * `teal` follows the active theme; every other color is drawn as `cssColor`
+ * passes it.
+ */
+export function areaColor(color: string): string | null {
+  const name = paletteName(color);
+  return name === null ? cssColor(color) : `var(--area-${name})`;
+}
+
 const EMPTY_NODES: readonly AreaNode[] = Object.freeze([]);
 const EMPTY_PATHS: readonly string[] = Object.freeze([]);
 

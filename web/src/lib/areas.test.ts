@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
+  AREA_PALETTE,
+  areaColor,
   createAreaVocabulary,
   cssColor,
   EMPTY_AREAS,
@@ -270,5 +272,26 @@ describe("the None select sentinel", () => {
 
   it("still maps the None item back to the unset assignment", () => {
     expect(fromSelectValue(toSelectValue(""))).toBe("");
+  });
+});
+
+describe("areaColor", () => {
+  it("palette names resolve to their theme variable", () => {
+    expect(areaColor("teal")).toBe("var(--area-teal)");
+    expect(areaColor("Teal")).toBe("var(--area-teal)");
+    for (const name of AREA_PALETTE) expect(areaColor(name)).toBe(`var(--area-${name})`);
+  });
+
+  it("non-palette colors fall back to cssColor", () => {
+    expect(areaColor("rebeccapurple")).toBe("rebeccapurple");
+    expect(areaColor("#4488ff80")).toBe("#4488ff80");
+    expect(areaColor("tea l")).toBeNull();
+    expect(areaColor("")).toBeNull();
+  });
+
+  // Mirrors the name branch of `area.ValidateColor`: a swatch stores its name verbatim.
+  it("every palette name passes the server's color rule", () => {
+    expect(AREA_PALETTE).toHaveLength(13);
+    for (const name of AREA_PALETTE) expect(name).toMatch(/^[a-z]+$/);
   });
 });
