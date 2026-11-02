@@ -109,7 +109,7 @@
     <AreaEditError message={membersMessage} />
   {:else if memberCount === 0}
     <span class="text-muted-foreground">
-      Retire {path} and every area declared beneath it.
+      Retire {path} and every area beneath it.
     </span>
   {:else}
     <span data-testid="area-remove-count" class="text-foreground">

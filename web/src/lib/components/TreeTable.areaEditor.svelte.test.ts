@@ -196,9 +196,9 @@ describe("declaring an area from the empty-areas state", () => {
     const user = userEvent.setup();
     renderAreas(EMPTY_AREAS);
 
-    await user.click(screen.getByRole("button", { name: /declare an area/i }));
+    await user.click(screen.getByRole("button", { name: /create an area/i }));
     await user.type(screen.getByTestId("area-path-input"), "web");
-    await user.click(screen.getByRole("button", { name: /^declare$/i }));
+    await user.click(screen.getByRole("button", { name: /^create$/i }));
 
     expect(dispatchedCommand()).toEqual(expect.objectContaining({ kind: "add-area", path: "web" }));
   });
@@ -391,7 +391,7 @@ describe("declaring a child area from a section row", () => {
 
     const d = await openAreaDialog(user, "web", /add child/i);
     await user.type(d().getByTestId("area-path-input"), "dashboard");
-    await user.click(d().getByRole("button", { name: /^declare$/i }));
+    await user.click(d().getByRole("button", { name: /^create$/i }));
 
     expect(dispatchedCommands()).toEqual([
       expect.objectContaining({ kind: "add-area", path: "web/dashboard" }),
@@ -706,7 +706,7 @@ describe("retiring an area whose member count cannot be read", () => {
     });
 
     await waitFor(() => expect(d().getByTestId("area-remove-unknown")).toBeInTheDocument());
-    expect(screen.queryByText(/and every area declared beneath it/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/and every area beneath it/i)).not.toBeInTheDocument();
     expect(d().getByTestId("area-edit-error")).toHaveTextContent("the store could not be read");
     // The transport prefix is urql's, and must not reach the user.
     expect(screen.queryByText(/\[GraphQL\]/)).not.toBeInTheDocument();
@@ -1082,7 +1082,7 @@ describe("backing out of the empty-areas declare form", () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     renderAreas(EMPTY_AREAS);
 
-    await user.click(screen.getByRole("button", { name: /declare an area/i }));
+    await user.click(screen.getByRole("button", { name: /create an area/i }));
 
     expect(screen.getByTestId("area-declare-form")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /switch to tree/i })).toBeInTheDocument();
@@ -1094,11 +1094,11 @@ describe("backing out of the empty-areas declare form", () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     renderAreas(EMPTY_AREAS);
 
-    await user.click(screen.getByRole("button", { name: /declare an area/i }));
+    await user.click(screen.getByRole("button", { name: /create an area/i }));
     await user.click(screen.getByRole("button", { name: /^cancel$/i }));
 
     await waitFor(() => expect(screen.queryByTestId("area-declare-form")).not.toBeInTheDocument());
-    expect(screen.getByRole("button", { name: /declare an area/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /create an area/i })).toBeInTheDocument();
     expect(mockExecute).not.toHaveBeenCalled();
   });
 });

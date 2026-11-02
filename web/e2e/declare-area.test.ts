@@ -48,7 +48,7 @@ test("New → Area declares a second top-level area and its section row appears"
     await page.getByTestId("toolbar-add-area").click();
     const dialog = page.getByTestId("new-area-dialog");
     await dialog.getByTestId("area-path-input").fill(newArea);
-    await dialog.getByRole("button", { name: "Declare", exact: true }).click();
+    await dialog.getByRole("button", { name: "Create", exact: true }).click();
 
     await expect(dialog).toHaveCount(0);
     await expect(areaSectionRow(page, newArea)).toBeVisible({ timeout: 15_000 });

@@ -416,7 +416,7 @@ describe("TreeTable", () => {
       renderAreas(EMPTY_AREAS, [makeTreeTableNib({ id: "nibs-001" })]);
 
       const box = screen.getByTestId("empty-areas-none");
-      expect(box).toHaveTextContent(/declares no areas/i);
+      expect(box).toHaveTextContent(/has no areas/i);
       expect(box).toHaveTextContent("areas:");
       expect(box).toHaveTextContent("areas.yml");
       // Exact: the box's own heading contains the phrase, and what must be

@@ -50,7 +50,7 @@ export function queryHelpSections(): HelpSection[] {
     },
     {
       title: "Areas",
-      note: "Takes a declared area path. Closure is over the declared tree, so webhooks is not within web.",
+      note: "Takes an area path. It matches that area and the areas nested under it, not every path that starts the same way, so webhooks is not within web.",
       rows: AREA_TOKEN_ORDER.map((spec) => ({
         token: `${spec.name}:<path>`,
         description: spec.description,
@@ -74,7 +74,7 @@ export function queryHelpSections(): HelpSection[] {
         { token: "is:blocked priority:high", description: "High-priority work that is stuck" },
         { token: "no:parent type:milestone", description: "Top-level milestones" },
         { token: "is:backlog type:epic", description: "Epics no milestone plan covers" },
-        { token: "area:web status:open", description: "Open work owned by web or anything declared under it" },
+        { token: "area:web status:open", description: "Open work in web or any area beneath it" },
       ],
     },
   ];

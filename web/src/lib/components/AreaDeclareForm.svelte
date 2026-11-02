@@ -69,7 +69,7 @@
     aria-label={parentPath === "" ? "Area path" : `New area under ${parentPath}`}
     class="h-7 w-56 min-w-0"
   />
-  <Button type="submit" variant="outline" size="sm" disabled={submitting}>Declare</Button>
+  <Button type="submit" variant="outline" size="sm" disabled={submitting}>Create</Button>
   <Button
     type="button"
     variant="ghost"

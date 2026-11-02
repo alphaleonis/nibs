@@ -2794,7 +2794,7 @@ describe("Toolbar — declaring a root area from the New menu", () => {
 
     const d = await openAreaDialog();
     await user.type(d.getByTestId("area-path-input"), "ops");
-    await user.click(d.getByRole("button", { name: /^declare$/i }));
+    await user.click(d.getByRole("button", { name: /^create$/i }));
 
     expect(mockExecute.mock.calls.map((call) => call[0])).toEqual([
       expect.objectContaining({ kind: "add-area", path: "ops" }),
@@ -2808,7 +2808,7 @@ describe("Toolbar — declaring a root area from the New menu", () => {
 
     const d = await openAreaDialog();
     await user.type(d.getByTestId("area-path-input"), "web");
-    await user.click(d.getByRole("button", { name: /^declare$/i }));
+    await user.click(d.getByRole("button", { name: /^create$/i }));
 
     await waitFor(() =>
       expect(d.getByTestId("area-edit-error")).toHaveTextContent('area "web" already exists'),
