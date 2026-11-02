@@ -50,6 +50,15 @@ nothing — an area that does not exist yet has no members.`,
 	RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 }
 
+// areaVerbs lists the `nibs area` subcommands, each with its operand, in the
+// order `nibs catalog areas` and `nibs cheat` present them.
+var areaVerbs = []struct{ name, operand string }{
+	{"list", ""},
+	{"add", "<path>"},
+	{"set", "<path>"},
+	{"rm", "<path>"},
+}
+
 var areaListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "Print the declared areas tree with each node's description",
