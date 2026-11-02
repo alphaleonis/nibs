@@ -113,7 +113,7 @@ func validateAreaRenameArgument(newName string) error {
 		return err
 	}
 	if strings.Contains(newName, area.PathSeparator) {
-		return fmt.Errorf("%q is not a name: a rename changes a node's name and never moves it between parents, so send the name alone",
+		return fmt.Errorf("%q contains \"/\", which separates the areas in a path. A rename keeps an area under its parent, so enter only the new name",
 			area.RenderPath(newName))
 	}
 	return nil
