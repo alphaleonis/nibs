@@ -100,8 +100,8 @@
     />
   </div>
   <div class="flex flex-col gap-1">
-    <label class="text-caption text-muted-foreground" for="area-edit-color">Color</label>
-    <AreaColorField id="area-edit-color" bind:value={draftColor} {path} />
+    <span class="text-caption text-muted-foreground">Color</span>
+    <AreaColorField bind:value={draftColor} {path} />
   </div>
   <AreaEditError message={error} />
   <!-- The dialog's footer band, so the actions sit where ConfirmDialog's do. -->

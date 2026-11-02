@@ -860,12 +860,23 @@ test("areas — the edit dialog", async ({ page }) => {
 });
 
 // Judge each swatch against its neighbors and the dialog surface in every palette,
-// with one picked so the pressed ring and the preview show too.
+// with one picked so the pressed ring shows too.
 for (const { value: theme } of THEMES) {
   test(`areas — the edit dialog — ${theme}`, async ({ page }) => {
     await openAreaEdit(page, theme);
     await page.getByRole("button", { name: "Teal" }).click();
     await shot(page, `areas-edit-dialog-${theme}`);
+  });
+}
+
+// The server refuses a path as a name, so nothing is saved. Judge the error text against the surface.
+for (const { value: theme } of THEMES) {
+  test(`areas — the edit dialog's error — ${theme}`, async ({ page }) => {
+    await openAreaEdit(page, theme);
+    await page.getByTestId("area-name-input").fill("api/web");
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByTestId("area-edit-error")).toBeVisible();
+    await shot(page, `areas-edit-error-${theme}`);
   });
 }
 

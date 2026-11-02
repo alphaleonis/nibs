@@ -948,7 +948,7 @@ func TestAreaMutationsAnswerArgumentsWithoutTheStore(t *testing.T) {
 				_, err := r.Mutation().UpdateArea(context.Background(), model.UpdateAreaInput{Path: "web", NewName: ptr("a/b")})
 				return err
 			},
-			want: "is not a name",
+			want: `"a/b" contains "/", which separates the areas in a path. A rename keeps an area under its parent, so enter only the new name`,
 		},
 		{
 			name: "a name no store could read back",
