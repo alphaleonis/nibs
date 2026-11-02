@@ -147,20 +147,72 @@ test("repeated submenu use in one session keeps working", async ({ page }) => {
 
 // A section row the view FABRICATED names no nib, so Open and Edit on an area
 // header used to raise "Nib /section:web/dashboard_ no longer exists". Covered
-// in jsdom too (TreeTable.test.ts); here the header ids come from the fixture's
-// own areas rather than a stub, and the gesture is a real Chromium right-click.
-test("no row menu on a fabricated section header, while real rows keep theirs", async ({
+// in jsdom too (TreeTable.test.ts); here the gesture is a real Chromium
+// right-click. The "No area" leftover has no declaration behind it, so it opens
+// neither the row menu nor the area menu.
+test("no menu on the No area header, while real rows keep theirs", async ({
   page,
 }) => {
   await openApp(page, "areas");
 
-  const header = page.locator('tr[data-nib-id^="/section:"]').first();
+  const header = page.locator('tr[data-nib-id="/__no_area__"]');
   await expect(header).toBeVisible({ timeout: 15_000 });
   await header.locator('[data-testid="nib-title"]').click({ button: "right" });
   await expect(page.locator('[data-testid="context-menu"]')).toBeHidden();
+  await expect(page.locator('[data-testid="area-row-menu"]')).toBeHidden();
 
   // Positive control in the SAME view, so the assertion above is about the
   // header and not about the Areas view having no menus at all.
   const nibRow = page.locator('tr[data-nib-id]:not([data-nib-id^="/"])').first();
   await openContextMenu(page, nibRow);
+});
+
+// A declared area's header opens the area menu at the pointer, and an entry
+// that takes input opens a dialog. jsdom cannot show either is visible.
+test("area section row: right-click opens the area menu, and Edit… opens a dialog", async ({
+  page,
+}) => {
+  await openApp(page, "areas");
+
+  const header = page.locator('tr[data-nib-id="/section:web_"]');
+  await expect(header).toBeVisible({ timeout: 15_000 });
+  await header.locator('[data-testid="nib-title"]').click({ button: "right" });
+
+  const menu = page.locator('[data-testid="area-row-menu"]');
+  await expect(menu).toBeVisible();
+  await expect(page.locator('[data-testid="context-menu"]')).toBeHidden();
+  await menu.getByRole("menuitem", { name: "Edit…" }).click();
+
+  const dialog = page.locator('[data-testid="area-form-dialog"]');
+  await expect(dialog).toBeVisible();
+  await expect(menu).toBeHidden();
+  await expect(dialog.locator('[data-testid="area-name-input"]')).toHaveValue("web");
+});
+
+// An open menu sets `pointer-events: none` on the body, so a press on another
+// row's [⋯] only dismisses it, as a press anywhere else does. A second press opens that row's menu.
+test("area section row: a press on another [⋯] while the menu is open only dismisses it", async ({
+  page,
+}) => {
+  await openApp(page, "areas");
+
+  const web = page.locator('tr[data-nib-id="/section:web_"]');
+  const docs = page.locator('tr[data-nib-id="/section:docs_"]');
+  await expect(web).toBeVisible({ timeout: 15_000 });
+  await web.hover();
+  await web.locator('[data-testid="row-area-actions"]').click();
+  const menu = page.locator('[data-testid="area-row-menu"]');
+  await expect(menu).toBeVisible();
+
+  // page.mouse, because a locator click refuses an element that another one covers.
+  const box = (await docs.locator('[data-testid="row-area-actions"]').boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(menu).toBeHidden();
+  // The lock lifts a moment after the menu closes.
+  await expect(page.locator("body")).not.toHaveCSS("pointer-events", "none");
+
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(menu).toBeVisible();
+  await menu.getByRole("menuitem", { name: "Edit…" }).click();
+  await expect(page.locator('[data-testid="area-name-input"]')).toHaveValue("docs");
 });

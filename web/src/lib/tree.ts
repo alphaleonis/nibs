@@ -1,6 +1,6 @@
 import type { TreeNib, TreeNode, TreeTableNib } from "./types";
 import { MILESTONE_TYPE } from "./membership";
-import type { SectionMeaning } from "./ordering/sectionMeaning";
+import type { SectionEntry, SectionMeaning } from "./ordering/sectionMeaning";
 
 export function buildTree<T extends TreeNib>(nibs: T[]): TreeNode<T>[] {
   const nodeMap = new Map<string, TreeNode<T>>();
@@ -228,6 +228,24 @@ function sectionRowId(key: SectionKey, lens: GroupingLens): string {
  */
 export function isSyntheticRowId(id: string): boolean {
   return id.startsWith("/") && !/[0-9a-z]$/.test(id);
+}
+
+/**
+ * Returns whether a row heads a DECLARED area, which is what the area menu acts on.
+ *
+ * The "No area" leftover enters as `byRow`, not as an area assignment, so it
+ * answers false: no declaration stands behind it to edit or retire.
+ */
+export function headsDeclaredArea(
+  id: string,
+  drawsSection: { readonly onEnter: SectionEntry } | null,
+): boolean {
+  return (
+    drawsSection !== null &&
+    isSyntheticRowId(id) &&
+    drawsSection.onEnter.kind === "assign" &&
+    drawsSection.onEnter.field === "area"
+  );
 }
 
 /**

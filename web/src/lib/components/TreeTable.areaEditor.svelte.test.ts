@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { render, screen, waitFor, within } from "@testing-library/svelte";
 import { userEvent } from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readable } from "svelte/store";
@@ -56,6 +56,11 @@ vi.mock("svelte-sonner", async () => {
   return { ...actual, toast: { ...actual.toast, warning: mockToastWarning } };
 });
 
+// jsdom has no elementFromPoint, which the drag move handler calls.
+if (typeof document.elementFromPoint !== "function") {
+  document.elementFromPoint = () => null;
+}
+
 import { queryStore, subscriptionStore } from "@urql/svelte";
 const mockQueryStore = vi.mocked(queryStore);
 const mockSubscriptionStore = vi.mocked(subscriptionStore);
@@ -89,16 +94,60 @@ function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
   };
 }
 
-function renderAreas(areas: AreaVocabulary, nibs: TreeTableNib[] = []) {
+function renderAreas(
+  areas: AreaVocabulary,
+  nibs: TreeTableNib[] = [],
+  opts: { onrowcontextmenu?: ReturnType<typeof vi.fn>; drag?: DragState } = {},
+) {
   mockQueryStore.mockReturnValue(
     readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any,
   );
   return render(TreeTable, {
-    props: { filter: {}, viewLevel: "areas" as ViewLevel } as any,
-    context: makeTestContext(new SelectionState(), new DragState(), {
+    props: { filter: {}, viewLevel: "areas" as ViewLevel, onrowcontextmenu: opts.onrowcontextmenu } as any,
+    context: makeTestContext(new SelectionState(), opts.drag ?? new DragState(), {
       viewSpine: makeViewSpine(areas),
     }),
   });
+}
+
+/** Reset every mock to the answers most cases want. */
+function resetMocks() {
+  mockExecute.mockReset().mockResolvedValue({ ok: true, data: {} });
+  mockToastWarning.mockReset();
+  mockQueryStore.mockReset();
+  mockSubscriptionStore.mockReset();
+  mockSubscriptionStore.mockReturnValue(
+    readable({ fetching: false, error: undefined, data: undefined, stale: false }) as any,
+  );
+}
+
+type User = ReturnType<typeof userEvent.setup>;
+
+/** The area menu, which bits-ui portals to the document body. */
+const areaMenu = () => screen.queryByTestId("area-row-menu");
+/** The open form dialog, scoped so the table's own buttons cannot match. */
+const dialog = () => within(screen.getByTestId("area-form-dialog"));
+
+/** Open the area menu from the [⋯] on the section row labeled `label`. */
+async function openAreaMenu(user: User, label: string): Promise<HTMLElement> {
+  await user.click(within(sectionRow(label)).getByTestId("row-area-actions"));
+  return screen.findByTestId("area-row-menu");
+}
+
+/** Pick `item` from the area menu of `label` and wait for the dialog it opens. */
+async function openAreaDialog(user: User, label: string, item: RegExp) {
+  const menu = await openAreaMenu(user, label);
+  await user.click(within(menu).getByRole("menuitem", { name: item }));
+  const el = await screen.findByTestId("area-form-dialog");
+  // bits-ui moves focus into the dialog after it mounts; typing before that
+  // lands in whichever field the deferred focus then steals.
+  await waitFor(() => expect(el.contains(document.activeElement)).toBe(true));
+  return dialog;
+}
+
+/** The commands of every `execute` call, in order. */
+function dispatchedCommands(): Array<Record<string, unknown>> {
+  return mockExecute.mock.calls.map((call) => call[0] as Record<string, unknown>);
 }
 
 /**
@@ -155,116 +204,360 @@ describe("declaring an area from the empty-areas state", () => {
   });
 });
 
-describe("declaring a child area from a section row", () => {
-  beforeEach(() => {
-    mockExecute.mockReset().mockResolvedValue({ ok: true, data: {} });
-    mockQueryStore.mockReset();
-    mockSubscriptionStore.mockReset();
-    mockSubscriptionStore.mockReturnValue(
-      readable({ fetching: false, error: undefined, data: undefined, stale: false }) as any,
+describe("the area menu", () => {
+  beforeEach(resetMocks);
+
+  // `-t "[⋯] opens the area menu"` selects this: -t is a regex, and `[⋯]` matches a bare ⋯.
+  it("the row's ⋯ opens the area menu", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    renderAreas(webAreas, [makeTreeTableNib({ id: "nibs-001", area: "web" })]);
+
+    const menu = await openAreaMenu(user, "web");
+
+    expect(menu).toHaveAttribute("role", "menu");
+    const items = within(menu).getAllByRole("menuitem").map((item) => item.textContent?.trim());
+    expect(items).toEqual(["Edit…", "Add child…", "Remove…"]);
+    expect(within(menu).queryByRole("menuitem", { name: /rename|description|color/i })).toBeNull();
+  });
+
+  // Remove is the one entry that destroys something, styled as Delete is in the row menu.
+  it("marks Remove… as destructive", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    renderAreas(webAreas, [makeTreeTableNib({ id: "nibs-001", area: "web" })]);
+
+    const menu = await openAreaMenu(user, "web");
+
+    expect(within(menu).getByRole("menuitem", { name: "Remove…" })).toHaveAttribute(
+      "data-variant",
+      "destructive",
     );
   });
 
-  // The schema takes the FULL path and refuses an undeclared parent, so the row
-  // the user opened the panel on supplies everything before the last segment.
-  // Typing a bare name and sending it as the path would declare a second ROOT
-  // area that merely looks nested.
-  it("assembles the full path under the parent area", async () => {
-    const user = userEvent.setup();
+  it("right-click on a declared area row opens the area menu", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const onrowcontextmenu = vi.fn();
+    renderAreas(webAreas, [makeTreeTableNib({ id: "nibs-001", area: "web" })], { onrowcontextmenu });
+
+    await user.pointer({ target: sectionRow("web"), keys: "[MouseRight]" });
+
+    const menu = await screen.findByTestId("area-row-menu");
+    const items = within(menu).getAllByRole("menuitem").map((item) => item.textContent?.trim());
+    expect(items).toEqual(["Edit…", "Add child…", "Remove…"]);
+    expect(onrowcontextmenu).not.toHaveBeenCalled();
+  });
+
+  // The leftover row has no declaration behind it to edit, so it keeps swallowing
+  // the gesture: no area menu, no row menu, and no browser menu either.
+  it("right-click on the No area row opens nothing", async () => {
+    const onrowcontextmenu = vi.fn();
+    const { container } = renderAreas(
+      webAreas,
+      [
+        makeTreeTableNib({ id: "nibs-001", area: "web" }),
+        makeTreeTableNib({ id: "nibs-002", area: "" }),
+      ],
+      { onrowcontextmenu },
+    );
+    const row = container.querySelector<HTMLElement>('tr[data-nib-id="/__no_area__"]');
+    expect(row).toBeInTheDocument();
+
+    const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    row!.dispatchEvent(event);
+    // Long enough for a menu that did open to reach the portal.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(areaMenu()).toBeNull();
+    expect(onrowcontextmenu).not.toHaveBeenCalled();
+  });
+
+  it("right-click on a nib row in the Areas view still reaches the row menu", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const onrowcontextmenu = vi.fn();
+    const { container } = renderAreas(
+      webAreas,
+      [makeTreeTableNib({ id: "nibs-001", area: "web" })],
+      { onrowcontextmenu },
+    );
+
+    await user.pointer({
+      target: container.querySelector<HTMLElement>('tr[data-nib-id="nibs-001"]')!,
+      keys: "[MouseRight]",
+    });
+
+    expect(onrowcontextmenu).toHaveBeenCalledWith(
+      "nibs-001",
+      expect.any(MouseEvent),
+      expect.objectContaining({ id: "nibs-001" }),
+      expect.any(Object),
+      expect.any(Function),
+    );
+    expect(areaMenu()).toBeNull();
+  });
+
+  it("right-click on a declared area row opens nothing while a drag is in flight", async () => {
+    const drag = new DragState();
+    const { container } = renderAreas(
+      webAreas,
+      [makeTreeTableNib({ id: "nibs-001", area: "web" })],
+      { drag },
+    );
+    const nibRow = container.querySelector<HTMLElement>('tr[data-nib-id="nibs-001"]')!;
+    nibRow.dispatchEvent(new PointerEvent("pointerdown", { clientX: 100, clientY: 100, bubbles: true, button: 0 }));
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 130, clientY: 100, bubbles: true }));
+    // A gesture that never started would let this pass for an unrelated reason.
+    expect(drag.isDragging).toBe(true);
+
+    try {
+      sectionRow("web").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(areaMenu()).toBeNull();
+    } finally {
+      window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+    }
+  });
+
+  it("closes on Escape, and the [⋯] opens it again", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
     renderAreas(webAreas, [makeTreeTableNib({ id: "nibs-001", area: "web" })]);
 
-    await user.click(within(sectionRow("web")).getByTestId("row-area-actions"));
+    await openAreaMenu(user, "web");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(areaMenu()).toBeNull());
 
-    // Scoped to the panel: every nib row that can hold children carries its own
-    // [+] button titled "Add child", so an unscoped name query matches those too.
-    const panel = () => within(screen.getByTestId("area-row-panel"));
-    await user.click(panel().getByRole("button", { name: /add child/i }));
-    await user.type(panel().getByTestId("area-path-input"), "dashboard");
-    await user.click(panel().getByRole("button", { name: /^declare$/i }));
-
-    expect(dispatchedCommand()).toEqual(
-      expect.objectContaining({ kind: "add-area", path: "web/dashboard" }),
-    );
+    // The reopen proves the table forgot the menu, not only bits-ui.
+    await openAreaMenu(user, "web");
   });
 });
 
-describe("renaming an area", () => {
-  beforeEach(() => {
-    mockExecute.mockReset().mockResolvedValue({ ok: true, data: {} });
-    mockQueryStore.mockReset();
-    mockSubscriptionStore.mockReset();
-    mockSubscriptionStore.mockReturnValue(
-      readable({ fetching: false, error: undefined, data: undefined, stale: false }) as any,
-    );
-  });
+describe("leaving an area dialog", () => {
+  beforeEach(resetMocks);
 
-  // `newName` is the node's own SEGMENT, and it is the only field a rename sets.
-  // Sending description or color alongside it — even as "" — would CLEAR what the
-  // store declares, so a rename would quietly erase a description nobody touched.
-  it("sends newName alone, leaving description and color as the store declares them", async () => {
-    const user = userEvent.setup();
+  for (const [item, testId] of [
+    [/edit/i, "area-edit-form"],
+    [/add child/i, "area-declare-form"],
+    [/remove/i, "area-remove-form"],
+  ] as const) {
+    it(`Cancel closes the ${testId} dialog without reopening the menu`, async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 });
+      renderAreas(webAreas, [makeTreeTableNib({ id: "nibs-001", area: "web" })]);
+
+      const d = await openAreaDialog(user, "web", item);
+      expect(d().getByTestId(testId)).toBeInTheDocument();
+      await user.click(d().getByRole("button", { name: /^cancel$/i }));
+
+      await waitFor(() => expect(screen.queryByTestId("area-form-dialog")).toBeNull());
+      expect(areaMenu()).toBeNull();
+      expect(mockExecute).not.toHaveBeenCalled();
+    });
+  }
+
+  it("Escape closes the dialog without reopening the menu", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
     renderAreas(webAreas, [makeTreeTableNib({ id: "nibs-001", area: "web" })]);
 
-    await user.click(within(sectionRow("web")).getByTestId("row-area-actions"));
-    const panel = () => within(screen.getByTestId("area-row-panel"));
-    await user.click(panel().getByRole("button", { name: /rename/i }));
-    await user.clear(panel().getByTestId("area-name-input"));
-    await user.type(panel().getByTestId("area-name-input"), "platform");
-    await user.click(panel().getByRole("button", { name: /^rename$/i }));
+    await openAreaDialog(user, "web", /edit/i);
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => expect(screen.queryByTestId("area-form-dialog")).toBeNull());
+    expect(areaMenu()).toBeNull();
+  });
+
+  // A dialog opened again starts from the store's values, not from the draft
+  // the previous one was left with.
+  it("re-opens Edit with the declared values, not the abandoned draft", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    renderAreas(webAreas, [makeTreeTableNib({ id: "nibs-001", area: "web" })]);
+
+    let d = await openAreaDialog(user, "web", /edit/i);
+    await user.type(d().getByTestId("area-name-input"), "-draft");
+    await user.click(d().getByRole("button", { name: /^cancel$/i }));
+    await waitFor(() => expect(screen.queryByTestId("area-form-dialog")).toBeNull());
+
+    d = await openAreaDialog(user, "web", /edit/i);
+    expect(d().getByTestId("area-name-input")).toHaveValue("web");
+  });
+});
+
+describe("declaring a child area from a section row", () => {
+  beforeEach(resetMocks);
+
+  // The schema takes the FULL path and refuses an undeclared parent, so the row
+  // the user opened the dialog on supplies everything before the last segment.
+  // Sending a bare name would declare a second ROOT area that only looks nested.
+  it("Add child declares under the area", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    renderAreas(webAreas, [makeTreeTableNib({ id: "nibs-001", area: "web" })]);
+
+    const d = await openAreaDialog(user, "web", /add child/i);
+    await user.type(d().getByTestId("area-path-input"), "dashboard");
+    await user.click(d().getByRole("button", { name: /^declare$/i }));
+
+    expect(dispatchedCommands()).toEqual([
+      expect.objectContaining({ kind: "add-area", path: "web/dashboard" }),
+    ]);
+    await waitFor(() => expect(screen.queryByTestId("area-form-dialog")).toBeNull());
+  });
+});
+
+describe("editing an area", () => {
+  beforeEach(resetMocks);
+
+  /** Open the Edit dialog on "web", which declares a description and a color. */
+  async function openEdit(user: User) {
+    renderAreas(describedAreas, [makeTreeTableNib({ id: "nibs-001", area: "web" })]);
+    return openAreaDialog(user, "web", /edit/i);
+  }
+
+  async function replace(user: User, input: HTMLElement, value: string) {
+    await user.clear(input);
+    if (value !== "") await user.type(input, value);
+  }
+
+  it("seeds each field with what the store declares", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const d = await openEdit(user);
+
+    expect(d().getByTestId("area-name-input")).toHaveValue("web");
+    expect(d().getByTestId("area-description-input")).toHaveValue("The browser surface");
+    expect(d().getByTestId("area-color-input")).toHaveValue("blue");
+  });
+
+  // The input carries all three, and the resolver applies them as one node update.
+  it("Edit saves name, description and color in one updateArea call", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const d = await openEdit(user);
+
+    await replace(user, d().getByTestId("area-name-input"), "platform");
+    await replace(user, d().getByTestId("area-description-input"), "Everything in the browser");
+    await replace(user, d().getByTestId("area-color-input"), "#4488ff");
+    await user.click(d().getByRole("button", { name: /^save$/i }));
+
+    expect(dispatchedCommands()).toEqual([
+      {
+        kind: "update-area",
+        path: "web",
+        newName: "platform",
+        description: "Everything in the browser",
+        color: "#4488ff",
+      },
+    ]);
+    await waitFor(() => expect(screen.queryByTestId("area-form-dialog")).toBeNull());
+  });
+
+  // An echo is indistinguishable from an edit on the wire, so it would overwrite
+  // a change another process made to a field this user never touched.
+  it("Edit sends only the fields that changed", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const d = await openEdit(user);
+
+    await replace(user, d().getByTestId("area-color-input"), "red");
+    await user.click(d().getByRole("button", { name: /^save$/i }));
+
+    const cmd = dispatchedCommand() as Record<string, unknown>;
+    expect(cmd).toEqual({ kind: "update-area", path: "web", color: "red" });
+    // toEqual ignores an undefined-valued key, so absence is asserted outright.
+    expect(cmd).not.toHaveProperty("newName");
+    expect(cmd).not.toHaveProperty("description");
+  });
+
+  it("sends a rename alone, leaving description and color as the store declares them", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const d = await openEdit(user);
+
+    await replace(user, d().getByTestId("area-name-input"), "platform");
+    await user.click(d().getByRole("button", { name: /^save$/i }));
 
     const cmd = dispatchedCommand() as Record<string, unknown>;
     expect(cmd).toEqual({ kind: "update-area", path: "web", newName: "platform" });
-    // toEqual ignores an undefined-valued key, so absence is asserted outright.
     expect(cmd).not.toHaveProperty("description");
     expect(cmd).not.toHaveProperty("color");
+  });
+
+  // Emptying a box is a real edit that clears the key, so "" is sent.
+  it("clears a field by sending it empty", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const d = await openEdit(user);
+
+    await replace(user, d().getByTestId("area-description-input"), "");
+    await user.click(d().getByRole("button", { name: /^save$/i }));
+
+    expect(dispatchedCommand()).toEqual({ kind: "update-area", path: "web", description: "" });
+  });
+
+  // The server refuses an input that sets nothing.
+  it("Edit with nothing changed closes without a request", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const d = await openEdit(user);
+
+    await user.click(d().getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(screen.queryByTestId("area-form-dialog")).toBeNull());
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
+
+  // The server refuses a rename to the current name, so padding is not a change.
+  it("treats a name that only gained whitespace as unchanged", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const d = await openEdit(user);
+
+    await replace(user, d().getByTestId("area-name-input"), "  web  ");
+    await replace(user, d().getByTestId("area-color-input"), "red");
+    await user.click(d().getByRole("button", { name: /^save$/i }));
+
+    expect(dispatchedCommand()).toEqual({ kind: "update-area", path: "web", color: "red" });
+  });
+
+  it("sends a changed name trimmed", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const d = await openEdit(user);
+
+    await replace(user, d().getByTestId("area-name-input"), " platform ");
+    await user.click(d().getByRole("button", { name: /^save$/i }));
+
+    expect(dispatchedCommand()).toEqual({ kind: "update-area", path: "web", newName: "platform" });
+  });
+
+  it("refuses an empty name inline and sends nothing", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const d = await openEdit(user);
+
+    await replace(user, d().getByTestId("area-name-input"), "   ");
+    await replace(user, d().getByTestId("area-color-input"), "red");
+    await user.click(d().getByRole("button", { name: /^save$/i }));
+
+    expect(d().getByTestId("area-edit-error")).toHaveTextContent(/name/i);
+    expect(mockExecute).not.toHaveBeenCalled();
+    expect(screen.getByTestId("area-form-dialog")).toBeInTheDocument();
   });
 });
 
 describe("retiring an area with no members", () => {
-  beforeEach(() => {
-    mockExecute.mockReset().mockResolvedValue({ ok: true, data: {} });
-    mockQueryStore.mockReset();
-    mockSubscriptionStore.mockReset();
-    mockSubscriptionStore.mockReturnValue(
-      readable({ fetching: false, error: undefined, data: undefined, stale: false }) as any,
-    );
-  });
+  beforeEach(resetMocks);
 
-  // A disposition says what to do with the members instead of leaving them on a
-  // path nothing declares. With nothing assigned there is nothing to dispose of,
-  // and the server REFUSES a disposition naming an area nothing is assigned to —
-  // so sending one here would turn an ordinary retirement into a refusal.
+  // The server refuses a disposition on an area nothing is assigned to, so
+  // sending one would turn an ordinary retirement into a refusal.
   it("sends no disposition, because there is nothing to dispose of", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
     renderAreas(webAreas, []);
 
-    await user.click(within(sectionRow("web")).getByTestId("row-area-actions"));
-    const panel = () => within(screen.getByTestId("area-row-panel"));
-    await user.click(panel().getByRole("button", { name: /remove/i }));
-    await user.click(panel().getByRole("button", { name: /^retire$/i }));
+    const d = await openAreaDialog(user, "web", /remove/i);
+    await user.click(d().getByRole("button", { name: /^retire$/i }));
 
     const cmd = dispatchedCommand() as Record<string, unknown>;
     expect(cmd).toEqual({ kind: "remove-area", path: "web" });
     expect(cmd).not.toHaveProperty("moveTo");
     expect(cmd).not.toHaveProperty("unassign");
+    await waitFor(() => expect(screen.queryByTestId("area-form-dialog")).toBeNull());
   });
 });
 
 describe("retiring an area that has members", () => {
-  beforeEach(() => {
-    mockExecute.mockReset().mockResolvedValue({ ok: true, data: {} });
-    mockQueryStore.mockReset();
-    mockSubscriptionStore.mockReset();
-    mockSubscriptionStore.mockReturnValue(
-      readable({ fetching: false, error: undefined, data: undefined, stale: false }) as any,
-    );
-  });
+  beforeEach(resetMocks);
 
   /**
    * Answer each query by its OPERATION NAME, so the remove form's member count
-   * can differ from the table's own row list. Routing on the document's name
-   * rather than on an imported constant keeps this independent of which module
-   * declares it.
+   * can differ from the table's own row list.
    */
   function routeQueries(byOperation: Record<string, TreeTableNib[]>, fallback: TreeTableNib[]) {
     mockQueryStore.mockImplementation((args: any) => {
@@ -281,15 +574,15 @@ describe("retiring an area that has members", () => {
     { path: "web/ui", name: "ui", description: "", color: "", depth: 1 },
   ]);
 
-  // Two of the three sit BELOW web rather than on it, so a count that walked
-  // only the direct members would say 1 where the retirement strands 3.
+  // Two of the three sit BELOW web, so a count of direct members alone says 1
+  // where the retirement strands 3.
   const members = [
     makeTreeTableNib({ id: "nibs-001", area: "web" }),
     makeTreeTableNib({ id: "nibs-002", area: "web/ui" }),
     makeTreeTableNib({ id: "nibs-003", area: "web/ui" }),
   ];
 
-  async function openRemove(user: ReturnType<typeof userEvent.setup>) {
+  async function openRemove(user: User) {
     routeQueries({ AreaMembers: members }, members);
     render(TreeTable, {
       props: { filter: {}, viewLevel: "areas" as ViewLevel } as any,
@@ -297,38 +590,48 @@ describe("retiring an area that has members", () => {
         viewSpine: makeViewSpine(treeAreas),
       }),
     });
-    await user.click(within(sectionRow("web")).getByTestId("row-area-actions"));
-    const panel = () => within(screen.getByTestId("area-row-panel"));
-    await user.click(panel().getByRole("button", { name: /remove/i }));
-    await waitFor(() => expect(panel().getByTestId("area-remove-count")).toBeInTheDocument());
-    return panel;
+    const d = await openAreaDialog(user, "web", /remove/i);
+    await waitFor(() => expect(d().getByTestId("area-remove-count")).toBeInTheDocument());
+    return d;
   }
 
-  // The count is the whole point of asking first: the server refuses the
-  // retirement while anything is assigned at or below the node, and the user
-  // cannot choose a disposition sensibly without knowing how much it moves.
+  // The server refuses the retirement while anything is assigned at or below the
+  // node, and a disposition cannot be chosen sensibly without the count.
   it("shows how much work the retirement would strand, counting the whole subtree", async () => {
-    const user = userEvent.setup();
-    const panel = await openRemove(user);
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const d = await openRemove(user);
 
-    expect(panel().getByTestId("area-remove-count")).toHaveTextContent("3");
+    expect(d().getByTestId("area-remove-count")).toHaveTextContent("3");
   });
 
   it("refuses to submit until a disposition is chosen", async () => {
-    const user = userEvent.setup();
-    const panel = await openRemove(user);
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const d = await openRemove(user);
 
-    await user.click(panel().getByRole("button", { name: /^retire$/i }));
+    await user.click(d().getByRole("button", { name: /^retire$/i }));
 
     expect(mockExecute).not.toHaveBeenCalled();
   });
 
-  it("dispatches the disposition the user chose", async () => {
-    const user = userEvent.setup();
-    const panel = await openRemove(user);
+  // `disabled` is only the visible half: submit() holds the same rule.
+  it("Remove refuses Retire when members exist and no disposition is picked", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const d = await openRemove(user);
 
-    await user.click(panel().getByRole("radio", { name: /clear their area/i }));
-    await user.click(panel().getByRole("button", { name: /^retire$/i }));
+    const retire = d().getByRole("button", { name: /^retire$/i });
+    expect(retire).toBeDisabled();
+    retire.removeAttribute("disabled");
+    await user.click(retire);
+
+    expect(dispatchedCommands().filter((cmd) => cmd.kind === "remove-area")).toEqual([]);
+  });
+
+  it("dispatches the disposition the user chose", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const d = await openRemove(user);
+
+    await user.click(d().getByRole("radio", { name: /clear their area/i }));
+    await user.click(d().getByRole("button", { name: /^retire$/i }));
 
     expect(dispatchedCommand()).toEqual({
       kind: "remove-area",
@@ -337,28 +640,20 @@ describe("retiring an area that has members", () => {
     });
   });
 
-  // The server refuses a moveTo declared at or below the node being retired —
-  // that target is about to stop existing, so offering it would produce exactly
-  // the stranded state the member refusal exists to prevent.
+  // A moveTo at or below the retiring node names a target that is about to stop
+  // existing, and the server refuses it.
   it("does not offer the retiring area or its subtree as a destination", async () => {
-    const user = userEvent.setup();
-    const panel = await openRemove(user);
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const d = await openRemove(user);
 
-    expect(panel().getByRole("radio", { name: /docs/i })).toBeInTheDocument();
-    expect(panel().queryByRole("radio", { name: /web\/ui/i })).not.toBeInTheDocument();
-    expect(panel().queryByRole("radio", { name: /move them to web$/i })).not.toBeInTheDocument();
+    expect(d().getByRole("radio", { name: /docs/i })).toBeInTheDocument();
+    expect(d().queryByRole("radio", { name: /web\/ui/i })).not.toBeInTheDocument();
+    expect(d().queryByRole("radio", { name: /move them to web$/i })).not.toBeInTheDocument();
   });
 });
 
 describe("retiring an area whose member count cannot be read", () => {
-  beforeEach(() => {
-    mockExecute.mockReset().mockResolvedValue({ ok: true, data: {} });
-    mockQueryStore.mockReset();
-    mockSubscriptionStore.mockReset();
-    mockSubscriptionStore.mockReturnValue(
-      readable({ fetching: false, error: undefined, data: undefined, stale: false }) as any,
-    );
-  });
+  beforeEach(resetMocks);
 
   const treeAreas = createAreaVocabulary([
     { path: "docs", name: "docs", description: "", color: "", depth: 0 },
@@ -374,7 +669,7 @@ describe("retiring an area whose member count cannot be read", () => {
     });
   }
 
-  async function openRemove(user: ReturnType<typeof userEvent.setup>, state: Record<string, unknown>) {
+  async function openRemove(user: User, state: Record<string, unknown>) {
     routeMembers(state);
     render(TreeTable, {
       props: { filter: {}, viewLevel: "areas" as ViewLevel } as any,
@@ -382,10 +677,7 @@ describe("retiring an area whose member count cannot be read", () => {
         viewSpine: makeViewSpine(treeAreas),
       }),
     });
-    await user.click(within(sectionRow("web")).getByTestId("row-area-actions"));
-    const panel = () => within(screen.getByTestId("area-row-panel"));
-    await user.click(panel().getByRole("button", { name: /remove/i }));
-    return panel;
+    return openAreaDialog(user, "web", /remove/i);
   }
 
   /** A urql CombinedError as the read path delivers it. */
@@ -394,76 +686,71 @@ describe("retiring an area whose member count cannot be read", () => {
     graphQLErrors: [{ message: "the store could not be read" }],
   };
 
-  // `?? 0` turned "the query failed" into "nothing is assigned", which is the
-  // one sentence this form exists to avoid saying without knowing.
+  // `?? 0` would turn "the query failed" into "nothing is assigned".
   it("says the count is unknown rather than presenting the area as empty", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
-    const panel = await openRemove(user, {
+    const d = await openRemove(user, {
       fetching: false,
       error: boom,
       data: undefined,
       stale: false,
     });
 
-    await waitFor(() => expect(panel().getByTestId("area-remove-unknown")).toBeInTheDocument());
+    await waitFor(() => expect(d().getByTestId("area-remove-unknown")).toBeInTheDocument());
     expect(screen.queryByText(/and every area declared beneath it/i)).not.toBeInTheDocument();
-    expect(panel().getByTestId("area-edit-error")).toHaveTextContent("the store could not be read");
+    expect(d().getByTestId("area-edit-error")).toHaveTextContent("the store could not be read");
     // The transport prefix is urql's, and must not reach the user.
     expect(screen.queryByText(/\[GraphQL\]/)).not.toBeInTheDocument();
   });
 
   it("leaves Retire disabled, dispatching nothing when it is clicked", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
-    const panel = await openRemove(user, {
+    const d = await openRemove(user, {
       fetching: false,
       error: boom,
       data: undefined,
       stale: false,
     });
 
-    await waitFor(() => expect(panel().getByTestId("area-remove-unknown")).toBeInTheDocument());
-    const retire = panel().getByRole("button", { name: /^retire$/i });
+    await waitFor(() => expect(d().getByTestId("area-remove-unknown")).toBeInTheDocument());
+    const retire = d().getByRole("button", { name: /^retire$/i });
     expect(retire).toBeDisabled();
     await user.click(retire);
     expect(mockExecute).not.toHaveBeenCalled();
   });
 
-  // A partial result carries data AND an error: the list may be short, and a
-  // count that is short understates exactly the work the retirement strands.
+  // A partial result's list may be short, and a short count understates the
+  // work the retirement strands.
   it("treats a partial result as unknown, not as the count it happens to carry", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
-    const panel = await openRemove(user, {
+    const d = await openRemove(user, {
       fetching: false,
       error: boom,
       data: { nibs: [makeTreeTableNib({ id: "nibs-001", area: "web" })] },
       stale: false,
     });
 
-    await waitFor(() => expect(panel().getByTestId("area-remove-unknown")).toBeInTheDocument());
-    expect(panel().queryByTestId("area-remove-count")).not.toBeInTheDocument();
-    expect(panel().getByRole("button", { name: /^retire$/i })).toBeDisabled();
+    await waitFor(() => expect(d().getByTestId("area-remove-unknown")).toBeInTheDocument());
+    expect(d().queryByTestId("area-remove-count")).not.toBeInTheDocument();
+    expect(d().getByRole("button", { name: /^retire$/i })).toBeDisabled();
   });
 
-  // The same absence of knowledge with no error to explain it: a settled query
-  // that carried no data at all must not read as an empty area either.
   it("treats a settled query that carried no data as unknown", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
-    const panel = await openRemove(user, {
+    const d = await openRemove(user, {
       fetching: false,
       error: undefined,
       data: undefined,
       stale: false,
     });
 
-    await waitFor(() => expect(panel().getByTestId("area-remove-unknown")).toBeInTheDocument());
-    expect(panel().getByRole("button", { name: /^retire$/i })).toBeDisabled();
-    expect(panel().queryByTestId("area-edit-error")).not.toBeInTheDocument();
+    await waitFor(() => expect(d().getByTestId("area-remove-unknown")).toBeInTheDocument());
+    expect(d().getByRole("button", { name: /^retire$/i })).toBeDisabled();
+    expect(d().queryByTestId("area-edit-error")).not.toBeInTheDocument();
   });
 
-  // Asked network-only because urql's document cache never invalidates a result
-  // that came back EMPTY: an empty list carries no Nib typename for a later nib
-  // mutation to match, so a cached zero would arm the no-disposition retirement
-  // on an area that has gained members since.
+  // urql's document cache never invalidates an EMPTY result, so a cached zero
+  // would arm the no-disposition retirement on an area that has gained members.
   it("asks the server for the count rather than accepting a cached one", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     await openRemove(user, { fetching: false, error: undefined, data: { nibs: [] }, stale: false });
@@ -474,31 +761,25 @@ describe("retiring an area whose member count cannot be read", () => {
     expect(call?.[0]).toEqual(expect.objectContaining({ requestPolicy: "network-only" }));
   });
 
-  // A failed query being retried is still in flight, so it reads as checking
-  // rather than as a settled refusal.
   it("still reads as checking while a failed query refetches", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
-    const panel = await openRemove(user, {
+    const d = await openRemove(user, {
       fetching: true,
       error: boom,
       data: undefined,
       stale: false,
     });
 
-    expect(panel().queryByTestId("area-remove-unknown")).not.toBeInTheDocument();
-    expect(panel().queryByRole("button", { name: /^retire$/i })).not.toBeInTheDocument();
+    expect(d().queryByTestId("area-remove-unknown")).not.toBeInTheDocument();
+    expect(d().queryByRole("button", { name: /^retire$/i })).not.toBeInTheDocument();
     expect(screen.getByText(/checking what is assigned/i)).toBeInTheDocument();
   });
 });
 
 describe("an edit the server refuses", () => {
   beforeEach(() => {
+    resetMocks();
     mockExecute.mockReset();
-    mockQueryStore.mockReset();
-    mockSubscriptionStore.mockReset();
-    mockSubscriptionStore.mockReturnValue(
-      readable({ fetching: false, error: undefined, data: undefined, stale: false }) as any,
-    );
   });
 
   /** A rejected ARGUMENT: no extensions code, repaired by changing the input. */
@@ -507,50 +788,43 @@ describe("an edit the server refuses", () => {
     error: '[GraphQL] area "platform" already exists',
   };
 
-  async function attemptRename(user: ReturnType<typeof userEvent.setup>) {
+  async function attemptRename(user: User) {
     renderAreas(webAreas, [makeTreeTableNib({ id: "nibs-001", area: "web" })]);
-    await user.click(within(sectionRow("web")).getByTestId("row-area-actions"));
-    const panel = () => within(screen.getByTestId("area-row-panel"));
-    await user.click(panel().getByRole("button", { name: /rename/i }));
-    await user.clear(panel().getByTestId("area-name-input"));
-    await user.type(panel().getByTestId("area-name-input"), "platform");
-    await user.click(panel().getByRole("button", { name: /^rename$/i }));
-    return panel;
+    const d = await openAreaDialog(user, "web", /edit/i);
+    await user.clear(d().getByTestId("area-name-input"));
+    await user.type(d().getByTestId("area-name-input"), "platform");
+    await user.click(d().getByRole("button", { name: /^save$/i }));
+    return d;
   }
 
-  // The message is the part that says what is on disk and what to do about it,
-  // so it has to reach the user — but urql's "[GraphQL] " transport prefix must
-  // not, and this surface is where the user is most likely to read closely.
+  // The message says what is on disk and what to do about it; urql's
+  // "[GraphQL] " transport prefix must not reach the user.
   it("shows the server's sentence inline, without the transport prefix", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
     mockExecute.mockResolvedValue(refusal);
-    const panel = await attemptRename(user);
+    const d = await attemptRename(user);
 
     await waitFor(() =>
-      expect(panel().getByTestId("area-edit-error")).toHaveTextContent(
-        'area "platform" already exists',
-      ),
+      expect(d().getByTestId("area-edit-error")).toHaveTextContent('area "platform" already exists'),
     );
     expect(screen.queryByText(/\[GraphQL\]/)).not.toBeInTheDocument();
   });
 
-  // A rejected argument is repaired by CHANGING the argument, so the form stays
-  // open with what was typed still in it rather than closing over the failure.
-  it("keeps the form open and the declared vocabulary unchanged", async () => {
-    const user = userEvent.setup();
+  // A rejected argument is repaired by changing it, so the dialog stays open
+  // with what was typed still in it.
+  it("keeps the dialog open and the declared vocabulary unchanged", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
     mockExecute.mockResolvedValue(refusal);
-    const panel = await attemptRename(user);
+    const d = await attemptRename(user);
 
-    await waitFor(() => expect(panel().getByTestId("area-edit-error")).toBeInTheDocument());
-    expect(panel().getByTestId("area-name-input")).toHaveValue("platform");
-    // The row still reads "web": nothing was spliced into the local vocabulary.
+    await waitFor(() => expect(d().getByTestId("area-edit-error")).toBeInTheDocument());
+    expect(d().getByTestId("area-name-input")).toHaveValue("platform");
     expect(within(sectionRow("web")).getByTestId("title-text")).toHaveTextContent("web");
   });
 
-  // Without suppression the dispatcher raises its own toast, so the user reads
-  // the same refusal twice — once transient and once inline.
+  // Without suppression the dispatcher toasts the refusal the form already shows.
   it("suppresses the dispatcher's toast, since this surface owns the message", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
     mockExecute.mockResolvedValue(refusal);
     await attemptRename(user);
 
@@ -560,81 +834,54 @@ describe("an edit the server refuses", () => {
 
 describe("a successful edit that still owes the user a message", () => {
   beforeEach(() => {
+    resetMocks();
     mockExecute.mockReset();
-    mockToastWarning.mockReset();
-    mockQueryStore.mockReset();
-    mockSubscriptionStore.mockReset();
-    mockSubscriptionStore.mockReturnValue(
-      readable({ fetching: false, error: undefined, data: undefined, stale: false }) as any,
-    );
   });
 
-  // The one note the server sends today: the store's areas.yml was a symlink and
-  // the edit replaced it with a regular file.
-  const note =
-    "areas.yml was a symbolic link and has been replaced with a regular file";
+  // The one note the server sends today.
+  const note = "areas.yml was a symbolic link and has been replaced with a regular file";
 
-  async function renameSucceedingWith(
-    user: ReturnType<typeof userEvent.setup>,
-    notes: string[],
-  ) {
+  async function renameSucceedingWith(user: User, notes: string[]) {
     mockExecute.mockResolvedValue({
       ok: true,
       data: { updateArea: { config: {}, notes } },
     });
     renderAreas(webAreas, [makeTreeTableNib({ id: "nibs-001", area: "web" })]);
-    await user.click(within(sectionRow("web")).getByTestId("row-area-actions"));
-    const panel = () => within(screen.getByTestId("area-row-panel"));
-    await user.click(panel().getByRole("button", { name: /rename/i }));
-    await user.clear(panel().getByTestId("area-name-input"));
-    await user.type(panel().getByTestId("area-name-input"), "platform");
-    await user.click(panel().getByRole("button", { name: /^rename$/i }));
+    const d = await openAreaDialog(user, "web", /edit/i);
+    await user.clear(d().getByTestId("area-name-input"));
+    await user.type(d().getByTestId("area-name-input"), "platform");
+    await user.click(d().getByRole("button", { name: /^save$/i }));
   }
 
-  // The edit SUCCEEDED, so there is no error to show and the form closes — but
-  // every note is something the caller has to act on, so it has to outlive the
-  // form. It must also not time out on its own: a notice that disappears is one
-  // the user can miss entirely.
+  // The dialog closes on success, so each note has to outlive it, and a notice
+  // that times out is one the user can miss.
   it("surfaces a note that arrives with a successful edit, and does not auto-dismiss it", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
     await renameSucceedingWith(user, [note]);
 
     await waitFor(() =>
-      expect(mockToastWarning).toHaveBeenCalledWith(
-        note,
-        expect.objectContaining({ duration: Infinity }),
-      ),
+      expect(mockToastWarning).toHaveBeenCalledWith(note, expect.objectContaining({ duration: Infinity })),
     );
   });
 
   it("surfaces every note, not just the first", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
     await renameSucceedingWith(user, [note, "a second thing to act on"]);
 
     await waitFor(() => expect(mockToastWarning).toHaveBeenCalledTimes(2));
   });
 
-  // Notes are empty for an ordinary edit, which must stay silent — otherwise the
-  // channel reserved for "you must act on this" becomes routine noise.
   it("says nothing when the edit carried no notes", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
     await renameSucceedingWith(user, []);
 
-    await waitFor(() => expect(screen.queryByTestId("area-row-panel")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByTestId("area-form-dialog")).not.toBeInTheDocument());
     expect(mockToastWarning).not.toHaveBeenCalled();
   });
 });
 
 describe("a change another process made to the vocabulary", () => {
-  beforeEach(() => {
-    mockExecute.mockReset().mockResolvedValue({ ok: true, data: {} });
-    mockToastWarning.mockReset();
-    mockQueryStore.mockReset();
-    mockSubscriptionStore.mockReset();
-    mockSubscriptionStore.mockReturnValue(
-      readable({ fetching: false, error: undefined, data: undefined, stale: false }) as any,
-    );
-  });
+  beforeEach(resetMocks);
 
   const webOnly = createAreaVocabulary([
     { path: "web", name: "web", description: "", color: "", depth: 0 },
@@ -646,12 +893,11 @@ describe("a change another process made to the vocabulary", () => {
 
   /**
    * App hands the spine down as a GETTER over a `$derived`, so its identity
-   * changes when `configChanged` delivers a new config. Mirrored here with a
-   * reactive holder: a component that read the vocabulary once, at mount, still
-   * satisfies a plain closure and would pass without this.
+   * changes when `configChanged` delivers a new config. A reactive holder
+   * mirrors that here.
    */
-  it("reaches an already-open editor, with no refresh path of its own", async () => {
-    const user = userEvent.setup();
+  it("reaches an already-open dialog, with no refresh path of its own", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
     const holder = $state({ spine: makeViewSpine(webOnly) });
     const context = makeTestContext(new SelectionState(), new DragState());
     context.set(VIEW_SPINE_KEY, () => holder.spine);
@@ -670,27 +916,20 @@ describe("a change another process made to the vocabulary", () => {
       context,
     });
 
-    await user.click(within(sectionRow("web")).getByTestId("row-area-actions"));
-    const panel = () => within(screen.getByTestId("area-row-panel"));
-    await user.click(panel().getByRole("button", { name: /remove/i }));
-    await waitFor(() => expect(panel().getByTestId("area-remove-count")).toBeInTheDocument());
+    const d = await openAreaDialog(user, "web", /remove/i);
+    await waitFor(() => expect(d().getByTestId("area-remove-count")).toBeInTheDocument());
 
-    // Nothing to move the members to yet: web is the only declared area, and it
-    // is the one being retired.
-    expect(panel().queryByRole("radio", { name: /move them to docs/i })).not.toBeInTheDocument();
+    // web is the only declared area, and it is the one being retired.
+    expect(d().queryByRole("radio", { name: /move them to docs/i })).not.toBeInTheDocument();
 
-    // Another process declares `docs`; the config push replaces the vocabulary.
-    // The panel is NOT remounted by this — it is keyed by path, and the path is
-    // unchanged — so the open form has to be reading the vocabulary live.
+    // The push does not remount the open dialog, so the form has to read the vocabulary live.
     holder.spine = makeViewSpine(webAndDocs);
 
     await waitFor(() =>
-      expect(panel().getByRole("radio", { name: /move them to docs/i })).toBeInTheDocument(),
+      expect(d().getByRole("radio", { name: /move them to docs/i })).toBeInTheDocument(),
     );
   });
 
-  // The same push, seen by the table behind the panel: a newly declared area
-  // gets its own section row without anything asking for a reload.
   it("adds the new area's section row to the table underneath", async () => {
     const holder = $state({ spine: makeViewSpine(webOnly) });
     const context = makeTestContext(new SelectionState(), new DragState());
@@ -718,15 +957,8 @@ describe("a change another process made to the vocabulary", () => {
   });
 });
 
-describe("an area whose panel is open going away underneath it", () => {
-  beforeEach(() => {
-    mockExecute.mockReset().mockResolvedValue({ ok: true, data: {} });
-    mockQueryStore.mockReset();
-    mockSubscriptionStore.mockReset();
-    mockSubscriptionStore.mockReturnValue(
-      readable({ fetching: false, error: undefined, data: undefined, stale: false }) as any,
-    );
-  });
+describe("an area going away while its menu or dialog is open", () => {
+  beforeEach(resetMocks);
 
   const webAndDocs = createAreaVocabulary([
     { path: "docs", name: "docs", description: "", color: "", depth: 0 },
@@ -743,14 +975,8 @@ describe("an area whose panel is open going away underneath it", () => {
     { path: "platform", name: "platform", description: "", color: "", depth: 0 },
   ]);
 
-  /**
-   * Open the panel on `web`, over a spine the caller then replaces — the shape a
-   * config push takes, since App hands the spine down as a getter.
-   */
-  async function openPanelOverSpine(
-    user: ReturnType<typeof userEvent.setup>,
-    initial: AreaVocabulary,
-  ) {
+  /** Render over a spine the caller then replaces, as a config push does. */
+  function renderOverSpine(initial: AreaVocabulary) {
     const holder = $state({ spine: makeViewSpine(initial) });
     const context = makeTestContext(new SelectionState(), new DragState());
     context.set(VIEW_SPINE_KEY, () => holder.spine);
@@ -768,190 +994,63 @@ describe("an area whose panel is open going away underneath it", () => {
       props: { filter: {}, viewLevel: "areas" as ViewLevel } as any,
       context,
     });
-
-    await user.click(within(sectionRow("web")).getByTestId("row-area-actions"));
-    await waitFor(() => expect(screen.getByTestId("area-row-panel")).toBeInTheDocument());
     return holder;
   }
 
-  // The one dismissal the Popover cannot answer: it involves neither a pointer
-  // nor a keystroke. Retiring the area destroys the row and the [⋯] it is
-  // anchored to, and bits-ui answers a vanished anchor by HIDING its wrapper —
-  // so without this the panel stays mounted and invisible, holding whatever
-  // draft or disposition the user had chosen.
-  it("closes the panel when the push retires the area it was opened on", async () => {
+  // Every form in the dialog sends the path, and the push has retired it.
+  it("a push retiring the area closes its open dialog", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
-    const holder = await openPanelOverSpine(user, webAndDocs);
+    const holder = renderOverSpine(webAndDocs);
+    await openAreaDialog(user, "web", /edit/i);
 
     holder.spine = makeViewSpine(docsOnly);
 
-    await waitFor(() => expect(screen.queryByTestId("area-row-panel")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByTestId("area-form-dialog")).not.toBeInTheDocument());
   });
 
-  // A rename is the same loss seen from the other side: the path the panel acts
-  // on is gone, and every form in it sends that path.
-  it("closes the panel when the push renames the area out from under it", async () => {
+  it("a push renaming the area closes its open dialog", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
-    const holder = await openPanelOverSpine(user, webAndDocs);
+    const holder = renderOverSpine(webAndDocs);
+    await openAreaDialog(user, "web", /edit/i);
 
     holder.spine = makeViewSpine(platformAndDocs);
 
-    await waitFor(() => expect(screen.queryByTestId("area-row-panel")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByTestId("area-form-dialog")).not.toBeInTheDocument());
   });
 
-  // The other direction, and the reason the check reads the vocabulary rather
-  // than the anchor node: a push replaces the spine wholesale, and an open panel
-  // on an area the push still declares must survive it.
-  it("leaves the panel open when the push declares another area", async () => {
+  // The menu hangs off the row the push destroys.
+  it("a push retiring the area closes its open menu", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
-    const holder = await openPanelOverSpine(user, webOnly);
+    const holder = renderOverSpine(webAndDocs);
+    await openAreaMenu(user, "web");
+
+    holder.spine = makeViewSpine(docsOnly);
+
+    await waitFor(() => expect(areaMenu()).toBeNull());
+  });
+
+  // A push replaces the spine wholesale, so a dialog on an area it still
+  // declares must survive it.
+  it("leaves the dialog open when the push declares another area", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const holder = renderOverSpine(webOnly);
+    await openAreaDialog(user, "web", /edit/i);
 
     holder.spine = makeViewSpine(webAndDocs);
 
     await waitFor(() => expect(sectionRow("docs")).toBeInTheDocument());
-    expect(screen.getByTestId("area-row-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("area-form-dialog")).toBeInTheDocument();
   });
 
-  // The nearest miss to a spurious close: a push that retires a DIFFERENT area
-  // destroys that row and rebuilds the table, leaving the open panel's own area
-  // declared.
-  it("leaves the panel open when the push retires a different area", async () => {
+  it("leaves the dialog open when the push retires a different area", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
-    const holder = await openPanelOverSpine(user, webAndDocs);
+    const holder = renderOverSpine(webAndDocs);
+    await openAreaDialog(user, "web", /edit/i);
 
     holder.spine = makeViewSpine(webOnly);
 
     await waitFor(() => expect(() => sectionRow("docs")).toThrow());
-    expect(screen.getByTestId("area-row-panel")).toBeInTheDocument();
-  });
-});
-
-describe("backing out of the area row panel", () => {
-  beforeEach(() => {
-    mockExecute.mockReset().mockResolvedValue({ ok: true, data: {} });
-    mockQueryStore.mockReset();
-    mockSubscriptionStore.mockReset();
-    mockSubscriptionStore.mockReturnValue(
-      readable({ fetching: false, error: undefined, data: undefined, stale: false }) as any,
-    );
-  });
-
-  /** Open the panel on the "web" section row and hand back its trigger. */
-  async function openPanel(user: ReturnType<typeof userEvent.setup>) {
-    renderAreas(webAreas, [makeTreeTableNib({ id: "nibs-001", area: "web" })]);
-    const trigger = within(sectionRow("web")).getByTestId("row-area-actions");
-    await user.click(trigger);
-    await waitFor(() => expect(screen.getByTestId("area-row-panel")).toBeInTheDocument());
-    return trigger;
-  }
-
-  // A user who opens the menu and changes their mind must be able to leave. With
-  // no dismissal the panel stays pinned over the table for the rest of the page's
-  // life, because every form closes it only after a mutation LANDS.
-  it("closes on Escape, and the [⋯] opens it again", async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
-    const trigger = await openPanel(user);
-
-    await user.keyboard("{Escape}");
-    await waitFor(() => expect(screen.queryByTestId("area-row-panel")).not.toBeInTheDocument());
-
-    // Re-opening is what proves the TABLE forgot the panel. bits-ui unmounts its
-    // own content either way, so a dismissal that left `areaPanel` set would look
-    // identical at this point — until the next [⋯] click toggled that stale
-    // entry closed and opened nothing.
-    await user.click(trigger);
-    await waitFor(() => expect(screen.getByTestId("area-row-panel")).toBeInTheDocument());
-  });
-
-  // The pointerdown carries coordinates on purpose. bits-ui decides "outside"
-  // with rect math — `isClickTrulyOutside` compares clientX/clientY against the
-  // layer's getBoundingClientRect() — and jsdom reports every rect as 0x0 at the
-  // origin, so the (0,0) a synthesized click carries reads as INSIDE the panel
-  // and dismisses nothing. The gesture is real in a browser; only the geometry
-  // has to be supplied here.
-  it("closes when a pointer interaction lands outside it, and the [⋯] opens it again", async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
-    const trigger = await openPanel(user);
-
-    await fireEvent.pointerDown(document.body, { clientX: 500, clientY: 500 });
-    await waitFor(() => expect(screen.queryByTestId("area-row-panel")).not.toBeInTheDocument());
-
-    // As above: the reopen is the half that reaches the table's own state.
-    await user.click(trigger);
-    await waitFor(() => expect(screen.getByTestId("area-row-panel")).toBeInTheDocument());
-  });
-
-  // The [⋯] is the one gesture a user reaches for to get the menu back, so it has
-  // to answer rather than look like it did nothing.
-  it("closes when the same row's [⋯] is clicked again", async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
-    const trigger = await openPanel(user);
-
-    await user.click(trigger);
-
-    await waitFor(() => expect(screen.queryByTestId("area-row-panel")).not.toBeInTheDocument());
-  });
-
-  // The [⋯] of ANOTHER row is both an outside interaction and an open request.
-  // It has to re-point the panel rather than dismiss it, which is what makes the
-  // gesture reach the second row's menu in one click.
-  it("moves to another row's menu when that row's [⋯] is clicked", async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
-    renderAreas(
-      createAreaVocabulary([
-        { path: "docs", name: "docs", description: "", color: "", depth: 0 },
-        { path: "web", name: "web", description: "", color: "", depth: 0 },
-      ]),
-      [makeTreeTableNib({ id: "nibs-001", area: "web" })],
-    );
-
-    await user.click(within(sectionRow("web")).getByTestId("row-area-actions"));
-    await waitFor(() => expect(screen.getByTestId("area-row-panel")).toBeInTheDocument());
-
-    await user.click(within(sectionRow("docs")).getByTestId("row-area-actions"));
-
-    await waitFor(() =>
-      expect(within(screen.getByTestId("area-row-panel")).getByText("docs")).toBeInTheDocument(),
-    );
-  });
-
-  // Cancel inside a sub-form is a step BACK, not a dismissal: the menu is where
-  // the user came from, and destroying the panel instead costs them another [⋯].
-  it("returns to the menu when a sub-form is canceled, leaving the panel open", async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
-    await openPanel(user);
-    const panel = () => within(screen.getByTestId("area-row-panel"));
-
-    await user.click(panel().getByRole("button", { name: /add child/i }));
-    await waitFor(() => expect(panel().getByTestId("area-declare-form")).toBeInTheDocument());
-    await user.click(panel().getByRole("button", { name: /^cancel$/i }));
-
-    await waitFor(() => expect(screen.queryByTestId("area-declare-form")).not.toBeInTheDocument());
-    expect(screen.getByTestId("area-row-panel")).toBeInTheDocument();
-    expect(panel().getByRole("button", { name: /add child/i })).toBeInTheDocument();
-    expect(mockExecute).not.toHaveBeenCalled();
-  });
-
-  // Re-opening must present the MENU, not the sub-form the panel was left in with
-  // the previous draft still in its input.
-  it("re-opens on the menu rather than the sub-form it was left in", async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
-    const trigger = await openPanel(user);
-
-    await user.click(screen.getByTestId("area-row-panel").querySelector("button")!);
-    await user.click(within(screen.getByTestId("area-row-panel")).getByRole("button", { name: /^rename$/i }));
-    await waitFor(() =>
-      expect(within(screen.getByTestId("area-row-panel")).getByTestId("area-name-input")).toBeInTheDocument(),
-    );
-
-    await user.click(trigger);
-    await waitFor(() => expect(screen.queryByTestId("area-row-panel")).not.toBeInTheDocument());
-    await user.click(trigger);
-    await waitFor(() => expect(screen.getByTestId("area-row-panel")).toBeInTheDocument());
-
-    const panel = within(screen.getByTestId("area-row-panel"));
-    expect(panel.queryByTestId("area-name-input")).not.toBeInTheDocument();
-    expect(panel.getByRole("button", { name: /add child/i })).toBeInTheDocument();
+    expect(screen.getByTestId("area-form-dialog")).toBeInTheDocument();
   });
 });
 
@@ -991,71 +1090,6 @@ describe("backing out of the empty-areas declare form", () => {
 
     await waitFor(() => expect(screen.queryByTestId("area-declare-form")).not.toBeInTheDocument());
     expect(screen.getByRole("button", { name: /declare an area/i })).toBeInTheDocument();
-    expect(mockExecute).not.toHaveBeenCalled();
-  });
-});
-
-describe("editing an area's description and color", () => {
-  beforeEach(() => {
-    mockExecute.mockReset().mockResolvedValue({ ok: true, data: {} });
-    mockQueryStore.mockReset();
-    mockSubscriptionStore.mockReset();
-    mockSubscriptionStore.mockReturnValue(
-      readable({ fetching: false, error: undefined, data: undefined, stale: false }) as any,
-    );
-  });
-
-  /** Open the details form on the "web" section row. */
-  async function openDetails(user: ReturnType<typeof userEvent.setup>) {
-    renderAreas(describedAreas, [makeTreeTableNib({ id: "nibs-001", area: "web" })]);
-    await user.click(within(sectionRow("web")).getByTestId("row-area-actions"));
-    const panel = () => within(screen.getByTestId("area-row-panel"));
-    await user.click(panel().getByRole("button", { name: /description/i }));
-    return panel;
-  }
-
-  // An untouched field must be left OUT rather than echoed back: echoing is
-  // indistinguishable from an edit on the wire, and it would overwrite a change
-  // another process made to the field this user never looked at.
-  it("sends only the field the edit changed", async () => {
-    const user = userEvent.setup();
-    const panel = await openDetails(user);
-
-    await user.clear(panel().getByTestId("area-description-input"));
-    await user.type(panel().getByTestId("area-description-input"), "Everything in the browser");
-    await user.click(panel().getByRole("button", { name: /^save$/i }));
-
-    const cmd = dispatchedCommand() as Record<string, unknown>;
-    expect(cmd).toEqual({
-      kind: "update-area",
-      path: "web",
-      description: "Everything in the browser",
-    });
-    expect(cmd).not.toHaveProperty("color");
-    expect(cmd).not.toHaveProperty("newName");
-  });
-
-  // The other half of "omitted is not empty": emptying the box is a real edit
-  // that CLEARS the key, so "" has to be sent rather than treated as untouched.
-  it("clears a field by sending it empty", async () => {
-    const user = userEvent.setup();
-    const panel = await openDetails(user);
-
-    await user.clear(panel().getByTestId("area-description-input"));
-    await user.click(panel().getByRole("button", { name: /^save$/i }));
-
-    const cmd = dispatchedCommand() as Record<string, unknown>;
-    expect(cmd).toEqual({ kind: "update-area", path: "web", description: "" });
-  });
-
-  // The server refuses an input that sets none of the three, so a save with
-  // nothing edited must not become a refusal the user has to read.
-  it("never reaches the wire when nothing was edited", async () => {
-    const user = userEvent.setup();
-    const panel = await openDetails(user);
-
-    await user.click(panel().getByRole("button", { name: /^save$/i }));
-
     expect(mockExecute).not.toHaveBeenCalled();
   });
 });

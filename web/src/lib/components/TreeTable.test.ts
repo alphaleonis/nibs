@@ -4809,9 +4809,10 @@ describe("view transition reconcile", () => {
  * A section row no nib heads carries a `data-nib-id` so delegation reaches it,
  * but names no nib for the menu's entries to resolve: Open and Edit both route
  * that id through `view.open`, which then reported it as a nib that had gone
- * away ("Nib /section:web/dashboard_ no longer exists"). The menu is not offered
- * on such a row at all — the same answer selection, actionTarget and dropZone
- * already give a synthetic id.
+ * away ("Nib /section:web/dashboard_ no longer exists"). The row menu is not
+ * offered on such a row at all — the same answer selection, actionTarget and
+ * dropZone already give a synthetic id. A declared area's row opens the area
+ * menu instead (TreeTable.areaEditor.svelte.test.ts).
  */
 describe("TreeTable — the row context menu on a section header", () => {
   beforeEach(() => {

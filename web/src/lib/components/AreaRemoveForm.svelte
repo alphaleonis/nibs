@@ -26,9 +26,8 @@
   // Asked of the SERVER rather than counted from the table's rows: the `area:`
   // filter is downward-closed, so this covers the whole subtree, and the table's
   // own rows are narrowed by whatever filter is active.
-  // Read once: one instance of this form serves one area, because TreeTable keys
-  // the panel by path and so a different section row remounts it rather than
-  // re-pointing this query at a new area underneath an open form.
+  // Read once: TreeTable remounts the dialog for each area it opens on, so one
+  // instance of this form serves one area.
   // network-only: urql's document cache never invalidates a result that came back
   // EMPTY, because an empty list carries no Nib typename for a later nib mutation
   // to match. A cached zero would arm the no-disposition retirement on an area
