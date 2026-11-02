@@ -558,7 +558,7 @@ func countStoreFiles(t *testing.T, nibsPath string) (total int, oldPrefixed []st
 
 // TestAreaCascadeWritesThePathsTheStoreHasNowIsTheAreaSideOfTheSameDefect.
 //
-// An `area rename` (or `area rm`) that parks on the store lock behind a
+// An `area set --name` (or `area rm`) that parks on the store lock behind a
 // `config set-prefix` resumes holding the paths it loaded BEFORE that rename.
 // Writing a clone to one of them used to CREATE the file — resurrecting the nib
 // at its pre-rename path, so the store ended up with one more file than it
@@ -696,7 +696,7 @@ func TestAreaRetireRefusesAMoveToTargetRetiredUnderTheLock(t *testing.T) {
 		t.Errorf("code = %q (exit %d), want %q (exit %d) — the store moved under the command, which is not bad input",
 			code, output.ExitCode(code), output.ErrFileError, output.ExitCode(output.ErrFileError))
 	}
-	for _, want := range []string{"infra", "when this command started"} {
+	for _, want := range []string{"infra", "retired or renamed by another edit"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error = %q, want substring %q", err.Error(), want)
 		}
@@ -717,9 +717,9 @@ func TestAreaRetireRefusesAMoveToTargetRetiredUnderTheLock(t *testing.T) {
 // question is asked of the vocabulary the store declares NOW, not of the one
 // this process loaded.
 //
-// A concurrent `area rename api/webhooks hooks` moves a member onto a path the
-// waiting process never loaded. Deciding membership from that snapshot skips it,
-// so the verb retires or renames its parent out from under a nib it never
+// A concurrent `area set api/webhooks --name hooks` moves a member onto a path
+// the waiting process never loaded. Deciding membership from that snapshot skips
+// it, so the verb retires or renames its parent out from under a nib it never
 // rewrote — the same permanent write refusal, reached from the other direction.
 func TestAreaEditsCascadeThroughTheVocabularyDeclaredUnderTheLock(t *testing.T) {
 	tests := []struct {
@@ -795,10 +795,10 @@ func TestAreaSetRefusesABadNameWithoutTakingTheStoreLock(t *testing.T) {
 		// wording of a clause that had to lose for this row to mean anything.
 		unwanted string
 	}{
-		{name: "an empty new name", args: []string{"web", ""}, want: "needs a name"},
+		{name: "an empty new name", args: []string{"web", ""}, want: "--name is empty"},
 		{name: "a new name that is only whitespace padding", args: []string{"web", " frontend"}, want: "whitespace"},
-		{name: "a new name over the bound an edit may write", args: []string{"web", strings.Repeat("a", 201)}, want: "bounded at 200"},
-		{name: "a path where a name belongs", args: []string{"web/dashboard", "web/panel"}, want: "not a name"},
+		{name: "a new name over the bound an edit may write", args: []string{"web", strings.Repeat("a", 201)}, want: "at most 200 characters"},
+		{name: "a path where a name belongs", args: []string{"web/dashboard", "web/panel"}, want: `contains "/"`},
 		// Both clauses match this one, and only the separator clause can print a
 		// spelling that works — so it has to be asked first. Ordered the other
 		// way this reported the length of the whole path and the caller was left
@@ -806,7 +806,7 @@ func TestAreaSetRefusesABadNameWithoutTakingTheStoreLock(t *testing.T) {
 		{
 			name: "a path where a name belongs, long enough to trip the bound too",
 			args: []string{"web/dashboard", "web/" + strings.Repeat("a", 198)},
-			want: "give the name alone", unwanted: "bounded at 200",
+			want: "give only the new name", unwanted: "at most 200 characters",
 		},
 		{name: "the name the node already has", args: []string{"api/webhooks", "webhooks"}, want: "already named"},
 	}
@@ -849,7 +849,7 @@ func TestAreaSetRefusesABadNameWithoutTakingTheStoreLock(t *testing.T) {
 					t.Errorf("error = %q, want it to carry no %q", err.Error(), tt.unwanted)
 				}
 			case <-time.After(10 * time.Second):
-				t.Fatalf("`area rename %v` is still waiting for the store's write lock — the two arguments alone refuse it, and nothing is printed while it waits", tt.args)
+				t.Fatalf("`area set %s --name %q` is still waiting for the store's write lock — the two arguments alone refuse it, and nothing is printed while it waits", tt.args[0], tt.args[1])
 			}
 		})
 	}
@@ -899,7 +899,7 @@ func TestAreaEditRefusesAVanishedVocabularyRatherThanBlamingAnotherProcess(t *te
 				t.Errorf("code = %q (exit %d), want %q (exit %d)",
 					code, output.ExitCode(code), output.ErrFileError, output.ExitCode(output.ErrFileError))
 			}
-			for _, want := range []string{"areas.yml", "does not exist"} {
+			for _, want := range []string{"areas.yml", "was deleted"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("error = %q, want substring %q", err.Error(), want)
 				}
@@ -965,7 +965,7 @@ func TestAreaEditOnAStoreThatNeverHadAVocabularyRefusesAsUndeclaredAreas(t *test
 				t.Errorf("code = %q (exit %d), want %q (exit %d) — the store is undamaged, so this is bad input and not a broken filesystem",
 					code, output.ExitCode(code), output.ErrValidation, output.ExitCode(output.ErrValidation))
 			}
-			for _, want := range []string{"declares no areas", "there is none to " + tt.verb, "`areas:` block"} {
+			for _, want := range []string{"this store has no areas in", "areas.yml", "there is none to " + tt.verb, "Create an area first"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("error = %q, want substring %q", err.Error(), want)
 				}
@@ -993,8 +993,8 @@ func TestAreaSetReportsAnUndeclaredPathBeforeTheNameShape(t *testing.T) {
 		unwanted string
 	}{
 		{name: "the name the path's last segment already has", args: []string{"api/hooks", "hooks"}, unwanted: "already named"},
-		{name: "a path where a name belongs", args: []string{"api/hooks", "api/other"}, unwanted: "is not a name"},
-		{name: "an empty new name", args: []string{"api/hooks", ""}, unwanted: "needs a name"},
+		{name: "a path where a name belongs", args: []string{"api/hooks", "api/other"}, unwanted: `contains "/"`},
+		{name: "an empty new name", args: []string{"api/hooks", ""}, unwanted: "--name is empty"},
 		{name: "a new name that is only whitespace padding", args: []string{"api/hooks", " hooks"}, unwanted: "whitespace"},
 	}
 
@@ -1013,18 +1013,13 @@ func TestAreaSetReportsAnUndeclaredPathBeforeTheNameShape(t *testing.T) {
 			if code := areaErrCode(t, err); code != output.ErrValidation {
 				t.Errorf("code = %q, want %q", code, output.ErrValidation)
 			}
-			for _, want := range []string{`no area "api/hooks"`, "the declared areas are"} {
+			for _, want := range []string{`no area "api/hooks"`, "Its areas are"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("error = %q, want substring %q — the typo in the path is what the caller has to see", err.Error(), want)
 				}
 			}
 			if strings.Contains(err.Error(), tt.unwanted) {
 				t.Errorf("error = %q — it answers about the name over an area this store does not declare", err.Error())
-			}
-			// The separator branch's prescription is the sharpest form: a
-			// runnable command the tool refuses the moment it is run.
-			if strings.Contains(err.Error(), "nibs area rename api/hooks") {
-				t.Errorf("error = %q — it prescribes a command that refuses with this same message", err.Error())
 			}
 		})
 	}
@@ -1076,12 +1071,12 @@ func TestAreaEditRefusesAPathRetiredUnderTheLock(t *testing.T) {
 				t.Errorf("code = %q (exit %d), want %q (exit %d)",
 					code, output.ExitCode(code), output.ErrFileError, output.ExitCode(output.ErrFileError))
 			}
-			for _, want := range []string{"auth", "when this command started"} {
+			for _, want := range []string{"auth", "retired or renamed by another edit"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("error = %q, want substring %q", err.Error(), want)
 				}
 			}
-			// The refusal says "nothing was written", so nothing may have been.
+			// The refusal says "nothing was changed", so nothing may have been.
 			if got := areaVocabulary(t, nibsPath); !slices.Equal(got, vocabBefore) {
 				t.Errorf("vocabulary = %v, want %v — the refused edit rewrote the declaration", got, vocabBefore)
 			}
@@ -1172,7 +1167,7 @@ func TestAreaEditsStopWaitingForTheStoreLockWhenTheCommandEnds(t *testing.T) {
 				if code := areaErrCode(t, err); code != output.ErrFileError {
 					t.Errorf("code = %q, want %q — a wait that was cut short is rerunnable, not bad input", code, output.ErrFileError)
 				}
-				for _, want := range []string{"nothing was written", "still waiting for the store's write lock", "rerun it"} {
+				for _, want := range []string{"nothing was changed", "while it waited for another edit to the store to finish", "Run it again"} {
 					if !strings.Contains(err.Error(), want) {
 						t.Errorf("error = %q, want substring %q", err.Error(), want)
 					}

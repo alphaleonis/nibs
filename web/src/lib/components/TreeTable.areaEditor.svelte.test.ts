@@ -50,10 +50,13 @@ vi.mock("$lib/mutations", async () => {
 // Spreads the real toast object: `warning` genuinely exists on svelte-sonner
 // 1.1.1, so overriding it here replaces a real method rather than inventing one
 // the app would fail on outside the test.
-const { mockToastWarning } = vi.hoisted(() => ({ mockToastWarning: vi.fn() }));
+const { mockToastWarning, mockToastSuccess } = vi.hoisted(() => ({
+  mockToastWarning: vi.fn(),
+  mockToastSuccess: vi.fn(),
+}));
 vi.mock("svelte-sonner", async () => {
   const actual = await vi.importActual<typeof import("svelte-sonner")>("svelte-sonner");
-  return { ...actual, toast: { ...actual.toast, warning: mockToastWarning } };
+  return { ...actual, toast: { ...actual.toast, warning: mockToastWarning, success: mockToastSuccess } };
 });
 
 // jsdom has no elementFromPoint, which the drag move handler calls.
@@ -114,6 +117,7 @@ function renderAreas(
 function resetMocks() {
   mockExecute.mockReset().mockResolvedValue({ ok: true, data: {} });
   mockToastWarning.mockReset();
+  mockToastSuccess.mockReset();
   mockQueryStore.mockReset();
   mockSubscriptionStore.mockReset();
   mockSubscriptionStore.mockReturnValue(
@@ -143,6 +147,26 @@ async function openAreaDialog(user: User, label: string, item: RegExp) {
   // lands in whichever field the deferred focus then steals.
   await waitFor(() => expect(el.contains(document.activeElement)).toBe(true));
   return dialog;
+}
+
+/** Open the empty-areas panel's dialog from its "Create an area" button. */
+async function openNewAreaDialog(user: User) {
+  await user.click(screen.getByRole("button", { name: /create an area/i }));
+  const el = await screen.findByTestId("new-area-dialog");
+  await waitFor(() => expect(el.contains(document.activeElement)).toBe(true));
+  return () => within(screen.getByTestId("new-area-dialog"));
+}
+
+/** Assert the create form's layout: the path input above a footer band holding Cancel and a primary Create. */
+function expectCreateFooter(d: ReturnType<typeof within>) {
+  const cancels = d.getAllByRole("button", { name: /^cancel$/i });
+  expect(cancels).toHaveLength(1);
+  const create = d.getByRole("button", { name: /^create$/i });
+  const footer = create.closest('[data-slot="dialog-footer"]');
+  expect(footer).not.toBeNull();
+  expect(cancels[0].closest('[data-slot="dialog-footer"]')).toBe(footer);
+  expect(d.getByTestId("area-path-input").closest('[data-slot="dialog-footer"]')).toBeNull();
+  expect(create).toHaveClass("bg-primary");
 }
 
 /** The commands of every `execute` call, in order. */
@@ -196,11 +220,25 @@ describe("declaring an area from the empty-areas state", () => {
     const user = userEvent.setup();
     renderAreas(EMPTY_AREAS);
 
-    await user.click(screen.getByRole("button", { name: /declare an area/i }));
-    await user.type(screen.getByTestId("area-path-input"), "web");
-    await user.click(screen.getByRole("button", { name: /^declare$/i }));
+    const d = await openNewAreaDialog(user);
+    await user.type(d().getByTestId("area-path-input"), "web");
+    await user.click(d().getByRole("button", { name: /^create$/i }));
 
     expect(dispatchedCommand()).toEqual(expect.objectContaining({ kind: "add-area", path: "web" }));
+  });
+
+  // This panel is drawn only in the Areas view, where the new area is already in sight.
+  it("confirms the create with a toast that offers no Show", async () => {
+    mockToastSuccess.mockReset();
+    const user = userEvent.setup();
+    renderAreas(EMPTY_AREAS);
+
+    const d = await openNewAreaDialog(user);
+    await user.type(d().getByTestId("area-path-input"), "web");
+    await user.click(d().getByRole("button", { name: /^create$/i }));
+
+    await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledTimes(1));
+    expect(mockToastSuccess).toHaveBeenCalledWith("Created area web", undefined);
   });
 });
 
@@ -391,12 +429,23 @@ describe("declaring a child area from a section row", () => {
 
     const d = await openAreaDialog(user, "web", /add child/i);
     await user.type(d().getByTestId("area-path-input"), "dashboard");
-    await user.click(d().getByRole("button", { name: /^declare$/i }));
+    await user.click(d().getByRole("button", { name: /^create$/i }));
 
     expect(dispatchedCommands()).toEqual([
       expect.objectContaining({ kind: "add-area", path: "web/dashboard" }),
     ]);
     await waitFor(() => expect(screen.queryByTestId("area-form-dialog")).toBeNull());
+    // Section rows exist only in the Areas view, so the toast offers no Show.
+    expect(mockToastSuccess).toHaveBeenCalledWith("Created area web/dashboard", undefined);
+  });
+
+  it("puts Cancel and a primary Create on one action row", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    renderAreas(webAreas, [makeTreeTableNib({ id: "nibs-001", area: "web" })]);
+
+    const d = await openAreaDialog(user, "web", /add child/i);
+
+    expectCreateFooter(d());
   });
 });
 
@@ -706,7 +755,7 @@ describe("retiring an area whose member count cannot be read", () => {
     });
 
     await waitFor(() => expect(d().getByTestId("area-remove-unknown")).toBeInTheDocument());
-    expect(screen.queryByText(/and every area declared beneath it/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/and every area beneath it/i)).not.toBeInTheDocument();
     expect(d().getByTestId("area-edit-error")).toHaveTextContent("the store could not be read");
     // The transport prefix is urql's, and must not reach the user.
     expect(screen.queryByText(/\[GraphQL\]/)).not.toBeInTheDocument();
@@ -1063,7 +1112,7 @@ describe("an area going away while its menu or dialog is open", () => {
   });
 });
 
-describe("backing out of the empty-areas declare form", () => {
+describe("the empty-areas panel's create dialog", () => {
   beforeEach(() => {
     mockExecute.mockReset().mockResolvedValue({ ok: true, data: {} });
     mockQueryStore.mockReset();
@@ -1076,29 +1125,35 @@ describe("backing out of the empty-areas declare form", () => {
     );
   });
 
-  // Opening the form must not take away the escape the user arrived with: this
-  // panel is the whole view when no areas are declared.
-  it("keeps Switch to Tree reachable while the form is open", async () => {
+  it("opens the form in a dialog, not on the panel", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     renderAreas(EMPTY_AREAS);
 
-    await user.click(screen.getByRole("button", { name: /declare an area/i }));
+    const d = await openNewAreaDialog(user);
 
-    expect(screen.getByTestId("area-declare-form")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /switch to tree/i })).toBeInTheDocument();
+    expect(d().getByTestId("area-declare-form")).toBeInTheDocument();
+    expect(within(screen.getByTestId("empty-areas-none")).queryByTestId("area-declare-form")).toBeNull();
   });
 
-  // `onclose` fires only on a successful declaration, so without a cancel the
-  // form cannot be closed by a user who changed their mind.
-  it("returns to the empty state when the form is canceled", async () => {
+  it("puts Cancel and a primary Create on one action row", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     renderAreas(EMPTY_AREAS);
 
-    await user.click(screen.getByRole("button", { name: /declare an area/i }));
-    await user.click(screen.getByRole("button", { name: /^cancel$/i }));
+    const d = await openNewAreaDialog(user);
 
-    await waitFor(() => expect(screen.queryByTestId("area-declare-form")).not.toBeInTheDocument());
-    expect(screen.getByRole("button", { name: /declare an area/i })).toBeInTheDocument();
+    expectCreateFooter(d());
+  });
+
+  // `onclose` fires only on a successful declaration, so Cancel is the form's own way out.
+  it("returns to the empty state when the dialog is canceled", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    renderAreas(EMPTY_AREAS);
+
+    const d = await openNewAreaDialog(user);
+    await user.click(d().getByRole("button", { name: /^cancel$/i }));
+
+    await waitFor(() => expect(screen.queryByTestId("new-area-dialog")).toBeNull());
+    expect(screen.getByRole("button", { name: /create an area/i })).toBeInTheDocument();
     expect(mockExecute).not.toHaveBeenCalled();
   });
 });

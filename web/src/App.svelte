@@ -72,9 +72,9 @@
   const configResult = queryStore({ client, query: CONFIG_QUERY });
 
   // The server pushes the whole config when it reloads the store's areas.yml
-  // (e.g. after `nibs area rename`), selecting the same fields as CONFIG_QUERY.
-  // It fires only on a change, so `data` is usually undefined and the query stays
-  // the base answer.
+  // (e.g. after `nibs area add`, `set` or `rm`), selecting the same fields as
+  // CONFIG_QUERY. It fires only on a change, so `data` is usually undefined and
+  // the query stays the base answer.
   const configChanged = subscriptionStore({ client, query: CONFIG_CHANGED_SUBSCRIPTION });
 
   // Push-over-query precedence, the last-good latch and the re-ask backoff.

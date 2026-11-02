@@ -23,13 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **The web table remembers a scroll position per view**, so switching away and back returns you to where you were rather than to wherever the other view's list left the offset.
 - **A drag says which list it will reorder within** — a badge follows the cursor naming the destination by title, a rule marks where an ordering group's run of rows ends, and a drop that cannot happen explains why instead of doing nothing.
 - **The web's filter box speaks the assignment axis** — `milestone:<id>` selects that milestone's whole plan, `milestone-exact:<id>` its queue alone, and `is:backlog` the work in no milestone's plan, its own or an inherited one.
-- **The web's filter box speaks the ownership axis** — `area:<path>` selects an area's work including everything declared beneath it, and `area-exact:<path>` that path alone.
+- **The web's filter box speaks the ownership axis** — `area:<path>` selects an area's work including everything declared beneath it, `area-exact:<path>` that path alone, and an Area dropdown beside the other filters writes the same `area:` token.
 - **The web groups work by area** — the Areas view spines on the declared vocabulary, and an area nothing is assigned to is still a row, so the map shows what is empty as well as what is not.
 - **The web table shows a nib's milestone and area as columns** — off by default and toggled on like Blocking or Created, so the views that group by neither axis can still show both.
-- **A nib's area is set from the web's detail panel** — a picker over the project's declared vocabulary, offered while creating as well as while editing, where before only `nibs set --area` could place a nib in one.
+- **A nib's area is set from the web's detail panel** — a picker over the project's declared vocabulary that can also create a new area, offered while creating as well as while editing, where before only `nibs set --area` could place a nib in one.
 - **`nibs rel` takes `-c` and `-q`** — the size of the related set as a bare integer and the related ids one per line, with list's semantics, which is what the cheat sheet's FILTER block already promised of both verbs.
 - **Areas are declared, edited and retired over the API** — a project that declares no vocabulary yet gets one from its first declaration, an area's name, description and color are changed in one call, and the work assigned beneath a renamed or retired area is reassigned or unassigned as the call directs.
-- **The web manages the areas vocabulary** — the New menu declares a top-level area, each area row's menu (right-click or ⋯) declares beneath it, edits it and retires it, asking where any work it holds should go, and palette colors follow the theme.
+- **The web manages the areas vocabulary** — the New menu creates an area from any view, each area row's menu (right-click or ⋯) creates one beneath it, edits it and retires it, asking where any work it holds should go, and palette colors follow the theme.
 
 ### Changed
 - **The web's Tree view no longer lists milestones** — a milestone is a waypoint outside the parent graph, so a view spined on parentage had nothing to nest under it; Flat still shows every nib, and the Milestone column shows the assignment.

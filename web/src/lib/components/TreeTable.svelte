@@ -711,23 +711,17 @@
     </div>
   {:else}
     <div data-testid="empty-areas-none" class="flex flex-col items-center gap-3 py-12 text-body text-muted-foreground">
-      <span class="text-foreground">This project declares no areas</span>
+      <span class="text-foreground">This project has no areas</span>
       <span class="max-w-md text-center">
-        Areas group work by the part of the project it belongs to. Declare an
+        Areas group work by the part of the project it belongs to. Create one with
+        the button below, or write an
         <code class="whitespace-nowrap rounded bg-muted px-1 py-0.5 text-foreground">areas:</code>
         block in the store's
-        <code class="whitespace-nowrap rounded bg-muted px-1 py-0.5 text-foreground">areas.yml</code>
-        and each nib's area can name one. A running server picks the file up, so
-        this view fills in without a reload.
+        <code class="whitespace-nowrap rounded bg-muted px-1 py-0.5 text-foreground">areas.yml</code>.
+        A running server picks the file up, so this view fills in without a reload.
       </span>
       <div class="flex items-center gap-2">
-        {#if declaringArea}
-          <AreaDeclareForm onclose={() => (declaringArea = false)} />
-        {:else}
-          <Button variant="outline" size="sm" onclick={() => (declaringArea = true)}>Declare an area</Button>
-        {/if}
-        <!-- Outside the branch: opening the form must not take away the escape
-             the user arrived with, since this panel is the whole view. -->
+        <Button variant="outline" size="sm" onclick={() => (declaringArea = true)}>Create an area</Button>
         <Button variant="outline" size="sm" onclick={leaveAreasView}>Switch to Tree</Button>
       </div>
     </div>
@@ -836,6 +830,12 @@
       <AreaRowMenu anchor={areaMenu.anchor} onclose={() => (areaMenu = null)} onselect={openAreaDialog} />
     {/key}
   {/if}
+{/if}
+{#if declaringArea}
+  <!-- The same dialog as the toolbar's New → Area. -->
+  <FormDialog testId="new-area-dialog" title="New area" onclose={() => (declaringArea = false)}>
+    <AreaDeclareForm onclose={() => (declaringArea = false)} />
+  </FormDialog>
 {/if}
 {#if areaDialog}
   {@const { target, action } = areaDialog}

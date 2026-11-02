@@ -346,16 +346,20 @@ func catalogHierarchy() error {
 // Every purpose is the command's own Short or the flag's own usage string, so
 // this table cannot drift from what the CLI accepts.
 func areaCommandCatalogEntries() []recipeInfo {
-	return []recipeInfo{
-		{"nibs area list", commandShort("area", "list")},
-		{"nibs area add <path>", commandShort("area", "add")},
-		{"nibs area set <path>", commandShort("area", "set")},
-		{"nibs area rm <path>", commandShort("area", "rm")},
-		{`nibs new "<title>" -t <type> --area <path>`, flagUsage("new", "area")},
-		{"nibs set <id> --area <path>", flagUsage("set", "area")},
-		{"nibs list --area <path>", flagUsage("list", "area")},
-		{"nibs list --area-exact <path>", flagUsage("list", "area-exact")},
+	entries := make([]recipeInfo, 0, len(areaVerbs)+4)
+	for _, v := range areaVerbs {
+		usage := "nibs area " + v.name
+		if v.operand != "" {
+			usage += " " + v.operand
+		}
+		entries = append(entries, recipeInfo{usage, commandShort("area", v.name)})
 	}
+	return append(entries,
+		recipeInfo{`nibs new "<title>" -t <type> --area <path>`, flagUsage("new", "area")},
+		recipeInfo{"nibs set <id> --area <path>", flagUsage("set", "area")},
+		recipeInfo{"nibs list --area <path>", flagUsage("list", "area")},
+		recipeInfo{"nibs list --area-exact <path>", flagUsage("list", "area-exact")},
+	)
 }
 
 // catalogAreas renders the areas grammar: how a project declares the vocabulary
@@ -619,15 +623,27 @@ func catalogSchema() error {
 // from the root — commandShort("next") for a top-level verb, commandShort("area",
 // "list") for a subcommand — or a placeholder if any step is ever renamed
 // (guarded by a test).
+func commandShort(path ...string) string {
+	return resolveCommand(path, func(c *cobra.Command) string { return c.Short })
+}
+
+// resolvedCommandName returns the name of the command addressed by its path from
+// the root, or resolveCommand's placeholder if any step is ever renamed.
+func resolvedCommandName(path ...string) string {
+	return resolveCommand(path, (*cobra.Command).Name)
+}
+
+// resolveCommand walks path from the root and returns pick of the command it
+// reaches, or a "(command not found: …)" placeholder when any step is missing.
 //
 // Each step matches on c.Name(), so an ALIAS finds nothing — but unlike a
 // skip-list lookup, a miss here is visible in the output rather than silent,
 // which is what the placeholder and its guard are for. flagUsage below has the
 // same shape and the same answer.
-func commandShort(path ...string) string {
-	// A caller that names no command is asking for nothing; answering with the
-	// root's own Short would put nibs' one-line description where a subcommand's
-	// purpose belongs, and read as a real answer.
+func resolveCommand(path []string, pick func(*cobra.Command) string) string {
+	// A caller that names no command is asking for nothing; answering for the
+	// root would put nibs' own description where a subcommand's belongs, and
+	// read as a real answer.
 	if len(path) == 0 {
 		return "(command not found: <no command named>)"
 	}
@@ -645,7 +661,7 @@ func commandShort(path ...string) string {
 		}
 		cmd = found
 	}
-	return cmd.Short
+	return pick(cmd)
 }
 
 // flagUsage returns the usage string of a flag on a top-level subcommand, or a

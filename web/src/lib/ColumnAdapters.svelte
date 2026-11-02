@@ -170,15 +170,22 @@
       {:else}
         <span class="inline-block w-5 h-5 shrink-0"></span>
       {/if}
-      <!-- TypeIcon takes no class, so the gap lives on a wrapper. -->
-      <span class="type-icon-gap"><TypeIcon type={nib.type} /></span>
       {#if sectionColor}
-        <!-- `areaColor` is what makes config text safe in this style. -->
-        <span
-          data-testid="section-color"
-          class="shrink-0 size-2.5 rounded-full border border-border"
-          style:background-color={sectionColor}
-        ></span>
+        <!-- A synthetic row has no type icon, so the dot takes the icon's slot
+             and its trailing gap. `areaColor` is what makes config text safe in
+             this style. -->
+        <span class="type-icon-gap">
+          <span class="section-color-line">
+            <span
+              data-testid="section-color"
+              class="inline-block size-2.5 rounded-full border border-border align-middle"
+              style:background-color={sectionColor}
+            ></span>
+          </span>
+        </span>
+      {:else}
+        <!-- TypeIcon takes no class, so the gap lives on a wrapper. -->
+        <span class="type-icon-gap"><TypeIcon type={nib.type} /></span>
       {/if}
       {#if priorityIndicator}
         <span
@@ -308,6 +315,13 @@
     display: inline-flex;
     flex-shrink: 0;
     margin-inline-end: 0.35em;
+  }
+
+  /* A line box in the title's font, so the dot's `vertical-align: middle`
+     centers it on the title's x-height. */
+  .section-color-line {
+    font-size: var(--text-body-size);
+    line-height: var(--text-body-leading);
   }
 
   /* Shrinks far ahead of the title, which is what the column is for. */

@@ -34,7 +34,7 @@ func setupAreaMutationApp(t *testing.T) *App {
 }
 
 // TestAreaMutationErrorClassesMatchTheAreaCommands pins that the two outcomes
-// `nibs area rename` and `nibs area rm` already split on — a refusal about the
+// `nibs area set` and `nibs area rm` already split on — a refusal about the
 // argument, and a failure of the filesystem — carry the same classes when the
 // same edit arrives over GraphQL.
 //
@@ -87,7 +87,7 @@ func TestAreaMutationErrorClassesMatchTheAreaCommands(t *testing.T) {
 		if got := output.ExitCode(ce.Code); got != output.ExitIO {
 			t.Errorf("exit code = %d, want %d", got, output.ExitIO)
 		}
-		if !strings.Contains(ce.Error(), "nothing was written") {
+		if !strings.Contains(ce.Error(), "nothing was changed") {
 			t.Errorf("the message does not say the store was left alone: %s", ce.Error())
 		}
 	})
@@ -142,9 +142,9 @@ func TestAreaMutationErrorClassesMatchTheAreaCommands(t *testing.T) {
 			t.Fatalf("expected *output.CodedError, got %T: %v", err, err)
 		}
 		if ce.Code != output.ErrFileError {
-			t.Errorf("code = %q, want %q — the same class `nibs area rename` gives this race", ce.Code, output.ErrFileError)
+			t.Errorf("code = %q, want %q — the same class `nibs area set --name` gives this race", ce.Code, output.ErrFileError)
 		}
-		if !strings.Contains(ce.Error(), "another nibs process") {
+		if !strings.Contains(ce.Error(), "retired or renamed by another edit") {
 			t.Errorf("the message does not name what moved: %s", ce.Error())
 		}
 	})

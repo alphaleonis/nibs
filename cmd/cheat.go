@@ -35,9 +35,15 @@ var cheatCmd = &cobra.Command{
 // omitting it is legal: a grammar that reads as required is how the bare form
 // gets run unawares, and its default answers plausibly rather than erroring.
 // The next entry takes its description from the command's own Short via
-// commandShort, the same source `nibs catalog recipes` reads.
+// commandShort, the same source `nibs catalog recipes` reads. The area verbs are
+// areaVerbs, the list `nibs catalog areas` reads, each resolved through
+// resolvedCommandName.
 func cheatSheet(cfg *config.Config) string {
 	var b strings.Builder
+	areaVerbNames := make([]string, len(areaVerbs))
+	for i, v := range areaVerbs {
+		areaVerbNames[i] = resolvedCommandName("area", v.name)
+	}
 	// The STATUS line lists the statuses by group rather than in one flat run:
 	// the groups partition the vocabulary, so this names every status AND says
 	// which group it filters under, in the same space. The blocker note is
@@ -61,7 +67,7 @@ READ   get <id…>          nib document (default); -f/--view id|ref|card|full; 
 WRITE  new "<title>" -t T create; also -s -p -e --area --parent --blocked-by --tag --after/--before/--first (siblings)
        set <id>           metadata/links; --clear %s; --remove-tag/-blocked-by/…
                           --milestone <ms> assigns to that milestone's queue, appended last (new cannot assign)
-                          --area <path> places it in a declared area; nibs area list|add|set|rm prints and edits the set
+                          --area <path> places it in a declared area; nibs area %s prints and edits the set
        body <id>          --set | --append | --section "## H" --set [--create] | --replace-old T --replace-new U
        mv <id…>           --after|--before <anchor> | --first | --parent <id> | --children-of <p> <id…>; 2+ ids need --block
                           --queue --after|--before <anchor> | --queue --first repositions within its queue
@@ -94,6 +100,7 @@ RULE   On any nibs error: STOP, find the root cause, never silently retry. A que
 		// what --clear actually accepts. TestClearableFieldsAreStatedInFull is
 		// the guard for the surfaces that cannot interpolate.
 		strings.Join(clearableFields, "|"),
+		strings.Join(areaVerbNames, "|"),
 		closeDefaultStatus(),
 		strings.Join(cfg.TypeNames(), ", "),
 		statusGroupOpen, strings.Join(cfg.OpenStatusNames(), "/"),

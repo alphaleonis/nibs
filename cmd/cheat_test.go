@@ -418,3 +418,14 @@ func TestCheatSheetSpeaksAreas(t *testing.T) {
 		t.Errorf("cheat sheet META line does not advertise the areas catalog topic, got: %q", line)
 	}
 }
+
+// TestCheatSheetResolvesEveryCommandItNames fails on resolveCommand's
+// placeholder anywhere in the sheet, which is how a command that no longer
+// resolves renders.
+func TestCheatSheetResolvesEveryCommandItNames(t *testing.T) {
+	for _, line := range strings.Split(cheatSheet(config.Default()), "\n") {
+		if strings.Contains(line, "(command not found") {
+			t.Errorf("cheat sheet names a command that does not exist: %q", line)
+		}
+	}
+}

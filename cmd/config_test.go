@@ -906,17 +906,7 @@ func TestSetPrefix_PreservesTheProjectConfig(t *testing.T) {
 // into place, can anything else take the store's write lock?
 //
 // The command renames every nib file and then rewrites the whole config from a
-// read of its own. Without the lock a concurrent `nibs area rename` — which
-// holds this lock from the moment it plans its own config edit until it writes
-// it — reads the pre-set-prefix config inside its own window and writes it back
-// over this one. Measured with the acquisition below removed: four concurrent
-// processes — one set-prefix and three area renames — against one store whose
-// config declares 9,000 areas, which is only there to make the whole-file
-// read-modify-write cost milliseconds rather than microseconds, lost the prefix
-// in 40 of 40 runs. The store was left with every nib file renamed and a config
-// still declaring the old prefix. At the fixture's config size the same four
-// writers lost nothing in 20 runs, which is why the guard below probes the lock
-// directly instead of racing anything.
+// read of its own.
 func TestSetPrefixHoldsTheStoreLockAcrossEverythingItMutates(t *testing.T) {
 	_, nibsDir, cfgPath := setupSetPrefixTest(t, "tnib-",
 		testNibSpec{filename: "tnib-aaa--root.md", id: "tnib-aaa"},

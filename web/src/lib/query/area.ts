@@ -33,12 +33,12 @@ export const AREA_TOKEN_ORDER = [
   {
     name: "area",
     field: "area",
-    description: "Nibs in this area, and in every area declared beneath it",
+    description: "Nibs in this area, and in every area beneath it",
   },
   {
     name: "area-exact",
     field: "areaExact",
-    description: "Nibs in exactly this area, and in nothing declared beneath it",
+    description: "Nibs in exactly this area, and in no area beneath it",
   },
 ] as const satisfies readonly AreaTokenSpec[];
 

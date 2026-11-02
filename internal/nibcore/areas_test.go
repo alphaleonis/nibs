@@ -58,10 +58,10 @@ func TestLoadRefusesAMalformedAreasVocabulary(t *testing.T) {
 	}
 }
 
-// The bug this nib is about: a `nibs area rename` from another process rewrites
-// the member nibs AND the vocabulary, and a live server used to take only the
-// first half — so every later write to a renamed nib was refused against the
-// vocabulary it read at startup.
+// The bug this nib is about: a `nibs area set <path> --name <new>` from another
+// process rewrites the member nibs AND the vocabulary, and a live server used to
+// take only the first half — so every later write to a renamed nib was refused
+// against the vocabulary it read at startup.
 func TestWatcherReloadsTheAreasVocabulary(t *testing.T) {
 	core, nibsDir := setupCoreWithoutAreasFile(t)
 	writeStoreAreas(t, nibsDir, "areas:\n    - name: web\n")
@@ -79,7 +79,7 @@ func TestWatcherReloadsTheAreasVocabulary(t *testing.T) {
 	}
 	defer func() { _ = core.StopWatching() }()
 
-	// The rename, as `nibs area rename web frontend` performs it: the members
+	// The rename, as `nibs area set web --name frontend` performs it: the members
 	// are rewritten first, then the vocabulary.
 	updated := created.Clone()
 	updated.Area = "frontend"

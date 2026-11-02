@@ -117,8 +117,8 @@ type Core struct {
 	config *config.Config // project configuration
 
 	// areas is the store's declared area vocabulary, the one piece of a store's
-	// configuration reloaded while the process runs (an external `nibs area
-	// rename` rewrites it; see area.Vocabulary).
+	// configuration reloaded while the process runs (an external `nibs area add`,
+	// `set` or `rm` rewrites it; see area.Vocabulary).
 	//
 	// An atomic pointer, not a mutex, because the read that matters happens
 	// OFF-LOCK: the GraphQL updateNib pre-check reaches ValidateArea through

@@ -1209,10 +1209,11 @@ type Subscription {
   whole `Config` each time it changes.
 
   The areas vocabulary is the one part of a store's configuration that is
-  reloaded while the server runs: an external `nibs area rename` rewrites the
-  store's areas.yml, and the server picks it up. Without this stream a client
-  would keep rendering sections the store no longer declares, and refuse to
-  filter by the paths its nibs now carry, until the page was reloaded.
+  reloaded while the server runs: an external `nibs area add`, `set` or `rm`
+  rewrites the store's areas.yml, and the server picks it up. Without this
+  stream a client would keep rendering sections the store no longer declares,
+  and refuse to filter by the paths its nibs now carry, until the page was
+  reloaded.
 
   It fires only when the vocabulary actually CHANGES — a file rewritten with the
   same content, or touched, delivers nothing. Nib writes never fire it; they have

@@ -135,7 +135,7 @@ func TestUpdateRefusesAnUndeclaredPath(t *testing.T) {
 // renders must be one the loader accepts.
 func TestUpdateRefusesAColorTheLoaderWouldReject(t *testing.T) {
 	refusal := mustRefuse(t)(planUpdate(areaEditFixture, "auth", NodeUpdate{Color: ptrTo("#xyz")}))
-	// The shapes are the actionable half: "not a usable hex code" alone leaves a
+	// The shapes are the actionable half: "not a valid hex code" alone leaves a
 	// caller guessing which spellings this vocabulary accepts.
 	if !strings.Contains(refusal.Error(), "#RRGGBB") {
 		t.Errorf("refusal = %q, want it to name the color shapes a caller may use", refusal.Error())
@@ -151,7 +151,7 @@ func TestUpdateRefusesAColorTheLoaderWouldReject(t *testing.T) {
 func TestUpdateRefusesADescriptionThatWouldOverflowTheFile(t *testing.T) {
 	huge := strings.Repeat("x", yamlfile.MaxBytes+1)
 	refusal := mustRefuse(t)(planUpdate(areaEditFixture, "auth", NodeUpdate{Description: &huge}))
-	if !strings.Contains(refusal.Error(), "configuration limit") {
+	if !strings.Contains(refusal.Error(), "no command can open an areas file over") {
 		t.Errorf("refusal = %q, want it to name the limit it hit", refusal.Error())
 	}
 }

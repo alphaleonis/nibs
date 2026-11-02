@@ -54,6 +54,13 @@ for (const level of VIEW_LEVELS) {
   });
 }
 
+// The loop above runs in the default dark palette. The area dots carry theme
+// colors, so they need the light one too.
+test("table — areas view level — daylight", async ({ page }) => {
+  await openApp(page, "areas", "daylight");
+  await shot(page, "table-areas-daylight");
+});
+
 // The one thing the loop above cannot reach: the `area:` filter is
 // DOWNWARD-CLOSED over the declared tree, so `area:web` keeps the nib assigned
 // to `web/dashboard` alongside `web`'s own member instead of matching the path
@@ -255,6 +262,17 @@ test("filter box — token hover affordance", async ({ page }) => {
   });
 });
 
+// The fixture nests webhooks under api and dashboard under web, so the indent shows.
+test("filter band — Area menu with a selection", async ({ page }) => {
+  await openApp(page);
+  await page.getByTestId("filter-area").click();
+  await page.getByRole("menuitemradio", { name: "web/dashboard" }).click();
+  await expect(page.locator('tr[data-nib-id="tnib-t001"]')).toHaveCount(0, { timeout: 5_000 });
+  await page.getByTestId("filter-area").click();
+  await expect(page.getByRole("menuitemradio", { name: "web/dashboard" })).toHaveAttribute("aria-checked", "true");
+  await shot(page, "filter-area-menu");
+});
+
 // Invalid-token marker must read as an attached element over the table, not as
 // bare "mid-air" text. status:xyz is invalid (and not a completion prefix).
 test("filter box — invalid token marker over table rows", async ({ page }) => {
@@ -322,8 +340,21 @@ test("detail panel — area picker open", async ({ page }) => {
   await page.locator('tr[data-nib-id="tnib-f008"]').locator('[data-action="title"]').click();
   await expect(page.locator('[data-testid="anv-area"]')).toHaveText(/web\/dashboard/);
   await page.locator('[data-testid="anv-area"]').click();
-  await expect(page.getByRole("option").first()).toBeVisible({ timeout: 5_000 });
+  await expect(page.getByRole("option", { name: "New area…" })).toBeVisible({ timeout: 5_000 });
   await shot(page, "detail-panel-area-open");
+});
+
+// The create-area dialog raised from "+ New area…" over the expanded editor, so
+// one frame shows the dialog stacked above the editor's own modal surface.
+test("active view — expanded, create area from the Area field", async ({ page }) => {
+  await openApp(page);
+  await page.locator('tr[data-nib-id="tnib-f008"]').locator('[data-action="title"]').click();
+  await page.locator('[data-testid="anv-expand"]').click();
+  await expect(page.locator('[data-testid="active-nib-modal"]')).toBeVisible({ timeout: 5_000 });
+  await page.locator('[data-testid="anv-area"]').click();
+  await page.getByRole("option", { name: "New area…" }).click();
+  await expect(page.locator('[data-testid="new-area-dialog"]')).toBeVisible({ timeout: 5_000 });
+  await shot(page, "active-view-expanded-new-area");
 });
 
 // Task-list checkboxes in rendered nib body: clickable + theme-styled.

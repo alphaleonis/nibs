@@ -46,6 +46,8 @@
   import EstimateSelect from "./EstimateSelect.svelte";
   import MilestoneSelect from "./MilestoneSelect.svelte";
   import AreaSelect from "./AreaSelect.svelte";
+  import AreaDeclareForm from "./AreaDeclareForm.svelte";
+  import FormDialog from "./FormDialog.svelte";
   import TagEditor from "./TagEditor.svelte";
   import RelationBadge from "./RelationBadge.svelte";
   import DelegatedTooltip from "./DelegatedTooltip.svelte";
@@ -129,6 +131,10 @@
   }
 
   // --- local presentational state ----------------------------------------
+  // The buffer "+ New area…" was picked from, held so the created area is written
+  // to it and never to a buffer swapped in while the dialog is open. Null while closed.
+  let areaCreateForm = $state<CreateForm | EditForm | null>(null);
+
   let bodyMode: "preview" | "edit" = $state("preview");
   // A preference, so it survives docked↔expanded remounts.
   const previewOn = $derived(prefs?.previewOpen ?? DEFAULT_PREVIEW_OPEN);
@@ -715,6 +721,7 @@
             <AreaSelect
               value={form.area}
               onchange={(v) => (form.area = v)}
+              oncreatearea={() => (areaCreateForm = form)}
               testId="anv-area"
               {disabled}
             />
@@ -824,6 +831,14 @@
          subtree and carry their own. -->
     <DelegatedTooltip container={rootEl} />
   </div>
+  {#if areaCreateForm}
+    {@const target = areaCreateForm}
+    {@const close = () => (areaCreateForm = null)}
+    <!-- The same dialog as the toolbar's New → Area. -->
+    <FormDialog testId="new-area-dialog" title="New area" onclose={close}>
+      <AreaDeclareForm onclose={close} oncreated={(path) => (target.area = path)} />
+    </FormDialog>
+  {/if}
 {/if}
 
 <style>

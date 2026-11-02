@@ -1,6 +1,8 @@
 <script lang="ts">
   import { Button } from "$lib/components/ui/button/index.js";
+  import * as Dialog from "$lib/components/ui/dialog/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
+  import { toast } from "svelte-sonner";
   import { addArea, getMutationStore } from "$lib/mutations";
   import { runAreaEdit } from "../areaEdit";
   import AreaEditError from "./AreaEditError.svelte";
@@ -18,9 +20,16 @@
      * `onclose` — which is what a host with nowhere to go back TO wants.
      */
     oncancel?: () => void;
+    /**
+     * Bring the Areas view into sight: the success toast's Show action. Absent,
+     * the toast has no action, for a host where the new area is already shown.
+     */
+    onshow?: () => void;
+    /** Take the full path of the area a create just made. Called before `onclose`. */
+    oncreated?: (path: string) => void;
   }
 
-  let { parentPath = "", onclose, oncancel }: Props = $props();
+  let { parentPath = "", onclose, oncancel, onshow, oncreated }: Props = $props();
 
   const mutations = getMutationStore();
 
@@ -44,7 +53,11 @@
       const outcome = await runAreaEdit(mutations, addArea(full));
       error = outcome.message;
       if (outcome.ok) {
+        // The form toasts, so every host confirms a create the same way.
+        const show = onshow;
+        toast.success(`Created area ${full}`, show ? { action: { label: "Show", onClick: () => show() } } : undefined);
         path = "";
+        oncreated?.(full);
         onclose?.();
       }
     } finally {
@@ -55,30 +68,31 @@
 
 <form
   data-testid="area-declare-form"
-  class="flex flex-col gap-2"
+  class="flex flex-col gap-3"
   onsubmit={(e) => {
     e.preventDefault();
     void submit();
   }}
 >
-  <div class="flex items-center gap-2">
-  <Input
-    data-testid="area-path-input"
-    bind:value={path}
-    placeholder={parentPath === "" ? "web/dashboard" : "name"}
-    aria-label={parentPath === "" ? "Area path" : `New area under ${parentPath}`}
-    class="h-7 w-56 min-w-0"
-  />
-  <Button type="submit" variant="outline" size="sm" disabled={submitting}>Declare</Button>
-  <Button
-    type="button"
-    variant="ghost"
-    size="sm"
-    disabled={submitting}
-    onclick={() => (oncancel ?? onclose)?.()}
-  >
-    Cancel
-  </Button>
+  <div class="flex flex-col gap-1">
+    <label class="text-caption text-muted-foreground" for="area-declare-path">
+      {parentPath === "" ? "Path" : "Name"}
+    </label>
+    <Input
+      id="area-declare-path"
+      data-testid="area-path-input"
+      bind:value={path}
+      placeholder={parentPath === "" ? "web/dashboard" : "name"}
+      aria-label={parentPath === "" ? "Area path" : `New area under ${parentPath}`}
+      class="h-7"
+    />
   </div>
   <AreaEditError message={error} />
+  <!-- The dialog's footer band, so the actions sit where ConfirmDialog's do. -->
+  <Dialog.Footer class="mt-1">
+    <Button type="button" variant="outline" disabled={submitting} onclick={() => (oncancel ?? onclose)?.()}>
+      Cancel
+    </Button>
+    <Button type="submit" disabled={submitting}>Create</Button>
+  </Dialog.Footer>
 </form>

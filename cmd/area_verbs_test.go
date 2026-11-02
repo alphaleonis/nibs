@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -181,7 +182,7 @@ func TestAreaSetCascadesTheWholeSubtree(t *testing.T) {
 
 	out, err := runArea(t, nibsPath, "set", "web", "--name", "frontend")
 	if err != nil {
-		t.Fatalf("area rename: %v\nout: %s", err, out)
+		t.Fatalf("area set web --name frontend: %v\nout: %s", err, out)
 	}
 
 	if got, want := areaVocabulary(t, nibsPath),
@@ -242,7 +243,7 @@ func TestAreaSetTouchesNothingElseInTheVocabulary(t *testing.T) {
 	}
 
 	if out, err := runArea(t, nibsPath, "set", "web", "--name", "frontend"); err != nil {
-		t.Fatalf("area rename: %v\nout: %s", err, out)
+		t.Fatalf("area set web --name frontend: %v\nout: %s", err, out)
 	}
 	after, err := os.ReadFile(cfgPath)
 	if err != nil {
@@ -297,12 +298,12 @@ func TestAreaSetRefusals(t *testing.T) {
 		{
 			name: "a path the store does not declare",
 			args: []string{"set", "nosuch", "--name", "x"},
-			want: []string{"nosuch", "declares no area"},
+			want: []string{`has no area "nosuch"`},
 		},
 		{
 			name: "a name a sibling already holds",
 			args: []string{"set", "web", "--name", "auth"},
-			want: []string{"already declares", "auth"},
+			want: []string{`area "auth" already exists`},
 		},
 		{
 			name: "a name a nested sibling already holds",
@@ -312,17 +313,17 @@ func TestAreaSetRefusals(t *testing.T) {
 		{
 			name: "a path where a name belongs",
 			args: []string{"set", "web/dashboard", "--name", "web/panel"},
-			want: []string{"not a name", "nibs area set web/dashboard --name panel"},
+			want: []string{`contains "/"`, "nibs area set web/dashboard --name panel"},
 		},
 		{
 			name: "a path under a different parent",
 			args: []string{"set", "web/dashboard", "--name", "api/panel"},
-			want: []string{"not a name", "never moves it"},
+			want: []string{`contains "/"`, "cannot move it to another"},
 		},
 		{
 			name: "an empty new name",
 			args: []string{"set", "web", "--name", ""},
-			want: []string{"needs a name"},
+			want: []string{"--name is empty"},
 		},
 		{
 			name: "a new name that is only whitespace padding",
@@ -337,7 +338,7 @@ func TestAreaSetRefusals(t *testing.T) {
 			// the store afterwards.
 			name: "a name no store could read back",
 			args: []string{"set", "web", "--name", strings.Repeat("x", 201)},
-			want: []string{"bounded at 200"},
+			want: []string{"at most 200 characters"},
 		},
 	}
 	for _, tt := range tests {
@@ -496,7 +497,7 @@ func TestAreaRetireRefusesADispositionWithNothingToDispose(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a refusal for a disposition with nothing to dispose of")
 	}
-	for _, want := range []string{"nothing to", "nibs area rm infra"} {
+	for _, want := range []string{"there are none to unassign", "nibs area rm infra"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error = %q, want substring %q", err.Error(), want)
 		}
@@ -536,7 +537,7 @@ func TestAreaRetireRefusesAnUndeclaredTarget(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a refusal")
 	}
-	if !strings.Contains(err.Error(), "nosuch") || !strings.Contains(err.Error(), "declares no area") {
+	if !strings.Contains(err.Error(), `has no area "nosuch" to move the nibs to`) {
 		t.Errorf("error = %q, want it to name the undeclared target", err.Error())
 	}
 	for _, id := range []string{"tnib-b002", "tnib-f002"} {
@@ -569,7 +570,7 @@ func TestAreaRetireRefusesAnUndeclaredPath(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a refusal")
 	}
-	if !strings.Contains(err.Error(), "declares no area") {
+	if !strings.Contains(err.Error(), `has no area "nosuch"`) {
 		t.Errorf("error = %q, want the undeclared-path refusal", err.Error())
 	}
 }
@@ -587,8 +588,8 @@ func TestAreaVerbsRefuseAStoreDeclaringNoAreas(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected a refusal")
 			}
-			if !strings.Contains(err.Error(), "declares no areas") {
-				t.Errorf("error = %q, want it to say the store declares none", err.Error())
+			if !strings.Contains(err.Error(), "this store has no areas") {
+				t.Errorf("error = %q, want it to say the store has none", err.Error())
 			}
 			if strings.Contains(err.Error(), "must be one of") {
 				t.Errorf("error = %q, must not name an empty allowed set", err.Error())
@@ -605,7 +606,7 @@ func TestAreaSetLeavesAStrandedAssignmentAlone(t *testing.T) {
 	rewriteStoredArea(t, nibsPath, "tnib-b005", "web", "web/retired")
 
 	if out, err := runArea(t, nibsPath, "set", "web", "--name", "frontend"); err != nil {
-		t.Fatalf("area rename: %v\nout: %s", err, out)
+		t.Fatalf("area set web --name frontend: %v\nout: %s", err, out)
 	}
 	if got := storedAreas(t, nibsPath)["tnib-b005"]; got != "web/retired" {
 		t.Errorf("the stranded value was rewritten to %q; only declared members cascade", got)
@@ -668,7 +669,7 @@ func TestAreaSetPartialCascadeIsRerunnable(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the seeded write failure to surface")
 	}
-	for _, want := range []string{"tnib-f008", "rerun the same command", "persisted"} {
+	for _, want := range []string{"tnib-f008", "stopped part way", `still names the area "web"`, "the moved nibs are saved", "Run the same command again to finish"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error = %q, want substring %q", err.Error(), want)
 		}
@@ -710,7 +711,7 @@ func TestAreaSetVocabularyWriteFailureIsRerunnable(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the seeded config write failure to surface")
 	}
-	for _, want := range []string{"areas.yml", "rerun the same command", "persisted"} {
+	for _, want := range []string{"areas.yml", "it moved 2 nibs", `still names the area "web"`, "the moved nibs are saved", "run the same command again to finish"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error = %q, want substring %q", err.Error(), want)
 		}
@@ -730,6 +731,38 @@ func TestAreaSetVocabularyWriteFailureIsRerunnable(t *testing.T) {
 	}
 }
 
+// TestAreaSetDescriptionWriteFailureReportsNothingChanged: a `set` that renames
+// nothing moves no nib before the areas.yml write, so a failed write leaves the
+// store as it was and the message must not report a rename.
+func TestAreaSetDescriptionWriteFailureReportsNothingChanged(t *testing.T) {
+	nibsPath := setupAreaVerbTest(t)
+	before := storedAreas(t, nibsPath)
+	disarm := failRenameOnto(t, "areas.yml")
+
+	_, err := runArea(t, nibsPath, "set", "web", "--description", "Frontend work")
+	if err == nil {
+		t.Fatal("expected the seeded areas.yml write failure to surface")
+	}
+	for _, want := range []string{`area "web" was not updated`, "areas.yml", "Nothing was changed"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want substring %q", err.Error(), want)
+		}
+	}
+	for _, unwanted := range []string{"was not renamed", "stopped part way", "moved", `""`} {
+		if strings.Contains(err.Error(), unwanted) {
+			t.Errorf("error = %q, want it not to carry %q", err.Error(), unwanted)
+		}
+	}
+	if after := storedAreas(t, nibsPath); !maps.Equal(after, before) {
+		t.Errorf("nib areas changed: before %v, after %v", before, after)
+	}
+
+	disarm()
+	if out, err := runArea(t, nibsPath, "set", "web", "--description", "Frontend work"); err != nil {
+		t.Fatalf("the rerun the message prescribes must finish the job: %v\nout: %s", err, out)
+	}
+}
+
 // TestAreaRetireVocabularyWriteFailureTellsTheCallerToDropTheFlag executes both
 // halves of what that message says. A retire whose disposition completed and
 // whose config write did not is the one state where rerunning the SAME command
@@ -744,7 +777,7 @@ func TestAreaRetireVocabularyWriteFailureTellsTheCallerToDropTheFlag(t *testing.
 	if err == nil {
 		t.Fatal("expected the seeded config write failure to surface")
 	}
-	if !strings.Contains(err.Error(), "rerun WITHOUT --unassign") {
+	if !strings.Contains(err.Error(), "run it again WITHOUT --unassign") {
 		t.Errorf("error = %q, want it to prescribe dropping the flag", err.Error())
 	}
 	for _, id := range []string{"tnib-b002", "tnib-f002"} {
@@ -823,7 +856,7 @@ func TestAreaRetireConfirmFailureTellsTheCallerToDropTheFlag(t *testing.T) {
 			if err == nil {
 				t.Fatalf("expected the confirming re-read to fail: %s", out)
 			}
-			if want := "rerun WITHOUT " + tt.flag; !strings.Contains(err.Error(), want) {
+			if want := "run it again WITHOUT " + tt.flag; !strings.Contains(err.Error(), want) {
 				t.Errorf("error = %q, want substring %q", err.Error(), want)
 			}
 			if strings.Contains(err.Error(), "rerun the same command") {
@@ -1108,12 +1141,12 @@ func TestAreaRetireConfirmFailureWithNoDispositionSaysWhatHappened(t *testing.T)
 	if err == nil {
 		t.Fatal("the ladder let a failed retire through")
 	}
-	for _, unwanted := range []string{"--unassign", "--move-to", "unassigned", "reassigned", "persisted"} {
+	for _, unwanted := range []string{"--unassign", "--move-to", "unassigned", "moved", "stays updated", "stay updated"} {
 		if strings.Contains(err.Error(), unwanted) {
 			t.Errorf("error = %q, want no mention of %q — no disposition was named and none ran", err.Error(), unwanted)
 		}
 	}
-	for _, want := range []string{"the vocabulary was left as it was", "rerun the same command once that is fixed"} {
+	for _, want := range []string{`area "infra" was left as it was`, "Fix the problem, then run the same command again"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error = %q, want substring %q", err.Error(), want)
 		}
@@ -1158,7 +1191,7 @@ func TestAreaEditNamesNoRestart(t *testing.T) {
 
 	out, err := runArea(t, nibsPath, "set", "web", "--name", "frontend")
 	if err != nil {
-		t.Fatalf("area rename: %v", err)
+		t.Fatalf("area set web --name frontend: %v", err)
 	}
 	for _, unwanted := range []string{"restart it", "once at startup"} {
 		if strings.Contains(out, unwanted) {
@@ -1231,7 +1264,7 @@ func TestAreaAddRefusesAPathAlreadyDeclared(t *testing.T) {
 	if code := areaErrCode(t, err); code != output.ErrValidation {
 		t.Errorf("code = %q, want %q", code, output.ErrValidation)
 	}
-	if !strings.Contains(err.Error(), "already declares") {
+	if !strings.Contains(err.Error(), "already exists") {
 		t.Errorf("error = %q, want the already-declared refusal", err.Error())
 	}
 	if got := areaVocabulary(t, nibsPath); !slices.Equal(got, before) {
@@ -1513,8 +1546,8 @@ func TestAreaSetRefusesToStrandANibThatArrived(t *testing.T) {
 		t.Errorf("code = %q (exit %d), want %q (exit %d) — the store moved under the command, which is not bad input",
 			code, output.ExitCode(code), output.ErrFileError, output.ExitCode(output.ErrFileError))
 	}
-	for _, want := range []string{"tnib-zz99", "did not see 1 nib assigned at or below", "rerun the same command", "persisted",
-		"every write to them is refused"} {
+	for _, want := range []string{"tnib-zz99", "1 nib assigned to it or to an area beneath it", "appeared after this command read the store",
+		"Run the same command again", "stay updated", "every change to them is refused"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error = %q, want substring %q", err.Error(), want)
 		}
@@ -1592,7 +1625,7 @@ func TestAreaRefusalsCarryTheStrandedClauseOnlyWhereItIsTrue(t *testing.T) {
 					t.Fatal("the ladder let a refused edit through")
 				}
 				stranded := e.newPath != "" && len(e.written) > 0
-				if got := strings.Contains(err.Error(), "every write to them is refused"); got != stranded {
+				if got := strings.Contains(err.Error(), "every change to them is refused"); got != stranded {
 					t.Errorf("error = %q, carries the stranded-member clause = %v, want %v", err.Error(), got, stranded)
 				}
 			})
@@ -1650,8 +1683,8 @@ func TestAreaSetConfirmFailureSaysWhatItStranded(t *testing.T) {
 	if err := os.Chmod(deep, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"the vocabulary was left as it was", "persisted", "rerun the same command",
-		"every write to them is refused"} {
+	for _, want := range []string{`area "web" was left as it was`, "stay updated", "run the same command again",
+		"every change to them is refused"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error = %q, want substring %q", err.Error(), want)
 		}

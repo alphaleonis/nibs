@@ -59,3 +59,35 @@ test("Daylight draws every area swatch differently from each dark theme", async 
     }
   }
 });
+
+// Geometry, which jsdom does not compute. The probe is a zero-height box with
+// `vertical-align: middle` inside the title, so its top is the title's x-height
+// center.
+test("the area dot sits on the title's x-height and leaves the type icon's gap", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("nibs-filter-preferences", JSON.stringify({ filter: {}, viewLevel: "areas" }));
+  });
+  await page.goto("/");
+  const row = areaSectionRow(page, "web");
+  await expect(row).toBeVisible({ timeout: 15_000 });
+  await page.evaluate(() => document.fonts.ready);
+
+  const area = await row.evaluate((tr) => {
+    const dot = tr.querySelector('[data-testid="section-color"]')!.getBoundingClientRect();
+    const title = tr.querySelector('[data-testid="title-text"]')!;
+    const probe = document.createElement("span");
+    probe.style.cssText = "display: inline-block; height: 0; vertical-align: middle;";
+    title.append(probe);
+    const xCenter = probe.getBoundingClientRect().top;
+    probe.remove();
+    return { dotCenter: dot.top + dot.height / 2, xCenter, gap: title.getBoundingClientRect().left - dot.right };
+  });
+  // A member of `web`, so it renders a type icon in the same column.
+  const nib = await page.locator('tr[data-nib-id="tnib-b005"]').evaluate((tr) => {
+    const icon = tr.querySelector(".type-icon-gap svg")!.getBoundingClientRect();
+    return { gap: tr.querySelector('[data-testid="title-text"]')!.getBoundingClientRect().left - icon.right };
+  });
+
+  expect(Math.abs(area.dotCenter - area.xCenter)).toBeLessThanOrEqual(0.5);
+  expect(area.gap).toBeCloseTo(nib.gap, 1);
+});
