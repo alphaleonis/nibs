@@ -181,7 +181,7 @@ func TestAreaSetCascadesTheWholeSubtree(t *testing.T) {
 
 	out, err := runArea(t, nibsPath, "set", "web", "--name", "frontend")
 	if err != nil {
-		t.Fatalf("area rename: %v\nout: %s", err, out)
+		t.Fatalf("area set web --name frontend: %v\nout: %s", err, out)
 	}
 
 	if got, want := areaVocabulary(t, nibsPath),
@@ -242,7 +242,7 @@ func TestAreaSetTouchesNothingElseInTheVocabulary(t *testing.T) {
 	}
 
 	if out, err := runArea(t, nibsPath, "set", "web", "--name", "frontend"); err != nil {
-		t.Fatalf("area rename: %v\nout: %s", err, out)
+		t.Fatalf("area set web --name frontend: %v\nout: %s", err, out)
 	}
 	after, err := os.ReadFile(cfgPath)
 	if err != nil {
@@ -605,7 +605,7 @@ func TestAreaSetLeavesAStrandedAssignmentAlone(t *testing.T) {
 	rewriteStoredArea(t, nibsPath, "tnib-b005", "web", "web/retired")
 
 	if out, err := runArea(t, nibsPath, "set", "web", "--name", "frontend"); err != nil {
-		t.Fatalf("area rename: %v\nout: %s", err, out)
+		t.Fatalf("area set web --name frontend: %v\nout: %s", err, out)
 	}
 	if got := storedAreas(t, nibsPath)["tnib-b005"]; got != "web/retired" {
 		t.Errorf("the stranded value was rewritten to %q; only declared members cascade", got)
@@ -1158,7 +1158,7 @@ func TestAreaEditNamesNoRestart(t *testing.T) {
 
 	out, err := runArea(t, nibsPath, "set", "web", "--name", "frontend")
 	if err != nil {
-		t.Fatalf("area rename: %v", err)
+		t.Fatalf("area set web --name frontend: %v", err)
 	}
 	for _, unwanted := range []string{"restart it", "once at startup"} {
 		if strings.Contains(out, unwanted) {

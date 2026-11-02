@@ -6,10 +6,11 @@ import { CONFIG_QUERY, CONFIG_CHANGED_SUBSCRIPTION, NIB_DETAIL_QUERY } from "./l
 import { prepareFilter } from "./lib/filter";
 import type { ViewSpine } from "./lib/viewSpine";
 
-// A `nibs area rename` in another terminal rewrites the store's areas.yml, the
-// server reloads it and pushes the new vocabulary. Without that push the browser
-// keeps rendering sections the store no longer declares, and withholds every
-// `area:` filter naming a path its own nibs now carry (nibs-5cuk).
+// A `nibs area set <path> --name <new>` in another terminal rewrites the store's
+// areas.yml, the server reloads it and pushes the new vocabulary. Without that
+// push the browser keeps rendering sections the store no longer declares, and
+// withholds every `area:` filter naming a path its own nibs now carry
+// (nibs-5cuk).
 
 const { configStore, configChangedStore } = await vi.hoisted(async () => {
   const { writable } = await import("svelte/store");
@@ -105,7 +106,7 @@ describe("App live areas vocabulary", () => {
     render(App);
     expect(currentSpine().areas.validity("web")).toBe("declared");
 
-    // `nibs area rename web frontend`, as the server pushes it.
+    // `nibs area set web --name frontend`, as the server pushes it.
     pushConfig({
       projectName: "test-project",
       areas: [areaNode("frontend"), areaNode("frontend/dashboard", 1)],

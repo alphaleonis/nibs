@@ -136,11 +136,7 @@ func runSetPrefix(cmd *cobra.Command, args []string) error {
 
 	// The renames and the config rewrite are two halves of one change, and the
 	// config half is a read-modify-write of the whole file, so they are one
-	// critical section. Without the lock, a concurrent `nibs area rename` — which
-	// holds this same lock from the moment it plans its own config edit until it
-	// writes it — reads the pre-set-prefix config inside its window and writes it
-	// back over this one. Both processes exit 0, and the store is left with every
-	// nib file renamed and a config still declaring the old prefix.
+	// critical section.
 	//
 	// The dry run above stays outside: it is read-only, and holding a write lock
 	// to print a plan would block writers for nothing. The plan it printed is

@@ -458,8 +458,8 @@ func (c *Core) watchLoop(watcher *fsnotify.Watcher, done <-chan struct{}) {
 
 			// The store's areas.yml is the one non-.md file a live process must
 			// not miss: it is the vocabulary every `area:` is judged against, and
-			// an external `nibs area rename` rewrites it. It gets its own timer, so
-			// a busy nib batch never delays it, nor it them.
+			// an external `nibs area add`, `set` or `rm` rewrites it. It gets its
+			// own timer, so a busy nib batch never delays it, nor it them.
 			//
 			// Debounced because an editor that writes in place (rather than
 			// through the temp-file-and-rename every nibs writer uses) can fire a

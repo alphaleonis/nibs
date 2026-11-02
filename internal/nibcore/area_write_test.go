@@ -385,8 +385,8 @@ func storedAreaOf(t *testing.T, core *Core, nibsDir, id string) string {
 	return ""
 }
 
-// renameRewrite is the mapping `nibs area rename` supplies: everything at or
-// below from moves, keeping whatever it carried below from.
+// renameRewrite is the mapping `nibs area set <path> --name <new>` supplies:
+// everything at or below from moves, keeping whatever it carried below from.
 func renameRewrite(areas *area.Vocabulary, from, to string) func(string) (string, bool) {
 	return func(path string) (string, bool) {
 		if !areas.IsWithin(path, from) {

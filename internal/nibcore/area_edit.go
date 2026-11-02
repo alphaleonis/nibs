@@ -299,7 +299,7 @@ const (
 // AreaEditIOError reports that an area vocabulary edit failed on the
 // FILESYSTEM, as opposed to area.EditRefusal, which is about the file's
 // CONTENT: a rerun often repairs this one and never repairs a refusal. That is
-// the exit 5 versus exit 2 split `nibs area rename` and `nibs area rm` report,
+// the exit 5 versus exit 2 split `nibs area set` and `nibs area rm` report,
 // and cmd/set.go's mutationErrCode maps this type so `nibs query` agrees.
 //
 // It implements no Unwrap: the causes it carries are whatever the operating

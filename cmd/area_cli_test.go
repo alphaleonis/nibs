@@ -558,7 +558,7 @@ func countStoreFiles(t *testing.T, nibsPath string) (total int, oldPrefixed []st
 
 // TestAreaCascadeWritesThePathsTheStoreHasNowIsTheAreaSideOfTheSameDefect.
 //
-// An `area rename` (or `area rm`) that parks on the store lock behind a
+// An `area set --name` (or `area rm`) that parks on the store lock behind a
 // `config set-prefix` resumes holding the paths it loaded BEFORE that rename.
 // Writing a clone to one of them used to CREATE the file — resurrecting the nib
 // at its pre-rename path, so the store ended up with one more file than it
@@ -717,9 +717,9 @@ func TestAreaRetireRefusesAMoveToTargetRetiredUnderTheLock(t *testing.T) {
 // question is asked of the vocabulary the store declares NOW, not of the one
 // this process loaded.
 //
-// A concurrent `area rename api/webhooks hooks` moves a member onto a path the
-// waiting process never loaded. Deciding membership from that snapshot skips it,
-// so the verb retires or renames its parent out from under a nib it never
+// A concurrent `area set api/webhooks --name hooks` moves a member onto a path
+// the waiting process never loaded. Deciding membership from that snapshot skips
+// it, so the verb retires or renames its parent out from under a nib it never
 // rewrote — the same permanent write refusal, reached from the other direction.
 func TestAreaEditsCascadeThroughTheVocabularyDeclaredUnderTheLock(t *testing.T) {
 	tests := []struct {
@@ -849,7 +849,7 @@ func TestAreaSetRefusesABadNameWithoutTakingTheStoreLock(t *testing.T) {
 					t.Errorf("error = %q, want it to carry no %q", err.Error(), tt.unwanted)
 				}
 			case <-time.After(10 * time.Second):
-				t.Fatalf("`area rename %v` is still waiting for the store's write lock — the two arguments alone refuse it, and nothing is printed while it waits", tt.args)
+				t.Fatalf("`area set %s --name %q` is still waiting for the store's write lock — the two arguments alone refuse it, and nothing is printed while it waits", tt.args[0], tt.args[1])
 			}
 		})
 	}
@@ -1020,11 +1020,6 @@ func TestAreaSetReportsAnUndeclaredPathBeforeTheNameShape(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), tt.unwanted) {
 				t.Errorf("error = %q — it answers about the name over an area this store does not declare", err.Error())
-			}
-			// The separator branch's prescription is the sharpest form: a
-			// runnable command the tool refuses the moment it is run.
-			if strings.Contains(err.Error(), "nibs area rename api/hooks") {
-				t.Errorf("error = %q — it prescribes a command that refuses with this same message", err.Error())
 			}
 		})
 	}
