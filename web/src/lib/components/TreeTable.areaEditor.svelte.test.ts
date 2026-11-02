@@ -604,6 +604,15 @@ describe("retiring an area that has members", () => {
     expect(d().getByTestId("area-remove-count")).toHaveTextContent("3");
   });
 
+  it("puts Cancel and Retire on one action row", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const d = await openRemove(user);
+
+    const cancels = d().getAllByRole("button", { name: /^cancel$/i });
+    expect(cancels).toHaveLength(1);
+    expect(d().getByRole("button", { name: /^retire$/i }).parentElement).toBe(cancels[0].parentElement);
+  });
+
   it("refuses to submit until a disposition is chosen", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     const d = await openRemove(user);

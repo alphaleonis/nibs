@@ -846,7 +846,6 @@
       testId="area-form-dialog"
       title={AREA_DIALOG_TITLES[action]}
       description={target.path}
-      cancel={action === "remove"}
       onclose={close}
     >
       {#if action === "edit"}

@@ -2,6 +2,7 @@
   import { untrack } from "svelte";
   import { getContextClient, queryStore } from "@urql/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
+  import * as Dialog from "$lib/components/ui/dialog/index.js";
   import * as RadioGroup from "$lib/components/ui/radio-group/index.js";
   import { getMutationStore, removeArea } from "$lib/mutations";
   import type { AreaDisposition } from "$lib/mutations";
@@ -63,6 +64,8 @@
   let choice: string = $state("");
   let submitting = $state(false);
   let error = $state("");
+  // Presentation only: submit() holds the same preconditions on its own.
+  let armed = $derived(countKnown && !submitting && (memberCount === 0 || choice !== ""));
 
   function chosenDisposition(): AreaDisposition | undefined {
     if (choice === UNASSIGN) return { unassign: true };
@@ -103,15 +106,11 @@
     <span data-testid="area-remove-unknown" class="text-foreground">
       What is assigned to {path} could not be read, so this retirement is not offered.
     </span>
-    <Button variant="destructive" disabled>Retire</Button>
     <AreaEditError message={membersMessage} />
   {:else if memberCount === 0}
     <span class="text-muted-foreground">
       Retire {path} and every area declared beneath it.
     </span>
-    <Button variant="destructive" disabled={submitting} onclick={() => void submit()}>
-      Retire
-    </Button>
   {:else}
     <span data-testid="area-remove-count" class="text-foreground">
       {memberCount}
@@ -142,13 +141,15 @@
         </div>
       {/each}
     </RadioGroup.Root>
-    <Button
-      variant="destructive"
-      disabled={submitting || choice === ""}
-      onclick={() => void submit()}
-    >
-      Retire
-    </Button>
   {/if}
   <AreaEditError message={error} />
+  <!-- The dialog's footer band, so the actions sit where ConfirmDialog's do. -->
+  <Dialog.Footer class="mt-1">
+    <Button type="button" variant="outline" disabled={submitting} onclick={() => onclose?.()}>
+      Cancel
+    </Button>
+    {#if !fetching}
+      <Button variant="destructive" disabled={!armed} onclick={() => void submit()}>Retire</Button>
+    {/if}
+  </Dialog.Footer>
 </div>
