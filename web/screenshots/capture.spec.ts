@@ -830,8 +830,8 @@ test("areas — the row actions affordance, revealed on hover", async ({ page })
 });
 
 /** Open the area menu from the `web` row's [⋯]. */
-async function openAreaMenu(page: Page) {
-  await openApp(page, "areas");
+async function openAreaMenu(page: Page, theme?: Theme) {
+  await openApp(page, "areas", theme);
   const row = page.locator(WEB_SECTION);
   await expect(row).toBeVisible({ timeout: 10_000 });
   await row.locator('[data-testid="row-area-actions"]').click();
@@ -874,15 +874,24 @@ for (const theme of ["daylight", "graphite"] as const) {
 
 // The affected count is over the whole SUBTREE, not the node, and it has to be
 // on screen BEFORE the user is asked to choose a disposition.
-test("areas — retiring an area that has members", async ({ page }) => {
-  const menu = await openAreaMenu(page);
-  await menu.getByRole("menuitem", { name: "Remove…" }).click();
-  await expect(page.locator('[data-testid="area-remove-form"]')).toBeVisible();
-  // The count itself, not merely the form: `area-remove-unknown` occupies the
-  // same slot while the query is unanswered, and must not pass for this frame.
-  await expect(page.locator('[data-testid="area-remove-count"]')).toBeVisible({ timeout: 10_000 });
-  await shot(page, "areas-remove-with-members");
-});
+// The default theme keeps the unsuffixed name; daylight checks the radio
+// indicators and the destructive Retire on the light palette.
+for (const [theme, suffix] of [
+  [undefined, ""],
+  ["daylight", "-daylight"],
+] as const) {
+  test(`areas — retiring an area that has members${suffix}`, async ({ page }) => {
+    const menu = await openAreaMenu(page, theme);
+    await menu.getByRole("menuitem", { name: "Remove…" }).click();
+    await expect(page.locator('[data-testid="area-remove-form"]')).toBeVisible();
+    // The count itself, not merely the form: `area-remove-unknown` occupies the
+    // same slot while the query is unanswered, and must not pass for this frame.
+    await expect(page.locator('[data-testid="area-remove-count"]')).toBeVisible({ timeout: 10_000 });
+    // A chosen disposition shows the checked indicator and an armed Retire.
+    await page.getByRole("radio", { name: "Clear their area" }).click();
+    await shot(page, `areas-remove-with-members${suffix}`);
+  });
+}
 
 // A truncating cell's tooltip is the ONLY way to read a clipped value, so it has
 // to be legible on both palettes: the popover's own surface over the row beneath

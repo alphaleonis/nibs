@@ -54,6 +54,9 @@
   let excluded = $derived(new Set(spine().areas.subtreeOf(path).map((n) => n.path)));
   let targets = $derived(spine().areas.sections().filter((n) => !excluded.has(n.path)));
 
+  // The primitive's `border-input` ring all but vanishes on the dark palettes.
+  const RADIO_CLASS = "border-muted-foreground";
+
   const UNASSIGN = "unassign";
   const MOVE_PREFIX = "move:";
 
@@ -90,34 +93,40 @@
   }
 </script>
 
-<div data-testid="area-remove-form" class="flex flex-col gap-2">
+<!-- wrap-break-word because an area path has no spaces to wrap at. -->
+<div data-testid="area-remove-form" class="flex flex-col gap-3 text-body wrap-break-word">
   {#if fetching}
-    <span class="px-2 text-caption text-muted-foreground">Checking what is assigned…</span>
+    <span class="text-muted-foreground">Checking what is assigned…</span>
   {:else if !countKnown}
     <!-- Ahead of the count: the no-members copy asserts that nothing else is
          affected, which is a claim there is no evidence for here. -->
-    <span data-testid="area-remove-unknown" class="px-2 text-caption text-foreground">
+    <span data-testid="area-remove-unknown" class="text-foreground">
       What is assigned to {path} could not be read, so this retirement is not offered.
     </span>
-    <Button variant="outline" size="sm" disabled>Retire</Button>
+    <Button variant="destructive" disabled>Retire</Button>
     <AreaEditError message={membersMessage} />
   {:else if memberCount === 0}
-    <span class="px-2 text-caption text-muted-foreground">
+    <span class="text-muted-foreground">
       Retire {path} and every area declared beneath it.
     </span>
-    <Button variant="outline" size="sm" disabled={submitting} onclick={() => void submit()}>
+    <Button variant="destructive" disabled={submitting} onclick={() => void submit()}>
       Retire
     </Button>
   {:else}
-    <span data-testid="area-remove-count" class="px-2 text-caption text-foreground">
+    <span data-testid="area-remove-count" class="text-foreground">
       {memberCount}
       {memberCount === 1 ? "nib is" : "nibs are"} assigned to {path} or an area beneath it.
       Choose what becomes of them.
     </span>
-    <RadioGroup.Root bind:value={choice} class="gap-1 px-2">
+    <RadioGroup.Root bind:value={choice} class="gap-2">
       <div class="flex items-center gap-2">
-        <RadioGroup.Item value={UNASSIGN} id="area-disposition-unassign" aria-label="Clear their area" />
-        <label class="text-caption" for="area-disposition-unassign">Clear their area</label>
+        <RadioGroup.Item
+          value={UNASSIGN}
+          id="area-disposition-unassign"
+          aria-label="Clear their area"
+          class={RADIO_CLASS}
+        />
+        <label class="min-w-0" for="area-disposition-unassign">Clear their area</label>
       </div>
       {#each targets as target (target.path)}
         <div class="flex items-center gap-2">
@@ -125,16 +134,16 @@
             value={`${MOVE_PREFIX}${target.path}`}
             id={`area-disposition-move-${target.path}`}
             aria-label={`Move them to ${target.path}`}
+            class={RADIO_CLASS}
           />
-          <label class="text-caption" for={`area-disposition-move-${target.path}`}>
+          <label class="min-w-0" for={`area-disposition-move-${target.path}`}>
             Move them to {target.path}
           </label>
         </div>
       {/each}
     </RadioGroup.Root>
     <Button
-      variant="outline"
-      size="sm"
+      variant="destructive"
       disabled={submitting || choice === ""}
       onclick={() => void submit()}
     >
