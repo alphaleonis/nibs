@@ -70,8 +70,8 @@ func isNilValue(v any) bool {
 
 // updateTargetClone is the one blessed target-side write path: it fetches an
 // OWNED clone via Reader.GetForUpdate, applies mutate to it, and writes it. The
-// SHARED c.nibs[id] pointer is never mutated, so a refused Writer.Update leaves
-// the in-memory nib untouched instead of showing a phantom mutation.
+// SHARED published store pointer is never mutated, so a refused Writer.Update
+// leaves the in-memory nib untouched instead of showing a phantom mutation.
 //
 // The fetch is FRESH per call, so a duplicate target id re-reads the nib the
 // first Update installed rather than computing a stale if-match. The if-match is
@@ -521,24 +521,18 @@ func (r *Resolver) removeBlockedByRelationships(b *nib.Nib, targetIDs []string) 
 // active nib under a non-active one.
 func (r *Resolver) activateParentChain(childID, parentID string) {
 	for parentID != "" {
-		parent, err := r.Reader.Get(parentID)
-		if err != nil || parent == nil {
-			return
-		}
-		if parent.Status != "todo" && parent.Status != "draft" {
-			return
-		}
-		nextParentID := parent.Parent
-		// Reader.Get above returns the SHARED in-memory pointer — read-only here,
-		// for the status gate and the next parent. Take the if-match from its
-		// current in-memory etag and mutate the OWNED clone from GetForUpdate. Do
-		// NOT substitute CurrentETag: that is a lost-update regression, guarded by
-		// TestActivateParentChainGenuineDivergenceIsRefused.
-		parentETag := parent.ETag()
 		updated, err := r.Reader.GetForUpdate(parentID)
 		if err != nil {
 			return
 		}
+		if updated.Status != "todo" && updated.Status != "draft" {
+			return
+		}
+		nextParentID := updated.Parent
+		// The if-match is the clone's in-memory etag, taken before the edit. Do
+		// NOT substitute CurrentETag: that is a lost-update regression, guarded by
+		// TestActivateParentChainGenuineDivergenceIsRefused.
+		parentETag := updated.ETag()
 		updated.Status = "in-progress"
 		if err := r.Writer.Update(updated, &parentETag); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: could not activate ancestor %s (from %s): %v — chain activation stops at this ancestor; it and any higher todo/draft ancestors stay unactivated until the next child-start re-triggers the walk\n", parentID, childID, err)

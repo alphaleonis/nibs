@@ -21,7 +21,18 @@ type NibReader interface {
 	// handing it to Writer.Update; the store's shared pointer is never touched, so
 	// a refused write cannot corrupt in-memory state. It returns ErrNotFound when
 	// the nib is missing, and is the one blessed accessor for every mutation site.
+	// It waits as AwaitWriters does.
 	GetForUpdate(id string) (*nib.Nib, error)
+	// AwaitWriters returns once the write holding the store's writer lock at the
+	// call, if any, has been published. Reads that do not wait can answer from a
+	// state that predates that write (see nibcore's readState).
+	//
+	// CANONICAL RULE (write-path reads). A mutation resolver calls this or
+	// GetForUpdate before its first read, so none of its reads predates a write
+	// that was in progress when it called. A write built from an older read
+	// reverts that write when it lands, unless an ifMatch refuses it. CurrentETag
+	// waits the same way, because it answers the if-match pre-check.
+	AwaitWriters()
 	// GetSnapshot returns a copy of the nib (see nib.Nib.Clone), so the result
 	// never aliases the live store pointer. Use it, not Get, for every nib a
 	// resolver returns (see the invariant below). ok is false when the nib is
@@ -37,10 +48,10 @@ type NibReader interface {
 	// CANONICAL INVARIANT (the live-pointer / copy-on-write rule). This doc is its
 	// single authoritative statement; other comments in internal/nibcore and
 	// internal/graph point here. No Core mutator writes any field, Path included,
-	// on a pointer already published in c.nibs. Every change installs a fresh
-	// *nib.Nib under the map key. An off-lock reader (the Nibs filter/sort
-	// pipeline; gqlgen's async field marshaler) that still holds the old pointer
-	// then never observes a field torn mid-write.
+	// on a nib pointer Core has published. Every change installs a fresh *nib.Nib
+	// instead, and nibcore's readState says how that reaches readers. Readers hold
+	// these pointers with no lock (the Nibs filter/sort pipeline; gqlgen's async
+	// field marshaler), and this rule keeps a field from changing under them.
 	// nibcore.TestCoreMutators_FreezeGuard enforces the producer half.
 	//
 	// For resolvers:

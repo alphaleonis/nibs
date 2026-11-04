@@ -640,10 +640,12 @@ func TestCoreMutators_FreezePartition(t *testing.T) {
 	// helpers). None installs or rewrites a published c.nibs pointer in a way that
 	// can tear a field for an off-lock reader: readers return live pointers or
 	// GetSnapshot clones; Load swaps the whole c.nibs map with fresh pointers
-	// (leaving any held pointer frozen); GetForUpdate returns a clone; Warn
-	// writes to the store's warning sink and reads no nib at all.
+	// (leaving any held pointer frozen); GetForUpdate returns a clone;
+	// AwaitWriters only waits; Warn writes to the store's warning sink and reads
+	// no nib at all.
 	freezeNonMutators := map[string]bool{
 		"All":                true,
+		"AwaitWriters":       true,
 		"CheckAllLinks":      true,
 		"Close":              true,
 		"Areas":              true,
@@ -759,15 +761,12 @@ type frozenPtr struct {
 	before *nib.Nib
 }
 
-// snapshotPublishedPointers captures every currently-published c.nibs pointer
-// and a deep clone of each, under the read lock so the clones cannot race an
-// in-place writer.
+// snapshotPublishedPointers captures every currently-published nib pointer and
+// a deep clone of each.
 func snapshotPublishedPointers(c *Core) []frozenPtr {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	out := make([]frozenPtr, 0, len(c.nibs))
-	for id, p := range c.nibs {
+	published := c.view().nibs
+	out := make([]frozenPtr, 0, len(published))
+	for id, p := range published {
 		out = append(out, frozenPtr{id: id, ptr: p, before: p.Clone()})
 	}
 	return out
@@ -778,9 +777,6 @@ func snapshotPublishedPointers(c *Core) []frozenPtr {
 // place on a published pointer.
 func assertPublishedPointersFrozen(t *testing.T, c *Core, snaps []frozenPtr, mutator string) {
 	t.Helper()
-
-	c.mu.RLock()
-	defer c.mu.RUnlock()
 
 	for _, s := range snaps {
 		// Compare two Clones so any load-boundary-only field a future Clone()

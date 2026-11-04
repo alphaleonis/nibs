@@ -775,9 +775,9 @@ func TestCanonicalizationSweepIsIdempotent(t *testing.T) {
 		t.Fatalf("premise failed: parent = %+v, want the first sweep to re-point it to nibs-e1", dep)
 	}
 
-	core.mu.RLock()
+	core.mu.Lock()
 	before := maps.Clone(core.nibs)
-	core.mu.RUnlock()
+	core.mu.Unlock()
 
 	// Sweep #2 over the very same store.
 	core.mu.Lock()
@@ -788,8 +788,8 @@ func TestCanonicalizationSweepIsIdempotent(t *testing.T) {
 		t.Errorf("the second sweep re-pointed %v; re-resolving an unchanged store must change nothing", rebinds)
 	}
 
-	core.mu.RLock()
-	defer core.mu.RUnlock()
+	core.mu.Lock()
+	defer core.mu.Unlock()
 	for id, b := range core.nibs {
 		if b != before[id] {
 			t.Errorf("the second sweep replaced the stored pointer for %q; a re-resolution that changes nothing must not clone (each clone becomes a spurious event on the watcher path)", id)

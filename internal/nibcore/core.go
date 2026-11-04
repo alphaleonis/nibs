@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -116,55 +117,53 @@ type Core struct {
 	layout store.Layout   // the store's directory structure, derived from root
 	config *config.Config // project configuration
 
-	// areas is the store's declared area vocabulary, the one piece of a store's
-	// configuration reloaded while the process runs (an external `nibs area add`,
-	// `set` or `rm` rewrites it; see area.Vocabulary).
-	//
-	// An atomic pointer, not a mutex, because the read that matters happens
-	// OFF-LOCK: the GraphQL updateNib pre-check reaches ValidateArea through
-	// NibValidator without holding c.mu. Every reload STORES A NEW VALUE rather
-	// than mutating the old, so a reader that has loaded the pointer holds one
-	// coherent vocabulary for the whole of its decision.
-	areas atomic.Pointer[loadedAreas]
-
 	// lockPath is the OS-temp-dir path of the cross-process advisory write lock
 	// guarding this .nibs directory. Every write mutator holds it for the duration
 	// of its read-check-write so two nibs processes (or serve + a CLI) on the same
 	// machine cannot both pass the etag check and clobber each other.
 	lockPath string
 
-	// In-memory state
-	mu   sync.RWMutex
+	// published is the state every reader serves from, without a lock. See
+	// readState for the rule that keeps it consistent.
+	published atomic.Pointer[readState]
+
+	// mu serializes the writers and guards every field below it up to the
+	// subscriber maps. The ones readers see are the working copy publishLocked
+	// installs.
+	mu   sync.Mutex
 	nibs map[string]*nib.Nib // ID -> Nib
 
-	// Reverse-mention index, maintained alongside c.nibs. Guarded by c.mu
-	// (writers under Lock, readers under RLock) — mentionIndex itself is not
-	// internally synchronized.
+	// Reverse-mention index, maintained alongside c.nibs.
 	mentionIdx *mentionIndex
 
-	// Load-time integrity diagnostics from the last loadFromDisk, guarded by
-	// c.mu alongside c.nibs and rebuilt from scratch on every load. Each records
-	// a file that is on disk but not answerable through the store — a skipped
-	// unparseable file, and the loser of an id collision — and CheckAllLinks
-	// reads them back.
+	// Load-time integrity diagnostics from the last loadFromDisk, rebuilt from
+	// scratch on every load. Each records a file that is on disk but not
+	// answerable through the store — a skipped unparseable file, and the loser of
+	// an id collision — and CheckAllLinks reads them back.
 	unparseableFiles []UnparseableFile
 	duplicateIDs     []DuplicateID
 
-	// loadWarned is every load-time warning this process has already written,
-	// guarded by c.mu alongside the diagnostics above, so a re-read of an
-	// unchanged store says nothing twice. Keyed by the RENDERED message, so a
-	// warning about a file that went bad between two reads still reaches the
-	// reader, and fed by the warnings the budget suppressed as well as the ones
-	// it emitted.
+	// areas is the store's declared area vocabulary, the one piece of a store's
+	// configuration reloaded while the process runs (an external `nibs area add`,
+	// `set` or `rm` rewrites it; see area.Vocabulary). Nil until the first load.
+	// Every reload stores a new value rather than mutating the old one.
+	areas *loadedAreas
+
+	// loadWarned is every load-time warning this process has already written, so
+	// a re-read of an unchanged store says nothing twice. Keyed by the RENDERED
+	// message, so a warning about a file that went bad between two reads still
+	// reaches the reader, and fed by the warnings the budget suppressed as well as
+	// the ones it emitted.
 	loadWarned map[string]struct{}
 
-	// Search index (optional, lazy-initialized)
+	// Search index (optional, lazy-initialized). The index is live rather than
+	// copied per publish; readState says what a reader may conclude from it.
 	searchIndex SearchIndex
 
 	// What searchIndex holds, by nib id: the digest of the text this Core last
-	// wrote there (see search_sync.go). Guarded by c.mu alongside c.nibs. It is
-	// what makes a reload index only the nibs that changed, so every path that
-	// indexes, drops or replaces the index maintains it.
+	// wrote there (see search_sync.go). It is what makes a reload index only the
+	// nibs that changed, so every path that indexes, drops or replaces the index
+	// maintains it.
 	indexedDigests map[string]uint64
 
 	// File watching (optional)
@@ -172,8 +171,7 @@ type Core struct {
 	done     chan struct{}
 
 	// longLived records that this process asked to watch the store, which only a
-	// holder outliving a single command does (`nibs serve`, `nibs tui`). Guarded
-	// by c.mu alongside c.watching.
+	// holder outliving a single command does (`nibs serve`, `nibs tui`).
 	//
 	// Not c.watching: StartWatching sets this before it can fail and StopWatching
 	// never clears it, and a serve whose watcher failed to start is the stalest
@@ -201,8 +199,8 @@ type Core struct {
 	// safetext.Writer: these warnings interpolate FILENAMES, which on Linux are
 	// arbitrary bytes. Keep the boundary on the writer, not at the call sites.
 	//
-	// An atomic pointer for the same reason as c.areas: the watcher reads it
-	// off any lock SetWarnWriter could take, and a swap publishes a new Writer.
+	// An atomic pointer because the watcher reads it off any lock SetWarnWriter
+	// could take, and a swap publishes a new Writer.
 	warnWriter atomic.Pointer[safetext.Writer]
 }
 
@@ -220,6 +218,7 @@ func New(root string, cfg *config.Config) *Core {
 		areasSubscribers:  make(map[uint64]chan struct{}),
 	}
 	c.warnWriter.Store(safetext.NewWriter(os.Stderr))
+	c.publishLocked()
 	return c
 }
 
@@ -270,9 +269,11 @@ func (c *Core) Warn(format string, args ...any) {
 
 // SetSearchIndex replaces the lazily-initialized Bleve index. It controls only
 // the full-text leg of Search: Core unions direct ID matches on top of index
-// results. Call it before Load or any concurrent operation — it is not safe for
-// concurrent use.
+// results. Call it before Load, because only a load indexes the nibs already in
+// the store.
 func (c *Core) SetSearchIndex(idx SearchIndex) {
+	c.mu.Lock()
+	defer c.publishAndUnlock()
 	c.searchIndex = idx
 	// The replacement holds nothing this Core put there, so the next load treats
 	// every nib as unindexed.
@@ -364,7 +365,7 @@ func (c *Core) Config() *config.Config {
 //
 // Never nil: a Core that has not been loaded answers with the empty vocabulary.
 func (c *Core) Areas() *area.Vocabulary {
-	return c.areasState().vocab
+	return c.view().areas.vocab
 }
 
 // loadedAreas is one installed vocabulary together with whether a file was read
@@ -378,12 +379,100 @@ type loadedAreas struct {
 	fromFile bool
 }
 
-// areasState returns the installed vocabulary state, never nil.
-func (c *Core) areasState() *loadedAreas {
-	if loaded := c.areas.Load(); loaded != nil {
-		return loaded
+// noAreas is the vocabulary of a Core that has not loaded one.
+var noAreas = &loadedAreas{vocab: &area.Vocabulary{}}
+
+// areasLocked returns the writers' working vocabulary state, never nil. c.mu
+// must be held.
+func (c *Core) areasLocked() *loadedAreas {
+	if c.areas != nil {
+		return c.areas
 	}
-	return &loadedAreas{vocab: &area.Vocabulary{}}
+	return noAreas
+}
+
+// readState is the store as readers see it: one immutable value, published
+// whole through Core.published and loaded once per read.
+//
+// CANONICAL INVARIANT (the published read state). This doc is its single
+// authoritative statement; other comments in internal/nibcore point here. The
+// nibs it holds follow the copy-on-write rule at NibReader.GetSnapshot in
+// internal/graph/interfaces.go.
+//
+//   - Nothing writes a readState or its maps after publishLocked stores it. A
+//     writer changes its working copy under c.mu and publishes a fresh
+//     readState once, after its last change and before it releases c.mu. A
+//     reader therefore sees what it would have seen after that unlock, which
+//     for a writer that failed partway includes the changes made before the
+//     failure.
+//   - A reader loads the pointer once and answers from that one value, so it
+//     never pairs the nibs of one publish with the mention index, diagnostics or
+//     vocabulary of another.
+//   - search is the one live member: the Bleve index is shared, not copied, and
+//     a writer updates it before it publishes. A reader may get ids from a newer
+//     state than its nibs map, so it keeps only the ids that map holds. A kept
+//     hit may then rest on text newer than the nib returned, and a nib whose
+//     published text matches may be missing.
+//
+// A reader takes no lock, so it does not wait for a writer, even one parked on
+// the store's file lock. A read waits only where it feeds a write, through
+// AwaitWriters (GetForUpdate, CurrentETag, and every query whose order-key
+// backfill writes), and on the first Search, which builds the index under c.mu
+// (see initSearchIndex). Writers wait for each other on c.mu.
+type readState struct {
+	nibs        map[string]*nib.Nib
+	mentions    *mentionIndex
+	unparseable []UnparseableFile
+	duplicates  []DuplicateID
+	areas       *loadedAreas
+	search      SearchIndex
+}
+
+// view returns the published read state, never nil after New.
+func (c *Core) view() *readState {
+	return c.published.Load()
+}
+
+// publishLocked installs the working copy as the published read state, then
+// ticks the areas subscribers when the published vocabulary changed. c.mu must
+// be held.
+//
+// It copies the nibs map and the mention index's outer maps, which is O(N) per
+// call; BenchmarkPublish measures it. The diagnostic slices are shared, because
+// loadFromDisk replaces them rather than appending to them.
+func (c *Core) publishLocked() {
+	next := &readState{
+		nibs:        maps.Clone(c.nibs),
+		mentions:    c.mentionIdx.snapshot(),
+		unparseable: c.unparseableFiles,
+		duplicates:  c.duplicateIDs,
+		areas:       c.areasLocked(),
+		search:      c.searchIndex,
+	}
+	prev := c.published.Swap(next)
+	// An unchanged file ticks nobody, so an editor that rewrites areas.yml byte
+	// for byte does not wake every browser holding the view.
+	if prev == nil || prev.areas == next.areas || prev.areas.vocab.Equal(next.areas.vocab) {
+		return
+	}
+	c.subMu.RLock()
+	defer c.subMu.RUnlock()
+	for _, ch := range c.areasSubscribers {
+		select {
+		case ch <- struct{}{}:
+		default:
+			// Subscriber is slow, drop the tick.
+		}
+	}
+}
+
+// publishAndUnlock publishes the working copy, even after the writer failed,
+// then releases c.mu. A writer that changes the working copy defers it right
+// after c.mu.Lock, unless it must run code after the unlock (handleChanges) or
+// publishes only when needed (initSearchIndex).
+func (c *Core) publishAndUnlock() {
+	c.publishLocked()
+	c.mu.Unlock()
 }
 
 // AreasLoadError marks the half of Core.Load that failed on the VOCABULARY. It
@@ -407,7 +496,7 @@ func (e *AreasLoadError) Unwrap() error { return e.Cause }
 // that gate.
 func (c *Core) Load() error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	defer c.publishAndUnlock()
 
 	return c.loadLocked()
 }
@@ -419,7 +508,8 @@ func (c *Core) Load() error {
 // The vocabulary is read BEFORE the nibs, and a malformed one aborts the load —
 // it is authorization data, what an `area:` may say and what a filter may close
 // over. loadAreasLocked requires c.mu, which both routes here already hold, and
-// is the one writer of c.areas (watcher.go).
+// is the one writer of c.areas (watcher.go). Both routes publish what this
+// loads when they release c.mu.
 func (c *Core) loadLocked() error {
 	if err := c.loadAreasLocked(); err != nil {
 		return &AreasLoadError{Cause: err}
@@ -427,13 +517,14 @@ func (c *Core) loadLocked() error {
 	return c.loadFromDisk()
 }
 
-// loadFromDisk reads all nibs from disk. Must be called with c.mu held.
+// loadFromDisk reads all nibs from disk into the working copy. Must be called
+// with c.mu held.
 //
 // The map and both diagnostics are built beside the ones in place and installed
-// only once the walk has SUCCEEDED: c.nibs is the live store every concurrent
-// query in a serve is answered from, and this runs in a request handler (an area
-// mutation re-reads the store under the write lock), so clearing it first would
-// empty that store for every client the moment a walk failed.
+// only once the walk has SUCCEEDED: a writer publishes its working copy even
+// when it fails (see publishAndUnlock), and this runs in a request handler (an
+// area mutation re-reads the store under the write lock), so clearing it first
+// would empty the store for every client the moment a walk failed.
 func (c *Core) loadFromDisk() error {
 	nibs := make(map[string]*nib.Nib)
 
@@ -523,10 +614,9 @@ func (c *Core) loadFromDisk() error {
 
 	c.mentionIdx.Rebuild(c.nibs)
 
-	// Only the nibs whose indexed text changed, and the ids that are gone: the
-	// whole-store re-index this replaced was the largest part of a load wherever
-	// an index was live, and it is charged inside c.mu, where every reader waits
-	// for it (nibs-lx4w).
+	// Only the nibs whose indexed text changed, and the ids that are gone: a
+	// whole-store re-index is the largest part of a load wherever an index is
+	// live, and every other writer waits on c.mu for it.
 	c.syncSearchIndexLocked()
 
 	return nil
@@ -582,8 +672,8 @@ var errFilenameNamesNoID = errors.New("its file name yields no nib id")
 // loadNib reads and parses a single nib file.
 func (c *Core) loadNib(path string) (*nib.Nib, error) {
 	// OpenRegularFile, not os.Open: this is reached from the fsnotify watcher
-	// with a path no walk classified, under the write lock — an open that blocks
-	// there wedges every reader in the process for as long as it lasts.
+	// with a path no walk classified, under c.mu — an open that blocks there
+	// wedges every writer in the process for as long as it lasts.
 	f, err := OpenRegularFile(path)
 	if err != nil {
 		return nil, err
@@ -652,7 +742,8 @@ func (c *Core) loadNib(path string) (*nib.Nib, error) {
 }
 
 // ensureSearchIndexLocked initializes the in-memory search index if not already
-// created. Must be called with c.mu held.
+// created. Must be called with c.mu held, so no writer can skip indexing a nib
+// that this call's whole-store fill has not read.
 func (c *Core) ensureSearchIndexLocked() error {
 	if c.searchIndex != nil {
 		return nil
@@ -699,27 +790,22 @@ func (c *Core) SearchAll(query string) ([]*nib.Nib, error) {
 // search is the shared body of Search and SearchAll. limit caps each leg
 // independently; a limit <= 0 (Unlimited) means no cap on either.
 func (c *Core) search(query string, limit int) ([]*nib.Nib, error) {
-	// Write lock for the lazy init.
-	c.mu.Lock()
-	if err := c.ensureSearchIndexLocked(); err != nil {
-		c.mu.Unlock()
-		return nil, err
+	state := c.view()
+	if state.search == nil {
+		var err error
+		if state, err = c.initSearchIndex(); err != nil {
+			return nil, err
+		}
 	}
-	// Capture the index under the lock.
-	idx := c.searchIndex
-	c.mu.Unlock()
 
-	// Perform search outside the lock (Bleve is thread-safe)
-	ids, err := idx.Search(query, limit)
+	// Bleve is safe for concurrent use. It may answer from a newer state than
+	// state.nibs, which the loop below filters out (see readState).
+	ids, err := state.search.Search(query, limit)
 	if err != nil {
 		return nil, err
 	}
 
-	// Read lock for the map read.
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	idMatches := c.idMatchesLocked(query, limit)
+	idMatches := idMatchesInMap(state.nibs, query, c.configPrefix(), limit)
 	seen := make(map[string]bool, len(idMatches))
 	for _, b := range idMatches {
 		seen[b.ID] = true
@@ -731,21 +817,38 @@ func (c *Core) search(query string, limit int) ([]*nib.Nib, error) {
 		if seen[id] {
 			continue
 		}
-		if b, ok := c.nibs[id]; ok {
+		if b, ok := state.nibs[id]; ok {
 			result = append(result, b)
 		}
 	}
 	return result, nil
 }
 
-// idMatchesLocked returns nibs whose IDs match the query, sorted by ID and
+// initSearchIndex builds the search index on first use and returns the read
+// state that carries it. It takes c.mu, so the first search waits for any
+// writer in progress.
+func (c *Core) initSearchIndex() (*readState, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	err := c.ensureSearchIndexLocked()
+	// Published even on failure, as every writer publishes: the index may be
+	// installed and partly filled. Another first search may have published it.
+	if c.view().search == nil {
+		c.publishLocked()
+	}
+	if err != nil {
+		return nil, err
+	}
+	return c.view(), nil
+}
+
+// idMatchesInMap returns the nibs whose IDs match the query, sorted by ID and
 // capped at limit (<= 0 means uncapped). The Bleve `id` field is unanalyzed, so
 // query-string terms never match it in the full-text leg.
-// Must be called with at least a read lock held.
-func (c *Core) idMatchesLocked(query string, limit int) []*nib.Nib {
-	m := prepareIDQuery(query, c.configPrefix())
+func idMatchesInMap(nibs map[string]*nib.Nib, query, configPrefix string, limit int) []*nib.Nib {
+	m := prepareIDQuery(query, configPrefix)
 	var matches []*nib.Nib
-	for id, b := range c.nibs {
+	for id, b := range nibs {
 		if m.matches(id) {
 			matches = append(matches, b)
 		}
@@ -795,14 +898,14 @@ func isIDFragment(query string) bool {
 // tokenize the query here.
 //
 // Test-only seam with no production callers: it delegates through prepareIDQuery
-// so table tests exercise the logic idMatchesLocked runs per nib (cf. the oracle
+// so table tests exercise the logic idMatchesInMap runs per nib (cf. the oracle
 // convention in mentions.go).
 func matchesIDQuery(query, id, prefix string) bool {
 	return prepareIDQuery(query, prefix).matches(id)
 }
 
 // idQueryMatcher carries the query-only parts of ID matching, precomputed
-// by prepareIDQuery so idMatchesLocked doesn't redo them for every nib.
+// by prepareIDQuery so idMatchesInMap doesn't redo them for every nib.
 type idQueryMatcher struct {
 	// query is the normalized (trimmed, lowercased) search query.
 	query string
@@ -848,11 +951,9 @@ func (m idQueryMatcher) matches(id string) bool {
 
 // All returns a slice of all nibs.
 func (c *Core) All() []*nib.Nib {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	result := make([]*nib.Nib, 0, len(c.nibs))
-	for _, b := range c.nibs {
+	nibs := c.view().nibs
+	result := make([]*nib.Nib, 0, len(nibs))
+	for _, b := range nibs {
 		result = append(result, b)
 	}
 	return result
@@ -863,31 +964,30 @@ func (c *Core) All() []*nib.Nib {
 // "nibs-abc" but Get("ab") does not). It returns the LIVE store pointer — see
 // GetSnapshot for a detached copy.
 func (c *Core) Get(id string) (*nib.Nib, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if b, ok := c.nibs[id]; ok {
-		return b, nil
-	}
-
-	if c.config != nil && c.config.Nibs.Prefix != "" && !strings.HasPrefix(id, c.config.Nibs.Prefix) {
-		if b, ok := c.nibs[c.config.Nibs.Prefix+id]; ok {
-			return b, nil
-		}
-	}
-
-	return nil, ErrNotFound
+	b, _, err := findNibInMap(c.view().nibs, id, c.configPrefix())
+	return b, err
 }
 
 // GetForUpdate returns a deep copy of the nib the caller OWNS and may freely
 // mutate before handing it to Update; mutating it never touches store state, so
 // a rejected Update leaves no phantom mutation behind. Resolution mirrors Get;
 // ErrNotFound when the nib is missing.
+//
+// It calls AwaitWriters first, so the copy includes the write holding c.mu at
+// the call.
 func (c *Core) GetForUpdate(id string) (*nib.Nib, error) {
+	c.AwaitWriters()
 	if b, ok := c.GetSnapshot(id); ok {
 		return b, nil
 	}
 	return nil, ErrNotFound
+}
+
+// AwaitWriters returns once the writer holding c.mu at the call, if any, has
+// published. NibReader.AwaitWriters says who must call it.
+func (c *Core) AwaitWriters() {
+	c.mu.Lock()
+	c.mu.Unlock() //nolint:staticcheck // SA2001: the empty critical section is the wait.
 }
 
 // GetSnapshot returns a copy of the nib (see nib.Nib.Clone), so the returned
@@ -895,18 +995,11 @@ func (c *Core) GetForUpdate(id string) (*nib.Nib, error) {
 // internal/graph/interfaces.go says when to use it. Get returns the live
 // pointer. Resolution mirrors Get; ok is false when the nib is absent.
 func (c *Core) GetSnapshot(id string) (*nib.Nib, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if b, ok := c.nibs[id]; ok {
-		return b.Clone(), true
+	b, _, err := findNibInMap(c.view().nibs, id, c.configPrefix())
+	if err != nil {
+		return nil, false
 	}
-	if c.config != nil && c.config.Nibs.Prefix != "" && !strings.HasPrefix(id, c.config.Nibs.Prefix) {
-		if b, ok := c.nibs[c.config.Nibs.Prefix+id]; ok {
-			return b.Clone(), true
-		}
-	}
-	return nil, false
+	return b.Clone(), true
 }
 
 // NormalizeID resolves a potentially short ID to its full form, prepending the
@@ -916,10 +1009,7 @@ func (c *Core) GetSnapshot(id string) (*nib.Nib, bool) {
 // Resolution lives in normalizeIDInMap; change behavior there (see mentions.go
 // for its other callers).
 func (c *Core) NormalizeID(id string) (string, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if full, ok := normalizeIDInMap(c.nibs, id, c.configPrefix()); ok {
+	if full, ok := normalizeIDInMap(c.view().nibs, id, c.configPrefix()); ok {
 		return full, true
 	}
 	return id, false
@@ -967,14 +1057,13 @@ func (c *Core) ValidateEnums(b *nib.Nib) error {
 // instead: a create has no stored value its argument could be confused with.
 //
 // Read tolerance: a file already carrying an undeclared area loads, lists and
-// renders exactly as written. Only a write refuses it; CheckAllLinks calls this
-// off the READ path to report it.
+// renders exactly as written. Only a write refuses it; CheckAllLinks asks the
+// same question off the READ path to report it.
 //
-// Like ValidateEnums it takes no lock; unlike ValidateEnums it reads mutable
-// state. The vocabulary is RELOADED while the process runs, so c.Areas() is an
-// atomic load rather than a field read, and a reload publishes a whole new
-// vocabulary rather than editing the one a reader is holding — which is what
-// makes the GraphQL updateNib pre-check's off-lock call safe.
+// Like ValidateEnums it takes no lock. It judges against the published
+// vocabulary (see readState), which a reload replaces whole rather than edits,
+// so the GraphQL updateNib pre-check may call it off-lock. Core's own writers
+// judge against their working copy instead.
 //
 // rewriteAreaAssignmentsLocked, the rename cascade, is not a caller: no single
 // vocabulary declares both the value a member is leaving and the one it is
@@ -1020,7 +1109,7 @@ func (c *Core) storedIDs() (map[string]struct{}, error) {
 // Create adds a new nib, generating an ID if needed, and writes it to disk.
 func (c *Core) Create(b *nib.Nib) error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	defer c.publishAndUnlock()
 
 	unlock, err := c.acquireWriteLock()
 	if err != nil {
@@ -1038,7 +1127,7 @@ func (c *Core) Create(b *nib.Nib) error {
 		return err
 	}
 	// ValidateAssignment, not ValidateArea: a create has no stored `area:`.
-	if err := c.Areas().ValidateAssignment(b.Area); err != nil {
+	if err := c.areasLocked().vocab.ValidateAssignment(b.Area); err != nil {
 		return err
 	}
 
@@ -1123,7 +1212,11 @@ func (c *Core) Create(b *nib.Nib) error {
 		return err
 	}
 
-	c.nibs[b.ID] = b
+	// The store holds its own copy, so the caller's b is never a published
+	// pointer the caller could write through. The caller's b keeps the link
+	// spelling it passed in.
+	stored := b.Clone()
+	c.nibs[b.ID] = stored
 
 	// An id ARRIVING can re-point a link another nib already holds: a short form
 	// left verbatim because nothing answered to it starts resolving, and a bare
@@ -1131,15 +1224,10 @@ func (c *Core) Create(b *nib.Nib) error {
 	// answering. The watcher cannot cover for this — the in-process insert above
 	// happens BEFORE fsnotify reports the file. See canonicalize.go.
 	//
-	// Copy-on-write, like every change to a published nib (see
-	// NibReader.GetSnapshot in internal/graph/interfaces.go).
-	//
-	// The caller's own pointer keeps the spelling it passed in: sibling mutators
-	// rewrite the STORE, not the caller's object.
-	if set := canonicalizeLinksInMap(c.nibs, b, c.configPrefix()); set.changed {
-		resolved := b.Clone()
-		set.applyTo(resolved)
-		c.nibs[b.ID] = resolved
+	// stored is resolved in place because nothing has published it yet (see
+	// readState).
+	if set := canonicalizeLinksInMap(c.nibs, stored, c.configPrefix()); set.changed {
+		set.applyTo(stored)
 	}
 	// Warn per rebind, as Core.Delete does: a create moving a THIRD nib's link
 	// changes no file and publishes no event, yet the next unrelated write to
@@ -1148,15 +1236,15 @@ func (c *Core) Create(b *nib.Nib) error {
 		c.logWarn("creating %s re-pointed %s", b.ID, rebind)
 	}
 
-	c.mentionIdx.Add(b.ID, b.Body)
+	c.mentionIdx.Add(stored.ID, stored.Body)
 
 	// Update search index if active (best-effort, don't fail create)
 	if c.searchIndex != nil {
-		if err := c.searchIndex.IndexNib(b); err != nil {
-			c.logWarn("failed to index nib %s: %v", b.ID, err)
-			c.forgetIndexedLocked(b.ID)
+		if err := c.searchIndex.IndexNib(stored); err != nil {
+			c.logWarn("failed to index nib %s: %v", stored.ID, err)
+			c.forgetIndexedLocked(stored.ID)
 		} else {
-			c.recordIndexedLocked(b)
+			c.recordIndexedLocked(stored)
 		}
 	}
 
@@ -1242,21 +1330,18 @@ func (c *Core) mintingVocabulary() (string, int, error) {
 // does not resolve. It falls back to the in-memory etag only when no on-disk
 // file exists yet (empty Path, or os.IsNotExist); an existing file that cannot
 // be read or parsed fails CLOSED — see computeStoredETag's matrix.
+//
+// It calls AwaitWriters first, because it answers an if-match pre-check. The
+// stored nib and the map that canonicalizes the file's links then come from one
+// published read state.
 func (c *Core) CurrentETag(id string) (string, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	storedNib, ok := c.nibs[id]
-	if !ok {
-		// Prefix-resolution, as Get does.
-		if c.config != nil && c.config.Nibs.Prefix != "" && !strings.HasPrefix(id, c.config.Nibs.Prefix) {
-			storedNib, ok = c.nibs[c.config.Nibs.Prefix+id]
-		}
-		if !ok {
-			return "", ErrNotFound
-		}
+	c.AwaitWriters()
+	nibs := c.view().nibs
+	storedNib, _, err := findNibInMap(nibs, id, c.configPrefix())
+	if err != nil {
+		return "", err
 	}
-	return c.computeStoredETag(storedNib)
+	return c.computeStoredETag(nibs, storedNib)
 }
 
 // computeStoredETag returns the canonical etag for a stored nib by reading AND
@@ -1266,7 +1351,8 @@ func (c *Core) CurrentETag(id string) (string, error) {
 // canonically equivalent, so an if-match survives benign formatting drift yet
 // still fails on genuine divergence, including divergence outside Render()'s
 // modeled fields (unknown YAML keys, a legacy v0 `blocking:` line), which
-// nib.Render preserves. Caller must hold c.mu (read or write lock).
+// nib.Render preserves. nibs is the map storedNib came from: the working copy
+// under c.mu, or one published read state.
 //
 // Parsing is the bare nib.Parse with only the ID copied over from the stored nib
 // so the rendered `# <id>` header matches. It deliberately does NOT go through
@@ -1294,9 +1380,8 @@ func (c *Core) CurrentETag(id string) (string, error) {
 // accepted-delete-race paths; the CLOSED ones RETURN a distinct error for the
 // caller to surface, and logging as well would flood stderr on the hot Children
 // read path (orderer.go's backfillKeys re-attempts the Update once per read for
-// a persistently uncertifiable sibling). Caller must hold c.mu (read or write
-// lock).
-func (c *Core) computeStoredETag(storedNib *nib.Nib) (string, error) {
+// a persistently uncertifiable sibling).
+func (c *Core) computeStoredETag(nibs map[string]*nib.Nib, storedNib *nib.Nib) (string, error) {
 	if storedNib.Path == "" {
 		return storedNib.ETag(), nil
 	}
@@ -1319,7 +1404,7 @@ func (c *Core) computeStoredETag(storedNib *nib.Nib) (string, error) {
 		// a YAML typo). Fail CLOSED so a blind retry cannot clobber it.
 		return "", &OnDiskUnparseableError{ID: storedNib.ID, Path: storedNib.Path, Reason: "unparseable", Err: err}
 	}
-	c.reconcileLoaderDerived(b, storedNib)
+	c.reconcileLoaderDerived(nibs, b, storedNib)
 	return b.ETag(), nil
 }
 
@@ -1342,12 +1427,11 @@ func (c *Core) computeStoredETag(storedNib *nib.Nib) (string, error) {
 // because someone DELETED it after this process loaded the file. See
 // loaderMaySynthesizeStamps for what separates the two.
 //
-// Caller must hold c.mu (read or write lock), which canonicalizeLinksInMap's
-// read of c.nibs requires.
-func (c *Core) reconcileLoaderDerived(parsed, storedNib *nib.Nib) {
+// nibs resolves the links, as computeStoredETag's doc says.
+func (c *Core) reconcileLoaderDerived(nibs map[string]*nib.Nib, parsed, storedNib *nib.Nib) {
 	parsed.ID = storedNib.ID
 
-	if set := canonicalizeLinksInMap(c.nibs, parsed, c.configPrefix()); set.changed {
+	if set := canonicalizeLinksInMap(nibs, parsed, c.configPrefix()); set.changed {
 		set.applyTo(parsed)
 	}
 
@@ -1427,7 +1511,7 @@ func copyStamp(stamp *time.Time) *time.Time {
 // own guard is an ifMatch, which the web UI's batch mutations send.
 func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	defer c.publishAndUnlock()
 
 	b = b.Clone()
 
@@ -1450,7 +1534,7 @@ func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 	if err := nibtypes.ValidateAxes(b.EffectiveType(), b.Milestone, b.Area); err != nil {
 		return err
 	}
-	if err := c.ValidateArea(b); err != nil {
+	if err := c.areasLocked().vocab.ValidateStored(b.ID, b.Area); err != nil {
 		return err
 	}
 
@@ -1461,7 +1545,7 @@ func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 	}
 
 	if ifMatch != nil && *ifMatch != "" {
-		currentETag, err := c.computeStoredETag(storedNib)
+		currentETag, err := c.computeStoredETag(c.nibs, storedNib)
 		if err != nil {
 			// The on-disk state cannot be certified. Surface the non-reconcilable
 			// error rather than an ETagMismatchError: no server etag satisfies it.
@@ -1630,7 +1714,7 @@ func (c *Core) renderAndWriteDeferDirSync(b *nib.Nib, path string, write func(st
 // Supports short IDs (without prefix) if a prefix is configured.
 func (c *Core) Delete(id string) error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	defer c.publishAndUnlock()
 
 	unlock, err := c.acquireWriteLock()
 	if err != nil {
@@ -1714,7 +1798,7 @@ func (c *Core) Delete(id string) error {
 // not key on "the file is at its new path".
 func (c *Core) Archive(id string) error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	defer c.publishAndUnlock()
 
 	unlock, lockErr := c.acquireWriteLock()
 	if lockErr != nil {
@@ -1755,7 +1839,7 @@ func (c *Core) Archive(id string) error {
 // Archive's comment records.
 func (c *Core) Unarchive(id string) error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	defer c.publishAndUnlock()
 
 	unlock, lockErr := c.acquireWriteLock()
 	if lockErr != nil {
@@ -1794,10 +1878,7 @@ func (c *Core) Unarchive(id string) error {
 // IsArchived returns true if the nib with the given ID is in the archive.
 // Supports short IDs (without prefix) if a prefix is configured.
 func (c *Core) IsArchived(id string) bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	b, _, err := c.findNibLocked(id)
+	b, _, err := findNibInMap(c.view().nibs, id, c.configPrefix())
 	if err != nil {
 		return false
 	}
@@ -1827,20 +1908,24 @@ func (c *Core) normalizeID(id string) string {
 	return id
 }
 
-// findNibLocked finds a nib by ID, supporting short IDs.
+// findNibLocked finds a nib by ID in the working copy, supporting short IDs.
 // Must be called with c.mu held.
 func (c *Core) findNibLocked(id string) (*nib.Nib, string, error) {
-	if b, ok := c.nibs[id]; ok {
+	return findNibInMap(c.nibs, id, c.configPrefix())
+}
+
+// findNibInMap finds a nib by exact ID, then by the prefix-prepended ID when id
+// lacks configPrefix. It returns the nib and its full ID, or ErrNotFound when
+// neither matches.
+func findNibInMap(nibs map[string]*nib.Nib, id, configPrefix string) (*nib.Nib, string, error) {
+	if b, ok := nibs[id]; ok {
 		return b, id, nil
 	}
-
-	fullID := c.normalizeID(id)
-	if fullID != id {
-		if b, ok := c.nibs[fullID]; ok {
-			return b, fullID, nil
+	if configPrefix != "" && !strings.HasPrefix(id, configPrefix) {
+		if b, ok := nibs[configPrefix+id]; ok {
+			return b, configPrefix + id, nil
 		}
 	}
-
 	return nil, "", ErrNotFound
 }
 
@@ -1884,7 +1969,7 @@ func (c *Core) GetFromArchive(id string) (*nib.Nib, error) {
 // and that write's updateOnDisk flushes data/.
 func (c *Core) LoadAndUnarchive(id string) (*nib.Nib, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	defer c.publishAndUnlock()
 
 	unlock, lockErr := c.acquireWriteLock()
 	if lockErr != nil {
@@ -1934,7 +2019,7 @@ func (c *Core) FullPath(b *nib.Nib) string {
 // Close stops any active file watcher and cleans up resources.
 func (c *Core) Close() error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	defer c.publishAndUnlock()
 
 	if c.searchIndex != nil {
 		if err := c.searchIndex.Close(); err != nil {

@@ -183,7 +183,7 @@ func writeNibFileFor(t *testing.T, core *Core, b *nib.Nib) error {
 // loadAreasLocked does — with c.mu held.
 func reloadUnderLock(core *Core) error {
 	core.mu.Lock()
-	defer core.mu.Unlock()
+	defer core.publishAndUnlock()
 	return core.loadAreasLocked()
 }
 
@@ -220,12 +220,11 @@ func TestReloadAreasReportsAFileItCannotRead(t *testing.T) {
 }
 
 // TestTheWatchersReloadDoesNotInstallOverAHeldStoreLock pins the half of the
-// vocabulary install the race detector cannot speak for. c.areas is an atomic
-// pointer, so a reload that reads areas.yml, is descheduled while an area edit
-// writes and installs a newer vocabulary, and then stores what it read is a LOST
-// UPDATE and not a data race — memory ends up a vocabulary behind disk, the
-// edit's own file event has already been spent, and every write to the nibs that
-// edit's cascade moved is refused from then on.
+// vocabulary install the race detector cannot speak for. A reload that reads
+// areas.yml, is descheduled while an area edit writes and installs a newer
+// vocabulary, and then stores what it read is a LOST UPDATE — memory ends up a
+// vocabulary behind disk, the edit's own file event has already been spent, and
+// every write to the nibs that edit's cascade moved is refused from then on.
 //
 // What makes that impossible is the install being one step against the other
 // installer, so that is what is asserted: while an edit's critical section is

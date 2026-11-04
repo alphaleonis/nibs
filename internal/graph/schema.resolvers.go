@@ -18,6 +18,7 @@ import (
 
 // CreateNib is the resolver for the createNib field.
 func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibInput) (*nib.Nib, error) {
+	r.Reader.AwaitWriters()
 	b := &nib.Nib{
 		Slug:    nib.Slugify(input.Title),
 		Title:   input.Title,
@@ -158,8 +159,7 @@ func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibI
 		}
 	}
 
-	// Writer.Create installed b AS the shared store entry — return a snapshot,
-	// never b itself.
+	// Return what the store now holds, as a snapshot, never b.
 	return r.snapshotResult(b.ID)
 }
 
@@ -493,6 +493,7 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 // re-pointed onto the twin by Core.Delete's canonicalization sweep, and the
 // twin's own incoming links stripped in their place.
 func (r *mutationResolver) DeleteNib(ctx context.Context, id string) (bool, error) {
+	r.Reader.AwaitWriters()
 	target, err := r.Reader.Get(id)
 	if err != nil {
 		return false, err
@@ -514,6 +515,7 @@ func (r *mutationResolver) DeleteNib(ctx context.Context, id string) (bool, erro
 // Incoming links are preserved, unlike DeleteNib: an archived nib stays in the
 // store and may be unarchived.
 func (r *mutationResolver) ArchiveNib(ctx context.Context, id string) (bool, error) {
+	r.Reader.AwaitWriters()
 	_, err := r.Reader.Get(id)
 	if err != nil {
 		return false, err
@@ -552,6 +554,7 @@ func (r *mutationResolver) SetParent(ctx context.Context, id string, parentID *s
 // AddBlocking is the resolver for the addBlocking field.
 // Single-side storage: adds id to target's blockedBy list (not to id's Blocking field).
 func (r *mutationResolver) AddBlocking(ctx context.Context, id string, targetID string) (*nib.Nib, error) {
+	r.Reader.AwaitWriters()
 	b, err := r.Reader.Get(id)
 	if err != nil {
 		return nil, err
@@ -593,6 +596,7 @@ func (r *mutationResolver) AddBlocking(ctx context.Context, id string, targetID 
 // RemoveBlocking is the resolver for the removeBlocking field.
 // Single-side storage: removes id from target's blockedBy list.
 func (r *mutationResolver) RemoveBlocking(ctx context.Context, id string, targetID string) (*nib.Nib, error) {
+	r.Reader.AwaitWriters()
 	b, err := r.Reader.Get(id)
 	if err != nil {
 		return nil, err
@@ -721,11 +725,13 @@ func (r *mutationResolver) ReorderNib(ctx context.Context, id string, afterID *s
 
 // ReorderChildren is the resolver for the reorderChildren field.
 func (r *mutationResolver) ReorderChildren(ctx context.Context, parentID string, childIds []string, ifMatch []*model.ChildEtag) ([]*nib.Nib, error) {
+	r.Reader.AwaitWriters()
 	return r.reorderChildrenImpl(parentID, childIds, ifMatch)
 }
 
 // ReorderSiblings is the resolver for the reorderSiblings field.
 func (r *mutationResolver) ReorderSiblings(ctx context.Context, siblingIds []string, afterID *string, beforeID *string, first *bool, ifMatch []*model.ChildEtag) ([]*nib.Nib, error) {
+	r.Reader.AwaitWriters()
 	return r.reorderSiblingsImpl(siblingIds, afterID, beforeID, first, ifMatch)
 }
 

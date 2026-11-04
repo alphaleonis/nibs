@@ -46,7 +46,7 @@ type Node struct {
 // without a nil check.
 //
 // Treat a parsed value as immutable. A reload builds a new one and swaps the
-// pointer; see nibcore.Core.ValidateArea for what reads one off-lock.
+// pointer; see nibcore.Core.ValidateArea for what reads one without a lock.
 type Vocabulary struct {
 	// The declared forest, in the file's declaration order.
 	Nodes []Node `yaml:"areas,omitempty"`

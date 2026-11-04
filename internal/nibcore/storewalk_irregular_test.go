@@ -312,8 +312,8 @@ func TestWatcherDoesNotWedgeTheStoreOnAnIrregularFile(t *testing.T) {
 // path recorded at LOAD time and re-read later.
 //
 // computeStoredETag re-reads the file behind a loaded nib to certify what is on
-// disk, and CurrentETag holds a read lock across it while Update holds the write
-// lock — so a nib swapped for a FIFO after load blocked there instead of failing.
+// disk, and Update runs it under c.mu — so a nib swapped for a FIFO after load
+// blocked there, and every writer behind it, instead of failing.
 // Failing closed is the right answer: the on-disk content cannot be certified, so
 // the overwrite must be refused.
 func TestCurrentETagRefusesANibReplacedByAnIrregularFile(t *testing.T) {

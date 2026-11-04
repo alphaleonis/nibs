@@ -646,7 +646,7 @@ func countOf(items []string, want string) int {
 func rewriteAreasLocked(t *testing.T, core *Core, rewrite func(string) (string, bool)) ([]string, error) {
 	t.Helper()
 	core.mu.Lock()
-	defer core.mu.Unlock()
+	defer core.publishAndUnlock()
 	release, err := core.acquireWriteLock()
 	if err != nil {
 		t.Fatalf("acquireWriteLock: %v", err)

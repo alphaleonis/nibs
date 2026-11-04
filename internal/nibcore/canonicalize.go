@@ -156,8 +156,9 @@ func canonicalizeLinksInMap(nibs map[string]*nib.Nib, b *nib.Nib, configPrefix s
 //
 // UNPUBLISHED is the precondition: it mutates the stored nibs IN PLACE, which is
 // safe only on the bulk load path, where loadFromDisk builds a fresh c.nibs of
-// pointers no off-lock reader can hold. Anything working on published pointers
-// must go through canonicalizeStoreLocked or canonicalizeLinksAfterBatchLocked.
+// pointers nothing has published yet (see readState). Anything working on
+// published pointers must go through canonicalizeStoreLocked or
+// canonicalizeLinksAfterBatchLocked.
 // Must be called with c.mu held.
 func (c *Core) canonicalizeAllLinksUnpublishedLocked() {
 	configPrefix := c.configPrefix()

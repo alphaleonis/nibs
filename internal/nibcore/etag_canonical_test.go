@@ -512,7 +512,7 @@ func TestComputeStoredETagFailsOpenWhenNotFlushed(t *testing.T) {
 		nibsDir := setupNibsDir(t)
 		core := New(nibsDir, config.Default())
 		n := &nib.Nib{ID: "notflushed1", Title: "Not Flushed", Status: "todo"}
-		got, err := core.computeStoredETag(n)
+		got, err := core.computeStoredETag(core.nibs, n)
 		if err != nil {
 			t.Fatalf("computeStoredETag for an empty-Path nib: unexpected error %v", err)
 		}

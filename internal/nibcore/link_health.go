@@ -668,26 +668,25 @@ func closedMilestoneQueuesInMap(nibs map[string]*nib.Nib, isClosed, releasesDepe
 // process whose watcher has since reconciled a file keeps reporting what its
 // Load saw, until the next Load.
 //
-// The retained slices are copied out rather than shared: this holds only a read
-// lock, so handing out the stored backing array would let a caller mutate Core
-// state without one.
+// Every category answers from one published read state, so the nibs, the
+// diagnostics and the vocabulary agree. The retained slices are copied out, so
+// a caller editing the report cannot write into that state (see readState).
 func (c *Core) CheckAllLinks() *LinkCheckResult {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	state := c.view()
 	projectRoot := filepath.Dir(c.root)
-	result := CheckAllLinksInMap(c.nibs, projectRoot, c.configPrefix())
-	result.UnparseableFiles = append(result.UnparseableFiles, c.unparseableFiles...)
-	result.DuplicateIDs = append(result.DuplicateIDs, c.duplicateIDs...)
+	result := CheckAllLinksInMap(state.nibs, projectRoot, c.configPrefix())
+	result.UnparseableFiles = append(result.UnparseableFiles, state.unparseable...)
+	result.DuplicateIDs = append(result.DuplicateIDs, state.duplicates...)
 
 	// Field integrity: the enum tables are the config's, which the pure map
 	// function does not carry. Sorted by id, or map order shuffles the report.
-	ids := make([]string, 0, len(c.nibs))
-	for id := range c.nibs {
+	ids := make([]string, 0, len(state.nibs))
+	for id := range state.nibs {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
-		if err := c.ValidateEnums(c.nibs[id]); err != nil {
+		if err := c.ValidateEnums(state.nibs[id]); err != nil {
 			result.InvalidEnums = append(result.InvalidEnums, InvalidEnum{NibID: id, Reason: err.Error()})
 		}
 	}
@@ -700,9 +699,9 @@ func (c *Core) CheckAllLinks() *LinkCheckResult {
 	// or not a vocabulary exists), and the answer for such a store is one config
 	// edit, not N findings. The cost: no read surface names those nibs, so the
 	// dead end shows up only on an attempted write.
-	if c.config != nil && !c.Areas().IsEmpty() {
+	if vocab := state.areas.vocab; c.config != nil && !vocab.IsEmpty() {
 		for _, id := range ids {
-			b := c.nibs[id]
+			b := state.nibs[id]
 			// A type that refuses `area:` outright is already an InvalidAxis
 			// finding whose remedy is to drop the key, so naming a declared
 			// value beside it would prescribe one this nib may not carry. Axis
@@ -712,7 +711,7 @@ func (c *Core) CheckAllLinks() *LinkCheckResult {
 				continue
 			}
 			var areaErr *area.Error
-			if errors.As(c.ValidateArea(b), &areaErr) {
+			if errors.As(vocab.ValidateStored(b.ID, b.Area), &areaErr) {
 				result.UndeclaredAreas = append(result.UndeclaredAreas, UndeclaredArea{
 					NibID: id, Path: b.Path, Area: areaErr.Path, Declared: areaErr.Declared,
 				})
@@ -723,7 +722,7 @@ func (c *Core) CheckAllLinks() *LinkCheckResult {
 	// Queue integrity: the status ROLES are the config's answer. The derivation
 	// stays pure; only the two predicates cross.
 	result.ClosedMilestoneQueues = append(result.ClosedMilestoneQueues,
-		closedMilestoneQueuesInMap(c.nibs, c.closedStatusPredicate(), c.releasesDependentsPredicate())...)
+		closedMilestoneQueuesInMap(state.nibs, c.closedStatusPredicate(), c.releasesDependentsPredicate())...)
 	return result
 }
 
@@ -734,10 +733,9 @@ func (c *Core) CheckAllLinks() *LinkCheckResult {
 // migrating around a skipped file can silently drop edges to it. Slices are
 // copied out, matching CheckAllLinks.
 func (c *Core) LoadDiagnostics() ([]UnparseableFile, []DuplicateID) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return append([]UnparseableFile(nil), c.unparseableFiles...),
-		append([]DuplicateID(nil), c.duplicateIDs...)
+	state := c.view()
+	return append([]UnparseableFile(nil), state.unparseable...),
+		append([]DuplicateID(nil), state.duplicates...)
 }
 
 // FindCyclesInMap detects all cycles for a specific link type using DFS.
@@ -905,7 +903,7 @@ func canonicalCycleKey(path []string) string {
 // the other whole-store sweep states — see Core.rewriteAreaAssignmentsLocked.
 func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	defer c.publishAndUnlock()
 
 	// Refused, not optimized away — see the doc comment.
 	if targetID == "" {
@@ -1042,7 +1040,7 @@ func (c *Core) skippedIDsLocked() map[string]bool {
 // writers for that long.
 func (c *Core) FixBrokenLinks() (int, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	defer c.publishAndUnlock()
 
 	unlock, lockErr := c.acquireWriteLock()
 	if lockErr != nil {

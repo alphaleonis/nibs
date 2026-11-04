@@ -134,3 +134,30 @@ func TestMentionIndex_Rebuild(t *testing.T) {
 		t.Errorf("InboundSources(a) = %v, want [c]", gotA)
 	}
 }
+
+// TestMentionIndex_SnapshotIsUnchangedByLaterWrites writes, after a snapshot,
+// to both a set the snapshot shares and the outer maps. The snapshot must
+// answer as it did when taken.
+func TestMentionIndex_SnapshotIsUnchangedByLaterWrites(t *testing.T) {
+	idx := newMentionIndex()
+	idx.Add("a", "See #b.")
+	idx.Add("c", "See #b and #d.")
+	snap := idx.snapshot()
+
+	idx.Add("e", "See #b.")
+	idx.Remove("c")
+	idx.Replace("a", "See #f.")
+
+	if got := snap.InboundSources("b"); len(got) != 2 || got[0] != "a" || got[1] != "c" {
+		t.Errorf("snapshot InboundSources(b) = %v, want [a c]", got)
+	}
+	if got := snap.InboundSources("d"); len(got) != 1 || got[0] != "c" {
+		t.Errorf("snapshot InboundSources(d) = %v, want [c]", got)
+	}
+	if got := snap.OutboundTokens("a"); len(got) != 1 || got[0] != "b" {
+		t.Errorf("snapshot OutboundTokens(a) = %v, want [b]", got)
+	}
+	if got := idx.InboundSources("b"); len(got) != 1 || got[0] != "e" {
+		t.Errorf("working InboundSources(b) = %v, want [e]", got)
+	}
+}

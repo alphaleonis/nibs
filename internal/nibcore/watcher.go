@@ -184,28 +184,24 @@ func (c *Core) SubscribeAreas() (<-chan struct{}, func()) {
 // already loaded (see loadAreasLocked) and another file event will come when the
 // file is repaired.
 //
-// It takes c.mu because the install is a read-compare-swap and an area edit is
-// the other writer. Off that lock this timer can read the pre-edit file, be
-// descheduled while editArea writes and installs, then store what it read —
-// leaving memory behind disk with the edit's own file event already spent, which
-// refuses every write to the nibs that edit's cascade moved. c.areas is an
-// atomic pointer, so that is a LOST UPDATE rather than a data race, and -race
-// never sees it.
+// It takes c.mu because an area edit is the other writer. Off that lock this
+// timer can read the pre-edit file, be descheduled while editArea writes and
+// installs, then store what it read — leaving memory behind disk with the edit's
+// own file event already spent, which refuses every write to the nibs that
+// edit's cascade moved.
 func (c *Core) watchReloadAreas() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	defer c.publishAndUnlock()
 
 	if err := c.loadAreasLocked(); err != nil {
 		c.logWarn("keeping the areas vocabulary already loaded: %v", err)
 	}
 }
 
-// loadAreasLocked re-reads the store's areas.yml and installs it, ticking every
-// areas subscriber when the vocabulary actually changed. c.mu must be held: the
-// read, the comparison and the install are one step against the other callers.
-// Install c.areas only here — a second installer that skipped the tick would
-// move the vocabulary and tell nobody, and the next reload, finding it already
-// equal, would tick nobody either.
+// loadAreasLocked re-reads the store's areas.yml and installs it in the working
+// copy. c.mu must be held, and the caller's publish ticks every areas subscriber
+// when the vocabulary changed (see publishLocked). It is the one writer of
+// c.areas.
 //
 // The error it returns is the caller's to dispose of, and callers differ: the
 // watcher swallows it to a warning, an area edit reports it.
@@ -214,11 +210,9 @@ func (c *Core) watchReloadAreas() {
 // an empty tree on a malformed file would make every `area:` undeclared at once
 // and refuse every write to every assigned nib.
 //
-// An unchanged file ticks nobody, so an editor that rewrites areas.yml byte for
-// byte does not wake every browser holding the view. That decides the TICK, not
-// the install, which is unconditional: Equal compares the declared tree alone, so
-// a vocabulary equal in content can still differ in whether a file was read,
-// which editArea's vanished-file check compares.
+// The install is unconditional even for an unchanged file: Equal compares the
+// declared tree alone, so a vocabulary equal in content can still differ in
+// whether a file was read, which editArea's vanished-file check compares.
 //
 // An absent areas.yml is the empty vocabulary, not an error. A file that exists
 // and cannot be honored is refused, naming the file.
@@ -240,21 +234,7 @@ func (c *Core) loadAreasLocked() error {
 	case !errors.Is(err, fs.ErrNotExist):
 		return err
 	}
-	changed := !loaded.vocab.Equal(c.Areas())
-	c.areas.Store(loaded)
-	if !changed {
-		return nil
-	}
-
-	c.subMu.RLock()
-	defer c.subMu.RUnlock()
-	for _, ch := range c.areasSubscribers {
-		select {
-		case ch <- struct{}{}:
-		default:
-			// Subscriber is slow, drop the tick.
-		}
-	}
+	c.areas = loaded
 	return nil
 }
 
@@ -767,9 +747,9 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 		}
 	}
 
-	c.mu.Unlock()
+	c.publishAndUnlock()
 
-	// Load-bearing ordering: state is committed above before any event is
+	// Load-bearing ordering: state is published above before any event is
 	// delivered, so a subscriber that re-reads via Get/All on an event sees the
 	// change. Fan out outside the lock.
 	c.fanOut(events, cloningPayloads)

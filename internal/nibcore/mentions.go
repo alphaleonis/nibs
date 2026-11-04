@@ -16,8 +16,7 @@ import (
 // configPrefix. Returns the full ID and true on either hit, otherwise
 // ("", false). Resolve short ids through this, not by prepending by hand.
 //
-// Pure function operating on the given map without locking. Callers passing
-// a Core.nibs map must hold Core.mu.RLock for the duration of the call.
+// Pure function operating on the given map without locking.
 //
 // A bare token and its prefixed twin can both be map keys: nib.NewID always
 // prepends the prefix, but nib.ParseFilename derives a bare id from a filename
@@ -42,9 +41,7 @@ func normalizeIDInMap(nibs map[string]*nib.Nib, id, configPrefix string) (string
 // self-references, and exclude unresolved tokens. Nibs are returned in order of
 // first appearance in the body.
 //
-// Pure function operating on the given map without locking. Callers passing a
-// Core.nibs map must hold Core.mu.RLock for the duration of the call and any
-// subsequent use of returned *nib.Nib pointers.
+// Pure function operating on the given map without locking.
 func FindMentionsInMap(nibs map[string]*nib.Nib, fromID, configPrefix string) []*nib.Nib {
 	from, ok := nibs[fromID]
 	if !ok {
@@ -76,9 +73,7 @@ func FindMentionsInMap(nibs map[string]*nib.Nib, fromID, configPrefix string) []
 // if it mentions the target multiple times) and exclude self-references. The
 // returned slice is sorted by ID for deterministic ordering across calls.
 //
-// Pure function operating on the given map without locking. Callers passing a
-// Core.nibs map must hold Core.mu.RLock for the duration of the call and any
-// subsequent use of returned *nib.Nib pointers.
+// Pure function operating on the given map without locking.
 func FindMentionedByInMap(nibs map[string]*nib.Nib, targetID, configPrefix string) []*nib.Nib {
 	if _, ok := nibs[targetID]; !ok {
 		return nil
@@ -114,21 +109,20 @@ func FindMentionedByInMap(nibs map[string]*nib.Nib, targetID, configPrefix strin
 // The outbound tokens come from the reverse-mention index, so no body is
 // re-parsed here.
 func (c *Core) FindMentions(fromID string) []*nib.Nib {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	fullID, ok := c.normalizeIDForLookupLocked(fromID)
+	state := c.view()
+	prefix := c.configPrefix()
+	fullID, ok := normalizeIDInMap(state.nibs, fromID, prefix)
 	if !ok {
 		return nil
 	}
-	tokens := c.mentionIdx.OutboundTokens(fullID)
+	tokens := state.mentions.OutboundTokens(fullID)
 	if len(tokens) == 0 {
 		return nil
 	}
-	prefix := c.configPrefix()
 	seen := make(map[string]struct{}, len(tokens))
 	var out []*nib.Nib
 	for _, tok := range tokens {
-		resolvedID, ok := normalizeIDInMap(c.nibs, tok, prefix)
+		resolvedID, ok := normalizeIDInMap(state.nibs, tok, prefix)
 		if !ok || resolvedID == fullID {
 			continue
 		}
@@ -136,7 +130,7 @@ func (c *Core) FindMentions(fromID string) []*nib.Nib {
 			continue
 		}
 		seen[resolvedID] = struct{}{}
-		out = append(out, c.nibs[resolvedID])
+		out = append(out, state.nibs[resolvedID])
 	}
 	return out
 }
@@ -147,16 +141,15 @@ func (c *Core) FindMentions(fromID string) []*nib.Nib {
 //
 // Served from the reverse-mention index, so no body is re-parsed here.
 func (c *Core) FindMentionedBy(targetID string) []*nib.Nib {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	fullID, ok := c.normalizeIDForLookupLocked(targetID)
+	state := c.view()
+	prefix := c.configPrefix()
+	fullID, ok := normalizeIDInMap(state.nibs, targetID, prefix)
 	if !ok {
 		return nil
 	}
 	// A body may carry the full-form token ("nibs-abc") or the short form
 	// ("abc"); both resolve to the target, so union both inbound sets.
 	tokens := []string{fullID}
-	prefix := c.configPrefix()
 	if prefix != "" && strings.HasPrefix(fullID, prefix) {
 		if short := strings.TrimPrefix(fullID, prefix); short != "" && short != fullID {
 			tokens = append(tokens, short)
@@ -165,7 +158,7 @@ func (c *Core) FindMentionedBy(targetID string) []*nib.Nib {
 
 	seen := make(map[string]struct{})
 	for _, tok := range tokens {
-		for _, srcID := range c.mentionIdx.InboundSources(tok) {
+		for _, srcID := range state.mentions.InboundSources(tok) {
 			if srcID == fullID {
 				continue
 			}
@@ -184,15 +177,15 @@ func (c *Core) FindMentionedBy(targetID string) []*nib.Nib {
 
 	out := make([]*nib.Nib, 0, len(ids))
 	for _, id := range ids {
-		if b, ok := c.nibs[id]; ok {
+		if b, ok := state.nibs[id]; ok {
 			out = append(out, b)
 		}
 	}
 	return out
 }
 
-// normalizeIDForLookupLocked mirrors Core.NormalizeID but assumes the caller
-// already holds c.mu.
+// normalizeIDForLookupLocked mirrors Core.NormalizeID against the working copy.
+// c.mu must be held.
 func (c *Core) normalizeIDForLookupLocked(id string) (string, bool) {
 	return normalizeIDInMap(c.nibs, id, c.configPrefix())
 }

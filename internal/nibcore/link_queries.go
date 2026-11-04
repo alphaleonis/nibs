@@ -21,11 +21,9 @@ func DetectCycleInMap(nibs map[string]*nib.Nib, fromID, linkType, toID string) [
 }
 
 // DetectCycle checks if adding a link from fromID to toID would create a cycle.
-// Thread-safe wrapper around DetectCycleInMap.
+// Lock-free wrapper around DetectCycleInMap.
 func (c *Core) DetectCycle(fromID, linkType, toID string) []string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return DetectCycleInMap(c.nibs, fromID, linkType, toID)
+	return DetectCycleInMap(c.view().nibs, fromID, linkType, toID)
 }
 
 // findPathToTargetInMap uses DFS to find if there's a path from current to target.
@@ -91,11 +89,9 @@ func findIncomingLinksInMap(nibs map[string]*nib.Nib, targetID string) []nib.Inc
 }
 
 // FindIncomingLinks returns all nibs that link TO the given nib ID.
-// Thread-safe wrapper around findIncomingLinksInMap.
+// Lock-free wrapper around findIncomingLinksInMap.
 func (c *Core) FindIncomingLinks(targetID string) []nib.IncomingLink {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return findIncomingLinksInMap(c.nibs, targetID)
+	return findIncomingLinksInMap(c.view().nibs, targetID)
 }
 
 // releasesDependentsPredicate returns the "does this blocker still count" test
@@ -136,11 +132,9 @@ func isBlockedInMap(nibs map[string]*nib.Nib, nibID, configPrefix string, releas
 // IsBlocked returns true if the nib with the given ID has any active blockers —
 // blockers whose status has not released them — and its own status has not
 // released its dependents: a completed or scrapped nib is never blocked.
-// Thread-safe wrapper around isBlockedInMap.
+// Lock-free wrapper around isBlockedInMap.
 func (c *Core) IsBlocked(nibID string) bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return isBlockedInMap(c.nibs, nibID, c.configPrefix(), c.releasesDependentsPredicate())
+	return isBlockedInMap(c.view().nibs, nibID, c.configPrefix(), c.releasesDependentsPredicate())
 }
 
 // isBlockingInMap returns true if the nib with the given ID is actively blocking
@@ -174,11 +168,9 @@ func isBlockingInMap(nibs map[string]*nib.Nib, nibID, configPrefix string, relea
 
 // IsBlocking returns true if the nib with the given ID is actively blocking
 // any other nib.
-// Thread-safe wrapper around isBlockingInMap.
+// Lock-free wrapper around isBlockingInMap.
 func (c *Core) IsBlocking(nibID string) bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return isBlockingInMap(c.nibs, nibID, c.configPrefix(), c.releasesDependentsPredicate())
+	return isBlockingInMap(c.view().nibs, nibID, c.configPrefix(), c.releasesDependentsPredicate())
 }
 
 // findActiveBlockersInMap returns the nibs actively blocking the given nib:
@@ -213,9 +205,7 @@ func findActiveBlockersInMap(nibs map[string]*nib.Nib, nibID, configPrefix strin
 }
 
 // FindActiveBlockers returns all nibs that are actively blocking the given nib.
-// Thread-safe wrapper around findActiveBlockersInMap.
+// Lock-free wrapper around findActiveBlockersInMap.
 func (c *Core) FindActiveBlockers(nibID string) []*nib.Nib {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return findActiveBlockersInMap(c.nibs, nibID, c.configPrefix(), c.releasesDependentsPredicate())
+	return findActiveBlockersInMap(c.view().nibs, nibID, c.configPrefix(), c.releasesDependentsPredicate())
 }

@@ -62,7 +62,7 @@ func (c *Core) MigrateV0ToV1(lock *StoreLock) (int, error) {
 	}
 
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	defer c.publishAndUnlock()
 
 	// Sorted so warnings and any failure point are stable across runs.
 	v0IDs := make([]string, 0)
@@ -142,7 +142,7 @@ func (c *Core) NormalizeLegacyPriorities(lock *StoreLock) (int, error) {
 	}
 
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	defer c.publishAndUnlock()
 
 	dirty := make(map[string]*nib.Nib)
 	for id, b := range c.nibs {
@@ -194,7 +194,7 @@ func (c *Core) MigrateV1ToV2(lock *StoreLock) (int, error) {
 	}
 
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	defer c.publishAndUnlock()
 
 	// Sorted so warnings and any failure point are stable across runs.
 	v1IDs := make([]string, 0)
