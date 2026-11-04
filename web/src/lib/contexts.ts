@@ -11,6 +11,7 @@ import { COLUMN_ADAPTERS_KEY, columnAdapters } from './ColumnAdapters.svelte';
 import { EMPTY_SPINE } from './viewSpine';
 import type { ViewSpine } from './viewSpine';
 import type { MilestoneOption } from './milestones';
+import { MappingModeState } from './mappingMode.svelte';
 
 export const SELECTION_KEY = 'nibs:selection';
 export const DRAG_KEY = 'nibs:drag';
@@ -22,6 +23,7 @@ export const CONNECTION_KEY = 'nibs:connection';
 export const VIEW_SPINE_KEY = 'nibs:view-spine';
 export const MILESTONES_KEY = 'nibs:milestones';
 export const CONFIG_RETRY_KEY = 'nibs:config-retry';
+export const MAPPING_MODE_KEY = 'nibs:mapping-mode';
 
 export function provideSelection(s: SelectionState) { setContext(SELECTION_KEY, s); }
 export function useSelection(): SelectionState {
@@ -61,6 +63,13 @@ export function useMilestones(): () => readonly MilestoneOption[] | null {
   const g = getContext<() => readonly MilestoneOption[] | null>(MILESTONES_KEY);
   // Optional: without a provider there is no list and no answer.
   return g ?? (() => null);
+}
+
+export function provideMappingMode(m: MappingModeState) { setContext(MAPPING_MODE_KEY, m); }
+export function useMappingMode(): MappingModeState {
+  const m = getContext<MappingModeState>(MAPPING_MODE_KEY);
+  if (!m) throw new Error('useMappingMode() called outside provider — call provideMappingMode() in a parent component');
+  return m;
 }
 
 export function provideConnection(c: ConnectionRecovery) { setContext(CONNECTION_KEY, c); }
@@ -121,6 +130,7 @@ export function makeTestContext(
     viewSpine?: ViewSpine;
     milestones?: readonly MilestoneOption[] | null;
     configRetry?: () => void;
+    mappingMode?: MappingModeState;
   },
 ): Map<string, unknown> {
   const m = new Map<string, unknown>();
@@ -136,6 +146,7 @@ export function makeTestContext(
   const milestones = opts?.milestones ?? null;
   m.set(MILESTONES_KEY, () => milestones);
   m.set(TREE_VIEW_KEY, opts?.treeView ?? new TreeViewState(DEFAULT_VIEW_LEVEL));
+  m.set(MAPPING_MODE_KEY, opts?.mappingMode ?? new MappingModeState());
   // Only when supplied; omitting it tests the no-retry path.
   if (opts?.configRetry) m.set(CONFIG_RETRY_KEY, opts.configRetry);
   if (opts?.confirmDialog) m.set(CONFIRM_DIALOG_KEY, opts.confirmDialog);

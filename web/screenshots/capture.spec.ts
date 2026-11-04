@@ -402,6 +402,34 @@ test("detail panel — bottom dock", async ({ page }) => {
   await shot(page, "detail-panel-bottom");
 });
 
+// Mapping mode's panel in the detail pane's slot, per dock and light/dark, with a
+// drag aimed at a milestone card so its drop highlight is in frame.
+for (const theme of ["daylight", "graphite"] as const) {
+  for (const position of ["right", "bottom"] as const) {
+    test(`mapping mode — ${theme}, ${position} dock`, async ({ page }) => {
+      await openApp(page, "flat", theme, position);
+      await page.getByTestId("mapping-mode-toggle").click();
+      const target = page.locator('[data-mapping-target="tnib-m001"]');
+      await expect(target.getByTestId("mapping-open-count")).toBeVisible({ timeout: 5_000 });
+      await shot(page, `mapping-mode-${theme}-${position}`);
+
+      const source = await page.locator("tr[data-nib-id]").nth(2).boundingBox();
+      const to = await target.boundingBox();
+      if (!source || !to) throw new Error("the mapping drag is not laid out");
+      await page.mouse.move(source.x + 80, source.y + source.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(source.x + 94, source.y + source.height / 2, { steps: 5 });
+      await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 10 });
+      await expect(page.getByTestId("drag-badge-label")).toBeVisible();
+      await shot(page, `mapping-mode-${theme}-${position}-drag`);
+
+      // Escape rather than a release, so the fixture is unchanged for later captures.
+      await page.keyboard.press("Escape");
+      await page.mouse.up();
+    });
+  }
+}
+
 // The two row-state channels side by side, per palette: a fill means "a bulk
 // action would consume this row" and the leading accent means "the detail panel
 // is showing it". Reaching the state needs the double-click preference — open one

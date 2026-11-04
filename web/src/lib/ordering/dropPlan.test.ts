@@ -1687,3 +1687,32 @@ describe("a target parented to itself", () => {
     expect(landedL.depth).toBeGreaterThan(landed.rows.find((r) => r.nib.id === "S")!.depth);
   });
 });
+
+describe("a drop onto a row under a closed drag gate", () => {
+  const BLOCK = { message: "Reordering is off in the Flat view" };
+
+  function planUnderGate(draggedIds: string[], targetId: string): DropPlan {
+    return planDrop({
+      draggedIds,
+      rowsById: ROWS_BY_ID,
+      draggedRowsById: ROWS_BY_ID,
+      target: ROWS_BY_ID.get(targetId)!,
+      zone: "before",
+      descendantIds: collectDescendantIds(draggedIds, ROWS),
+      containment: CONTAINMENT,
+      rowDropBlock: BLOCK,
+    });
+  }
+
+  it("refuses an otherwise accepted reorder with the gate's message", () => {
+    const plan = planUnderGate(["B1"], "B2");
+    expect(plan).toEqual({ ok: false, refusal: { reason: "gate-closed", message: BLOCK.message } });
+  });
+
+  it("keeps a release on a grabbed row a silent cancel", () => {
+    const plan = planUnderGate(["B1", "B2"], "B2");
+    expect(plan.ok).toBe(false);
+    if (plan.ok) return;
+    expect(plan.refusal.reason).toBe("drop-on-self");
+  });
+});

@@ -54,7 +54,17 @@ export type DropRefusalReason =
   /** The rows are already in the section the drop names. */
   | "already-in-section"
   /** The section refuses entry, and carries the sentence saying why. */
-  | "entry-refused";
+  | "entry-refused"
+  /** A drag gate is closed, so rows are no drop target; the message is the gate's. */
+  | "gate-closed"
+  /** Clearing the dragged nib's own milestone would leave the one it inherits. */
+  | "inherited-membership"
+  /** The mapping panel has no current copy of the store it plans against. */
+  | "panel-unavailable"
+  /** An assign would meet an assigned ancestor or descendant the drop leaves in place. */
+  | "exclusivity-conflict"
+  /** A dragged nib's parent chain leads back to itself. */
+  | "parent-cycle";
 
 /**
  * Toast id shared by every drop refusal, so repeated refused releases replace
@@ -127,6 +137,11 @@ export interface DropRequest {
    * Omitted, ids are spelled as ids (`BY_ID`).
    */
   readonly nameOf?: RegionNamer;
+  /**
+   * The closed drag gate while a drag runs past it, or null. Rows are then no
+   * drop target, and only a release on a grabbed row stays a silent cancel.
+   */
+  readonly rowDropBlock?: { readonly message: string } | null;
 }
 
 /**
@@ -167,10 +182,16 @@ export function entryRegionOf(row: RowData): Region | null {
  */
 export function planDrop(req: DropRequest): DropPlan {
   // Defaulted here so every phrase below takes a required namer.
-  const { draggedIds, rowsById, draggedRowsById, target, zone, descendantIds, containment, nameOf = BY_ID } = req;
+  const { draggedIds, rowsById, draggedRowsById, target, zone, descendantIds, containment, nameOf = BY_ID, rowDropBlock = null } = req;
 
   if (draggedIds.length === 0) {
     return refuse("no-source", "Nothing is being dragged.");
+  }
+
+  if (rowDropBlock !== null) {
+    return draggedIds.includes(target.nib.id)
+      ? refuse("drop-on-self", "A nib cannot be dropped onto itself.")
+      : refuse("gate-closed", rowDropBlock.message);
   }
 
   const dragged: RowData[] = [];
@@ -515,7 +536,8 @@ export function planDrop(req: DropRequest): DropPlan {
   }
 }
 
-function refuse(
+/** A refusal plan, with the region and remedy it names when given. */
+export function refuse(
   reason: DropRefusalReason,
   message: string,
   extra: { region?: Region; action?: { label: string; command: AnyCommand } } = {},

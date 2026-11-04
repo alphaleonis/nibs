@@ -17,6 +17,7 @@ type Documents = {
     "\n  query Config {\n    config {\n      projectName\n      prefix\n      areas {\n        path\n        name\n        description\n        color\n        depth\n      }\n    }\n  }\n": typeof types.ConfigDocument,
     "\n  subscription ConfigChanged {\n    configChanged {\n      projectName\n      prefix\n      areas {\n        path\n        name\n        description\n        color\n        depth\n      }\n    }\n  }\n": typeof types.ConfigChangedDocument,
     "\n  query Milestones {\n    nibs(filter: { type: [\"milestone\"] }, sort: { field: ORDER, direction: ASC }) {\n      id\n      title\n      status\n    }\n  }\n": typeof types.MilestonesDocument,
+    "\n  query MappingPlan {\n    nibs {\n      id\n      title\n      status\n      type\n      milestone\n      parentId\n    }\n  }\n": typeof types.MappingPlanDocument,
     "\n  query UpdateStatus {\n    updateStatus {\n      current\n      latest\n      updateAvailable\n    }\n  }\n": typeof types.UpdateStatusDocument,
     "\n  query NibDetail($id: ID!) {\n    nib(id: $id) {\n      id\n      title\n      status\n      type\n      priority\n      estimate\n      milestone\n      area\n      tags\n      body\n      documents\n      etag\n      parent {\n        id\n        title\n        type\n        status\n      }\n      children(sort: { field: ORDER, direction: ASC }) {\n        id\n        title\n        type\n        status\n      }\n      blocking {\n        id\n        title\n        type\n        status\n      }\n      blockedBy {\n        id\n        title\n        type\n        status\n      }\n      mentions {\n        id\n        title\n        type\n        status\n      }\n      mentionedBy {\n        id\n        title\n        type\n        status\n      }\n    }\n  }\n": typeof types.NibDetailDocument,
     "\n  query NibConflictSnapshot($id: ID!) {\n    nib(id: $id) {\n      id\n      title\n      status\n      type\n      priority\n      estimate\n      milestone\n      area\n      tags\n      body\n      etag\n    }\n  }\n": typeof types.NibConflictSnapshotDocument,
@@ -38,6 +39,7 @@ const documents: Documents = {
     "\n  query Config {\n    config {\n      projectName\n      prefix\n      areas {\n        path\n        name\n        description\n        color\n        depth\n      }\n    }\n  }\n": types.ConfigDocument,
     "\n  subscription ConfigChanged {\n    configChanged {\n      projectName\n      prefix\n      areas {\n        path\n        name\n        description\n        color\n        depth\n      }\n    }\n  }\n": types.ConfigChangedDocument,
     "\n  query Milestones {\n    nibs(filter: { type: [\"milestone\"] }, sort: { field: ORDER, direction: ASC }) {\n      id\n      title\n      status\n    }\n  }\n": types.MilestonesDocument,
+    "\n  query MappingPlan {\n    nibs {\n      id\n      title\n      status\n      type\n      milestone\n      parentId\n    }\n  }\n": types.MappingPlanDocument,
     "\n  query UpdateStatus {\n    updateStatus {\n      current\n      latest\n      updateAvailable\n    }\n  }\n": types.UpdateStatusDocument,
     "\n  query NibDetail($id: ID!) {\n    nib(id: $id) {\n      id\n      title\n      status\n      type\n      priority\n      estimate\n      milestone\n      area\n      tags\n      body\n      documents\n      etag\n      parent {\n        id\n        title\n        type\n        status\n      }\n      children(sort: { field: ORDER, direction: ASC }) {\n        id\n        title\n        type\n        status\n      }\n      blocking {\n        id\n        title\n        type\n        status\n      }\n      blockedBy {\n        id\n        title\n        type\n        status\n      }\n      mentions {\n        id\n        title\n        type\n        status\n      }\n      mentionedBy {\n        id\n        title\n        type\n        status\n      }\n    }\n  }\n": types.NibDetailDocument,
     "\n  query NibConflictSnapshot($id: ID!) {\n    nib(id: $id) {\n      id\n      title\n      status\n      type\n      priority\n      estimate\n      milestone\n      area\n      tags\n      body\n      etag\n    }\n  }\n": types.NibConflictSnapshotDocument,
@@ -82,6 +84,10 @@ export function graphql(source: "\n  subscription ConfigChanged {\n    configCha
  * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
  */
 export function graphql(source: "\n  query Milestones {\n    nibs(filter: { type: [\"milestone\"] }, sort: { field: ORDER, direction: ASC }) {\n      id\n      title\n      status\n    }\n  }\n"): (typeof documents)["\n  query Milestones {\n    nibs(filter: { type: [\"milestone\"] }, sort: { field: ORDER, direction: ASC }) {\n      id\n      title\n      status\n    }\n  }\n"];
+/**
+ * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
+ */
+export function graphql(source: "\n  query MappingPlan {\n    nibs {\n      id\n      title\n      status\n      type\n      milestone\n      parentId\n    }\n  }\n"): (typeof documents)["\n  query MappingPlan {\n    nibs {\n      id\n      title\n      status\n      type\n      milestone\n      parentId\n    }\n  }\n"];
 /**
  * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
  */

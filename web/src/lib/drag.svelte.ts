@@ -23,6 +23,8 @@ export class DragState {
   /** The accepted plan the badge and row indicator draw from, or null. */
   dropAccepted: AcceptedDrop | null = $state(null);
   dropLabel: string | null = $derived(this.dropAccepted?.label ?? null);
+  /** The mapping-panel target under the cursor, or null while the cursor is over none. */
+  panelTargetKey: string | null = $state(null);
 
   /** Cursor position (for the badge) */
   cursorX: number = $state(0);
@@ -37,6 +39,16 @@ export class DragState {
     this.dropZone = zone;
     this.dropValid = valid;
     this.dropAccepted = accepted;
+    this.panelTargetKey = null;
+  }
+
+  /** Aims the drag at a mapping-panel target, which is no row. */
+  setPanelTarget(key: string, valid: boolean, accepted: AcceptedDrop | null): void {
+    this.dropTargetId = null;
+    this.dropZone = null;
+    this.dropValid = valid;
+    this.dropAccepted = accepted;
+    this.panelTargetKey = key;
   }
 
   clearDropTarget(): void {
@@ -44,6 +56,7 @@ export class DragState {
     this.dropZone = null;
     this.dropValid = false;
     this.dropAccepted = null;
+    this.panelTargetKey = null;
   }
 
   endDrag(): void {

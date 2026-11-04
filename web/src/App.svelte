@@ -17,16 +17,18 @@
   import TreeTable from "./lib/components/TreeTable.svelte";
   import ColumnAdapters from "./lib/ColumnAdapters.svelte";
   import ActiveNibView from "./lib/components/ActiveNibView.svelte";
+  import MappingPanel from "./lib/components/MappingPanel.svelte";
   import TypePickerPopover from "./lib/components/TypePickerPopover.svelte";
   import RowContextMenu from "./lib/components/RowContextMenu.svelte";
   import DragBadge from "./lib/components/DragBadge.svelte";
   import ConfirmDialog from "./lib/components/ConfirmDialog.svelte";
   import { SelectionState } from "./lib/selection.svelte";
   import { DragState } from "./lib/drag.svelte";
+  import { MappingModeState } from "./lib/mappingMode.svelte";
   import { DROP_REFUSAL_TOAST_ID, refusalAction, type DropPlan } from "./lib/ordering/dropPlan";
   import type { AnyCommand } from "./lib/mutations/types";
   import { TreeViewState } from "./lib/treeView.svelte";
-  import { provideSelection, provideDrag, provideTreeView, provideConfirmDialog, provideActiveView, provideHistoryNav, provideConnection, provideViewSpine, provideMilestones, provideConfigRetry } from "./lib/contexts";
+  import { provideSelection, provideDrag, provideTreeView, provideConfirmDialog, provideActiveView, provideHistoryNav, provideConnection, provideViewSpine, provideMilestones, provideConfigRetry, provideMappingMode } from "./lib/contexts";
   import { createAreaVocabulary } from "./lib/areas";
   import { makeViewSpine, LOADING_SPINE, UNAVAILABLE_SPINE } from "./lib/viewSpine";
   import { useConnectionRecovery } from "./lib/composables/useConnectionRecovery.svelte";
@@ -152,6 +154,7 @@
 
   const selection = new SelectionState();
   const drag = new DragState();
+  const mapping = new MappingModeState();
   // Created outside the {#key position} block so collapse state survives the
   // PaneGroup remount. Seeded with the restored view level: TreeTable's transition
   // applier parks the outgoing scroll offset under `activeLevel`, so a wrong seed
@@ -331,6 +334,7 @@
 
   provideSelection(selection);
   provideDrag(drag);
+  provideMappingMode(mapping);
   provideTreeView(treeView);
   provideHistoryNav(nav);
   provideConfirmDialog(confirmDialog);
@@ -338,6 +342,15 @@
 
   // The expanded presentation uses the modal below instead.
   const dockOpen = $derived(view.isOpen && view.presentation === "docked");
+  // The mapping panel takes the detail pane's slot while no nib is docked there.
+  const paneOpen = $derived(dockOpen || mapping.on);
+
+  // A docked nib gives the slot up when mapping turns on, unless its dirty guard
+  // refuses; then it keeps the slot until it closes.
+  function toggleMapping() {
+    mapping.toggle();
+    if (mapping.on && dockOpen) void view.requestClose();
+  }
 
   // Sync selection from the initial URL and let the view follow; popstate drives
   // it afterward. Untracked so it runs once: `syncTo` reads and writes view
@@ -464,7 +477,7 @@
     // The menu reads its target from the selection. "single" opens an unselected
     // row through the view; "double" selects it without opening the panel.
     if (!selection.isSelected(nibId)) {
-      if (prefs.openDetailOn === "double") {
+      if (mapping.on || prefs.openDetailOn === "double") {
         selection.selectOnly(nibId);
       } else {
         view.open(nibId);
@@ -529,7 +542,7 @@
 
   $effect(() => {
     if (!detailPaneComponent) return;
-    if (dockOpen) {
+    if (paneOpen) {
       if (detailPaneComponent.isCollapsed()) {
         detailPaneComponent.expand();
         detailPaneComponent.resize(layout.defaultPercent);
@@ -547,7 +560,7 @@
   let paneInitialSized = false;
   $effect(() => {
     if (paneInitialSized) return;
-    if (!detailPaneComponent || !dockOpen || containerSize <= 0) return;
+    if (!detailPaneComponent || !paneOpen || containerSize <= 0) return;
     detailPaneComponent.resize(layout.defaultPercent);
     paneInitialSized = true;
   });
@@ -566,6 +579,8 @@
     areas={viewSpine.areas}
     connectionStatus={recovery.status}
     oncreatenew={(type) => view.startCreate({ type })}
+    mappingOn={mapping.on}
+    ontogglemapping={toggleMapping}
   />
 
   <!-- Provides the per-column header/cell adapters to the table region. -->
@@ -593,25 +608,29 @@
       </Resizable.Pane>
       <Resizable.Handle
         data-testid="resize-handle"
-        class={dockOpen ? "" : "hidden"}
+        class={paneOpen ? "" : "hidden"}
         ondblclick={handleResizeHandleDblClick}
         onDraggingChange={layout.onDraggingChange}
       />
       <Resizable.Pane
-        defaultSize={dockOpen ? layout.defaultPercent : 0}
-        minSize={dockOpen ? layout.minPercent : 0}
-        maxSize={dockOpen ? layout.maxPercent : 0}
+        defaultSize={paneOpen ? layout.defaultPercent : 0}
+        minSize={paneOpen ? layout.minPercent : 0}
+        maxSize={paneOpen ? layout.maxPercent : 0}
         collapsible={true}
         collapsedSize={0}
         onResize={layout.onResize}
         onCollapse={() => {
-          if (!dockOpen) return;
+          if (!dockOpen) {
+            if (mapping.on) mapping.on = false;
+            return;
+          }
           // Close only if still docked-open when the frame fires; re-expand if
           // the dirty guard refuses.
           requestAnimationFrame(async () => {
             if (!dockOpen) return;
             await view.requestClose();
-            if (dockOpen && detailPaneComponent?.isCollapsed()) {
+            // Re-expand for a refused close, or for the mapping panel behind the nib.
+            if (paneOpen && detailPaneComponent?.isCollapsed()) {
               detailPaneComponent.expand();
               detailPaneComponent.resize(layout.defaultPercent);
             }
@@ -622,6 +641,8 @@
       >
         {#if dockOpen}
           <ActiveNibView suggestions={availableTags} blockedEmphasis={prefs.blockedEmphasis} {prefs} />
+        {:else if mapping.on}
+          <MappingPanel onclose={() => (mapping.on = false)} />
         {/if}
       </Resizable.Pane>
     </Resizable.PaneGroup>

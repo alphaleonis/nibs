@@ -15,6 +15,7 @@ const { buildTableData } = EMPTY_SPINE;
 import { OPEN_STATUSES } from "../constants";
 import { SelectionState } from "../selection.svelte";
 import { DragState } from "../drag.svelte";
+import { MappingModeState } from "../mappingMode.svelte";
 import { TreeViewState } from "../treeView.svelte";
 import { buildShapedViewTree } from "../tree";
 import { makeTestContext } from "../contexts";
@@ -74,14 +75,14 @@ const mockSubscriptionStore = vi.mocked(subscriptionStore);
 /** Render TreeTable with required context. */
 function renderTreeTable(
   props: Record<string, unknown>,
-  opts?: { selection?: SelectionState; drag?: DragState; treeView?: TreeViewState },
+  opts?: { selection?: SelectionState; drag?: DragState; treeView?: TreeViewState; mappingMode?: MappingModeState },
 ) {
   return render(TreeTable, {
     props: props as any,
     context: makeTestContext(
       opts?.selection ?? new SelectionState(),
       opts?.drag ?? new DragState(),
-      { treeView: opts?.treeView },
+      { treeView: opts?.treeView, mappingMode: opts?.mappingMode },
     ),
   });
 }
@@ -1742,6 +1743,15 @@ describe("TreeTable", () => {
     it("rows are not draggable in flat view (browse-only), sort on or off", () => {
       expect(renderFlat().container.querySelectorAll("tr.draggable")).toHaveLength(0);
     });
+
+    it("rows are draggable in flat view while mapping mode is on, so they can reach the panel", () => {
+      const mappingMode = new MappingModeState();
+      mappingMode.on = true;
+      const nibs: TreeTableNib[] = [makeTreeTableNib({ id: "nibs-001", title: "First", type: "task" })];
+      mockQueryStore.mockReturnValue(readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any);
+      const { container } = renderTreeTable({ filter: {}, viewLevel: "flat" as ViewLevel }, { mappingMode });
+      expect(container.querySelectorAll("tr.draggable")).toHaveLength(1);
+    });
   });
 
   describe("table sort — every sortable column", () => {
@@ -3209,6 +3219,25 @@ describe("TreeTable", () => {
       expect(sel.selectedIds.has("nibs-001")).toBe(true);
       expect(sel.focusedNibId).toBe("nibs-001");
       expect(sel.anchorId).toBe("nibs-001");
+    });
+
+    it("mapping mode: a plain single click selects without opening, whatever the preference", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      const mappingMode = new MappingModeState();
+      mappingMode.on = true;
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs: makeTestNibs() }, stale: false }) as any
+      );
+      const { container } = renderTreeTable(
+        { filter: {}, viewLevel: "milestones" as ViewLevel, openDetailOn: "single" },
+        { selection: sel, mappingMode },
+      );
+
+      await user.click(container.querySelector("tr[data-nib-id='nibs-001']") as HTMLElement);
+
+      expect(sel.selectedNibId).toBeNull();
+      expect(sel.selectedIds.has("nibs-001")).toBe(true);
     });
 
     it("double mode: a single click on the title text also selects without opening", async () => {

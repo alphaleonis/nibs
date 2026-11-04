@@ -90,6 +90,7 @@ describe("useTreeDrag", () => {
     /** Defaults to the index of an EMPTY view: these cases are about the
      *  gesture, and the destination check they would reach is `dropPlan`'s. */
     containment?: ContainmentIndex;
+    planPanelDrop?: (key: string, draggedIds: readonly string[], draggedRowsById: ReadonlyMap<string, RowData>) => DropPlan | null;
   } = {}) {
     const selection = overrides.selection ?? new SelectionState();
     const drag = overrides.drag ?? new DragState();
@@ -104,6 +105,7 @@ describe("useTreeDrag", () => {
       getScrollContainer: () => overrides.scrollContainer ?? null,
       getContainment: () => overrides.containment ?? buildContainmentIndex([]),
       getDragBlock: () => overrides.dragBlock ?? null,
+      planPanelDrop: overrides.planPanelDrop,
       ondrop,
       onblockeddrag,
     });
@@ -733,6 +735,79 @@ describe("useTreeDrag", () => {
     expect(ondrop).not.toHaveBeenCalled();
 
     unhover();
+  });
+
+  describe("over the mapping panel", () => {
+    const PANEL_PLAN: DropPlan = { ok: false, refusal: { reason: "panel-unavailable", message: "loading" } };
+
+    /** A panel holding one card whose target value is "", and the card's child. */
+    function mountPanel(): { panel: HTMLElement; card: HTMLElement; label: HTMLElement } {
+      const panel = document.createElement("section");
+      panel.setAttribute("data-mapping-panel", "");
+      const card = document.createElement("div");
+      card.setAttribute("data-mapping-target", "");
+      const label = document.createElement("span");
+      card.appendChild(label);
+      panel.appendChild(card);
+      document.body.appendChild(panel);
+      return { panel, card, label };
+    }
+
+    /** A scroll container whose bottom edge the cursor at y=880 is past. */
+    function scrollContainer(): HTMLElement {
+      const el = document.createElement("div");
+      el.getBoundingClientRect = () => ({ top: 0, bottom: 500, left: 0, right: 800, height: 500, width: 800, x: 0, y: 0, toJSON: () => {} });
+      return el;
+    }
+
+    function moveTo(el: Element | null) {
+      document.elementFromPoint = () => el;
+      window.dispatchEvent(new PointerEvent("pointermove", { clientX: 200, clientY: 880, bubbles: true }));
+    }
+
+    it("asks the panel about the card under the cursor, an empty target value included, and drops its plan", () => {
+      const { panel, label } = mountPanel();
+      const planPanelDrop = vi.fn(() => PANEL_PLAN);
+      const drag = new DragState();
+      const ondrop = vi.fn();
+      const composable = setup({ drag, rows: [makeRow(makeNib({ id: "nibs-001" }))], ondrop, planPanelDrop });
+
+      startDragOn("nibs-001", composable);
+      moveTo(label);
+      expect(planPanelDrop).toHaveBeenCalledWith("", ["nibs-001"], expect.any(Map));
+      expect(drag.panelTargetKey).toBe("");
+      window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+      expect(ondrop).toHaveBeenCalledWith(PANEL_PLAN);
+      panel.remove();
+    });
+
+    it("does not auto-scroll the table, on a card or between cards", () => {
+      const { panel, card } = mountPanel();
+      const raf = vi.spyOn(window, "requestAnimationFrame");
+      const drag = new DragState();
+      const composable = setup({
+        drag,
+        rows: [makeRow(makeNib({ id: "nibs-001" }))],
+        scrollContainer: scrollContainer(),
+        planPanelDrop: () => PANEL_PLAN,
+      });
+
+      startDragOn("nibs-001", composable);
+      raf.mockClear();
+      moveTo(panel);
+      expect(drag.panelTargetKey).toBeNull();
+      moveTo(card);
+      expect(raf).not.toHaveBeenCalled();
+
+      // Below the table outside the panel, the same cursor does auto-scroll.
+      moveTo(null);
+      expect(raf).toHaveBeenCalled();
+
+      raf.mockRestore();
+      cleanup?.();
+      panel.remove();
+    });
   });
 
   it("a row that arrives mid-drag can still be dropped on", () => {

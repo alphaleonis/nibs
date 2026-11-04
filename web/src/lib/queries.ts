@@ -54,6 +54,21 @@ export const MILESTONES_QUERY = graphql(`
   }
 `);
 
+// Every nib, unfiltered, for the mapping panel's whole-plan counts and its
+// membership lookup.
+export const MAPPING_PLAN_QUERY = graphql(`
+  query MappingPlan {
+    nibs {
+      id
+      title
+      status
+      type
+      milestone
+      parentId
+    }
+  }
+`);
+
 export const UPDATE_STATUS_QUERY = graphql(`
   query UpdateStatus {
     updateStatus {

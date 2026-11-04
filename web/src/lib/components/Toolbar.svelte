@@ -16,6 +16,7 @@
     ListFilter,
     LayoutGrid,
     TriangleAlert,
+    SquareKanban,
   } from "@lucide/svelte";
   import { typeIcons } from "../icons";
   import { priorityIndicators } from "../badges";
@@ -56,6 +57,8 @@
     oncolumnschange = undefined as ((columns: ColumnKey[]) => void) | undefined,
     columnOrder = undefined as ColumnKey[] | undefined,
     oncreatenew = undefined as ((type: string) => void) | undefined,
+    mappingOn = false,
+    ontogglemapping = undefined as (() => void) | undefined,
     connectionStatus = "connected" as ConnectionStatusValue,
     rowDensity = "compact" as RowDensity,
     ondensitychange = undefined as ((density: RowDensity) => void) | undefined,
@@ -87,6 +90,10 @@
     oncolumnschange?: (columns: ColumnKey[]) => void;
     columnOrder?: ColumnKey[];
     oncreatenew?: (type: string) => void;
+    /** Whether mapping mode is on; drives the toggle's pressed state. */
+    mappingOn?: boolean;
+    /** Absent, the mapping-mode toggle is not shown. */
+    ontogglemapping?: () => void;
     /** Live-socket state; drives the disconnected chip beside the project name. */
     connectionStatus?: ConnectionStatusValue;
     rowDensity?: RowDensity;
@@ -832,6 +839,19 @@
         </DropdownMenu.Item>
       </DropdownMenu.Content>
     </DropdownMenu.Root>
+
+    {#if ontogglemapping}
+      <TooltipButton
+        label="Mapping mode"
+        variant="ghost"
+        data-testid="mapping-mode-toggle"
+        aria-pressed={mappingOn}
+        class={mappingOn ? "bg-accent text-accent-foreground" : "text-muted-foreground"}
+        onclick={ontogglemapping}
+      >
+        <SquareKanban size={16} />
+      </TooltipButton>
+    {/if}
 
     {#if declaringArea}
       <FormDialog testId="new-area-dialog" title="New area" onclose={() => (declaringArea = false)}>

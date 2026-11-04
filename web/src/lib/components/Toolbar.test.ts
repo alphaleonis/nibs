@@ -191,6 +191,17 @@ describe("Toolbar", () => {
     expect(screen.getByTestId("toolbar-add-research")).toBeInTheDocument();
   });
 
+  it("reports the mapping-mode toggle's state and calls its handler", async () => {
+    const ontogglemapping = vi.fn();
+    render(Toolbar, { ...defaultToolbarProps, mappingOn: true, ontogglemapping });
+
+    const toggle = screen.getByTestId("mapping-mode-toggle");
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(toggle).toHaveAccessibleName("Mapping mode");
+    await user.click(toggle);
+    expect(ontogglemapping).toHaveBeenCalledOnce();
+  });
+
   it("calls oncreatenew with selected type when a type is clicked", async () => {
     const oncreatenew = vi.fn();
     render(Toolbar, { ...defaultToolbarProps, oncreatenew });

@@ -37,8 +37,12 @@ export function useTreeDrag(opts: {
   /** What the current view draws inside what, for the destination check
    *  `planDrop` cannot answer from the rows alone. */
   getContainment: () => ContainmentIndex;
-  /** The gate currently suppressing drag-reorder, or null when drag is available. */
+  /** The gate refusing drag START, or null when a drag may begin. */
   getDragBlock?: () => DragBlock | null;
+  /** The gate refusing drops onto ROWS once a drag runs, or null when rows take drops. */
+  getRowDropBlock?: () => DragBlock | null;
+  /** The plan for a drop onto a mapping-panel target, or null when no panel answers. */
+  planPanelDrop?: (targetKey: string, draggedIds: readonly string[], draggedRowsById: ReadonlyMap<string, RowData>) => DropPlan | null;
   /** The plan the gesture ended on, refusals included, so the caller can say why
    *  nothing moved. */
   ondrop?: (plan: DropPlan) => void;
@@ -207,6 +211,22 @@ export function useTreeDrag(opts: {
     updateDragPreview(e.clientX, e.clientY);
 
     const el = document.elementFromPoint(e.clientX, e.clientY);
+
+    // Over the mapping panel the table is not the target, so it does not auto-scroll.
+    if (el?.closest("[data-mapping-panel]")) {
+      stopAutoScroll();
+      const cardEl = el.closest("[data-mapping-target]") as HTMLElement | null;
+      const key = cardEl?.dataset.mappingTarget;
+      const plan = key === undefined ? null : (opts.planPanelDrop?.(key, drag.draggedIds, draggedRowsById) ?? null);
+      if (key === undefined || plan === null) {
+        clearDrop();
+      } else {
+        dropPlan = plan;
+        drag.setPanelTarget(key, plan.ok, acceptedDropOf(plan));
+      }
+      return;
+    }
+
     const tr = el?.closest("tr[data-nib-id]") as HTMLElement | null;
     if (!tr) {
       clearDrop();
@@ -234,6 +254,7 @@ export function useTreeDrag(opts: {
       descendantIds: dragDescendantIds,
       containment: opts.getContainment(),
       nameOf,
+      rowDropBlock: opts.getRowDropBlock?.() ?? null,
     });
     dropPlan = plan;
     // A refusal passes the raw zone (only `.drop-invalid` applies) and no accepted

@@ -27,7 +27,7 @@
   import type { DropPlan } from "../ordering/dropPlan";
   import { regionBandAt, type BandAxis } from "../ordering/regionBand";
   import type { PanelPolicy } from "../selection.svelte";
-  import { useSelection, useDrag, useActiveView, useTreeView, useConnection, useViewSpine, useConfigRetry } from "../contexts";
+  import { useSelection, useDrag, useActiveView, useTreeView, useConnection, useViewSpine, useConfigRetry, useMappingMode } from "../contexts";
   import { useColumnResize } from "../composables/useColumnResize.svelte";
   import { useColumnDrag } from "../composables/useColumnDrag.svelte";
   import { useTreeDrag } from "../composables/useTreeDrag.svelte";
@@ -109,6 +109,7 @@
   // A getter: the spine's identity changes when the areas vocabulary arrives, and
   // the `$derived`s below must see it.
   const viewSpine = useViewSpine();
+  const mapping = useMappingMode();
 
   // Resolve values: prefs takes precedence over individual props
   let resolvedFilter = $derived(resolveFilter(prefs, filter));
@@ -119,7 +120,10 @@
   let resolvedColumnWidths = $derived(resolveColumnWidths(prefs, columnWidths));
   let resolvedColumnOrder = $derived(resolveColumnOrder(prefs, columnOrder));
   let resolvedTableSort = $derived(resolveTableSort(prefs, tableSort));
-  let resolvedOpenDetailOn = $derived(prefs ? prefs.openDetailOn : (openDetailOn ?? DEFAULT_OPEN_DETAIL_ON));
+  // Mapping mode forces "double", so a click only selects and the panel stays put.
+  let resolvedOpenDetailOn = $derived(
+    mapping.on ? "double" : prefs ? prefs.openDetailOn : (openDetailOn ?? DEFAULT_OPEN_DETAIL_ON),
+  );
   // The sort applies only while its column is visible; the preference is kept, so
   // re-showing the column restores it. Drives row order, the header indicator
   // and the drag gate.
@@ -132,7 +136,10 @@
   // Drag is blocked in Flat, under a search, and under an active sort (the sort
   // never rewrites `order`). The same block supplies the blocked-drag toast.
   let dragBlock = $derived(viewSpine().dragBlockFor(resolvedFilter, resolvedViewLevel, activeSort));
-  let dragAllowed = $derived(dragBlock === null);
+  // In mapping mode the gate stops refusing drag start, so rows can reach the
+  // panel; it refuses drops onto rows instead.
+  let startBlock = $derived(mapping.on ? null : dragBlock);
+  let dragAllowed = $derived(startBlock === null);
   let showColumn = $derived((key: ColumnKey) => resolvedVisibleColumns.includes(key));
 
   // TreeTableRow filters the same order, so cells stay under their headers.
@@ -432,7 +439,9 @@
     getRows: () => rows,
     getScrollContainer: () => scrollContainerEl ?? null,
     getContainment: () => containment,
-    getDragBlock: () => dragBlock,
+    getDragBlock: () => startBlock,
+    getRowDropBlock: () => (mapping.on ? dragBlock : null),
+    planPanelDrop: (key, ids, rows) => mapping.planner?.(key, ids, (id) => rows.get(id)?.nib) ?? null,
     ondrop: (plan) => ondrop?.(plan),
     onblockeddrag: (block) => {
       toast.info(block.message, {
