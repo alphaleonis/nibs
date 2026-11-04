@@ -123,6 +123,33 @@ func SetAtLevel(body string, matchLevel, appendLevel int, heading, content strin
 	return strings.TrimRight(body, "\n") + "\n\n" + section, true
 }
 
+// AppendAtLevel adds content at the end of the section matching at matchLevel,
+// after its subsections, or appends a new heading at appendLevel holding content
+// when none matches. The bool is true when it created the heading.
+//
+// A blank line separates content from the section's text, so each addition stays
+// its own Markdown paragraph. A section whose text is only blank lines takes
+// content alone, and so does a created heading, with a blank line after the
+// heading. Empty content leaves a matching section unchanged, as
+// nib.AppendWithSeparator does, and creates an empty heading when none matches.
+func AppendAtLevel(body string, matchLevel, appendLevel int, heading, content string) (string, bool) {
+	existing, found := Find(body, heading, matchLevel)
+	if !found {
+		if content == "" {
+			return SetAtLevel(body, matchLevel, appendLevel, heading, "")
+		}
+		return SetAtLevel(body, matchLevel, appendLevel, heading, "\n"+content+"\n")
+	}
+	if content == "" {
+		return body, false
+	}
+	updated := "\n" + content + "\n"
+	if kept := strings.TrimRight(existing, "\n"); strings.TrimSpace(kept) != "" {
+		updated = kept + "\n\n" + content + "\n"
+	}
+	return Replace(body, heading, updated, matchLevel), false
+}
+
 // headingLevels returns each line's heading level, or 0 for a line that is not a
 // heading — including one inside a fenced code block, where "# comment" is code.
 // A fence opens with a run of three or more backticks or tildes and closes on a

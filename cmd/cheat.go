@@ -68,7 +68,7 @@ WRITE  new "<title>" -t T create; also -s -p -e --area --parent --blocked-by --t
        set <id>           metadata/links; --clear %s; --remove-tag/-blocked-by/…
                           --milestone <ms> assigns to that milestone's queue, appended last (new cannot assign)
                           --area <path> places it in a declared area; nibs area %s prints and edits the set
-       body <id>          --set | --append | --section "## H" --set [--create] | --replace-old T --replace-new U
+       body <id>          --set | --append | --replace-old T --replace-new U | --section "## H" (--set|--append [--create] | --clear)
        mv <id…>           --after|--before <anchor> | --first | --parent <id> | --children-of <p> <id…>; 2+ ids need --block
                           --queue --after|--before <anchor> | --queue --first repositions within its queue
        rm <id…>           --archive (default) | --delete (irreversible); agents pass -f/--force

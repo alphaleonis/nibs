@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/spf13/pflag"
 )
@@ -25,6 +27,7 @@ func resetBodyFlags() {
 	bodyIfMatch = ""
 	bodyJSON = false
 	bodyCreate = false
+	bodyClear = false
 	bodyCmd.Flags().Visit(func(f *pflag.Flag) {
 		f.Changed = false
 	})
@@ -40,13 +43,14 @@ func TestResetBodyFlagsClearsAllState(t *testing.T) {
 	bodyIfMatch = "dirty"
 	bodyJSON = true
 	bodyCreate = true
+	bodyClear = true
 
 	resetBodyFlags()
 
 	if bodySet != "" || bodyAppend != "" || bodySection != "" ||
-		bodyReplaceOld != "" || bodyReplaceNew != "" || bodyIfMatch != "" || bodyJSON || bodyCreate {
-		t.Errorf("resetBodyFlags left non-zero state: set=%q append=%q section=%q old=%q new=%q ifMatch=%q json=%v create=%v",
-			bodySet, bodyAppend, bodySection, bodyReplaceOld, bodyReplaceNew, bodyIfMatch, bodyJSON, bodyCreate)
+		bodyReplaceOld != "" || bodyReplaceNew != "" || bodyIfMatch != "" || bodyJSON || bodyCreate || bodyClear {
+		t.Errorf("resetBodyFlags left non-zero state: set=%q append=%q section=%q old=%q new=%q ifMatch=%q json=%v create=%v clear=%v",
+			bodySet, bodyAppend, bodySection, bodyReplaceOld, bodyReplaceNew, bodyIfMatch, bodyJSON, bodyCreate, bodyClear)
 	}
 }
 
@@ -908,9 +912,9 @@ func TestBodyReplaceAmbiguous(t *testing.T) {
 	}
 }
 
-// TestBodySectionRequiresSet verifies that --section without --set is a usage
-// error naming the missing content channel.
-func TestBodySectionRequiresSet(t *testing.T) {
+// TestBodySectionRequiresOperation verifies that --section with no operation to
+// apply to the section is a validation error.
+func TestBodySectionRequiresOperation(t *testing.T) {
 	t.Cleanup(resetBodyFlags)
 	resetBodyFlags()
 
@@ -919,7 +923,7 @@ func TestBodySectionRequiresSet(t *testing.T) {
 	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--section", "## Notes", "--json"})
 	err := rootCmd.Execute()
 	if err == nil {
-		t.Fatal("expected --section without --set to error, got nil")
+		t.Fatal("expected --section without an operation to error, got nil")
 	}
 	var ce *output.CodedError
 	if !errors.As(err, &ce) {
@@ -953,21 +957,16 @@ func TestBodyNoOperation(t *testing.T) {
 }
 
 // TestBodyMutuallyExclusiveOps verifies two primary operations cannot be
-// combined.
+// combined, and that the refusal is a coded validation error.
 func TestBodyMutuallyExclusiveOps(t *testing.T) {
 	t.Cleanup(resetBodyFlags)
 	resetBodyFlags()
 
 	nibsDir, id := writeSetNib(t, "bdy-10", "body\n")
 
-	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--set", "-", "--append", "-"})
-	err := rootCmd.Execute()
-	if err == nil {
-		t.Fatal("expected mutual-exclusion error for --set + --append, got nil")
-	}
-	if !strings.Contains(err.Error(), "cannot be set together") &&
-		!strings.Contains(err.Error(), "if any flags in the group") {
-		t.Errorf("expected mutual-exclusion error, got: %s", err)
+	msg := runBodyExpectValidation(t, "--nibs-path", nibsDir, "body", id, "--set", "-", "--append", "-", "--json")
+	if !strings.Contains(msg, "--set") || !strings.Contains(msg, "--append") {
+		t.Errorf("mutual-exclusion message should name both operations, got: %q", msg)
 	}
 }
 
@@ -978,14 +977,9 @@ func TestBodyReplaceRequiresNew(t *testing.T) {
 
 	nibsDir, id := writeSetNib(t, "bdy-11", "body\n")
 
-	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--replace-old", "body"})
-	err := rootCmd.Execute()
-	if err == nil {
-		t.Fatal("expected --replace-old without --replace-new to error, got nil")
-	}
-	if !strings.Contains(err.Error(), "replace-new") &&
-		!strings.Contains(err.Error(), "if any flags in the group") {
-		t.Errorf("expected required-together error mentioning replace-new, got: %s", err)
+	msg := runBodyExpectValidation(t, "--nibs-path", nibsDir, "body", id, "--replace-old", "body", "--json")
+	if !strings.Contains(msg, "--replace-new") {
+		t.Errorf("required-together message should name --replace-new, got: %q", msg)
 	}
 }
 
@@ -1356,12 +1350,13 @@ func TestSectionShadowWarningTrustsWriteSignal(t *testing.T) {
 	// A body-based re-derivation (Find at matchLevel 3) HITS this exact level-3
 	// heading and would report "replacing" — i.e. it would suppress the warning.
 	originalBody := "### Key Decisions\n\n- old\n"
+	req := bodyRequest{operation: bodyOpSet, section: true, create: true}
 
 	// sectionAppended=true (the write appended a new heading): the warning MUST
 	// fire, following the write's signal — not the re-derivation, which would say
 	// "replacing" and return "". This is the assertion that fails under a reverted
 	// Find-based implementation, so it guards criterion #2.
-	if got := sectionShadowWarning(originalBody, true, true, true, true); got == "" {
+	if got := sectionShadowWarning(originalBody, req, true); got == "" {
 		t.Fatal("sectionAppended=true must warn; an empty result means the warning " +
 			"re-derives append/replace from originalBody instead of trusting the write's signal")
 	}
@@ -1369,7 +1364,404 @@ func TestSectionShadowWarningTrustsWriteSignal(t *testing.T) {
 	// Inverse direction: sectionAppended=false (the write replaced in place) must
 	// NOT warn, even though an exact same-text heading exists — a replace shadows
 	// nothing. Pins both directions of the parameter.
-	if got := sectionShadowWarning(originalBody, true, true, true, false); got != "" {
+	if got := sectionShadowWarning(originalBody, req, false); got != "" {
 		t.Errorf("sectionAppended=false must not warn (a replace-in-place shadows nothing), got: %q", got)
 	}
+}
+
+// runBodyExpectValidation runs the root command with args and requires a coded
+// validation error (exit 2), returning its message.
+func runBodyExpectValidation(t *testing.T, args ...string) string {
+	t.Helper()
+	rootCmd.SetArgs(args)
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatalf("expected a validation error for %q, got nil", args)
+	}
+	var ce *output.CodedError
+	if !errors.As(err, &ce) {
+		t.Fatalf("error for %q = %T (%v), want *output.CodedError", args, err, err)
+	}
+	if got := output.ExitCode(ce.Code); got != output.ExitValidation {
+		t.Errorf("exit for %q = %d, want %d (validation)", args, got, output.ExitValidation)
+	}
+	return ce.Msg
+}
+
+func TestBodySectionAppendAddsAfterSubsections(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	body := "## Notes\nfirst\n\n### Sub\nnested\n\n## Tail\nkeep\n"
+	nibsDir, id := writeSetNib(t, "bdy-sapp-1", body)
+	withStdin(t, "second\n")
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--section", "## Notes", "--append", "-"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("body --section --append - failed: %v", err)
+	}
+
+	content := readNibFile(t, nibsDir, bodyNibFile(id))
+	if !strings.Contains(content, "## Notes\nfirst\n\n### Sub\nnested\n\nsecond\n\n## Tail\nkeep\n") {
+		t.Errorf("entry not appended at the end of the section, got:\n%s", content)
+	}
+	if got := strings.Count(content, "## Notes"); got != 1 {
+		t.Errorf("heading should occur exactly once, got %d, body:\n%s", got, content)
+	}
+}
+
+func TestBodySectionAppendHeadingOnlySection(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	nibsDir, id := writeSetNib(t, "bdy-sapp-2", "## Notes\n## Tail\nkeep\n")
+	withStdin(t, "only\n")
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--section", "## Notes", "--append", "-"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("body --section --append - failed: %v", err)
+	}
+
+	content := readNibFile(t, nibsDir, bodyNibFile(id))
+	if !strings.Contains(content, "## Notes\n\nonly\n\n## Tail\nkeep\n") {
+		t.Errorf("a heading-only section should take the content alone, got:\n%s", content)
+	}
+}
+
+func TestBodySectionAppendParentheticalFallback(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	nibsDir, id := writeSetNib(t, "bdy-sapp-3", "## Notes (Phase 1)\nfirst\n")
+	withStdin(t, "second\n")
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--section", "Notes", "--append", "-"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("body --section Notes --append - failed: %v", err)
+	}
+
+	content := readNibFile(t, nibsDir, bodyNibFile(id))
+	if !strings.Contains(content, "## Notes (Phase 1)\nfirst\n\nsecond\n") {
+		t.Errorf("entry should land in the parenthetical section, got:\n%s", content)
+	}
+}
+
+// The only "Notes" is level 2, so a spelled "### Notes" finds nothing.
+func TestBodySectionAppendSpelledLevelDoesNotMatchOtherLevel(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	nibsDir, id := writeSetNib(t, "bdy-sapp-4", "## Notes\nfirst\n")
+	path := dataPath(nibsDir, bodyNibFile(id))
+	before := readFileT(t, path)
+	withStdin(t, "second\n")
+
+	msg := runBodyExpectValidation(t, "--nibs-path", nibsDir, "body", id, "--section", "### Notes", "--append", "-", "--json")
+	if !strings.Contains(msg, "another level") {
+		t.Errorf("message should point at the heading at another level, got: %q", msg)
+	}
+	if after := readFileT(t, path); after != before {
+		t.Errorf("file changed on a refused append:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+func TestBodySectionAppendAbsentHeadingWritesNothing(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	nibsDir, id := writeSetNib(t, "bdy-sapp-5", "## Intro\nhi\n")
+	path := dataPath(nibsDir, bodyNibFile(id))
+	before := readFileT(t, path)
+	withStdin(t, "second\n")
+
+	msg := runBodyExpectValidation(t, "--nibs-path", nibsDir, "body", id, "--section", "## Absent", "--append", "-", "--json")
+	if !strings.Contains(msg, "--create") {
+		t.Errorf("message should name --create, got: %q", msg)
+	}
+	if strings.Contains(msg, "use --append") {
+		t.Errorf("message should not tell an --append caller to use --append, got: %q", msg)
+	}
+	if after := readFileT(t, path); after != before {
+		t.Errorf("file changed on a refused append:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+func TestBodySectionAppendCreateAddsHeadingAtSpelledLevel(t *testing.T) {
+	for _, tc := range []struct {
+		flag, heading string
+	}{
+		{"### New", "### New"},
+		{"New", "## New"},
+	} {
+		t.Run(tc.flag, func(t *testing.T) {
+			t.Cleanup(resetBodyFlags)
+			resetBodyFlags()
+
+			nibsDir, id := writeSetNib(t, "bdy-sapp-6", "## Intro\nhi\n")
+			withStdin(t, "content\n")
+
+			rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--section", tc.flag, "--append", "-", "--create"})
+			if err := rootCmd.Execute(); err != nil {
+				t.Fatalf("body --section --append - --create failed: %v", err)
+			}
+
+			content := readNibFile(t, nibsDir, bodyNibFile(id))
+			if !strings.Contains(content, "## Intro\nhi\n\n"+tc.heading+"\n\ncontent\n") {
+				t.Errorf("expected %q created holding the content, got:\n%s", tc.heading, content)
+			}
+		})
+	}
+}
+
+func TestBodySectionAppendCreateWarnsOnShadow(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	nibsDir, id := writeSetNib(t, "bdy-sapp-7", "## X\n- a\n")
+	withStdin(t, "sub\n")
+
+	var errBuf bytes.Buffer
+	rootCmd.SetErr(&errBuf)
+	t.Cleanup(func() { rootCmd.SetErr(nil); rootCmd.SetOut(nil) })
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--section", "### X", "--append", "-", "--create"})
+	var execErr error
+	captureStdout(t, func() { execErr = rootCmd.Execute() })
+	if execErr != nil {
+		t.Fatalf("shadowing --append --create should succeed, got: %v", execErr)
+	}
+	if !strings.Contains(errBuf.String(), "another level") {
+		t.Errorf("expected a shadow warning on stderr, got: %q", errBuf.String())
+	}
+}
+
+func TestBodyPlainAppendStillAppendsToBodyEnd(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	nibsDir, id := writeSetNib(t, "bdy-sapp-8", "## Notes\nfirst\n\n## Tail\nkeep\n")
+	withStdin(t, "## Extra\nmore\n")
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--append", "-"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("body --append - failed: %v", err)
+	}
+
+	content := readNibFile(t, nibsDir, bodyNibFile(id))
+	if !strings.HasSuffix(strings.TrimRight(content, "\n"), "keep\n\n## Extra\nmore") {
+		t.Errorf("plain --append should add its block at the body end, got:\n%s", content)
+	}
+}
+
+func TestBodySectionClearKeepsHeading(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	body := "## Notes\nold\n\n### Sub\nnested\n\n## Tail\nkeep\n"
+	nibsDir, id := writeSetNib(t, "bdy-clear-1", body)
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--section", "## Notes", "--clear"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("body --section --clear failed: %v", err)
+	}
+
+	content := readNibFile(t, nibsDir, bodyNibFile(id))
+	if !strings.Contains(content, "## Notes\n\n## Tail\nkeep\n") {
+		t.Errorf("section should be empty with its heading and the next section kept, got:\n%s", content)
+	}
+	if strings.Contains(content, "old") || strings.Contains(content, "### Sub") {
+		t.Errorf("section content, subsections included, should be gone, got:\n%s", content)
+	}
+}
+
+func TestBodySectionClearAbsentHeadingWritesNothing(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	nibsDir, id := writeSetNib(t, "bdy-clear-2", "## Intro\nhi\n")
+	path := dataPath(nibsDir, bodyNibFile(id))
+	before := readFileT(t, path)
+
+	msg := runBodyExpectValidation(t, "--nibs-path", nibsDir, "body", id, "--section", "## Absent", "--clear", "--json")
+	if strings.Contains(msg, "--create") {
+		t.Errorf("--create is invalid with --clear, so the message should not suggest it, got: %q", msg)
+	}
+	if after := readFileT(t, path); after != before {
+		t.Errorf("file changed on a refused clear:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+// The only "Notes" is level 2, and --clear cannot create a heading, so the advice
+// names the level and not --create.
+func TestBodySectionClearOtherLevelOmitsCreate(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	nibsDir, id := writeSetNib(t, "bdy-clear-3", "## Notes\nkeep\n")
+	path := dataPath(nibsDir, bodyNibFile(id))
+	before := readFileT(t, path)
+
+	msg := runBodyExpectValidation(t, "--nibs-path", nibsDir, "body", id, "--section", "### Notes", "--clear", "--json")
+	if !strings.Contains(msg, "another level") || strings.Contains(msg, "--create") {
+		t.Errorf("message should name the other level and not suggest --create, got: %q", msg)
+	}
+	if after := readFileT(t, path); after != before {
+		t.Errorf("file changed on a refused clear:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+// Each combination is refused before the nib is read, so none needs stdin.
+func TestBodyOperationRulesAreValidationErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		args    []string
+		wantMsg string
+	}{
+		{"clear without section", []string{"--clear"}, "--clear requires --section"},
+		{"clear with set", []string{"--section", "## Notes", "--clear", "--set", "-"}, "choose one body operation"},
+		{"clear with append", []string{"--section", "## Notes", "--clear", "--append", "-"}, "choose one body operation"},
+		{"clear with create", []string{"--section", "## Notes", "--clear", "--create"}, "--create is only valid"},
+		{"clear with replace", []string{"--section", "## Notes", "--clear", "--replace-old", "a", "--replace-new", "b"}, "choose one body operation"},
+		{"clear=false selects no operation", []string{"--section", "## Notes", "--clear=false"}, "--section needs an operation"},
+		{"set with append", []string{"--set", "-", "--append", "-"}, "choose one body operation"},
+		{"section with replace", []string{"--section", "## Notes", "--replace-old", "a", "--replace-new", "b"}, "--section does not combine with --replace-old"},
+		{"section alone", []string{"--section", "## Notes"}, "--section needs an operation"},
+		{"create without section", []string{"--append", "-", "--create"}, "--create is only valid"},
+		{"replace-new alone", []string{"--replace-new", "b"}, "--replace-old and --replace-new must be used together"},
+		{"no operation", nil, "no body operation specified"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Cleanup(resetBodyFlags)
+			resetBodyFlags()
+
+			nibsDir, id := writeSetNib(t, "bdy-rules-1", "## Notes\nkeep\n")
+			path := dataPath(nibsDir, bodyNibFile(id))
+			before := readFileT(t, path)
+
+			args := append([]string{"--nibs-path", nibsDir, "body", id, "--json"}, tc.args...)
+			if msg := runBodyExpectValidation(t, args...); !strings.Contains(msg, tc.wantMsg) {
+				t.Errorf("message = %q, want it to contain %q", msg, tc.wantMsg)
+			}
+			if after := readFileT(t, path); after != before {
+				t.Errorf("file changed on a refused request:\nbefore:\n%s\nafter:\n%s", before, after)
+			}
+		})
+	}
+}
+
+// An operation value with no case in the per-operation switches stands for a
+// table row added without its handling.
+func TestBodyInputRejectsUnhandledOperation(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+	bodySection = "## Notes"
+	b := &nib.Nib{Body: "## Notes\nkeep\n"}
+	const unhandled = bodyOperation(99)
+
+	for _, section := range []bool{false, true} {
+		_, _, err := buildBodyInput(b, bodyRequest{operation: unhandled, section: section})
+		var target *unhandledBodyOperationError
+		if !errors.As(err, &target) {
+			t.Errorf("section=%v: error = %v, want *unhandledBodyOperationError", section, err)
+		}
+	}
+
+	for _, otherLevel := range []bool{false, true} {
+		msg := (&sectionNotFoundError{heading: "## Notes", operation: unhandled, otherLevelExists: otherLevel}).Error()
+		if want := `section "## Notes" not found`; msg != want {
+			t.Errorf("otherLevel=%v: message = %q, want %q", otherLevel, msg, want)
+		}
+	}
+}
+
+// nibBodyText returns the body of a nib file: the text after its front matter's
+// closing fence, without the blank line the renderer writes after that fence.
+func nibBodyText(t *testing.T, content string) string {
+	t.Helper()
+	_, body, found := strings.Cut(strings.TrimPrefix(content, "---\n"), "\n---\n")
+	if !found {
+		t.Fatalf("no front matter fence in:\n%s", content)
+	}
+	return strings.TrimPrefix(body, "\n")
+}
+
+// The target section is the last one, so a section append and a plain append
+// land in the same place and must write the same body for every input.
+func TestBodySectionAppendMatchesPlainAppendOnEdgeInput(t *testing.T) {
+	const body = "## Notes\nfirst\n"
+	for _, tc := range []struct {
+		name, stdin string
+		unchanged   bool
+	}{
+		{"empty", "", true},
+		{"lone newline", "\n", true},
+		{"several newlines", "\n\n\n", true},
+		{"spaces and tabs", " \t ", false},
+		{"spaces and tabs with newline", " \t\n", false},
+		{"text", "second\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Cleanup(resetBodyFlags)
+
+			var before string
+			run := func(id string, args ...string) string {
+				resetBodyFlags()
+				nibsDir, id := writeSetNib(t, id, body)
+				before = nibBodyText(t, readNibFile(t, nibsDir, bodyNibFile(id)))
+				withStdin(t, tc.stdin)
+				rootCmd.SetArgs(append([]string{"--nibs-path", nibsDir, "body", id}, args...))
+				if err := rootCmd.Execute(); err != nil {
+					t.Fatalf("body %v failed: %v", args, err)
+				}
+				return nibBodyText(t, readNibFile(t, nibsDir, bodyNibFile(id)))
+			}
+			plain := run("bdy-edge-plain", "--append", "-")
+			section := run("bdy-edge-section", "--section", "## Notes", "--append", "-")
+
+			if section != plain {
+				t.Errorf("section append wrote %q, plain append wrote %q", section, plain)
+			}
+			if tc.unchanged && section != before {
+				t.Errorf("input %q should leave the body unchanged, got %q", tc.stdin, section)
+			}
+		})
+	}
+}
+
+// An absent heading under --create is created even when the input holds nothing
+// to append, as --set --create creates it.
+func TestBodySectionAppendCreateEdgeInputCreatesHeading(t *testing.T) {
+	run := func(t *testing.T, id, stdin string, args ...string) string {
+		t.Helper()
+		resetBodyFlags()
+		nibsDir, id := writeSetNib(t, id, "## Intro\nhi\n")
+		withStdin(t, stdin)
+		rootCmd.SetArgs(append([]string{"--nibs-path", nibsDir, "body", id}, args...))
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("body %v failed: %v", args, err)
+		}
+		return nibBodyText(t, readNibFile(t, nibsDir, bodyNibFile(id)))
+	}
+
+	for _, stdin := range []string{"", "\n"} {
+		t.Run(fmt.Sprintf("%q", stdin), func(t *testing.T) {
+			t.Cleanup(resetBodyFlags)
+			appended := run(t, "bdy-edge-create-a", stdin, "--section", "## New", "--append", "-", "--create")
+			set := run(t, "bdy-edge-create-s", stdin, "--section", "## New", "--set", "-", "--create")
+			if appended != set {
+				t.Errorf("--append --create wrote %q, --set --create wrote %q", appended, set)
+			}
+			if strings.TrimRight(appended, "\n") != "## Intro\nhi\n\n## New" {
+				t.Errorf("expected an empty \"## New\" heading at the end, got %q", appended)
+			}
+		})
+	}
+
+	t.Run("spaces and tabs", func(t *testing.T) {
+		t.Cleanup(resetBodyFlags)
+		got := run(t, "bdy-edge-create-w", " \t ", "--section", "## New", "--append", "-", "--create")
+		if !strings.Contains(got, "## New\n\n \t \n") {
+			t.Errorf("whitespace input should be appended under the created heading, got %q", got)
+		}
+	})
 }

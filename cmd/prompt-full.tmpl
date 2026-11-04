@@ -208,10 +208,11 @@ The closing record is not one of these: `nibs close` writes the summary into a `
 ```bash
 nibs body <id> --set -                                  # replace the whole body from stdin
 nibs body <id> --section "## Notes" --set @notes.md     # replace only the content under a heading
+nibs body <id> --section "## Notes" --append -          # add to the end of a section, after its subsections
 nibs body <id> --append -                               # append a block from stdin
 nibs body <id> --replace-old "- [ ] Task" --replace-new "- [x] Task"   # replace exactly one occurrence
 ```
-`--section` matches an existing heading at the level you SPELL: `### H` matches only a level-3 heading (never a level-2 `## H`), while a bare `H` (no `#`) matches a heading at any level. With `--create`, a missing heading is created at the spelled level (a bare heading defaults to `##`).
+`--section` matches an existing heading at the level you SPELL: `### H` matches only a level-3 heading (never a level-2 `## H`), while a bare `H` (no `#`) matches a heading at any level. A missing heading is an error (exit 2) and nothing is written. With `--set` or `--append`, `--create` creates it instead, at the spelled level (a bare heading defaults to `##`). `--section --append` separates the new content from the section's existing content with a blank line; pass only the new content, not the heading. `--section "## H" --clear` empties a section, subsections included, and keeps its heading.
 
 `--replace-old`/`--replace-new` must match exactly once: zero matches → `TEXT_NOT_FOUND`, more than one → `TEXT_AMBIGUOUS` (both exit 2, with an occurrence count). For several replacements in one atomic write, use `nibs graphql` with `bodyMod.replace`, which reports the same codes and the same count (see GraphQL).
 
