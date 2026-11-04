@@ -210,11 +210,11 @@ nibs body <id> --set -                                  # replace the whole body
 nibs body <id> --section "## Notes" --set @notes.md     # replace only the content under a heading
 nibs body <id> --section "## Notes" --append -          # add to the end of a section, after its subsections
 nibs body <id> --append -                               # append a block from stdin
-nibs body <id> --replace-old "- [ ] Task" --replace-new "- [x] Task"   # replace exactly one occurrence
+nibs body <id> --check 1,3                              # tick items 1 and 3 of the Acceptance checklist
 ```
 `--section` matches an existing heading at the level you SPELL: `### H` matches only a level-3 heading (never a level-2 `## H`), while a bare `H` (no `#`) matches a heading at any level. A missing heading is an error (exit 2) and nothing is written. With `--set` or `--append`, `--create` creates it instead, at the spelled level (a bare heading defaults to `##`). `--section --append` separates the new content from the section's existing content with a blank line; pass only the new content, not the heading. `--section "## H" --clear` empties a section, subsections included, and keeps its heading.
 
-`--replace-old`/`--replace-new` must match exactly once: zero matches → `TEXT_NOT_FOUND`, more than one → `TEXT_AMBIGUOUS` (both exit 2, with an occurrence count). For several replacements in one atomic write, use `nibs graphql` with `bodyMod.replace`, which reports the same codes and the same count (see GraphQL).
+`--check`, `--uncheck` and `--remove` take item numbers (`1,3`) and combine in one call; they number the `- [ ]`/`- [x]` items of the Acceptance section (or of `--section "## H"`) as they stand before the edit, skipping fenced code, and print the list afterwards; `--remove` deletes an item with its nested lines. `--checklist` prints that numbered list without writing. `nibs body <id> --replace-old T --replace-new U` replaces text that must match exactly once: zero matches → `TEXT_NOT_FOUND`, more than one → `TEXT_AMBIGUOUS` (both exit 2, with an occurrence count). For several replacements in one atomic write, use `nibs graphql` with `bodyMod.replace`, which reports the same codes and the same count (see GraphQL).
 
 ## Queues and reordering
 

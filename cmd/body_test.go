@@ -28,6 +28,10 @@ func resetBodyFlags() {
 	bodyJSON = false
 	bodyCreate = false
 	bodyClear = false
+	bodyCheck = nil
+	bodyUncheck = nil
+	bodyRemove = nil
+	bodyChecklist = false
 	bodyCmd.Flags().Visit(func(f *pflag.Flag) {
 		f.Changed = false
 	})
@@ -44,13 +48,19 @@ func TestResetBodyFlagsClearsAllState(t *testing.T) {
 	bodyJSON = true
 	bodyCreate = true
 	bodyClear = true
+	bodyCheck = []string{"dirty"}
+	bodyUncheck = []string{"dirty"}
+	bodyRemove = []string{"dirty"}
+	bodyChecklist = true
 
 	resetBodyFlags()
 
 	if bodySet != "" || bodyAppend != "" || bodySection != "" ||
-		bodyReplaceOld != "" || bodyReplaceNew != "" || bodyIfMatch != "" || bodyJSON || bodyCreate || bodyClear {
-		t.Errorf("resetBodyFlags left non-zero state: set=%q append=%q section=%q old=%q new=%q ifMatch=%q json=%v create=%v clear=%v",
-			bodySet, bodyAppend, bodySection, bodyReplaceOld, bodyReplaceNew, bodyIfMatch, bodyJSON, bodyCreate, bodyClear)
+		bodyReplaceOld != "" || bodyReplaceNew != "" || bodyIfMatch != "" || bodyJSON || bodyCreate || bodyClear ||
+		bodyCheck != nil || bodyUncheck != nil || bodyRemove != nil || bodyChecklist {
+		t.Errorf("resetBodyFlags left non-zero state: set=%q append=%q section=%q old=%q new=%q ifMatch=%q json=%v create=%v clear=%v check=%q uncheck=%q remove=%q checklist=%v",
+			bodySet, bodyAppend, bodySection, bodyReplaceOld, bodyReplaceNew, bodyIfMatch, bodyJSON, bodyCreate, bodyClear,
+			bodyCheck, bodyUncheck, bodyRemove, bodyChecklist)
 	}
 }
 

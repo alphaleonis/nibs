@@ -3,11 +3,9 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph"
-	"github.com/alphaleonis/nibs/internal/mdsection"
 	"github.com/alphaleonis/nibs/internal/membership"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/output"
@@ -213,45 +211,21 @@ func planAxis(container *nib.Nib) planAxisSpec {
 	}
 }
 
-// acceptanceRollup counts the GitHub task-list checkboxes in a nib body's
-// Acceptance section. It matches an "## Acceptance" heading first (the current
-// body template) then "## Acceptance Criteria" (older bodies), and returns nil
-// when neither section exists. Only "- [ ]" / "- [x]" list items are counted;
-// checked is the "[x]"/"[X]" subset.
+// acceptanceRollup counts the checklist items of a nib body's Acceptance
+// section, as acceptanceChecklist finds them, and returns nil when the body has
+// no such section.
 func acceptanceRollup(body string) *AcceptanceRollup {
-	section, found := mdsection.Find(body, "Acceptance", mdsection.AnyLevel)
-	if !found {
-		section, found = mdsection.Find(body, "Acceptance Criteria", mdsection.AnyLevel)
-	}
+	checklist, found := acceptanceChecklist(body)
 	if !found {
 		return nil
 	}
-	r := &AcceptanceRollup{}
-	for _, line := range strings.Split(section, "\n") {
-		mark, ok := checkboxMark(line)
-		if !ok {
-			continue
-		}
-		r.Total++
-		if mark == 'x' || mark == 'X' {
+	r := &AcceptanceRollup{Total: len(checklist.Items)}
+	for _, item := range checklist.Items {
+		if item.Checked {
 			r.Checked++
 		}
 	}
 	return r
-}
-
-// checkboxMark reports the mark character of a GitHub task-list item
-// ("- [ ] …", "- [x] …", "* [X] …") and whether the line is such an item.
-func checkboxMark(line string) (byte, bool) {
-	t := strings.TrimSpace(line)
-	// Shortest valid item is "- [ ]" (5 chars).
-	if len(t) < 5 {
-		return 0, false
-	}
-	if (t[0] != '-' && t[0] != '*') || t[1] != ' ' || t[2] != '[' || t[4] != ']' {
-		return 0, false
-	}
-	return t[3], true
 }
 
 // filterOpen keeps the nibs carrying an open status — the same open *group*

@@ -25,6 +25,10 @@ var (
 	bodyJSON       bool
 	bodyCreate     bool
 	bodyClear      bool
+	bodyCheck      []string
+	bodyUncheck    []string
+	bodyRemove     []string
+	bodyChecklist  bool
 )
 
 var bodyCmd = &cobra.Command{
@@ -41,6 +45,8 @@ Operations (choose one):
   --section "## H" --set <chan>     Replace the content under an EXISTING heading "## H".
   --section "## H" --append <chan>  Add to the end of "## H", after its subsections.
   --section "## H" --clear          Empty "## H", deleting its subsections; keeps the heading.
+  --check N,… --uncheck N,… --remove N,…  Edit checklist items by number (combinable).
+  --checklist                       Print the numbered checklist; writes nothing.
 
 --section targets an existing heading and errors if it is absent; add --create
 to --section --set or --section --append to create the heading in place (--set
@@ -58,6 +64,17 @@ does it fall back to a heading whose text is "<name> (…)" (a parenthetical
 suffix), so "Key Decisions" targets an exact "## Key Decisions" over a
 "## Key Decisions (Phase 1)".
 
+The checklist flags act on the Acceptance section ("Acceptance", else
+"Acceptance Criteria", at any level) unless --section names another. Items are
+the "- [ ]", "- [x]" and "* [X]" lines of that section and its subsections,
+nested ones included, outside fenced code, numbered from 1 in document order.
+Every number in one call refers to the list before the edit, so a removal does
+not shift the others. --remove deletes an item with its nested lines: the lines
+after it indented to its text, its wrapped lines and nested items; removing an
+item that holds a fenced block is refused. Checking a checked item is a
+successful no-op. After an edit the numbered list is printed; --json adds a
+"checklist" array beside "nib".
+
 The surgical --replace-old/--replace-new form matches exactly once: zero
 matches fail with TEXT_NOT_FOUND and more than one with TEXT_AMBIGUOUS (both
 exit 2), each reporting the occurrence count.`,
@@ -74,9 +91,23 @@ exit 2), each reporting the occurrence count.`,
 // short-circuits here (2 positionals) before RunE, and the no-trailing-"-" shape
 // (1 positional) would otherwise trip an unrelated inline-prose error in RunE —
 // so this single placement names the swallowed token and steers to the correct
-// order for both. When neither flag swallowed a flag token, it falls through to
-// the standard exactly-one-argument check.
+// order for both. The checklist flags take no input channel, so for them it catches
+// only a flag token bound as the item numbers (see swallowedIndexValue). When no
+// flag swallowed a flag token, it falls through to the standard
+// exactly-one-argument check.
 func bodyArgs(cmd *cobra.Command, args []string) error {
+	for _, f := range []struct {
+		name   string
+		values []string
+	}{{"check", bodyCheck}, {"uncheck", bodyUncheck}, {"remove", bodyRemove}} {
+		for _, value := range f.values {
+			if swallowed, ok := swallowedIndexValue(value); ok {
+				return cmdError(bodyJSON, output.ErrValidation,
+					"--%s expects item numbers like 1,3; %q was consumed as its value — write it as `--%s <n,…> %s`",
+					f.name, swallowed, f.name, swallowed)
+			}
+		}
+	}
 	if swallowed, ok := swallowedFlagValue(bodySet); ok {
 		return cmdError(bodyJSON, output.ErrValidation,
 			"--set expects an input channel ('-' or '@FILE'); %q was consumed as its value — write it as `--set - %s`",
@@ -111,6 +142,8 @@ const (
 	bodyOpAppend
 	bodyOpReplace
 	bodyOpClear
+	bodyOpChecklistEdit
+	bodyOpChecklistRead
 )
 
 // sectionRule is whether an operation takes --section.
@@ -120,24 +153,46 @@ const (
 	sectionOptional sectionRule = iota
 	sectionRequired
 	sectionForbidden
+	// sectionDefaultAcceptance is optional, and without --section the operation
+	// acts on the Acceptance section that acceptanceChecklist finds.
+	sectionDefaultAcceptance
 )
 
-// bodyOperationRule describes one operation: the flag that selects it, whether
+// bodyOperationRule describes one operation: the flags that select it, whether
 // it takes --section, and whether --section --create applies to it.
 type bodyOperationRule struct {
-	flag      string
+	// flags select the operation, and several of them combine in one call.
+	flags     []string
 	operation bodyOperation
 	section   sectionRule
 	creates   bool
 }
 
+// label spells the rule's flags as "--a/--b".
+func (r bodyOperationRule) label() string {
+	return "--" + strings.Join(r.flags, "/--")
+}
+
+// givenFlags returns the rule's flags that request their behavior.
+func (r bodyOperationRule) givenFlags(flags *pflag.FlagSet) []string {
+	var given []string
+	for _, name := range r.flags {
+		if bodyFlagGiven(flags, name) {
+			given = append(given, name)
+		}
+	}
+	return given
+}
+
 // bodyOperationRules lists every body operation. classifyBodyOperation derives
 // its operation checks and messages from these rows.
 var bodyOperationRules = []bodyOperationRule{
-	{flag: "set", operation: bodyOpSet, section: sectionOptional, creates: true},
-	{flag: "append", operation: bodyOpAppend, section: sectionOptional, creates: true},
-	{flag: "replace-old", operation: bodyOpReplace, section: sectionForbidden},
-	{flag: "clear", operation: bodyOpClear, section: sectionRequired},
+	{flags: []string{"set"}, operation: bodyOpSet, section: sectionOptional, creates: true},
+	{flags: []string{"append"}, operation: bodyOpAppend, section: sectionOptional, creates: true},
+	{flags: []string{"replace-old"}, operation: bodyOpReplace, section: sectionForbidden},
+	{flags: []string{"clear"}, operation: bodyOpClear, section: sectionRequired},
+	{flags: []string{"check", "uncheck", "remove"}, operation: bodyOpChecklistEdit, section: sectionDefaultAcceptance},
+	{flags: []string{"checklist"}, operation: bodyOpChecklistRead, section: sectionDefaultAcceptance},
 }
 
 // bodyRequest is a classified `nibs body` call.
@@ -147,6 +202,9 @@ type bodyRequest struct {
 	section bool
 	// create is whether --create creates that heading when it is absent.
 	create bool
+	// acceptanceDefault is whether the operation acts on the Acceptance section
+	// because its rule is sectionDefaultAcceptance and --section is absent.
+	acceptanceDefault bool
 }
 
 // classifyBodyOperation returns the one operation the given flags request. It
@@ -159,17 +217,18 @@ func classifyBodyOperation(flags *pflag.FlagSet) (bodyRequest, error) {
 	}
 
 	var chosen []bodyOperationRule
+	var chosenLabels []string
 	for _, rule := range bodyOperationRules {
-		if bodyFlagGiven(flags, rule.flag) {
+		if given := rule.givenFlags(flags); len(given) > 0 {
 			chosen = append(chosen, rule)
+			chosenLabels = append(chosenLabels, "--"+strings.Join(given, "/--"))
 		}
 	}
 	section := bodyFlagGiven(flags, "section")
 	create := bodyFlagGiven(flags, "create")
 
 	if len(chosen) > 1 {
-		return bodyRequest{}, fmt.Errorf("choose one body operation; got %s",
-			joinRuleFlags(chosen, "and", func(bodyOperationRule) bool { return true }))
+		return bodyRequest{}, fmt.Errorf("choose one body operation; got %s", joinWords(chosenLabels, "and"))
 	}
 	if len(chosen) == 0 {
 		takesSection := func(r bodyOperationRule) bool { return r.section != sectionForbidden }
@@ -184,14 +243,19 @@ func classifyBodyOperation(flags *pflag.FlagSet) (bodyRequest, error) {
 	rule := chosen[0]
 	switch {
 	case section && rule.section == sectionForbidden:
-		return bodyRequest{}, fmt.Errorf("--section does not combine with --%s", rule.flag)
+		return bodyRequest{}, fmt.Errorf("--section does not combine with %s", rule.label())
 	case !section && rule.section == sectionRequired:
-		return bodyRequest{}, fmt.Errorf("--%s requires --section to name the heading", rule.flag)
+		return bodyRequest{}, fmt.Errorf("%s requires --section to name the heading", rule.label())
 	case create && (!section || !rule.creates):
 		return bodyRequest{}, fmt.Errorf("--create is only valid with --section and %s",
 			joinRuleFlags(bodyOperationRules, "or", func(r bodyOperationRule) bool { return r.creates }))
 	}
-	return bodyRequest{operation: rule.operation, section: section, create: create}, nil
+	return bodyRequest{
+		operation:         rule.operation,
+		section:           section,
+		create:            create,
+		acceptanceDefault: !section && rule.section == sectionDefaultAcceptance,
+	}, nil
 }
 
 // bodyRuleFor returns the row of bodyOperationRules for operation, and whether
@@ -226,15 +290,20 @@ func (e *unhandledBodyOperationError) Error() string {
 	return fmt.Sprintf("internal error: %s has no case for body operation %d", e.in, e.operation)
 }
 
-// joinRuleFlags returns the flags of the rules that keep accepts, spelled with
-// their "--" prefix and joined by commas and a final conjunction.
+// joinRuleFlags returns the labels of the rules that keep accepts, joined by
+// commas and a final conjunction.
 func joinRuleFlags(rules []bodyOperationRule, conjunction string, keep func(bodyOperationRule) bool) string {
 	var names []string
 	for _, r := range rules {
 		if keep(r) {
-			names = append(names, "--"+r.flag)
+			names = append(names, r.label())
 		}
 	}
+	return joinWords(names, conjunction)
+}
+
+// joinWords joins names by commas and a final conjunction.
+func joinWords(names []string, conjunction string) string {
 	if len(names) <= 1 {
 		return strings.Join(names, "")
 	}
@@ -249,6 +318,9 @@ func runBody(cmd *cobra.Command, args []string) error {
 	req, err := classifyBodyOperation(cmd.Flags())
 	if err != nil {
 		return cmdError(bodyJSON, output.ErrValidation, "%s", err)
+	}
+	if req.operation == bodyOpChecklistRead {
+		return runBodyChecklistRead(ctx, resolver, args[0], req)
 	}
 
 	// Find the nib; fall back to the archive and unarchive it (mirrors set).
@@ -265,6 +337,10 @@ func runBody(cmd *cobra.Command, args []string) error {
 		if err != nil || b == nil {
 			return cmdError(bodyJSON, output.ErrNotFound, "nib not found: %s", args[0])
 		}
+	}
+
+	if req.operation == bodyOpChecklistEdit {
+		return runBodyChecklistEdit(ctx, resolver, cmd.Flags(), b, req)
 	}
 
 	// Snapshot the body before UpdateNib (below) reassigns b; the shadow-warning
@@ -472,6 +548,8 @@ func (e *sectionNotFoundError) Error() string {
 		return fmt.Sprintf("section %q not found — --section --append adds to an existing section; add --create to create it", e.heading)
 	case bodyOpClear:
 		return fmt.Sprintf("section %q not found — --section --clear empties an existing section, so there is nothing to clear", e.heading)
+	case bodyOpChecklistEdit, bodyOpChecklistRead:
+		return fmt.Sprintf("section %q not found — checklist items are numbered within an existing section", e.heading)
 	default:
 		return fmt.Sprintf("section %q not found", e.heading)
 	}
@@ -614,9 +692,13 @@ func bodyMutationError(jsonOutput bool, err error) error {
 func init() {
 	bodyCmd.Flags().StringVar(&bodySet, "set", "", "Replace the body from the input channel: '-' for stdin or '@FILE' for a file (no inline text)")
 	bodyCmd.Flags().StringVar(&bodyAppend, "append", "", "Append a block from the input channel: '-' for stdin or '@FILE' for a file (no inline text)")
-	bodyCmd.Flags().StringVar(&bodySection, "section", "", "Heading that --set, --append or --clear acts on (e.g. \"## Notes\"); matches exact text first, else a \"<name> (…)\" suffix; a spelled level matches only that level, a bare heading matches any level")
+	bodyCmd.Flags().StringVar(&bodySection, "section", "", "Heading that --set, --append, --clear or a checklist flag acts on (e.g. \"## Notes\"); matches exact text first, else a \"<name> (…)\" suffix; a spelled level matches only that level, a bare heading matches any level")
 	bodyCmd.Flags().BoolVar(&bodyCreate, "create", false, "Create the --section heading if absent; default errors on a missing heading")
 	bodyCmd.Flags().BoolVar(&bodyClear, "clear", false, "With --section, empty the section, subsections included, and keep its heading")
+	bodyCmd.Flags().StringArrayVar(&bodyCheck, "check", nil, "Check the checklist items with these 1-based numbers (e.g. 1,3; repeatable) in the Acceptance section or --section")
+	bodyCmd.Flags().StringArrayVar(&bodyUncheck, "uncheck", nil, "Uncheck the checklist items with these 1-based numbers (e.g. 1,3; repeatable) in the Acceptance section or --section")
+	bodyCmd.Flags().StringArrayVar(&bodyRemove, "remove", nil, "Remove the checklist items with these 1-based numbers (e.g. 1,3; repeatable), each with its nested lines, in the Acceptance section or --section")
+	bodyCmd.Flags().BoolVar(&bodyChecklist, "checklist", false, "Print the numbered checklist of the Acceptance section or --section, writing nothing")
 	bodyCmd.Flags().StringVar(&bodyReplaceOld, "replace-old", "", "Text to find and replace exactly once (requires --replace-new)")
 	bodyCmd.Flags().StringVar(&bodyReplaceNew, "replace-new", "", "Replacement text (requires --replace-old)")
 	bodyCmd.Flags().StringVar(&bodyIfMatch, "if-match", "", "Only update if etag matches (optimistic locking)")
