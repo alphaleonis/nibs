@@ -547,7 +547,7 @@ func bfsTraverse(ctx context.Context, resolver *graph.Resolver, start *nib.Nib, 
 // Edges pointing outside the candidate set are dropped. Self-edges are
 // ignored. Returns an error when a cycle is present (naming the members).
 //
-// Only `blocked_by` declarations contribute edges. `#<id>` body mentions are
+// Only `blocked_by` declarations contribute edges. Body mentions are
 // informational and never affect topo order.
 func topoSortNibs(candidates []*nib.Nib) ([]*nib.Nib, error) {
 	byID := make(map[string]*nib.Nib, len(candidates))

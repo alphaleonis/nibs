@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -206,12 +207,11 @@ func TestSetPrefix_HappyPath_RenamesFilesAndUpdatesReferences(t *testing.T) {
 }
 
 // TestSetPrefix_RewritesFullFormBodyMentions pins the whole command over a
-// store whose prose mentions the renamed nibs: a full-form `#<prefix><id>`
-// mention names a nib the rename retires, so it moves with it, while a
-// short-form mention names the same nib under either prefix and is left as the
-// author wrote it.
+// store whose prose mentions the renamed nibs: a full-form mention names a nib
+// the rename retires, so it moves with it, while a short-form mention names the
+// same nib under either prefix and is left as the author wrote it.
 func TestSetPrefix_RewritesFullFormBodyMentions(t *testing.T) {
-	body := "Blocked on #tnib-bbb; see #tnib-bbb again.\n\nShort form #bbb stays.\n\n`#tnib-bbb` is literal.\n\n```\n#tnib-bbb\n```"
+	body := "Blocked on #tnib-bbb; see [[tnib-bbb]] again.\n\nShort form #bbb and [[bbb]] stay.\n\n`#tnib-bbb` is literal.\n\n```\n#tnib-bbb\n```"
 	_, nibsDir, cfgPath := setupSetPrefixTest(t, "tnib-",
 		testNibSpec{filename: "tnib-aaa--root.md", id: "tnib-aaa", body: body},
 		testNibSpec{filename: "tnib-bbb--child.md", id: "tnib-bbb", parent: "tnib-aaa"},
@@ -225,7 +225,7 @@ func TestSetPrefix_RewritesFullFormBodyMentions(t *testing.T) {
 	// Render frames a body with a leading blank-line separator and a
 	// terminating newline, and Parse hands both back as part of the body —
 	// so this body, written with neither, round-trips carrying both.
-	want := "\nBlocked on #new-bbb; see #new-bbb again.\n\nShort form #bbb stays.\n\n`#tnib-bbb` is literal.\n\n```\n#tnib-bbb\n```\n"
+	want := "\nBlocked on #new-bbb; see [[new-bbb]] again.\n\nShort form #bbb and [[bbb]] stay.\n\n`#tnib-bbb` is literal.\n\n```\n#tnib-bbb\n```\n"
 	if got != want {
 		t.Fatalf("rewritten body =\n%q\nwant\n%q", got, want)
 	}
@@ -492,8 +492,10 @@ func TestSetPrefixDryRunJSONAnnouncesTheBodyRewriteItCannotItemize(t *testing.T)
 	var env struct {
 		Success      bool `json:"success"`
 		BodyMentions struct {
-			From string `json:"from"`
-			To   string `json:"to"`
+			Shapes []struct {
+				From string `json:"from"`
+				To   string `json:"to"`
+			} `json:"shapes"`
 			Note string `json:"note"`
 		} `json:"bodyMentions"`
 		Plan struct {
@@ -515,14 +517,15 @@ func TestSetPrefixDryRunJSONAnnouncesTheBodyRewriteItCannotItemize(t *testing.T)
 		t.Fatalf("envelope reports success=false: %s", out)
 	}
 
-	for _, c := range []struct{ field, got, want string }{
-		{"from", env.BodyMentions.From, "#tnib-<id>"},
-		{"to", env.BodyMentions.To, "#new-<id>"},
-		{"note", env.BodyMentions.Note, bodyMentionNote},
-	} {
-		if c.got != c.want {
-			t.Errorf("bodyMentions.%s = %q, want %q", c.field, c.got, c.want)
-		}
+	var shapes []string
+	for _, sh := range env.BodyMentions.Shapes {
+		shapes = append(shapes, sh.From+" -> "+sh.To)
+	}
+	if want := []string{"#tnib-<id> -> #new-<id>", "[[tnib-<id>]] -> [[new-<id>]]"}; !slices.Equal(shapes, want) {
+		t.Errorf("bodyMentions.shapes = %q, want %q", shapes, want)
+	}
+	if env.BodyMentions.Note != bodyMentionNote {
+		t.Errorf("bodyMentions.note = %q, want %q", env.BodyMentions.Note, bodyMentionNote)
 	}
 
 	// The plan itself must still report nothing for this file, or the note
@@ -554,7 +557,7 @@ func TestSetPrefixDryRunTextAnnouncesTheBodyRewriteItCannotItemize(t *testing.T)
 		t.Fatalf("dry-run failed: %v", runErr)
 	}
 
-	for _, want := range []string{bodyMentionNote, `"#tnib-<id>"`, `"#new-<id>"`} {
+	for _, want := range []string{bodyMentionNote, `"#tnib-<id>"`, `"#new-<id>"`, `"[[tnib-<id>]]"`, `"[[new-<id>]]"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("text dry-run output does not mention %s:\n%s", want, out)
 		}
@@ -568,7 +571,7 @@ func TestSetPrefixDryRunTextAnnouncesTheBodyRewriteItCannotItemize(t *testing.T)
 func setupBodyMentionOnlyStore(t *testing.T) (projectDir, nibsDir, cfgPath string) {
 	t.Helper()
 	return setupSetPrefixTest(t, "tnib-",
-		testNibSpec{filename: "tnib-aaa--root.md", id: "tnib-aaa", body: "Blocked on #tnib-bbb; see #tnib-bbb again."},
+		testNibSpec{filename: "tnib-aaa--root.md", id: "tnib-aaa", body: "Blocked on #tnib-bbb; see [[tnib-bbb]] again."},
 		testNibSpec{filename: "tnib-bbb--other.md", id: "tnib-bbb"},
 	)
 }

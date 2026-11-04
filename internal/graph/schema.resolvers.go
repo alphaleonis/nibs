@@ -904,18 +904,18 @@ func (r *nibResolver) Children(ctx context.Context, obj *nib.Nib, filter *model.
 }
 
 // MentionIds is the resolver for the mentionIds field.
-// The IDs of nibs mentioned via `#<id>` in this nib's body. Mentions are
-// informational and include every status, the closed ones included; for open
-// nibs only, request `mentions` with a status filter — which matches literal
-// names, with no open/closed group expansion at this layer.
+// The IDs of nibs mentioned via `#<id>` or `[[<id>]]` in this nib's body.
+// Mentions are informational and include every status, the closed ones included;
+// for open nibs only, request `mentions` with a status filter — which matches
+// literal names, with no open/closed group expansion at this layer.
 func (r *nibResolver) MentionIds(ctx context.Context, obj *nib.Nib) ([]string, error) {
 	return existingMentionIDs(r.Reader, cachedMentions(ctx, r.Reader, obj.ID)), nil
 }
 
 // MentionedByIds is the resolver for the mentionedByIds field.
-// The IDs of nibs whose bodies mention this nib via `#<id>`. Mentions include
-// every status, the closed ones included; for open nibs only, request
-// `mentionedBy` with a status filter (see MentionIds).
+// The IDs of nibs whose bodies mention this nib via `#<id>` or `[[<id>]]`.
+// Mentions include every status, the closed ones included; for open nibs only,
+// request `mentionedBy` with a status filter (see MentionIds).
 func (r *nibResolver) MentionedByIds(ctx context.Context, obj *nib.Nib) ([]string, error) {
 	return existingMentionIDs(r.Reader, cachedMentionedBy(ctx, r.Reader, obj.ID)), nil
 }

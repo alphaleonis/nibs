@@ -581,6 +581,19 @@ func TestRewriteBodyMentions(t *testing.T) {
 			body: "#old-abc, #abc, `#old-abc`, #old-abc",
 			want: "#new-abc, #abc, `#old-abc`, #new-abc",
 		},
+		{"bracketed full form keeps its brackets", "see [[old-x]] for details", "see [[new-x]] for details"},
+		{
+			name: "both spellings retargeted, short forms in both untouched",
+			body: "[[old-x]] and #old-y, but [[x]] and #y stay",
+			want: "[[new-x]] and #new-y, but [[x]] and #y stay",
+		},
+		{"bracketed form in a code span", "run `[[old-x]]` verbatim", "run `[[old-x]]` verbatim"},
+		{"a backslash before the brackets does not escape them", `\[[old-x]]`, `\[[new-x]]`},
+		{
+			name: "bracketed mentions under a longer prefix",
+			body: "[[old-a]] x [[old-b]] #old-c",
+			want: "[[much-longer-a]] x [[much-longer-b]] #much-longer-c",
+		},
 		{
 			// The new prefix is longer than the old one, so every splice moves
 			// the offsets of the text after it.
@@ -635,7 +648,7 @@ func TestRewriteBodyMentionsRefusesAnEmptyOldPrefix(t *testing.T) {
 func TestExecute_RewritesFullFormBodyMentions(t *testing.T) {
 	root := t.TempDir()
 
-	body := "Blocked on #tnib-bbb; see #tnib-bbb again.\n\nShort form #bbb stays.\n\n`#tnib-bbb` is literal.\n\n```\n#tnib-bbb\n```\n"
+	body := "Blocked on #tnib-bbb; see [[tnib-bbb]] again.\n\nShort form #bbb stays.\n\n`#tnib-bbb` is literal.\n\n```\n#tnib-bbb\n```\n"
 	newTestNib(t, root, "tnib-aaa--root.md", "tnib-aaa", "", nil, body)
 	newTestNib(t, root, "tnib-bbb--child.md", "tnib-bbb", "tnib-aaa", nil, "child body with no mentions")
 
@@ -656,7 +669,7 @@ func TestExecute_RewritesFullFormBodyMentions(t *testing.T) {
 	// does not already start with one, and Parse hands that separator back
 	// as part of the body — so the round-tripped body leads with "\n". The
 	// fixture's own terminating newline survives the round trip untouched.
-	want := "\nBlocked on #new-bbb; see #new-bbb again.\n\nShort form #bbb stays.\n\n`#tnib-bbb` is literal.\n\n```\n#tnib-bbb\n```\n"
+	want := "\nBlocked on #new-bbb; see [[new-bbb]] again.\n\nShort form #bbb stays.\n\n`#tnib-bbb` is literal.\n\n```\n#tnib-bbb\n```\n"
 	if got != want {
 		t.Fatalf("rewritten body =\n%q\nwant\n%q", got, want)
 	}

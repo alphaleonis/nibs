@@ -1,6 +1,7 @@
 package nib
 
 import (
+	"bytes"
 	"regexp"
 	"slices"
 
@@ -16,15 +17,42 @@ const MentionIDPattern = `[a-z0-9](?:[a-z0-9-]*[a-z0-9])?`
 // mentionPattern matches `#` followed by an id; group 1 is the id.
 var mentionPattern = regexp.MustCompile(`#(` + MentionIDPattern + `)`)
 
-// MentionSpan is one `#<id>` mention: body[Start:Stop] is `#`+Token, in byte
+// leadingIDPattern matches the longest id at the start of its input.
+var leadingIDPattern = regexp.MustCompile(`^` + MentionIDPattern)
+
+// MentionForm is the spelling a mention is written in.
+type MentionForm int
+
+const (
+	// MentionHash is the `#<id>` spelling.
+	MentionHash MentionForm = iota
+	// MentionBracket is the `[[<id>]]` spelling.
+	MentionBracket
+)
+
+// MentionForms returns every mention form, in the order the forms are declared.
+func MentionForms() []MentionForm {
+	return []MentionForm{MentionHash, MentionBracket}
+}
+
+// Spell returns the mention of id written in form f.
+func (f MentionForm) Spell(id string) string {
+	if f == MentionBracket {
+		return "[[" + id + "]]"
+	}
+	return "#" + id
+}
+
+// MentionSpan is one mention: body[Start:Stop] is Form.Spell(Token), in byte
 // offsets.
 type MentionSpan struct {
 	Token string
 	Start int
 	Stop  int
+	Form  MentionForm
 }
 
-// ExtractMentionSpans returns every `#<id>` mention in body, repeats included, as
+// ExtractMentionSpans returns every mention in body, repeats included, as
 // non-overlapping spans in ascending Start order, so a rewrite can splice right to
 // left. ExtractMentionTokens describes what is scanned.
 func ExtractMentionSpans(body string) []MentionSpan {
@@ -61,6 +89,7 @@ func ExtractMentionSpans(body string) []MentionSpan {
 		}
 
 		out = scanMentions(source, t.Segment.Start, t.Segment.Stop, out)
+		out = scanBracketMentions(source, t.Segment.Start, t.Segment.Stop, out)
 		return ast.WalkContinue, nil
 	})
 
@@ -70,12 +99,13 @@ func ExtractMentionSpans(body string) []MentionSpan {
 	return out
 }
 
-// ExtractMentionTokens returns the distinct `#<id>` tokens in body, in order of
-// first appearance. Only CommonMark text is scanned: code spans and blocks, links,
-// autolinks, images, HTML blocks, raw inline HTML tags and reference-link
-// definitions are skipped, while heading text and text between inline tags are
-// scanned. A `#` preceded by an ASCII letter, digit or `_` is not a mention.
-// Tokens are not checked against existing nibs.
+// ExtractMentionTokens returns the distinct ids that body mentions as `#<id>` or
+// `[[<id>]]`, in order of first appearance. Only CommonMark text is scanned: code
+// spans and blocks, links, autolinks, images, HTML blocks, raw inline HTML tags
+// and reference-link definitions are skipped, while heading text and text between
+// inline tags are scanned. A `#` preceded by an ASCII letter, digit or `_` is not
+// a mention, and neither are brackets that hold anything but an id. Tokens are not
+// checked against existing nibs.
 func ExtractMentionTokens(body string) []string {
 	spans := ExtractMentionSpans(body)
 	if len(spans) == 0 {
@@ -116,6 +146,38 @@ func scanMentions(source []byte, segStart, segStop int, out []MentionSpan) []Men
 	}
 	return out
 }
+
+// scanBracketMentions appends the `[[<id>]]` mentions whose id starts in
+// source[segStart:segStop] to out. goldmark splits text into separate segments at
+// an unmatched `[` or `]`, so the brackets are checked in source.
+func scanBracketMentions(source []byte, segStart, segStop int, out []MentionSpan) []MentionSpan {
+	from := max(segStart-len(bracketOpen), 0)
+	for {
+		i := bytes.Index(source[from:segStop], bracketOpen)
+		if i < 0 {
+			return out
+		}
+		open := from + i
+		from = open + 1
+		idStart := open + len(bracketOpen)
+		idLen := len(leadingIDPattern.Find(source[idStart:segStop]))
+		idStop := idStart + idLen
+		if idLen == 0 || !bytes.HasPrefix(source[idStop:], bracketClose) {
+			continue
+		}
+		out = append(out, MentionSpan{
+			Token: string(source[idStart:idStop]),
+			Start: open,
+			Stop:  idStop + len(bracketClose),
+			Form:  MentionBracket,
+		})
+	}
+}
+
+var (
+	bracketOpen  = []byte("[[")
+	bracketClose = []byte("]]")
+)
 
 // isWordChar reports whether b is an ASCII letter of either case, a digit or '_'.
 // It is wider than the id grammar, so `name_#bar` is not a mention, and ASCII-only,

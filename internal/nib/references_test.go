@@ -367,6 +367,144 @@ func TestExtractMentionTokens(t *testing.T) {
 			body: "## #abc in heading",
 			want: []string{"abc"},
 		},
+		// The bracketed form. goldmark splits failed `[`…`]` pairs into
+		// separate Text segments, so these cases pin the result, not the
+		// segmentation.
+		{
+			name: "bracketed full-form mention",
+			body: "[[tnib-e001]]",
+			want: []string{"tnib-e001"},
+		},
+		{
+			name: "bracketed short-form mention",
+			body: "see [[gx0f]] here",
+			want: []string{"gx0f"},
+		},
+		{
+			name: "bracketed mention mid-sentence after other text",
+			body: "Blocked on the parser and [[tnib-e001]] until later.",
+			want: []string{"tnib-e001"},
+		},
+		{
+			name: "bracketed one-character id",
+			body: "see [[x]]",
+			want: []string{"x"},
+		},
+		{
+			name: "bracketed mention inside an inline code span is skipped",
+			body: "use `[[tnib-e001]]` verbatim",
+			want: nil,
+		},
+		{
+			name: "bracketed mention inside a fenced code block is skipped",
+			body: "```\n[[tnib-e001]]\n```",
+			want: nil,
+		},
+		{
+			name: "bracketed mention inside link text is skipped",
+			body: "[see [[tnib-e001]]](http://example.com)",
+			want: nil,
+		},
+		{
+			name: "a reference definition makes the inner brackets a link",
+			body: "a [[tnib-e001]] b\n\n[tnib-e001]: http://example.com",
+			want: nil,
+		},
+		{
+			name: "bracketed mention inside an autolink is skipped",
+			body: "<http://example.com/[[tnib-e001]]>",
+			want: nil,
+		},
+		{
+			name: "bracketed mention inside image alt text is skipped",
+			body: "![[[tnib-e001]]](img.png)",
+			want: nil,
+		},
+		{
+			name: "bracketed mention inside raw inline HTML is skipped",
+			body: `x <span title="[[tnib-e001]]">y</span>`,
+			want: nil,
+		},
+		{
+			name: "bracketed mention inside an HTML block is skipped",
+			body: "<div>[[tnib-e001]]</div>",
+			want: nil,
+		},
+		{
+			name: "inner spaces are not a mention",
+			body: "[[ tnib-e001 ]]",
+			want: nil,
+		},
+		{
+			name: "an alias is not a mention",
+			body: "[[tnib-e001|x]]",
+			want: nil,
+		},
+		{
+			name: "brackets delimit, so word characters around them do not matter",
+			body: "foo[[abc]]bar",
+			want: []string{"abc"},
+		},
+		{
+			name: "a backslash before the first bracket does not block the mention",
+			body: `\[[abc]]`,
+			want: []string{"abc"},
+		},
+		// A backslash anywhere else among the brackets blocks the mention.
+		{"a backslash before both brackets", `\[\[abc]]`, nil},
+		{"a backslash before the second bracket", `[\[abc]]`, nil},
+		{"a backslash between the closing brackets", `[[abc]\]`, nil},
+		{"a backslash before the closing brackets", `[[abc\]]`, nil},
+		{
+			name: "a backslash before a hash does not escape the mention",
+			body: `\#abc`,
+			want: []string{"abc"},
+		},
+		{
+			name: "a hash inside brackets is one hash mention",
+			body: "[[#abc]]",
+			want: []string{"abc"},
+		},
+		{
+			name: "uppercase is outside the id grammar",
+			body: "[[ABC]] [[aBc]]",
+			want: nil,
+		},
+		{
+			name: "an id may not start or end with a hyphen",
+			body: "[[abc-]] [[-abc]]",
+			want: nil,
+		},
+		{
+			name: "unbalanced or empty brackets are not mentions",
+			body: "[[abc] [abc]] [[]]",
+			want: nil,
+		},
+		{
+			name: "bracketed mention inside emphasis",
+			body: "*[[abc]]*",
+			want: []string{"abc"},
+		},
+		{
+			name: "bracketed mention in heading text",
+			body: "## Follows [[abc]]",
+			want: []string{"abc"},
+		},
+		{
+			name: "both forms in one body",
+			body: "Bracketed [[tnib-e001]] versus hash #tnib-e002 in one body.",
+			want: []string{"tnib-e001", "tnib-e002"},
+		},
+		{
+			name: "the same id in both forms is one token",
+			body: "[[abc]] and #abc",
+			want: []string{"abc"},
+		},
+		{
+			name: "a hash right after a bracketed mention",
+			body: "[[abc]]#def",
+			want: []string{"abc", "def"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -528,15 +666,24 @@ func FuzzExtractMentionTokens(f *testing.F) {
 	// behavior under nested-fence-type stress.
 	f.Add("~~~\n```\n#a\n```\n#b\n~~~\n#c")
 
+	// Bracketed form: the plain case, escapes, a hash inside, code, and long
+	// runs of openers and of mentions with no space between them.
+	f.Add("See [[gx0f]] and [[nibs-0rs2]].")
+	f.Add(`\[[a]] \\[[b]] \[\[c]]`)
+	f.Add("[[#a]] [[ b ]] [[c|d]] `[[e]]` [[f]]")
+	f.Add(strings.Repeat("[[", 512))
+	f.Add(strings.Repeat("[[a]]", 200))
+
 	f.Fuzz(func(t *testing.T, body string) {
 		got := ExtractMentionTokens(body)
 		assertValidOutput(t, body, got)
+		assertSpansAddressBody(t, body, ExtractMentionSpans(body))
 	})
 }
 
 // TestExtractMentionSpans pins the located form of the mention scan: every
 // occurrence (not the deduplicated set), in ascending offset order, with
-// offsets that slice the body back to the exact `#<id>` text.
+// offsets that slice the body back to the exact mention text.
 //
 // The non-ASCII rows are the only place the type's byte-offset contract
 // (MentionSpan's doc: "byte offsets ... not rune indices") has a case where
@@ -616,37 +763,88 @@ func TestExtractMentionSpans(t *testing.T) {
 			body: "#old-abc \u65e5\u672c\u8a9e #old-def",
 			want: []MentionSpan{{Token: "old-abc", Start: 0, Stop: 8}, {Token: "old-def", Start: 19, Stop: 27}},
 		},
+		{
+			name: "bracketed mention covers both bracket pairs",
+			body: "see [[old-abc]] for details",
+			want: []MentionSpan{{Token: "old-abc", Start: 4, Stop: 15, Form: MentionBracket}},
+		},
+		{
+			name: "both forms in one body ascend by Start",
+			body: "#old-a then [[old-b]] then #old-c and [[old-d]]",
+			want: []MentionSpan{
+				{Token: "old-a", Start: 0, Stop: 6},
+				{Token: "old-b", Start: 12, Stop: 21, Form: MentionBracket},
+				{Token: "old-c", Start: 27, Stop: 33},
+				{Token: "old-d", Start: 38, Stop: 47, Form: MentionBracket},
+			},
+		},
+		{
+			// The bracket pair wraps a hash mention; counting it twice would
+			// give the rewrite two overlapping splices.
+			name: "a hash inside brackets is only the hash span",
+			body: "[[#old-abc]]",
+			want: []MentionSpan{{Token: "old-abc", Start: 2, Stop: 10}},
+		},
+		{
+			name: "adjacent bracketed mentions",
+			body: "[[old-a]][[old-b]]",
+			want: []MentionSpan{
+				{Token: "old-a", Start: 0, Stop: 9, Form: MentionBracket},
+				{Token: "old-b", Start: 9, Stop: 18, Form: MentionBracket},
+			},
+		},
+		{
+			name: "multi-byte before a bracketed mention",
+			body: "caf\u00e9 [[old-abc]]",
+			want: []MentionSpan{{Token: "old-abc", Start: 6, Stop: 17, Form: MentionBracket}},
+		},
+		{"bracketed mention in a code span", "see `[[old-abc]]` here", nil},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := ExtractMentionSpans(tt.body)
 
-			// The offsets must slice the body back to the mention they
-			// describe, and must be ascending — a rewrite splicing
-			// right-to-left depends on both. These run BEFORE the whole-slice
-			// comparison and report with t.Errorf: behind the DeepEqual's
-			// t.Fatalf they would execute only once `got` already equalled
-			// `want`, i.e. never on the failure they exist to diagnose.
-			prev := -1
-			for _, s := range got {
-				if s.Start <= prev {
-					t.Errorf("span %+v is not after offset %d — spans must ascend", s, prev)
-				}
-				prev = s.Start
-				if s.Start < 0 || s.Start > s.Stop || s.Stop > len(tt.body) {
-					t.Errorf("span %+v does not address a %d-byte body", s, len(tt.body))
-					continue
-				}
-				if slice := tt.body[s.Start:s.Stop]; slice != "#"+s.Token {
-					t.Errorf("body[%d:%d] = %q, want %q", s.Start, s.Stop, slice, "#"+s.Token)
-				}
-			}
+			// These run BEFORE the whole-slice comparison and report with
+			// t.Errorf: behind the DeepEqual's t.Fatalf they would execute only
+			// once `got` already equalled `want`, i.e. never on the failure they
+			// exist to diagnose.
+			assertSpansAddressBody(t, tt.body, got)
 
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("ExtractMentionSpans(%q) = %+v, want %+v", tt.body, got, tt.want)
 			}
 		})
+	}
+}
+
+// assertSpansAddressBody checks that spans ascend without overlap and slice body
+// back to the mention text they describe, which a right-to-left splice relies on.
+func assertSpansAddressBody(t testing.TB, body string, spans []MentionSpan) {
+	t.Helper()
+	prevStop := -1
+	for _, s := range spans {
+		if s.Start < prevStop {
+			t.Errorf("span %+v starts before the previous span's stop %d — spans must ascend without overlap", s, prevStop)
+		}
+		prevStop = s.Stop
+		if s.Start < 0 || s.Start > s.Stop || s.Stop > len(body) {
+			t.Errorf("span %+v does not address a %d-byte body", s, len(body))
+			continue
+		}
+		var want string
+		switch s.Form {
+		case MentionHash:
+			want = "#" + s.Token
+		case MentionBracket:
+			want = "[[" + s.Token + "]]"
+		default:
+			t.Errorf("span %+v has an unknown form", s)
+			continue
+		}
+		if slice := body[s.Start:s.Stop]; slice != want {
+			t.Errorf("body[%d:%d] = %q, want %q", s.Start, s.Stop, slice, want)
+		}
 	}
 }
 

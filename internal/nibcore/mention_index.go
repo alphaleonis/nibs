@@ -10,7 +10,7 @@ import (
 // becomes O(matches) instead of O(N × body-length). Not safe for concurrent
 // use; callers hold Core.mu.
 //
-// Tokens are stored as the raw text after the `#` sigil, never as resolved
+// Tokens are stored as the raw id text of the mention, never as resolved
 // target IDs: a token that resolves to no nib at index time is still recorded,
 // and InboundSources returns its source as soon as that nib is created — no
 // reconciliation pass.

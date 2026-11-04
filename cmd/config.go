@@ -319,11 +319,9 @@ func setPrefixRecovery(root, oldPrefix, newPrefix string, forced bool) string {
 //
 // The bar stops at the front matter because the snapshot is a front-matter view.
 // Body ids are handled a layer down instead: reprefix.Execute retargets every
-// full-form `#<prefix><id>` mention while it re-renders each file, working from
-// the plan's prefix pair rather than from anything this snapshot carries. `#` is
-// the whole mention grammar — nib.ExtractMentionSpans recognizes no other form,
-// and neither does the web renderer, so `[[id]]` in a body is prose that merely
-// looks like a link and is left as written.
+// full-form body mention, `#<prefix><id>` and `[[<prefix><id>]]` alike, while it
+// re-renders each file, working from the plan's prefix pair and not from this
+// snapshot. nib.ExtractMentionSpans decides what counts as a mention.
 //
 // What still has no coverage anywhere is a body mention naming a nib that does
 // not exist: `nibs check` reports no link issue for one, so a mention broken by
@@ -359,9 +357,9 @@ type dryRunResponse struct {
 }
 
 // bodyMentionPreview is the dry run's account of the prose the real run
-// rewrites. reprefix.Execute retargets every full-form `#<oldPrefix><id>` body
-// mention, driven by the plan's prefix pair rather than by anything a FilePlan
-// carries, so the file list previews none of it.
+// rewrites. reprefix.Execute retargets every full-form body mention, driven by
+// the plan's prefix pair and not by a FilePlan, so the file list previews none
+// of it.
 //
 // It reports the mention SHAPES rather than a count, and that is a design
 // constraint rather than a shortcut: reprefix.BuildPlan does no disk I/O, so
@@ -369,24 +367,32 @@ type dryRunResponse struct {
 // nobody measured. What an operator needs before an irreversible store-wide run
 // is that prose is in scope at all.
 type bodyMentionPreview struct {
+	Shapes []mentionShape `json:"shapes"`
+	Note   string         `json:"note"`
+}
+
+// mentionShape is one mention spelling before and after the rewrite.
+type mentionShape struct {
 	From string `json:"from"`
 	To   string `json:"to"`
-	Note string `json:"note"`
 }
 
 // bodyMentionNote is shared by the JSON envelope and the human preview so the
 // two cannot drift into describing the same write differently.
 const bodyMentionNote = "nib bodies are rewritten too; those edits are not itemized, because the plan covers filenames and front matter only"
 
-// previewBodyMentions renders the mention shapes the rewrite moves between.
-// `<id>` is a placeholder, not a literal: the real run retargets whatever id
-// follows the prefix.
+// previewBodyMentions renders the mention shapes the rewrite moves between, one
+// per nib.MentionForm. `<id>` is a placeholder, not a literal: the real run
+// retargets whatever id follows the prefix.
 func previewBodyMentions(plan *reprefix.RenamePlan) bodyMentionPreview {
-	return bodyMentionPreview{
-		From: "#" + plan.OldPrefix + "<id>",
-		To:   "#" + plan.NewPrefix + "<id>",
-		Note: bodyMentionNote,
+	var shapes []mentionShape
+	for _, form := range nib.MentionForms() {
+		shapes = append(shapes, mentionShape{
+			From: form.Spell(plan.OldPrefix + "<id>"),
+			To:   form.Spell(plan.NewPrefix + "<id>"),
+		})
 	}
+	return bodyMentionPreview{Shapes: shapes, Note: bodyMentionNote}
 }
 
 func printPlan(plan *reprefix.RenamePlan, jsonMode bool) error {
@@ -409,8 +415,12 @@ func printPlan(plan *reprefix.RenamePlan, jsonMode bool) error {
 	// stated here rather than left to FilePlan's doc comment, which is read by
 	// maintainers and not by the person standing in front of the run. It is a
 	// statement of scope, not a count — see previewBodyMentions.
-	fmt.Printf("Note: %s. Every full-form %q mention in prose becomes %q; mentions inside code spans, code fences, link URLs and HTML blocks are left as written.\n",
-		bodyMentionNote, stripControlChars(bodies.From), bodies.To)
+	moves := make([]string, len(bodies.Shapes))
+	for i, sh := range bodies.Shapes {
+		moves[i] = fmt.Sprintf("%q becomes %q", stripControlChars(sh.From), sh.To)
+	}
+	fmt.Printf("Note: %s. Every full-form mention in prose is retargeted: %s; mentions inside code spans, code fences, link URLs and HTML blocks are left as written.\n",
+		bodyMentionNote, strings.Join(moves, ", "))
 	return nil
 }
 

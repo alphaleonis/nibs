@@ -37,10 +37,10 @@ func normalizeIDInMap(nibs map[string]*nib.Nib, id, configPrefix string) (string
 	return "", false
 }
 
-// FindMentionsInMap returns the nibs whose IDs are referenced via `#<id>`
-// mentions in fromID's body. Results are deduplicated, exclude self-references,
-// and exclude unresolved tokens. Nibs are returned in order of first appearance
-// in the body.
+// FindMentionsInMap returns the nibs whose IDs are referenced via `#<id>` or
+// `[[<id>]]` mentions in fromID's body. Results are deduplicated, exclude
+// self-references, and exclude unresolved tokens. Nibs are returned in order of
+// first appearance in the body.
 //
 // Pure function operating on the given map without locking. Callers passing a
 // Core.nibs map must hold Core.mu.RLock for the duration of the call and any
@@ -71,7 +71,7 @@ func FindMentionsInMap(nibs map[string]*nib.Nib, fromID, configPrefix string) []
 	return out
 }
 
-// FindMentionedByInMap returns the nibs whose bodies contain a `#<id>` mention
+// FindMentionedByInMap returns the nibs whose bodies contain a mention
 // resolving to targetID. Results are deduplicated (a nib is returned once even
 // if it mentions the target multiple times) and exclude self-references. The
 // returned slice is sorted by ID for deterministic ordering across calls.
@@ -106,7 +106,7 @@ func FindMentionedByInMap(nibs map[string]*nib.Nib, targetID, configPrefix strin
 	return out
 }
 
-// FindMentions returns the nibs mentioned via `#<id>` in fromID's body.
+// FindMentions returns the nibs mentioned in fromID's body.
 // Results are deduplicated, exclude self-references and unresolved tokens,
 // and preserve first-appearance order. Short IDs are normalized via the
 // same exact-match-then-prefix-prepended rule as Core.Get / Core.NormalizeID.
@@ -141,7 +141,7 @@ func (c *Core) FindMentions(fromID string) []*nib.Nib {
 	return out
 }
 
-// FindMentionedBy returns the nibs whose bodies contain a `#<id>` mention
+// FindMentionedBy returns the nibs whose bodies contain a mention
 // resolving to targetID. Results are deduplicated, exclude self-references,
 // and are returned sorted by ID for deterministic ordering.
 //
