@@ -80,10 +80,9 @@ type subscription struct {
 // reflect it.
 //
 // Payloads are immutable snapshots. Each event's Nib is a Clone taken at publish
-// time, so a payload's fields never change after delivery even when the store
-// later mutates that nib in place (e.g. Archive/Unarchive rewriting Path). Trust
-// the payload: re-reading the store is neither required nor, for a removal
-// event, possible — a deleted nib is gone from the store.
+// time, so a payload never aliases a store pointer and its fields never change
+// after delivery. Trust the payload: re-reading the store is neither required
+// nor, for a removal event, possible — a deleted nib is gone from the store.
 //
 // Sharp edges:
 //
@@ -572,7 +571,7 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 			// file lives now — never from stored.Path and never from batch order.
 			//
 			// stored.Path is authoritative only for a move THIS process made:
-			// Archive/Unarchive/LoadAndUnarchive rewrite it under the lock this
+			// Archive/Unarchive/LoadAndUnarchive update it under the lock this
 			// handler takes. Any other mover (the CLI against a running server, a
 			// pull in the separate .nibs repo) leaves it stale. Both halves of a
 			// move — the rename at the old path and the create at the new one —
@@ -585,11 +584,11 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 			if !fromArchive {
 				archiveRel := c.layout.ArchiveRel(filename)
 				if c.fileExists(filepath.Join(c.root, archiveRel)) {
-					stored.Path = archiveRel
-					c.nibs[id] = stored
+					moved := withPath(stored, archiveRel)
+					c.nibs[id] = moved
 					events = append(events, NibEvent{
 						Type:  EventArchived,
-						Nib:   stored,
+						Nib:   moved,
 						NibID: id,
 					})
 					continue
@@ -602,11 +601,11 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 			if fromArchive {
 				mainRel := c.layout.DataRel(filename)
 				if c.fileExists(filepath.Join(c.root, mainRel)) {
-					stored.Path = mainRel
-					c.nibs[id] = stored
+					moved := withPath(stored, mainRel)
+					c.nibs[id] = moved
 					events = append(events, NibEvent{
 						Type:  EventUnarchived,
-						Nib:   stored,
+						Nib:   moved,
 						NibID: id,
 					})
 					continue
@@ -618,15 +617,8 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 			// nibs-x--new-slug.md, so neither basename check above matched). Point
 			// the nib at the new location, re-derive its Slug, and report an
 			// update.
-			//
-			// Copy-on-write: this changes Slug, a NON-Path field, so it must land on
-			// a FRESH pointer — mutating Slug in place would let an off-lock reader
-			// observe it torn mid-write. Only Path may change in place on a stored
-			// pointer, which is what the branches above do. See the canonical
-			// invariant at NibReader.GetSnapshot (internal/graph/interfaces.go).
 			if newRel, ok := c.findRelPathByID(id); ok {
-				updated := stored.Clone()
-				updated.Path = newRel
+				updated := withPath(stored, newRel)
 				_, updated.Slug = nib.ParseFilename(filepath.Base(newRel), c.configPrefix())
 				c.nibs[id] = updated
 				events = append(events, NibEvent{
@@ -754,9 +746,6 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 
 	// Snapshot every payload while the lock is still held — this is the choke
 	// point behind the immutable-payload contract documented on Subscribe.
-	// Cloning under the lock also keeps Clone's field reads from racing the
-	// in-place Path writers (Archive, Unarchive, LoadAndUnarchive, and the
-	// removal branch above), which hold the same lock.
 	//
 	// Skip the clone when no payload subscriber is attached: with only
 	// signal-only subscribers it is pure waste. When it is skipped,

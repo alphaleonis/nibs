@@ -883,11 +883,6 @@ func (c *Core) Get(id string) (*nib.Nib, error) {
 // mutate before handing it to Update; mutating it never touches store state, so
 // a rejected Update leaves no phantom mutation behind. Resolution mirrors Get;
 // ErrNotFound when the nib is missing.
-//
-// The Clone is taken WHILE c.mu is held (via GetSnapshot), so the struct copy's
-// field reads — notably Path — cannot race an in-place Path writer holding c.mu
-// (Archive/Unarchive). Cloning the shared pointer off-lock would race that
-// writer.
 func (c *Core) GetForUpdate(id string) (*nib.Nib, error) {
 	if b, ok := c.GetSnapshot(id); ok {
 		return b, nil
@@ -895,19 +890,16 @@ func (c *Core) GetForUpdate(id string) (*nib.Nib, error) {
 	return nil, ErrNotFound
 }
 
-// GetSnapshot returns a detached deep copy of the nib, cloned WHILE c.mu is
-// held, so the returned value never aliases the live store pointer and no field
-// (notably Path) is read off-lock. Use it when the result outlives the lock —
-// GraphQL relationship resolvers whose fields gqlgen marshals asynchronously,
-// concurrently with in-place mutations like Archive/Unarchive rewriting a stored
-// nib's Path. Get returns the live pointer. Resolution mirrors Get; ok is false
-// when the nib is absent.
+// GetSnapshot returns a copy of the nib (see nib.Nib.Clone), so the returned
+// value never aliases the live store pointer; NibReader.GetSnapshot in
+// internal/graph/interfaces.go says when to use it. Get returns the live
+// pointer. Resolution mirrors Get; ok is false when the nib is absent.
 func (c *Core) GetSnapshot(id string) (*nib.Nib, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
 	if b, ok := c.nibs[id]; ok {
-		return b.Clone(), true // clone under the lock, never after it
+		return b.Clone(), true
 	}
 	if c.config != nil && c.config.Nibs.Prefix != "" && !strings.HasPrefix(id, c.config.Nibs.Prefix) {
 		if b, ok := c.nibs[c.config.Nibs.Prefix+id]; ok {
@@ -1139,10 +1131,8 @@ func (c *Core) Create(b *nib.Nib) error {
 	// answering. The watcher cannot cover for this — the in-process insert above
 	// happens BEFORE fsnotify reports the file. See canonicalize.go.
 	//
-	// Copy-on-write, like every other mutator that rewrites a non-Path field. An
-	// in-place edit would be safe HERE in isolation, but the exception list the
-	// off-lock read pipeline rests on (NibReader.GetSnapshot in
-	// internal/graph/interfaces.go) is exhaustive and stays closed.
+	// Copy-on-write, like every change to a published nib (see
+	// NibReader.GetSnapshot in internal/graph/interfaces.go).
 	//
 	// The caller's own pointer keeps the spelling it passed in: sibling mutators
 	// rewrite the STORE, not the caller's object.
@@ -1407,21 +1397,19 @@ func copyStamp(stamp *time.Time) *time.Time {
 
 // Update modifies an existing nib and writes it to disk. A non-nil ifMatch is
 // validated against the current on-disk etag first — optimistic concurrency
-// control against a lost update.
+// control against a lost update. Update stores a copy of b and never writes b
+// itself, so b may be a pointer the store has published.
 //
 // THE CALLER'S b IS A SNAPSHOT taken BEFORE this call, and two things about it
 // can be stale by the time the write happens — its PATH and its CONTENT. They
 // get different answers.
 //
 // The PATH is re-derived under the lock: the write goes to the path the STORE
-// holds for this id, not the one the snapshot carries. Every writer that moves a
-// nib's file does so under this same c.mu — the in-place Path writers the
-// canonical live-pointer invariant enumerates (see NibReader.GetSnapshot in
-// internal/graph/interfaces.go), plus the watcher's slug-rename branch, which
-// installs a fresh pointer carrying the new Path. And the writer is the
-// non-creating one, so a path that went stale in a way no process in this one
-// can re-derive — `nibs config set-prefix` renames every file in the store — is
-// reported rather than turned into a second copy of the nib at its old name.
+// holds for this id, not the one the snapshot carries. Every change to a stored
+// Path happens under this same c.mu. And the writer is the non-creating one, so
+// a path that went stale in a way no process in this one can re-derive — `nibs
+// config set-prefix` renames every file in the store — is reported rather than
+// turned into a second copy of the nib at its old name.
 //
 // The CONTENT cannot be re-derived here, and that is the residual. This method
 // takes c.mu and then parks on the store flock while holding it, so a migration
@@ -1440,6 +1428,8 @@ func copyStamp(stamp *time.Time) *time.Time {
 func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	b = b.Clone()
 
 	unlock, lockErr := c.acquireWriteLock()
 	if lockErr != nil {
@@ -1502,9 +1492,9 @@ func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 
 	c.nibs[b.ID] = b
 
-	// The caller may name a link by short id. Resolve it in the store, copy-on-
-	// write and leaving the caller's pointer alone, as Create does. No sweep: an
-	// update changes no key set, so no other nib's link can re-point.
+	// The caller may name a link by short id. Resolve it in the store,
+	// copy-on-write as Create does. No sweep: an update changes no key set, so
+	// no other nib's link can re-point.
 	if set := canonicalizeLinksInMap(c.nibs, b, c.configPrefix()); set.changed {
 		resolved := b.Clone()
 		set.applyTo(resolved)
@@ -1753,8 +1743,7 @@ func (c *Core) Archive(id string) error {
 		return fmt.Errorf("moving nib to archive: %w", err)
 	}
 
-	targetNib.Path = newRelPath
-	c.nibs[targetID] = targetNib
+	c.nibs[targetID] = withPath(targetNib, newRelPath)
 
 	return nil
 }
@@ -1797,8 +1786,7 @@ func (c *Core) Unarchive(id string) error {
 		return fmt.Errorf("moving nib from archive: %w", err)
 	}
 
-	targetNib.Path = newRelPath
-	c.nibs[targetID] = targetNib
+	c.nibs[targetID] = withPath(targetNib, newRelPath)
 
 	return nil
 }
@@ -1815,6 +1803,15 @@ func (c *Core) IsArchived(id string) bool {
 	}
 
 	return c.isArchivedPath(b.Path)
+}
+
+// withPath returns a clone of b carrying path, to replace b in c.nibs. A
+// published nib's Path is never written in place (see NibReader.GetSnapshot in
+// internal/graph/interfaces.go).
+func withPath(b *nib.Nib, path string) *nib.Nib {
+	moved := b.Clone()
+	moved.Path = path
+	return moved
 }
 
 // isArchivedPath reports whether a store-relative path is an archived nib's.
@@ -1917,10 +1914,10 @@ func (c *Core) LoadAndUnarchive(id string) (*nib.Nib, error) {
 		return nil, fmt.Errorf("moving nib from archive: %w", err)
 	}
 
-	b.Path = newRelPath
-	c.nibs[targetID] = b
+	moved := withPath(b, newRelPath)
+	c.nibs[targetID] = moved
 
-	return b, nil
+	return moved, nil
 }
 
 // Init creates the store root and the data/ directory every new nib is written

@@ -208,7 +208,8 @@ func (s *stubWriter) Update(b *nib.Nib, ifMatch *string) error {
 		if s.store.nibs == nil {
 			s.store.nibs = map[string]*nib.Nib{}
 		}
-		s.store.nibs[b.ID] = b
+		// A copy, as Core.Update stores.
+		s.store.nibs[b.ID] = b.Clone()
 	}
 	s.updated = append(s.updated, b)
 	return nil

@@ -398,32 +398,31 @@ func TestGetShortID(t *testing.T) {
 func TestUpdate(t *testing.T) {
 	core, _ := setupTestCore(t)
 
-	b := createTestNib(t, core, "upd1", "Original Title", "todo")
-	originalCreatedAt := *b.CreatedAt
+	created := createTestNib(t, core, "upd1", "Original Title", "todo")
+	originalCreatedAt := *created.CreatedAt
 
-	// Update the nib
+	b, err := core.GetForUpdate("upd1")
+	if err != nil {
+		t.Fatalf("GetForUpdate() error = %v", err)
+	}
 	b.Title = "Updated Title"
 	b.Status = "in-progress"
+	// Cleared so that a stamp on the stored nib can only come from Update.
+	b.UpdatedAt = nil
 
-	err := core.Update(b, nil)
-	if err != nil {
+	if err := core.Update(b, nil); err != nil {
 		t.Fatalf("Update() error = %v", err)
 	}
 
-	// CreatedAt should be preserved
-	if !b.CreatedAt.Equal(originalCreatedAt) {
-		t.Errorf("CreatedAt changed: got %v, want %v", b.CreatedAt, originalCreatedAt)
-	}
-
-	// UpdatedAt should be refreshed (might be same second, so just check it's set)
-	if b.UpdatedAt == nil {
-		t.Error("UpdatedAt not set")
-	}
-
-	// Verify in-memory state
 	loaded, err := core.Get("upd1")
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
+	}
+	if loaded.CreatedAt == nil || !loaded.CreatedAt.Equal(originalCreatedAt) {
+		t.Errorf("CreatedAt changed: got %v, want %v", loaded.CreatedAt, originalCreatedAt)
+	}
+	if loaded.UpdatedAt == nil {
+		t.Error("UpdatedAt not set")
 	}
 	if loaded.Title != "Updated Title" {
 		t.Errorf("Title = %q, want %q", loaded.Title, "Updated Title")
@@ -1104,8 +1103,6 @@ func TestWatcherArchiveVsDelete(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			core, nibsDir := setupTestCore(t)
 			b := createTestNib(t, core, nibID, "Event Test", "todo")
-			// Capture the filename now: Archive mutates the stored nib's Path in
-			// place, and this is the same pointer.
 			filename := filepath.Base(b.Path)
 
 			if tt.preWatch != nil {

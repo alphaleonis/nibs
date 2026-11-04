@@ -22,10 +22,10 @@ type NibReader interface {
 	// a refused write cannot corrupt in-memory state. It returns ErrNotFound when
 	// the nib is missing, and is the one blessed accessor for every mutation site.
 	GetForUpdate(id string) (*nib.Nib, error)
-	// GetSnapshot returns a detached deep copy of the nib, cloned WHILE the store
-	// lock is held, so the result never aliases the live store pointer and no field
-	// (notably Path) is read off-lock. This is the blessed READ accessor for values
-	// that outlive the lock. ok is false when the nib is absent.
+	// GetSnapshot returns a copy of the nib (see nib.Nib.Clone), so the result
+	// never aliases the live store pointer. Use it, not Get, for every nib a
+	// resolver returns (see the invariant below). ok is false when the nib is
+	// absent.
 	//
 	// ID RESOLUTION IS PART OF THIS CONTRACT, not an implementation detail of Core.
 	// It mirrors Get: exact id first, then — when a prefix is configured and the id
@@ -35,27 +35,25 @@ type NibReader interface {
 	// short-form link every other surface resolves (see resolvedParent).
 	//
 	// CANONICAL INVARIANT (the live-pointer / copy-on-write rule). This doc is its
-	// single authoritative statement; sibling comments across internal/nibcore and
-	// internal/graph defer here rather than re-derive it. A Core mutator may change
-	// ONLY Path in place on a pointer already published in c.nibs; every other
-	// field change must be copy-on-write — install a fresh *nib.Nib under the map
-	// key rather than edit the stored one. An off-lock reader (the Nibs filter/sort
-	// pipeline; gqlgen's async field marshaler) still holding the old pointer then
-	// never observes a non-Path field torn mid-write. The in-place writers are the
-	// archive/unarchive moves; a slug rename is copy-on-write like any other field
-	// change, since it also changes the filename-derived Slug. The producer half is
-	// enforced by nibcore.TestCoreMutators_FreezeGuard.
+	// single authoritative statement; other comments in internal/nibcore and
+	// internal/graph point here. No Core mutator writes any field, Path included,
+	// on a pointer already published in c.nibs. Every change installs a fresh
+	// *nib.Nib under the map key. An off-lock reader (the Nibs filter/sort
+	// pipeline; gqlgen's async field marshaler) that still holds the old pointer
+	// then never observes a field torn mid-write.
+	// nibcore.TestCoreMutators_FreezeGuard enforces the producer half.
 	//
-	// Two consequences:
+	// For resolvers:
 	//
-	//   - Return nib data that outlives the store lock as a GetSnapshot clone, from
-	//     every resolver — read, query, relationship and mutation alike. Only the
-	//     immutable ID may be read off a live pointer, to look the snapshot up. The
-	//     mutation resolvers go through snapshotResult / snapshotResults.
+	//   - Return nib data as a GetSnapshot clone from every resolver — read, query,
+	//     relationship and mutation alike — so a caller cannot write a published
+	//     nib through the result. The CLI and the TUI call resolvers in-process
+	//     and receive these pointers. The mutation resolvers go through
+	//     snapshotResult / snapshotResults.
 	//
 	//   - Snapshotting at the END of the Nibs pipeline detaches only the RETURNED
-	//     data. ApplyFilter/includeAncestors/ApplySorting read non-Path fields off
-	//     live pointers before it, which is safe only because of the rule above.
+	//     data. ApplyFilter/includeAncestors/ApplySorting read fields off live
+	//     pointers before it, which is safe only because of the rule above.
 	GetSnapshot(id string) (*nib.Nib, bool)
 	All() []*nib.Nib
 	// Search returns the TOP hits for the query — id matches first, then full-text

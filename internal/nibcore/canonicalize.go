@@ -175,10 +175,7 @@ func (c *Core) canonicalizeAllLinksUnpublishedLocked() {
 // current store and installs the rewritten nib under its key, returning the
 // fresh pointer. Returns nil when the nib is absent or nothing changed.
 //
-// Every rewrite is copy-on-write: Parent and Milestone (torn strings) and
-// BlockedBy (a memory-unsafe torn slice header) are non-Path fields, so they
-// must land on a FRESH pointer rather than on the published one — see the
-// canonical live-pointer invariant at NibReader.GetSnapshot
+// Every rewrite is copy-on-write, per the invariant at NibReader.GetSnapshot
 // (internal/graph/interfaces.go). Must be called with c.mu held.
 func (c *Core) canonicalizeOneLocked(id, configPrefix string) *nib.Nib {
 	b, ok := c.nibs[id]

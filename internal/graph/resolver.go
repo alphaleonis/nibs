@@ -90,13 +90,11 @@ func (r *Resolver) updateTargetClone(id string, mutate func(*nib.Nib) bool) erro
 	return r.Writer.Update(clone, &ifMatch)
 }
 
-// snapshotResult returns a detached GetSnapshot clone of the nib a mutation just
-// wrote, so gqlgen never marshals the live c.nibs pointer. Return a nib from a
-// mutation resolver through this helper: the value the resolver would otherwise
-// return aliases the store, and only a clone taken under the store lock is safe
-// to hand out (see NibReader.GetSnapshot for the rule). A !ok means the nib
-// vanished between the write and the snapshot (a concurrent delete): report it
-// rather than return a nil nib for the non-null result.
+// snapshotResult returns a GetSnapshot clone of the nib a mutation just wrote.
+// Return a nib from a mutation resolver through this helper (see
+// NibReader.GetSnapshot for the rule). A !ok means the nib vanished between the
+// write and the snapshot (a concurrent delete): report it rather than return a
+// nil nib for the non-null result.
 func (r *Resolver) snapshotResult(id string) (*nib.Nib, error) {
 	snap, ok := r.Reader.GetSnapshot(id)
 	if !ok {

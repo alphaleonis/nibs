@@ -891,12 +891,9 @@ func canonicalCycleKey(path []string) string {
 // `nibs-.md` — so without it an empty target would strip that nib's incoming
 // links. Separately, pointsAtTarget rejects an empty LINK id.
 //
-// Copy-on-write, per the canonical live-pointer invariant (see
-// NibReader.GetSnapshot in internal/graph/interfaces.go): the changed fields
-// here are non-Path — Parent, a torn string, and BlockedBy, a memory-unsafe torn
-// slice header — so a changed nib is cloned, persisted and reinstalled under its
-// key. Ranging over c.nibs while reassigning an existing key's value is safe in
-// Go.
+// A changed nib is cloned, persisted and reinstalled under its key, per the
+// copy-on-write invariant at NibReader.GetSnapshot (internal/graph/interfaces.go).
+// Ranging over c.nibs while reassigning an existing key's value is safe in Go.
 //
 // CONCURRENCY: this whole-store sweep takes the per-operation cross-process
 // write lock the single-nib writers take — c.mu, then the flock (see
@@ -1036,12 +1033,8 @@ func (c *Core) skippedIDsLocked() map[string]bool {
 // A link that resolves is left exactly as stored: nothing here rewrites a
 // short id into its full form.
 //
-// Copy-on-write for the same reason as RemoveLinksTo: mutate a clone and
-// reinstall it rather than editing the stored pointer in place, so no off-lock
-// reader ever sees a stored pointer's non-Path fields torn mid-write. See the
-// canonical live-pointer / copy-on-write invariant at NibReader.GetSnapshot
-// (internal/graph/interfaces.go). Documents is made copy-on-write here too, for
-// the same discipline.
+// A changed nib is cloned and reinstalled as in RemoveLinksTo, Documents
+// included.
 //
 // CONCURRENCY and the non-creating write are RemoveLinksTo's — read them there.
 // This sweep holds the lock longer: it stats one file per document link on top

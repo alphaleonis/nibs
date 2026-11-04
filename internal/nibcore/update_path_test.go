@@ -63,16 +63,14 @@ func TestUpdateRefusesAStalePathRatherThanRecreatingIt(t *testing.T) {
 
 // TestUpdateWritesThePathTheStoreHoldsNotTheCallersSnapshot is the other half:
 // the caller's nib is a clone taken BEFORE Update's lock, and Archive/Unarchive/
-// LoadAndUnarchive rewrite Path in place on the stored pointer under that same
-// lock. So a clone that predates one of those moves names a file the store has
-// already moved, and only the STORED path says where the nib now lives — which
-// is also what keeps the non-creating writer from refusing a caller that did
-// nothing wrong.
+// LoadAndUnarchive change the stored Path under that same lock. So a clone that
+// predates one of those moves names a file the store has already moved, and only
+// the STORED path says where the nib now lives — which is also what keeps the
+// non-creating writer from refusing a caller that did nothing wrong.
 func TestUpdateWritesThePathTheStoreHoldsNotTheCallersSnapshot(t *testing.T) {
 	core, nibsDir := setupTestCore(t)
 
 	created := createTestNib(t, core, "up92", "Archived Mid Edit", "todo")
-	// Captured up front: Archive rewrites Path in place on this very pointer.
 	dataRel := created.Path
 	dataFile := filepath.Join(nibsDir, filepath.FromSlash(dataRel))
 

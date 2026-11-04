@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -13,43 +14,22 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-// TestCoreMutators_FreezeGuard is the deterministic, store-level guard for the
-// copy-on-write invariant documented canonically at NibReader.GetSnapshot
-// (internal/graph/interfaces.go): a Core mutator may only ever change Path in
-// place on a pointer already published in c.nibs; every OTHER field change must
-// be copy-on-write (install a fresh *nib.Nib under the map key). An off-lock
-// reader — the GraphQL Nibs filter/sort pipeline, gqlgen's async marshaler —
-// still holding the old pointer must never observe a non-Path field change torn
-// mid-write.
+// TestCoreMutators_FreezeGuard covers the copy-on-write invariant stated at
+// NibReader.GetSnapshot (internal/graph/interfaces.go): no Core mutator writes
+// any field, Path included, in place on a nib already published in c.nibs.
 //
-// The guard drives every Core mutator against an already-published nib and
-// asserts that no non-Path field of the previously-published pointer changed.
-// The mechanism is uniform and field-agnostic: before the mutation it captures
-// EVERY live c.nibs pointer plus a deep clone of each (the frozen "before"),
-// runs the mutator, then re-reads each SAME captured pointer and compares it to
-// its clone with Path neutralized on both sides. Because the comparison is a
-// whole-struct reflect.DeepEqual, a new VALUE-typed field on nib.Nib is covered
-// automatically; a new slice/map/pointer field is covered only once
-// nib.Nib.Clone() deep-copies it (so the "before" snapshot stays independent) —
-// extend Clone() (and TestNibClone) alongside such a field.
+// Each case captures every published pointer plus a deep clone of each, runs
+// the mutator, and compares each SAME pointer with its clone. A copy-on-write
+// mutator installs a different pointer and leaves the captured one untouched.
+// The comparison is a whole-struct reflect.DeepEqual, so a new value-typed field
+// on nib.Nib is covered automatically. A new slice, map or pointer field is
+// covered once nib.Nib.Clone() deep-copies it, so extend Clone() (and
+// TestNibClone) with such a field.
 //
-// Why this bites the historical drift: every regression in this area reassigned
-// a non-Path field (Title, Parent, BlockedBy, Order, ...) on the stored pointer
-// instead of on a fresh clone. Such a reassignment makes the captured pointer's
-// field diverge from its "before" clone, which DeepEqual reports. A copy-on-write
-// mutator, by contrast, installs a DIFFERENT pointer and leaves the captured one
-// fully frozen (even Path), which also passes. Path is the sole in-place exception
-// (Archive/Unarchive/LoadAndUnarchive and the watcher's archive/unarchive move
-// branches rewrite it under c.mu; the watcher's slug-rename branch is instead
-// copy-on-write), so it is excluded from the comparison.
-//
-// The "before" snapshot is a DEEP clone (not a shallow *p copy) on purpose: a
-// shallow copy would share slice/map backing storage with the live pointer, so an
-// in-place element write (e.g. p.BlockedBy[0] = x) would mutate both sides and
-// slip past DeepEqual. The deep clone makes that class visible for the top-level
-// slices Clone() copies (Tags, BlockedBy, Blocking, Documents); Extra's nested
-// yaml.Node.Content is shared by Clone(), so an in-place edit there is not
-// covered (no current mutator touches it).
+// The "before" clone is deep so that an in-place element write such as
+// p.BlockedBy[0] = x cannot change both sides at once. That holds for the slices
+// Clone() copies. Clone() shares Extra's nested yaml.Node.Content, so an
+// in-place edit there is not covered.
 func TestCoreMutators_FreezeGuard(t *testing.T) {
 	for _, tt := range freezeGuardCases() {
 		t.Run(tt.name, func(t *testing.T) {
@@ -67,7 +47,7 @@ func TestCoreMutators_FreezeGuard(t *testing.T) {
 
 			tt.mutate(t, c, dir)
 
-			assertPublishedPointersFrozenExceptPath(t, c, snaps, tt.name)
+			assertPublishedPointersFrozen(t, c, snaps, tt.name)
 		})
 	}
 }
@@ -126,7 +106,7 @@ func freezeGuardCases() []freezeGuardCase {
 					t.Fatalf("Get: %v", err)
 				}
 				// The blessed write shape: mutate an OWNED clone, then Update. Update
-				// must install the clone as a FRESH pointer, leaving the old one frozen.
+				// installs a FRESH pointer, leaving the old one frozen.
 				clone := stored.Clone()
 				clone.Title = "Changed"
 				clone.Status = "in-progress"
@@ -162,6 +142,28 @@ func freezeGuardCases() []freezeGuardCase {
 			},
 		},
 		{
+			name:   "Update-given-the-live-pointer",
+			covers: []string{"Update"},
+			// Update stamps UpdatedAt, so a stamp from an earlier second makes an
+			// in-place write visible.
+			setup: func(t *testing.T, c *Core, _ string) {
+				createTestNib(t, c, "updlive", "Update Live", "todo")
+				past := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+				c.mu.Lock()
+				c.nibs["updlive"].UpdatedAt = &past
+				c.mu.Unlock()
+			},
+			mutate: func(t *testing.T, c *Core, _ string) {
+				live, err := c.Get("updlive")
+				if err != nil {
+					t.Fatalf("Get: %v", err)
+				}
+				if err := c.Update(live, nil); err != nil {
+					t.Fatalf("Update: %v", err)
+				}
+			},
+		},
+		{
 			name:   "Delete",
 			covers: []string{"Delete"},
 			setup: func(t *testing.T, c *Core, _ string) {
@@ -178,9 +180,9 @@ func freezeGuardCases() []freezeGuardCase {
 			name:   "Create-resolves-a-dangling-link", // Re-points a link on a BYSTANDER nib: copy-on-write.
 			covers: []string{"Create"},
 			// Creating the nib that a dangling short-form link names re-resolves that
-			// link on a nib published long before. Parent is a non-Path field, so the
-			// rewrite must install a fresh pointer rather than edit the one an off-lock
-			// reader may still hold.
+			// link on a nib published long before, so the rewrite must install a
+			// fresh pointer rather than edit the one an off-lock reader may still
+			// hold.
 			//
 			// The prefixed core is load-bearing, not incidental: canonicalizeLinksInMap
 			// and canonicalizeStoreLocked both early-return when no id prefix is
@@ -210,10 +212,10 @@ func freezeGuardCases() []freezeGuardCase {
 			covers: []string{"Delete"},
 			// Deleting a bare-token nib whose prefixed twin is still stored re-resolves
 			// the links that named the bare spelling, and the nib holding such a link
-			// has been published for a while — Parent is a non-Path field, so the
-			// rewrite must install a fresh pointer rather than edit the one an off-lock
-			// reader may still hold. The default core configures no id prefix, so the
-			// bare/prefixed pair cannot exist there.
+			// has been published for a while, so the rewrite must install a fresh
+			// pointer rather than edit the one an off-lock reader may still hold. The
+			// default core configures no id prefix, so the bare/prefixed pair cannot
+			// exist there.
 			newCore: mustLoadPrefixedCore,
 			setup: func(t *testing.T, c *Core, dir string) {
 				writeLinkNibFile(t, dir, "e1", "todo", "")
@@ -236,7 +238,7 @@ func freezeGuardCases() []freezeGuardCase {
 			},
 		},
 		{
-			name:   "Archive", // Rewrites Path in place — the sanctioned exception.
+			name:   "Archive",
 			covers: []string{"Archive"},
 			setup: func(t *testing.T, c *Core, _ string) {
 				createTestNib(t, c, "arch", "Archive Me", "todo")
@@ -248,7 +250,7 @@ func freezeGuardCases() []freezeGuardCase {
 			},
 		},
 		{
-			name:   "Unarchive", // Rewrites Path in place — the sanctioned exception.
+			name:   "Unarchive",
 			covers: []string{"Unarchive"},
 			setup: func(t *testing.T, c *Core, _ string) {
 				createTestNib(t, c, "unarch", "Unarchive Me", "todo")
@@ -263,7 +265,7 @@ func freezeGuardCases() []freezeGuardCase {
 			},
 		},
 		{
-			name:   "LoadAndUnarchive", // Rewrites Path in place — the sanctioned exception.
+			name:   "LoadAndUnarchive",
 			covers: []string{"LoadAndUnarchive"},
 			setup: func(t *testing.T, c *Core, _ string) {
 				createTestNib(t, c, "loadun", "Load And Unarchive", "todo")
@@ -477,7 +479,7 @@ func freezeGuardCases() []freezeGuardCase {
 			},
 		},
 		{
-			name: "watcher-archive-move", // External archive: rewrites Path in place.
+			name: "watcher-archive-move",
 			setup: func(t *testing.T, c *Core, _ string) {
 				createTestNib(t, c, "wmove", "Watch Move", "todo")
 				setWatching(c)
@@ -497,6 +499,34 @@ func freezeGuardCases() []freezeGuardCase {
 					t.Fatalf("Rename: %v", err)
 				}
 				c.handleChanges(map[string]fsnotify.Op{oldPath: fsnotify.Rename})
+				if b, _ := c.Get("wmove"); b == nil || !c.isArchivedPath(b.Path) {
+					t.Fatalf("mutation did not fire: nib = %+v, want it archived", b)
+				}
+			},
+		},
+		{
+			name: "watcher-unarchive-move",
+			setup: func(t *testing.T, c *Core, _ string) {
+				createTestNib(t, c, "wunmove", "Watch Unarchive Move", "todo")
+				if err := c.Archive("wunmove"); err != nil {
+					t.Fatalf("setup Archive: %v", err)
+				}
+				setWatching(c)
+			},
+			mutate: func(t *testing.T, c *Core, dir string) {
+				stored, err := c.Get("wunmove")
+				if err != nil {
+					t.Fatalf("Get: %v", err)
+				}
+				oldPath := filepath.Join(dir, stored.Path)
+				newPath := filepath.Join(dir, store.DataDirName, filepath.Base(stored.Path))
+				if err := os.Rename(oldPath, newPath); err != nil {
+					t.Fatalf("Rename: %v", err)
+				}
+				c.handleChanges(map[string]fsnotify.Op{oldPath: fsnotify.Rename})
+				if b, _ := c.Get("wunmove"); b == nil || c.isArchivedPath(b.Path) {
+					t.Fatalf("mutation did not fire: nib = %+v, want it unarchived", b)
+				}
 			},
 		},
 		{
@@ -523,9 +553,9 @@ func freezeGuardCases() []freezeGuardCase {
 			name: "watcher-canonicalize-late-target", // Resolves a link on a BYSTANDER nib: copy-on-write.
 			// The batch's own file is not the one that changes here. A nib loaded
 			// with an unresolvable short-form parent is rewritten when the nib it
-			// names finally arrives, and that nib has been published for a while —
-			// Parent is a non-Path field, so the rewrite must install a fresh
-			// pointer rather than edit the one an off-lock reader may still hold.
+			// names finally arrives, and that nib has been published for a while,
+			// so the rewrite must install a fresh pointer rather than edit the one
+			// an off-lock reader may still hold.
 			newCore: mustLoadPrefixedCore,
 			setup: func(t *testing.T, c *Core, dir string) {
 				writeLinkNibFile(t, dir, "nibs-wlate", "todo", "parent: wtarget\n")
@@ -569,8 +599,8 @@ func freezeGuardCases() []freezeGuardCase {
 //     TestCoreMutators_FreezeGuard.
 //   - Completeness, not correctness. The partition proves every method is
 //     CLASSIFIED, not that it is classified CORRECTLY. A mutator misfiled into
-//     freezeNonMutators, or a new in-place non-Path write added inside an
-//     already-classified method, is invisible here — only the freeze guard's own
+//     freezeNonMutators, or a new in-place write added inside an already-
+//     classified method, is invisible here — only the freeze guard's own
 //     subtests catch an actual in-place mutation.
 //   - covers is self-declared. The coverage check trusts each subtest's `covers`
 //     label; it does not witness that the subtest's mutate closure actually calls
@@ -608,10 +638,10 @@ func TestCoreMutators_FreezePartition(t *testing.T) {
 
 	// freezeNonMutators: every OTHER exported *Core method (readers, lifecycle,
 	// helpers). None installs or rewrites a published c.nibs pointer in a way that
-	// can tear a non-Path field for an off-lock reader: readers return live
-	// pointers or GetSnapshot clones; Load swaps the whole c.nibs map with fresh
-	// pointers (leaving any held pointer frozen); GetForUpdate returns a clone;
-	// Warn writes to the store's warning sink and reads no nib at all.
+	// can tear a field for an off-lock reader: readers return live pointers or
+	// GetSnapshot clones; Load swaps the whole c.nibs map with fresh pointers
+	// (leaving any held pointer frozen); GetForUpdate returns a clone; Warn
+	// writes to the store's warning sink and reads no nib at all.
 	freezeNonMutators := map[string]bool{
 		"All":                true,
 		"CheckAllLinks":      true,
@@ -743,12 +773,10 @@ func snapshotPublishedPointers(c *Core) []frozenPtr {
 	return out
 }
 
-// assertPublishedPointersFrozenExceptPath re-reads each captured pointer and
-// fails if any non-Path field diverged from its "before" clone — i.e. if the
-// mutator wrote a non-Path field in place on a previously-published pointer.
-// Path is neutralized on both sides because it is the one field a mutator may
-// change in place (see the canonical invariant at NibReader.GetSnapshot).
-func assertPublishedPointersFrozenExceptPath(t *testing.T, c *Core, snaps []frozenPtr, mutator string) {
+// assertPublishedPointersFrozen fails if any field of a captured pointer
+// diverged from its "before" clone, which means the mutator wrote that field in
+// place on a published pointer.
+func assertPublishedPointersFrozen(t *testing.T, c *Core, snaps []frozenPtr, mutator string) {
 	t.Helper()
 
 	c.mu.RLock()
@@ -758,15 +786,12 @@ func assertPublishedPointersFrozenExceptPath(t *testing.T, c *Core, snaps []froz
 		// Compare two Clones so any load-boundary-only field a future Clone()
 		// normalizes is neutralized SYMMETRICALLY. s.before is already a
 		// capture-time Clone; re-clone the SAME captured pointer now to read its
-		// post-mutation state through the same normalization. An in-place
-		// non-Path write still surfaces: Clone() copies the pointer's current
-		// field values.
+		// post-mutation state through the same normalization. An in-place write
+		// still surfaces: Clone() copies the pointer's current field values.
 		before := *s.before     // deep, independent capture-time clone
 		after := *s.ptr.Clone() // deep clone of the SAME captured pointer, post-mutation
-		before.Path = ""
-		after.Path = ""
 		if !reflect.DeepEqual(before, after) {
-			t.Errorf("%s mutated a non-Path field in place on the published pointer for %q\n  before: %+v\n  after:  %+v",
+			t.Errorf("%s mutated a field in place on the published pointer for %q\n  before: %+v\n  after:  %+v",
 				mutator, s.id, before, after)
 		}
 	}

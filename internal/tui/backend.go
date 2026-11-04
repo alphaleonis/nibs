@@ -37,7 +37,7 @@ type Backend interface {
 	Root() string
 	// ReloadAfterEdit reloads the store after an external editor save and stamps
 	// the nib's updated_at, which a file-level edit does not set.
-	ReloadAfterEdit(id string) (*nib.Nib, error)
+	ReloadAfterEdit(id string) error
 
 	StartWatching() error
 	StopWatching()

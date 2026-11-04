@@ -46,8 +46,8 @@ func (t NextTally) Any() bool {
 }
 
 // NextResult is the answer to "what do I do", with the provenance that reached
-// it. Every nib pointer is a LIVE store pointer (see NibReader.GetSnapshot) —
-// snapshot a result that outlives the store lock.
+// it. Every nib pointer is a LIVE store pointer — snapshot it before a resolver
+// returns it (see NibReader.GetSnapshot).
 type NextResult struct {
 	// Milestone is the derived active milestone, or nil when none derives.
 	Milestone *nib.Nib

@@ -973,8 +973,7 @@ func (a *App) recordExternalEdit(id string, since time.Time) error {
 	if !info.ModTime().After(since) {
 		return nil
 	}
-	_, err = a.backend.ReloadAfterEdit(id)
-	return err
+	return a.backend.ReloadAfterEdit(id)
 }
 
 // nibFileUnreadableError is a write-back whose nib file could not be stat'd, so

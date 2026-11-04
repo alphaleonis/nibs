@@ -348,8 +348,8 @@ func (o *Orderer) backfillKeys(scope Scope, members []*nib.Nib) {
 			}
 			continue
 		}
-		// The write installed the clone as the new c.nibs[id]; return that, not
-		// the pre-write pointer.
+		// Return the clone, which carries the key just written, not the
+		// pre-write pointer.
 		members[i] = clone
 	}
 }

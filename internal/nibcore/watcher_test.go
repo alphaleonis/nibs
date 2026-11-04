@@ -750,26 +750,13 @@ func TestWatcherSameIdSlugRenameUpdatesSlug(t *testing.T) {
 	}
 }
 
-// TestEventPayloadsAreImmutableSnapshots pins the payload contract from
-// nibs-y5nb: an event's Nib is a snapshot taken at publish time, so a subscriber
-// holding a payload never sees its fields change even when the store later
-// mutates that same nib in place. Archive, Unarchive, and LoadAndUnarchive all
-// rewrite Path on the stored *nib.Nib under c.mu; without a clone at publish, a
-// held EventArchived payload aliases that pointer and its Path flips under the
-// subscriber.
+// TestEventPayloadsAreImmutableSnapshots covers the payload contract on
+// Subscribe: an event's Nib is a clone taken at publish time, never the pointer
+// the store publishes.
 //
-// The move is driven create-first so the EventArchived branch publishes the
-// pointer that STAYS in the store (the create half replaces c.nibs[id] with the
-// reloaded nib; the remove half then re-stores and archives that same pointer).
-// Remove-first would publish an orphaned pointer that no later mutation touches,
-// so it could not reproduce the bug.
-//
-// The deterministic guard is the Path assertion below: on unfixed code the held
-// payload aliases the live store nib, so Unarchive's in-place Path write is
-// visible through it. The concurrent reader is a best-effort race surfacer under
-// -race, but does not reliably trip the detector (measured 0/5) — do not rely on
-// it as the guard. Cloning at publish removes the value change (and closes the
-// underlying race regardless of whether the detector observes it).
+// The move runs create-first, so the EventArchived branch publishes the pointer
+// that stays in the store. Remove-first would publish a pointer the create half
+// then replaces, so a payload aliasing it would no longer be the store's.
 func TestEventPayloadsAreImmutableSnapshots(t *testing.T) {
 	const nibID = "snap1"
 	core, nibsDir, filename := watchingCore(t, nibID)
@@ -782,8 +769,7 @@ func TestEventPayloadsAreImmutableSnapshots(t *testing.T) {
 	archiveAbs := filepath.Join(archiveDir, filename)
 
 	// Move the file into archive/ on disk, then drive the move through
-	// handleChanges so it emits EventArchived carrying the stored nib (Path
-	// rewritten to the archive location).
+	// handleChanges so it emits EventArchived.
 	if err := os.Rename(mainAbs, archiveAbs); err != nil {
 		t.Fatalf("archive rename: %v", err)
 	}
@@ -807,40 +793,15 @@ func TestEventPayloadsAreImmutableSnapshots(t *testing.T) {
 		t.Fatalf("expected an EventArchived carrying a nib, got: %+v", got)
 	}
 
-	wantPath := held.Nib.Path
-	if !core.isArchivedPath(wantPath) {
-		t.Fatalf("precondition: held payload Path = %q, want an archive path", wantPath)
+	live, err := core.Get(nibID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
 	}
-
-	// Read the held payload's Path continuously while Unarchive mutates the stored
-	// nib's Path in place under c.mu. On unfixed code the payload aliases the store
-	// pointer, so this is a read/write data race AND the observed value changes.
-	stop := make(chan struct{})
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		var sink string
-		for {
-			select {
-			case <-stop:
-				_ = sink
-				return
-			default:
-				sink = held.Nib.Path
-			}
-		}
-	}()
-
-	if err := core.Unarchive(nibID); err != nil {
-		t.Fatalf("Unarchive: %v", err)
+	if !core.isArchivedPath(live.Path) {
+		t.Fatalf("precondition: stored Path = %q, want an archive path", live.Path)
 	}
-	close(stop)
-	<-done
-
-	if held.Nib.Path != wantPath {
-		t.Fatalf("held payload Path mutated after Unarchive: got %q, want %q — "+
-			"the payload aliased the live store nib instead of an immutable snapshot",
-			held.Nib.Path, wantPath)
+	if held.Nib == live {
+		t.Fatal("the payload aliased the live store nib instead of an immutable snapshot")
 	}
 }
 
