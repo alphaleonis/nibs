@@ -280,8 +280,8 @@ tasks:
       # Run the concurrency-critical packages a second time under -race, so a
       # reintroduced data race fails the default gate rather than only when
       # someone remembers to pass -race by hand (nibs-7l3v). Many guards in these
-      # packages (payload-snapshot / live-pointer detachment, the GetForUpdate
-      # clone-under-lock guard, the store-level freeze guard) are only meaningful
+      # packages (copy-on-write of published nibs, lock-free reads of the
+      # published read state, the store-level freeze guard) are only meaningful
       # under the detector; a plain `go test` degrades them to trivial checks.
       - task: test:race
       - task: web:check
