@@ -20,6 +20,11 @@ var mentionPattern = regexp.MustCompile(`#(` + MentionIDPattern + `)`)
 // leadingIDPattern matches the longest id at the start of its input.
 var leadingIDPattern = regexp.MustCompile(`^` + MentionIDPattern)
 
+// maxContainerDepth is the most list and blockquote markers one line may open
+// in the mention parse. goldmark rescans the rest of a line for each marker it
+// opens, so an unbounded prefix makes the parse quadratic in the line's length.
+const maxContainerDepth = 32
+
 // MentionForm is the spelling a mention is written in.
 type MentionForm int
 
@@ -61,6 +66,7 @@ func ExtractMentionSpans(body string) []MentionSpan {
 	}
 
 	source := []byte(body)
+	boundContainerDepth(source)
 	parser := goldmark.DefaultParser()
 	doc := parser.Parse(text.NewReader(source))
 
@@ -104,8 +110,9 @@ func ExtractMentionSpans(body string) []MentionSpan {
 // spans and blocks, links, autolinks, images, HTML blocks, raw inline HTML tags
 // and reference-link definitions are skipped, while heading text and text between
 // inline tags are scanned. A `#` preceded by an ASCII letter, digit or `_` is not
-// a mention, and neither are brackets that hold anything but an id. Tokens are not
-// checked against existing nibs.
+// a mention, and neither are brackets that hold anything but an id. A line that
+// opens more than maxContainerDepth list or blockquote markers is read as paragraph
+// text past that depth. Tokens are not checked against existing nibs.
 func ExtractMentionTokens(body string) []string {
 	spans := ExtractMentionSpans(body)
 	if len(spans) == 0 {
@@ -172,6 +179,89 @@ func scanBracketMentions(source []byte, segStart, segStop int, out []MentionSpan
 			Form:  MentionBracket,
 		})
 	}
+}
+
+// boundContainerDepth overwrites with '.' each container marker past
+// maxContainerDepth on a line, so goldmark reads the rest of that line as
+// paragraph text. Byte offsets do not change, and no mention's bytes do either.
+func boundContainerDepth(src []byte) {
+	for start := 0; start < len(src); {
+		end := bytes.IndexByte(src[start:], '\n')
+		if end < 0 {
+			end = len(src)
+		} else {
+			end += start
+		}
+		boundLineDepth(src[start:end])
+		start = end + 1
+	}
+}
+
+func boundLineDepth(line []byte) {
+	if isThematicBreakLine(line) {
+		return
+	}
+	for i, depth := 0, 0; ; depth++ {
+		for i < len(line) && (line[i] == ' ' || line[i] == '\t') {
+			i++
+		}
+		n := containerMarkerLen(line[i:])
+		if n == 0 {
+			return
+		}
+		if depth >= maxContainerDepth {
+			for j := i; j < i+n; j++ {
+				line[j] = '.'
+			}
+		}
+		i += n
+	}
+}
+
+// containerMarkerLen returns the length of the blockquote or list marker that s
+// starts with, or 0 when it starts with neither.
+func containerMarkerLen(s []byte) int {
+	if len(s) == 0 {
+		return 0
+	}
+	if s[0] == '>' {
+		return 1
+	}
+	n := 0
+	if s[0] == '-' || s[0] == '+' || s[0] == '*' {
+		n = 1
+	} else {
+		for n < len(s) && n < 9 && s[n] >= '0' && s[n] <= '9' {
+			n++
+		}
+		if n == 0 || n == len(s) || (s[n] != '.' && s[n] != ')') {
+			return 0
+		}
+		n++
+	}
+	if n < len(s) && s[n] != ' ' && s[n] != '\t' {
+		return 0
+	}
+	return n
+}
+
+// isThematicBreakLine reports whether line holds only one of '-', '*' or '_',
+// at least three times, and blanks.
+func isThematicBreakLine(line []byte) bool {
+	var mark byte
+	count := 0
+	for _, b := range line {
+		switch {
+		case b == ' ' || b == '\t' || b == '\r':
+		case mark == 0 && (b == '-' || b == '*' || b == '_'):
+			mark, count = b, 1
+		case b == mark:
+			count++
+		default:
+			return false
+		}
+	}
+	return count >= 3
 }
 
 var (
