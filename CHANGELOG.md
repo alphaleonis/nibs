@@ -63,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **A running `nibs serve` now reports a second file claiming a nib id it already holds**, instead of silently answering with whichever of the two the filesystem happened to deliver last.
 - **A pre-layout project nested under a store no longer resolves to that ancestor store**, where `nibs migrate` moved and rewrote the ancestor's nib files while leaving the project it was run in untouched.
 - **`nibs serve` answers queries while one of its edits waits for another nibs process to finish writing**, where every read stalled until that edit completed.
+- **A nib body with one deeply nested list or blockquote line no longer stalls every command**, where a 480 KB body of nested markers took over a minute to load.
 - **Text read from a file can no longer rewrite the terminal**, such as a control sequence in a config value or a nib body reaching a message that echoes it.
 - **Commands a refusal prescribes are quoted for the shell of the platform printing them**, instead of POSIX quoting that `cmd.exe` passes through literally.
 - **`nibs prime` no longer primes an agent for a project it cannot use** — a pre-layout project now gets the same migration refusal as every other command, in place of instructions whose every command refuses there.
