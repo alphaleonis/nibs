@@ -8,8 +8,8 @@ import (
 
 // QueueInversion is one order-vs-dependency inversion inside a milestone queue:
 // Ahead sits earlier in the queue than Blocker, yet Blocker still blocks it.
-// Both are live store pointers (see NibReader.Get) — snapshot them if the result
-// outlives the store lock.
+// Both are live store pointers (see NibReader.Get) — snapshot them before a
+// resolver returns them (see NibReader.GetSnapshot).
 type QueueInversion struct {
 	// Milestone is the resolved id of the queue both nibs sit in.
 	Milestone string

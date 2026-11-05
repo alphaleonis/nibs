@@ -1798,8 +1798,8 @@ func TestSearchKeepsTheOrderItsSurfacePromises(t *testing.T) {
 // ApplyFilter already IS the term's answer. Leaving Search set on that filter
 // makes ApplyFilter's intersection branch query the identical term again only to
 // intersect that answer with itself — invisible in the result, and Core.Search
-// is the expensive read here (a write lock for lazy init, a Bleve query, then a
-// full store scan for id matches).
+// is the expensive read here (a Bleve query, then a full store scan for id
+// matches).
 //
 // The second assertion covers the half that is not about cost: the term is
 // cleared on a COPY, so the caller's filter still carries it afterwards. A

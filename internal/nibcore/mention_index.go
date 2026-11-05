@@ -1,6 +1,7 @@
 package nibcore
 
 import (
+	"maps"
 	"sort"
 
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -8,9 +9,10 @@ import (
 
 // mentionIndex maintains a token-keyed reverse lookup so FindMentionedBy
 // becomes O(matches) instead of O(N × body-length). Not safe for concurrent
-// use; callers hold Core.mu.
+// use: Core's working index is written under Core.mu, and an index returned by
+// snapshot is only read.
 //
-// Tokens are stored as the raw text after the `#` sigil, never as resolved
+// Tokens are stored as the raw id text of the mention, never as resolved
 // target IDs: a token that resolves to no nib at index time is still recorded,
 // and InboundSources returns its source as soon as that nib is created — no
 // reconciliation pass.
@@ -19,13 +21,46 @@ type mentionIndex struct {
 	outbound map[string][]string
 	// inbound maps raw token -> set of source IDs that mention it.
 	inbound map[string]map[string]struct{}
+	// owned names the inbound sets this index may write in place. Every other set
+	// is shared with an index snapshot returned, so a write clones it first. An
+	// outbound slice is never written in place, so it needs no such guard.
+	owned map[string]struct{}
 }
 
 func newMentionIndex() *mentionIndex {
 	return &mentionIndex{
 		outbound: make(map[string][]string),
 		inbound:  make(map[string]map[string]struct{}),
+		owned:    make(map[string]struct{}),
 	}
+}
+
+// snapshot returns a read-only copy of the index, at the cost of copying the two
+// outer maps. The copy shares every inbound set with m, so m clones a set before
+// its next write to it.
+func (m *mentionIndex) snapshot() *mentionIndex {
+	snap := &mentionIndex{
+		outbound: maps.Clone(m.outbound),
+		inbound:  maps.Clone(m.inbound),
+	}
+	m.owned = make(map[string]struct{})
+	return snap
+}
+
+// writableInbound returns the inbound set for token that m may write in place,
+// creating it when absent.
+func (m *mentionIndex) writableInbound(token string) map[string]struct{} {
+	set := m.inbound[token]
+	if _, ok := m.owned[token]; ok && set != nil {
+		return set
+	}
+	set = maps.Clone(set)
+	if set == nil {
+		set = make(map[string]struct{})
+	}
+	m.inbound[token] = set
+	m.owned[token] = struct{}{}
+	return set
 }
 
 // Add records the mention tokens in body for sourceID, replacing any record it
@@ -41,12 +76,7 @@ func (m *mentionIndex) Add(sourceID, body string) {
 	// ExtractMentionTokens already dedupes and preserves first-appearance order.
 	m.outbound[sourceID] = tokens
 	for _, tok := range tokens {
-		set, ok := m.inbound[tok]
-		if !ok {
-			set = make(map[string]struct{})
-			m.inbound[tok] = set
-		}
-		set[sourceID] = struct{}{}
+		m.writableInbound(tok)[sourceID] = struct{}{}
 	}
 }
 
@@ -59,13 +89,14 @@ func (m *mentionIndex) Remove(sourceID string) {
 	}
 	delete(m.outbound, sourceID)
 	for _, tok := range tokens {
-		set := m.inbound[tok]
-		if set == nil {
+		if m.inbound[tok] == nil {
 			continue
 		}
+		set := m.writableInbound(tok)
 		delete(set, sourceID)
 		if len(set) == 0 {
 			delete(m.inbound, tok)
+			delete(m.owned, tok)
 		}
 	}
 }
@@ -80,6 +111,7 @@ func (m *mentionIndex) Replace(sourceID, body string) {
 func (m *mentionIndex) Rebuild(nibs map[string]*nib.Nib) {
 	m.outbound = make(map[string][]string, len(nibs))
 	m.inbound = make(map[string]map[string]struct{})
+	m.owned = make(map[string]struct{})
 	for id, b := range nibs {
 		if b == nil || b.Body == "" {
 			continue

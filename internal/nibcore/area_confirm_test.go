@@ -76,7 +76,7 @@ func TestConfirmScanAgreesWithTheLoadItReplaced(t *testing.T) {
 
 	for _, path := range []string{"web", "web/ui", "auth"} {
 		core.mu.Lock()
-		areas := core.areasState().vocab
+		areas := core.areasLocked().vocab
 		loaded := core.areaMembersLocked(areas, path)
 		scanned, err := core.scanAreaMembersOnDiskLocked(areas, path)
 		core.mu.Unlock()
@@ -95,7 +95,7 @@ func TestConfirmScanAgreesWithTheLoadItReplaced(t *testing.T) {
 	// answers missed them: the two shapes the bounded read is most likely to get
 	// wrong on its own.
 	core.mu.Lock()
-	scanned, err := core.scanAreaMembersOnDiskLocked(core.areasState().vocab, "web")
+	scanned, err := core.scanAreaMembersOnDiskLocked(core.areasLocked().vocab, "web")
 	core.mu.Unlock()
 	if err != nil {
 		t.Fatal(err)

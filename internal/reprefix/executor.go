@@ -117,10 +117,11 @@ func readNibForRewrite(absPath string, fp FilePlan) (*nib.Nib, os.FileMode, erro
 	return b, info.Mode().Perm(), nil
 }
 
-// rewriteBodyMentions retargets every full-form `#<oldPrefix><rest>` mention in
-// body to newPrefix. nib.ExtractMentionSpans decides what is a mention; short-form
-// mentions are left alone, as link fields are. Splice from the highest offset
-// down, since each replacement shifts everything after it.
+// rewriteBodyMentions retargets every full-form mention of `<oldPrefix><rest>` in
+// body to newPrefix, keeping the spelling it was written in. nib.ExtractMentionSpans
+// decides what is a mention; short-form mentions are left alone, as link fields
+// are. Splice from the highest offset down, since each replacement shifts
+// everything after it.
 func rewriteBodyMentions(body, oldPrefix, newPrefix string) string {
 	// An empty oldPrefix would retarget every short-form mention, and Execute does
 	// not run BuildPlan's check against it.
@@ -136,7 +137,7 @@ func rewriteBodyMentions(body, oldPrefix, newPrefix string) string {
 		if !ok {
 			continue
 		}
-		out = out[:s.Start] + "#" + newPrefix + rest + out[s.Stop:]
+		out = out[:s.Start] + s.Form.Spell(newPrefix+rest) + out[s.Stop:]
 	}
 	return out
 }

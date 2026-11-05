@@ -573,12 +573,14 @@ type areaPlan struct {
 // mutation: the other holder is another nibs process finishing one operation.
 // Only ctx ends that wait — acquireWriteLockContext says why no deadline can.
 //
-// THE COST IS READER AVAILABILITY. c.mu is held from before the file lock is
+// THE COST IS WRITER AVAILABILITY. c.mu is held from before the file lock is
 // asked for until after the reload — a wait for another process, the cascade,
-// the config write and two full store loads for a rename or a retire — and Get,
-// All and Search all read under it, so under `nibs serve` a read blocks for all
-// of it. Do not narrow the span: that is what lets two edits interleave and lose
-// one's declaration.
+// the config write and two full store loads for a rename or a retire — so every
+// other writer waits for all of it. Readers other than the waits readState
+// names do not: they answer from the state published before the edit, and the
+// edit publishes its nibs and its vocabulary together on the way out. Do not
+// narrow the span: that is what lets two edits interleave and lose one's
+// declaration.
 //
 // THE RE-READ IS WHY BLOCKING IS SAFE. Waiting means another process was
 // mid-write while this one held the state it started with: a concurrent
@@ -588,17 +590,16 @@ type areaPlan struct {
 // over. Reading the store again HERE is what makes both ordinary events.
 //
 // The vocabulary is the ONE part of a store's configuration a reload may
-// replace, and it is replaced here: it lives behind an atomic pointer so a
-// reload cannot race the off-lock readers. Everything in config.yml stays fixed
-// at construction.
+// replace, and it is replaced here. Everything in config.yml stays fixed at
+// construction.
 //
 // A failure to re-read is a REFUSAL, never a fallback to the vocabulary already
 // loaded.
 func (c *Core) editArea(ctx context.Context, path string, plan func(before, now *area.Vocabulary) (areaPlan, error)) (AreaEditResult, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	defer c.publishAndUnlock()
 
-	beforeState := c.areasState()
+	beforeState := c.areasLocked()
 	before := beforeState.vocab
 
 	release, err := c.acquireWriteLockContext(ctx)
@@ -615,7 +616,7 @@ func (c *Core) editArea(ctx context.Context, path string, plan func(before, now 
 		}
 		return AreaEditResult{}, &AreaEditIOError{Phase: phase, Path: path, File: c.layout.AreasPath(), Cause: err}
 	}
-	nowState := c.areasState()
+	nowState := c.areasLocked()
 	now := nowState.vocab
 
 	if beforeState.fromFile && !nowState.fromFile {
@@ -685,8 +686,8 @@ func (c *Core) editArea(ctx context.Context, path string, plan func(before, now 
 	// wrote, and so an areas subscriber in this process wakes on the edit rather
 	// than on the watcher's debounce. loadAreasLocked keeps the pre-edit
 	// vocabulary when the file cannot be read back, so ignoring the failure would
-	// report success over it. The subscriber tick it makes takes subMu under
-	// c.mu, which is the established order.
+	// report success over it. The subscriber tick comes from the publish on the
+	// way out, which takes subMu under c.mu, the established order.
 	if err := reloadAreasAfterEdit(c); err != nil {
 		return AreaEditResult{}, &AreaEditIOError{
 			Phase: AreaEditPhaseReload, Path: p.path, NewPath: p.newPath, File: c.layout.AreasPath(),
@@ -695,7 +696,7 @@ func (c *Core) editArea(ctx context.Context, path string, plan func(before, now 
 	}
 
 	return AreaEditResult{
-		Areas:           c.Areas(),
+		Areas:           c.areasLocked().vocab,
 		Members:         p.members,
 		Written:         written,
 		NewPath:         p.newPath,
@@ -764,10 +765,10 @@ func (c *Core) planAreasFileLocked(plan func(current []byte, exists bool) ([]byt
 	// synthesizing an empty document, so an add landing in that window would
 	// write an areas.yml declaring its own path alone.
 	//
-	// c.areasState() is the state that re-read installed: c.mu is held from
+	// c.areasLocked() is the state that re-read installed: c.mu is held from
 	// before it until after the write, and loadAreasLocked is the one writer of
 	// c.areas.
-	if errors.Is(err, fs.ErrNotExist) && c.areasState().fromFile {
+	if errors.Is(err, fs.ErrNotExist) && c.areasLocked().fromFile {
 		return nil, &AreaVocabularyVanishedError{File: path}
 	}
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {

@@ -18,6 +18,7 @@ import (
 
 // CreateNib is the resolver for the createNib field.
 func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibInput) (*nib.Nib, error) {
+	r.Reader.AwaitWriters()
 	b := &nib.Nib{
 		Slug:    nib.Slugify(input.Title),
 		Title:   input.Title,
@@ -158,15 +159,14 @@ func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibI
 		}
 	}
 
-	// Writer.Create installed b AS the shared store entry — return a snapshot,
-	// never b itself.
+	// Return what the store now holds, as a snapshot, never b.
 	return r.snapshotResult(b.ID)
 }
 
 // UpdateNib is the resolver for the updateNib field.
 func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model.UpdateNibInput) (*nib.Nib, error) {
 	// GetForUpdate returns an owned clone; mutate b freely — the shared store nib
-	// stays pristine until Writer.Update installs b.
+	// stays pristine until Writer.Update stores a copy of b.
 	b, err := r.Reader.GetForUpdate(id)
 	if err != nil {
 		return nil, err
@@ -477,7 +477,7 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 	// the store the caller is about to see.
 	r.endQueueLint(ctx, b.ID, lintBefore)
 
-	// Writer.Update installed b AS the shared store entry — return a snapshot.
+	// Return what the store now holds, as a snapshot, never b.
 	return r.snapshotResult(b.ID)
 }
 
@@ -493,6 +493,7 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 // re-pointed onto the twin by Core.Delete's canonicalization sweep, and the
 // twin's own incoming links stripped in their place.
 func (r *mutationResolver) DeleteNib(ctx context.Context, id string) (bool, error) {
+	r.Reader.AwaitWriters()
 	target, err := r.Reader.Get(id)
 	if err != nil {
 		return false, err
@@ -514,6 +515,7 @@ func (r *mutationResolver) DeleteNib(ctx context.Context, id string) (bool, erro
 // Incoming links are preserved, unlike DeleteNib: an archived nib stays in the
 // store and may be unarchived.
 func (r *mutationResolver) ArchiveNib(ctx context.Context, id string) (bool, error) {
+	r.Reader.AwaitWriters()
 	_, err := r.Reader.Get(id)
 	if err != nil {
 		return false, err
@@ -545,13 +547,14 @@ func (r *mutationResolver) SetParent(ctx context.Context, id string, parentID *s
 	if err := r.Writer.Update(b, ifMatch); err != nil {
 		return nil, err
 	}
-	// Writer.Update installed b AS the shared store entry — return a snapshot.
+	// Return what the store now holds, as a snapshot, never b.
 	return r.snapshotResult(b.ID)
 }
 
 // AddBlocking is the resolver for the addBlocking field.
 // Single-side storage: adds id to target's blockedBy list (not to id's Blocking field).
 func (r *mutationResolver) AddBlocking(ctx context.Context, id string, targetID string) (*nib.Nib, error) {
+	r.Reader.AwaitWriters()
 	b, err := r.Reader.Get(id)
 	if err != nil {
 		return nil, err
@@ -593,6 +596,7 @@ func (r *mutationResolver) AddBlocking(ctx context.Context, id string, targetID 
 // RemoveBlocking is the resolver for the removeBlocking field.
 // Single-side storage: removes id from target's blockedBy list.
 func (r *mutationResolver) RemoveBlocking(ctx context.Context, id string, targetID string) (*nib.Nib, error) {
+	r.Reader.AwaitWriters()
 	b, err := r.Reader.Get(id)
 	if err != nil {
 		return nil, err
@@ -647,7 +651,7 @@ func (r *mutationResolver) AddBlockedBy(ctx context.Context, id string, targetID
 	}
 	r.endQueueLint(ctx, b.ID, lintBefore)
 
-	// Writer.Update installed b AS the shared store entry — return a snapshot.
+	// Return what the store now holds, as a snapshot, never b.
 	return r.snapshotResult(b.ID)
 }
 
@@ -667,7 +671,7 @@ func (r *mutationResolver) RemoveBlockedBy(ctx context.Context, id string, targe
 	if err := r.Writer.Update(b, ifMatch); err != nil {
 		return nil, err
 	}
-	// Writer.Update installed b AS the shared store entry — return a snapshot.
+	// Return what the store now holds, as a snapshot, never b.
 	return r.snapshotResult(b.ID)
 }
 
@@ -715,17 +719,19 @@ func (r *mutationResolver) ReorderNib(ctx context.Context, id string, afterID *s
 	}
 	r.endQueueLint(ctx, b.ID, lintBefore)
 
-	// Writer.Update installed b AS the shared store entry — return a snapshot.
+	// Return what the store now holds, as a snapshot, never b.
 	return r.snapshotResult(b.ID)
 }
 
 // ReorderChildren is the resolver for the reorderChildren field.
 func (r *mutationResolver) ReorderChildren(ctx context.Context, parentID string, childIds []string, ifMatch []*model.ChildEtag) ([]*nib.Nib, error) {
+	r.Reader.AwaitWriters()
 	return r.reorderChildrenImpl(parentID, childIds, ifMatch)
 }
 
 // ReorderSiblings is the resolver for the reorderSiblings field.
 func (r *mutationResolver) ReorderSiblings(ctx context.Context, siblingIds []string, afterID *string, beforeID *string, first *bool, ifMatch []*model.ChildEtag) ([]*nib.Nib, error) {
+	r.Reader.AwaitWriters()
 	return r.reorderSiblingsImpl(siblingIds, afterID, beforeID, first, ifMatch)
 }
 
@@ -904,18 +910,18 @@ func (r *nibResolver) Children(ctx context.Context, obj *nib.Nib, filter *model.
 }
 
 // MentionIds is the resolver for the mentionIds field.
-// The IDs of nibs mentioned via `#<id>` in this nib's body. Mentions are
-// informational and include every status, the closed ones included; for open
-// nibs only, request `mentions` with a status filter — which matches literal
-// names, with no open/closed group expansion at this layer.
+// The IDs of nibs mentioned via `#<id>` or `[[<id>]]` in this nib's body.
+// Mentions are informational and include every status, the closed ones included;
+// for open nibs only, request `mentions` with a status filter — which matches
+// literal names, with no open/closed group expansion at this layer.
 func (r *nibResolver) MentionIds(ctx context.Context, obj *nib.Nib) ([]string, error) {
 	return existingMentionIDs(r.Reader, cachedMentions(ctx, r.Reader, obj.ID)), nil
 }
 
 // MentionedByIds is the resolver for the mentionedByIds field.
-// The IDs of nibs whose bodies mention this nib via `#<id>`. Mentions include
-// every status, the closed ones included; for open nibs only, request
-// `mentionedBy` with a status filter (see MentionIds).
+// The IDs of nibs whose bodies mention this nib via `#<id>` or `[[<id>]]`.
+// Mentions include every status, the closed ones included; for open nibs only,
+// request `mentionedBy` with a status filter (see MentionIds).
 func (r *nibResolver) MentionedByIds(ctx context.Context, obj *nib.Nib) ([]string, error) {
 	return existingMentionIDs(r.Reader, cachedMentionedBy(ctx, r.Reader, obj.ID)), nil
 }
@@ -1010,11 +1016,8 @@ func (r *queryResolver) Nibs(ctx context.Context, filter *model.NibFilter, sort 
 
 	ApplySorting(result, sort, r.Reader.Config())
 
-	// Detach: hand gqlgen snapshots, never the live pointers gathered above,
-	// whose Path a concurrent Archive rewrites in place. This detaches the
-	// RESULT only — the pipeline above reads non-Path fields off live pointers
-	// and stays safe through the copy-on-write rule (see NibReader.GetSnapshot),
-	// not through this step.
+	// Detach: hand gqlgen snapshots, never the live pointers gathered above (see
+	// NibReader.GetSnapshot).
 	snapshots := make([]*nib.Nib, 0, len(result))
 	for _, b := range result {
 		if snap, ok := r.Reader.GetSnapshot(b.ID); ok {
@@ -1057,9 +1060,8 @@ func (r *subscriptionResolver) NibChanged(ctx context.Context, id *string) (<-ch
 					if id != nil && evt.NibID != *id {
 						continue
 					}
-					// evt.Nib is already an immutable snapshot (see Core.Subscribe)
-					// — safe to hand to gqlgen's async marshaler, path included,
-					// without re-reading the store.
+					// evt.Nib is already an immutable snapshot (see Core.Subscribe),
+					// so it goes to gqlgen without re-reading the store.
 					event := &model.NibChangeEvent{
 						Type:  evt.Type.String(),
 						NibID: evt.NibID,

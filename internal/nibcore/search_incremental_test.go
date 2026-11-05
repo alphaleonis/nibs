@@ -27,7 +27,7 @@ func nibFile(title, body string) string {
 // TestSearch_LoadIndexesOnlyChanges is the point of the incremental re-index: a
 // reload costs what CHANGED, not what the store holds. The whole-store version
 // of this was the largest part of every load wherever an index was live, charged
-// inside c.mu where every reader waits for it (nibs-lx4w).
+// inside c.mu where every other writer waits for it.
 func TestSearch_LoadIndexesOnlyChanges(t *testing.T) {
 	core, nibsDir := setupTestCore(t)
 	defer func() { _ = core.Close() }()

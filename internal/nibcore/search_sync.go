@@ -37,7 +37,7 @@ func searchDocDigest(b *nib.Nib) uint64 {
 // Best-effort, like the whole-store re-index it replaces: a failure warns rather
 // than failing the load. An index write that fails records no digest, so the next
 // load tries again; a delete that fails leaves a stale entry, which Search
-// filters out against c.nibs.
+// filters out against its read state.
 func (c *Core) syncSearchIndexLocked() {
 	if c.searchIndex == nil {
 		return

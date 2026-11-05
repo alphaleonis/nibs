@@ -530,6 +530,134 @@ func TestSetWildcard(t *testing.T) {
 	}
 }
 
+func TestAppendAtLevel(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		matchLevel  int
+		appendLevel int
+		heading     string
+		content     string
+		want        string
+		wantCreated bool
+	}{
+		{
+			name:        "adds after existing content, before the next equal heading",
+			body:        "## Notes\n\nfirst\n\n## Tail\nkeep\n",
+			matchLevel:  AnyLevel,
+			appendLevel: 2,
+			heading:     "Notes",
+			content:     "second",
+			want:        "## Notes\n\nfirst\n\nsecond\n\n## Tail\nkeep\n",
+		},
+		{
+			name:        "adds after subsections, before the next higher heading",
+			body:        "## Notes\nfirst\n\n### Sub\nnested\n\n# Top\nkeep\n",
+			matchLevel:  2,
+			appendLevel: 2,
+			heading:     "Notes",
+			content:     "second",
+			want:        "## Notes\nfirst\n\n### Sub\nnested\n\nsecond\n\n# Top\nkeep\n",
+		},
+		{
+			name:        "a section at the end of the body",
+			body:        "## Intro\nhi\n\n## Notes\nfirst\n",
+			matchLevel:  AnyLevel,
+			appendLevel: 2,
+			heading:     "Notes",
+			content:     "second",
+			want:        "## Intro\nhi\n\n## Notes\nfirst\n\nsecond\n",
+		},
+		{
+			name:        "a heading-only section takes the content alone",
+			body:        "## Notes\n## Tail\nkeep\n",
+			matchLevel:  AnyLevel,
+			appendLevel: 2,
+			heading:     "Notes",
+			content:     "only",
+			want:        "## Notes\n\nonly\n\n## Tail\nkeep\n",
+		},
+		{
+			name:        "a section holding only blank lines takes the content alone",
+			body:        "## Notes\n\n\n## Tail\n",
+			matchLevel:  AnyLevel,
+			appendLevel: 2,
+			heading:     "Notes",
+			content:     "only",
+			want:        "## Notes\n\nonly\n\n## Tail\n",
+		},
+		{
+			name:        "falls back to a parenthetical heading",
+			body:        "## Notes (Phase 1)\nfirst\n",
+			matchLevel:  AnyLevel,
+			appendLevel: 2,
+			heading:     "Notes",
+			content:     "second",
+			want:        "## Notes (Phase 1)\nfirst\n\nsecond\n",
+		},
+		{
+			name:        "a spelled level does not match another level, so it creates",
+			body:        "## Notes\nfirst\n",
+			matchLevel:  3,
+			appendLevel: 3,
+			heading:     "Notes",
+			content:     "second",
+			want:        "## Notes\nfirst\n\n### Notes\n\nsecond\n",
+			wantCreated: true,
+		},
+		{
+			name:        "empty content leaves an existing section unchanged",
+			body:        "## Notes\nfirst\n",
+			matchLevel:  AnyLevel,
+			appendLevel: 2,
+			heading:     "Notes",
+			content:     "",
+			want:        "## Notes\nfirst\n",
+		},
+		{
+			name:        "empty content creates an empty heading",
+			body:        "## Intro\nhi\n",
+			matchLevel:  AnyLevel,
+			appendLevel: 2,
+			heading:     "Summary",
+			content:     "",
+			want:        "## Intro\nhi\n\n## Summary\n",
+			wantCreated: true,
+		},
+		{
+			name:        "whitespace content is appended like any other",
+			body:        "## Notes\nfirst\n",
+			matchLevel:  AnyLevel,
+			appendLevel: 2,
+			heading:     "Notes",
+			content:     " \t",
+			want:        "## Notes\nfirst\n\n \t\n",
+		},
+		{
+			name:        "creates the heading with a blank line before the content",
+			body:        "## Intro\nhi\n",
+			matchLevel:  AnyLevel,
+			appendLevel: 2,
+			heading:     "Summary",
+			content:     "done",
+			want:        "## Intro\nhi\n\n## Summary\n\ndone\n",
+			wantCreated: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, created := AppendAtLevel(tt.body, tt.matchLevel, tt.appendLevel, tt.heading, tt.content)
+			if got != tt.want {
+				t.Errorf("AppendAtLevel() =\n%q\nwant:\n%q", got, tt.want)
+			}
+			if created != tt.wantCreated {
+				t.Errorf("AppendAtLevel() created = %v, want %v", created, tt.wantCreated)
+			}
+		})
+	}
+}
+
 // A "#" line inside a fenced code block is code, not a heading: it neither ends
 // the enclosing section nor matches as a section of its own.
 func TestFencedCodeBlocksHoldNoHeadings(t *testing.T) {

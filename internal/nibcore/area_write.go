@@ -47,10 +47,8 @@ import (
 // that clears an assignment. It must not call back into Core, which would
 // deadlock, and it is asked only about nibs that carry an area at all.
 //
-// Copy-on-write, per the canonical live-pointer invariant (see
-// NibReader.GetSnapshot in internal/graph/interfaces.go): Area is a non-Path
-// field, so a changed nib is cloned, written and reinstalled under its key
-// rather than edited in place.
+// A changed nib is cloned, written and reinstalled under its key, per the
+// copy-on-write invariant at NibReader.GetSnapshot (internal/graph/interfaces.go).
 func (c *Core) rewriteAreaAssignmentsLocked(rewrite func(area string) (string, bool)) ([]string, error) {
 	type target struct {
 		id   string

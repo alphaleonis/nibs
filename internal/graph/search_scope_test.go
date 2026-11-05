@@ -299,10 +299,10 @@ func (r *countingSearchReader) queries() int {
 //
 // `nibs { children(filter: {search: q}) }` resolves children once per nib in the
 // outer result, and each of those runs the same term against the index — N
-// identical queries for one term in one request. One is not cheap: a write lock
-// for lazy index init, a Bleve query, then a read lock over a full scan of the
-// store for id matches. The per-operation cache already dedups the mention
-// lookups for exactly this reason; search now rides the same mechanism.
+// identical queries for one term in one request. One is not cheap: a Bleve
+// query, then a full scan of the store for id matches. The per-operation cache
+// already dedups the mention lookups for exactly this reason; search now rides
+// the same mechanism.
 //
 // Driven through the real gqlgen executor rather than a resolver loop, because
 // that is what makes the fan-out real: gqlgen resolves the children field of the

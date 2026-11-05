@@ -69,12 +69,11 @@ func TestLoadRecordsFileNamingNoID(t *testing.T) {
 			if err != nil {
 				t.Fatalf("storedIDs() error = %v", err)
 			}
-			core.mu.RLock()
-			loaded := make([]string, 0, len(core.nibs))
-			for id := range core.nibs {
+			published := core.view().nibs
+			loaded := make([]string, 0, len(published))
+			for id := range published {
 				loaded = append(loaded, id)
 			}
-			core.mu.RUnlock()
 			slices.Sort(loaded)
 			storedList := make([]string, 0, len(stored))
 			for id := range stored {
@@ -359,10 +358,10 @@ func TestCheckAllLinksLoadDiagnosticsRebuiltOnReload(t *testing.T) {
 }
 
 // TestCheckAllLinksLoadDiagnosticsAreCopies pins that the result does not alias
-// Core's retained state. CheckAllLinks holds only a read lock, so handing out
-// the stored slice would let any caller mutate shared state without one — and a
-// caller editing the report (sorting it, redacting a path) would silently
-// rewrite what every later check reports.
+// Core's retained state. CheckAllLinks answers from the published read state,
+// which nothing may write, so handing out the stored slice would let any caller
+// mutate shared state — and a caller editing the report (sorting it, redacting
+// a path) would silently rewrite what every later check reports.
 func TestCheckAllLinksLoadDiagnosticsAreCopies(t *testing.T) {
 	core, nibsDir := mustLoadPrefixedCore(t)
 

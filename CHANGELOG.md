@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`nibs rel` takes `-c` and `-q`** — the size of the related set as a bare integer and the related ids one per line, with list's semantics, which is what the cheat sheet's FILTER block already promised of both verbs.
 - **Areas are declared, edited and retired over the API** — a project that declares no vocabulary yet gets one from its first declaration, an area's name, description and color are changed in one call, and the work assigned beneath a renamed or retired area is reassigned or unassigned as the call directs.
 - **The web manages the areas vocabulary** — the New menu creates an area from any view, each area row's menu (right-click or ⋯) creates one beneath it, edits it and retires it, asking where any work it holds should go, and palette colors follow the theme.
+- **`[[<id>]]` is a nib mention alongside `#<id>`** — it links in the web UI, counts toward `mentions-in`/`mentions-out`, and `nibs config set-prefix` retargets it.
+- **`nibs body --section "<heading>" --append` and `--clear`** add to the end of one section and empty it, where `--set` could only replace it.
+- **`nibs body --check`, `--uncheck` and `--remove` edit checklist items by number**, and `--checklist` prints the numbered list.
 
 ### Changed
 - **The web's Tree view no longer lists milestones** — a milestone is a waypoint outside the parent graph, so a view spined on parentage had nothing to nest under it; Flat still shows every nib, and the Milestone column shows the assignment.
@@ -43,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **The web table's view control is labelled "View"**, since two of the six it offers — Tree and Flat — group nothing.
 - **A drop beside a row whose real parent the view has hidden now moves the row there**, where it was refused before because the drag read the row's position on screen rather than the group it orders in.
 - **The web opens on the milestone-grouped view** — the Milestones view groups work by its milestone assignment instead of by type, each queue in its own order with a Backlog tail for whatever is in none, a nib's milestone is set from the detail panel or the row context menu, and a drag reorders within a queue or assigns into one; a stored view preference still wins, and the hierarchical view is still there as Tree.
+- **An invalid combination of `nibs body` flags exits 2**, like every other validation failure, where some combinations exited 1, and `--create=false` now means the same as leaving the flag out.
 
 ### Fixed
 - **`nibs config` refuses a subcommand it does not recognize** (exit 2, naming it and suggesting the nearest match) instead of printing the group help and exiting 0, which reported success to any script checking the status.
@@ -58,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **A store full of unreadable or duplicate nib files no longer floods every command — or a running `nibs serve` — with warnings**, printing at most 20 and then a count pointing at `nibs check`, which still reports every one.
 - **A running `nibs serve` now reports a second file claiming a nib id it already holds**, instead of silently answering with whichever of the two the filesystem happened to deliver last.
 - **A pre-layout project nested under a store no longer resolves to that ancestor store**, where `nibs migrate` moved and rewrote the ancestor's nib files while leaving the project it was run in untouched.
+- **`nibs serve` answers queries while one of its edits waits for another nibs process to finish writing**, where every read stalled until that edit completed.
 - **Text read from a file can no longer rewrite the terminal**, such as a control sequence in a config value or a nib body reaching a message that echoes it.
 - **Commands a refusal prescribes are quoted for the shell of the platform printing them**, instead of POSIX quoting that `cmd.exe` passes through literally.
 - **`nibs prime` no longer primes an agent for a project it cannot use** — a pre-layout project now gets the same migration refusal as every other command, in place of instructions whose every command refuses there.

@@ -446,7 +446,7 @@ func parentChain(b *nib.Nib, reader NibReader) []string {
 // the decision points means asking for references to BOTH names.
 //
 // The returned pointer is the reader's LIVE store pointer (NibReader.Get):
-// snapshot it if the result outlives the store lock (NibReader.GetSnapshot).
+// snapshot it before a resolver returns it (NibReader.GetSnapshot).
 func resolvedParent(b *nib.Nib, reader NibReader) *nib.Nib {
 	if b.Parent == "" {
 		return nil

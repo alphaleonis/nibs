@@ -90,19 +90,16 @@ func (b *RealBackend) Root() string {
 	return b.core.Root()
 }
 
-func (b *RealBackend) ReloadAfterEdit(id string) (*nib.Nib, error) {
+func (b *RealBackend) ReloadAfterEdit(id string) error {
 	if err := b.core.Load(); err != nil {
-		return nil, err
+		return err
 	}
-	n, err := b.core.Get(id)
+	n, err := b.core.GetForUpdate(id)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	// Update stamps updated_at.
-	if err := b.core.Update(n, nil); err != nil {
-		return nil, err
-	}
-	return n, nil
+	return b.core.Update(n, nil)
 }
 
 func (b *RealBackend) StartWatching() error {

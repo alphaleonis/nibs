@@ -89,9 +89,9 @@ func (p *projectionResolver) ChildCount(id string) int {
 // `milestone:` assignees, every other container over its structural children.
 // See progress.Rollup / progress.ByCount for the exact rule.
 //
-// Reading Status off the view's live pointers is safe here: only Path is ever
-// mutated in place on a published stored pointer (see NibReader.GetSnapshot),
-// and this returns a computed value, so no pointer escapes to async marshaling.
+// Reading Status off the view's live pointers is safe here: no published
+// pointer is written in place (see NibReader.GetSnapshot), and this returns a
+// computed value, so no pointer escapes to async marshaling.
 func (p *projectionResolver) Progress(id string) any {
 	members := p.membershipView().DirectMembers(id)
 	statuses := make([]string, len(members))

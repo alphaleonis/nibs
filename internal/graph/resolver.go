@@ -70,8 +70,8 @@ func isNilValue(v any) bool {
 
 // updateTargetClone is the one blessed target-side write path: it fetches an
 // OWNED clone via Reader.GetForUpdate, applies mutate to it, and writes it. The
-// SHARED c.nibs[id] pointer is never mutated, so a refused Writer.Update leaves
-// the in-memory nib untouched instead of showing a phantom mutation.
+// SHARED published store pointer is never mutated, so a refused Writer.Update
+// leaves the in-memory nib untouched instead of showing a phantom mutation.
 //
 // The fetch is FRESH per call, so a duplicate target id re-reads the nib the
 // first Update installed rather than computing a stale if-match. The if-match is
@@ -90,13 +90,11 @@ func (r *Resolver) updateTargetClone(id string, mutate func(*nib.Nib) bool) erro
 	return r.Writer.Update(clone, &ifMatch)
 }
 
-// snapshotResult returns a detached GetSnapshot clone of the nib a mutation just
-// wrote, so gqlgen never marshals the live c.nibs pointer. Return a nib from a
-// mutation resolver through this helper: the value the resolver would otherwise
-// return aliases the store, and only a clone taken under the store lock is safe
-// to hand out (see NibReader.GetSnapshot for the rule). A !ok means the nib
-// vanished between the write and the snapshot (a concurrent delete): report it
-// rather than return a nil nib for the non-null result.
+// snapshotResult returns a GetSnapshot clone of the nib a mutation just wrote.
+// Return a nib from a mutation resolver through this helper (see
+// NibReader.GetSnapshot for the rule). A !ok means the nib vanished between the
+// write and the snapshot (a concurrent delete): report it rather than return a
+// nil nib for the non-null result.
 func (r *Resolver) snapshotResult(id string) (*nib.Nib, error) {
 	snap, ok := r.Reader.GetSnapshot(id)
 	if !ok {
@@ -523,24 +521,18 @@ func (r *Resolver) removeBlockedByRelationships(b *nib.Nib, targetIDs []string) 
 // active nib under a non-active one.
 func (r *Resolver) activateParentChain(childID, parentID string) {
 	for parentID != "" {
-		parent, err := r.Reader.Get(parentID)
-		if err != nil || parent == nil {
-			return
-		}
-		if parent.Status != "todo" && parent.Status != "draft" {
-			return
-		}
-		nextParentID := parent.Parent
-		// Reader.Get above returns the SHARED in-memory pointer — read-only here,
-		// for the status gate and the next parent. Take the if-match from its
-		// current in-memory etag and mutate the OWNED clone from GetForUpdate. Do
-		// NOT substitute CurrentETag: that is a lost-update regression, guarded by
-		// TestActivateParentChainGenuineDivergenceIsRefused.
-		parentETag := parent.ETag()
 		updated, err := r.Reader.GetForUpdate(parentID)
 		if err != nil {
 			return
 		}
+		if updated.Status != "todo" && updated.Status != "draft" {
+			return
+		}
+		nextParentID := updated.Parent
+		// The if-match is the clone's in-memory etag, taken before the edit. Do
+		// NOT substitute CurrentETag: that is a lost-update regression, guarded by
+		// TestActivateParentChainGenuineDivergenceIsRefused.
+		parentETag := updated.ETag()
 		updated.Status = "in-progress"
 		if err := r.Writer.Update(updated, &parentETag); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: could not activate ancestor %s (from %s): %v — chain activation stops at this ancestor; it and any higher todo/draft ancestors stay unactivated until the next child-start re-triggers the walk\n", parentID, childID, err)

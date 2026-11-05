@@ -4,6 +4,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -259,6 +260,45 @@ func TestCoreFindMentions(t *testing.T) {
 			t.Errorf("got %v, want [aaa1]", got)
 		}
 	})
+}
+
+// TestCoreFindMentions_BracketedAndHashForms runs a body that uses both
+// spellings through Create, so the mention index sees both.
+func TestCoreFindMentions_BracketedAndHashForms(t *testing.T) {
+	nibsDir := filepath.Join(t.TempDir(), store.DirName)
+	if err := os.MkdirAll(store.NewLayout(nibsDir).DataDir(), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	core := New(nibsDir, config.DefaultWithPrefix("tnib-"))
+	core.SetWarnWriter(nil)
+	if err := core.Load(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	probe := &nib.Nib{ID: "tnib-p001", Title: "P", Status: "todo", Body: "Bracketed [[tnib-e001]] versus hash #tnib-e002 in one body."}
+	e1 := &nib.Nib{ID: "tnib-e001", Title: "E1", Status: "todo"}
+	e2 := &nib.Nib{ID: "tnib-e002", Title: "E2", Status: "todo"}
+	for _, b := range []*nib.Nib{probe, e1, e2} {
+		if err := core.Create(b); err != nil {
+			t.Fatalf("create: %v", err)
+		}
+	}
+
+	ids := func(ns []*nib.Nib) []string {
+		var out []string
+		for _, n := range ns {
+			out = append(out, n.ID)
+		}
+		return out
+	}
+	if got := ids(core.FindMentions("tnib-p001")); !slices.Equal(got, []string{"tnib-e001", "tnib-e002"}) {
+		t.Errorf("FindMentions = %v, want [tnib-e001 tnib-e002]", got)
+	}
+	for _, target := range []string{"tnib-e001", "tnib-e002"} {
+		if got := ids(core.FindMentionedBy(target)); !slices.Equal(got, []string{"tnib-p001"}) {
+			t.Errorf("FindMentionedBy(%s) = %v, want [tnib-p001]", target, got)
+		}
+	}
 }
 
 // TestCoreFindMentionedBy_IndexServesAfterLoad is the tracer bullet for the

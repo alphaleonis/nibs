@@ -327,13 +327,13 @@ func TestFailedUpdateLeavesSharedNibUntouched(t *testing.T) {
 // TestUpdateNibDuplicateBlockingTargetIsIdempotent is the stale-pointer
 // regression guard for validateAndAddBlocking. Caching each target's *nib.Nib in
 // Phase 1 and reusing it in Phase 2 is the trap: because a successful
-// Writer.Update installs the CLONE as the new
-// c.nibs[id], the cached pointer is orphaned after the first write. With a
-// DUPLICATE target ID (--blocking is a repeatable flag with no dedup), iteration
-// 2 held the stale pre-mutation pointer, computed a stale if-match, and the write
-// was refused with a spurious ETagMismatchError — aborting UpdateNib AFTER target
-// 1 was persisted and silently dropping any bundled subject field change (e.g. a
-// Title edit): a partial write plus a lost update.
+// Writer.Update installs a fresh pointer as c.nibs[id], the cached pointer is
+// orphaned after the first write. With a DUPLICATE target ID (--blocking is a
+// repeatable flag with no dedup), iteration 2 held the stale pre-mutation
+// pointer, computed a stale if-match, and the write was refused with a spurious
+// ETagMismatchError — aborting UpdateNib AFTER target 1 was persisted and
+// silently dropping any bundled subject field change (e.g. a Title edit): a
+// partial write plus a lost update.
 //
 // The fix re-fetches each target FRESH in Phase 2. This test bundles a duplicate
 // blocking target with a Title change and asserts the whole update succeeds, the

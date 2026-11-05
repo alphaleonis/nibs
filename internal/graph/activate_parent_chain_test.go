@@ -131,13 +131,25 @@ func TestActivateParentChainBenignDriftActivates(t *testing.T) {
 	resolver, core := setupTestResolverWithAutoActivation(t)
 	ctx := context.Background()
 
-	parent := createTestNib(t, core, "epic-ben", "Benign Parent", "todo")
-	parent.Type = "epic"
-	if err := core.Update(parent, nil); err != nil {
+	createTestNib(t, core, "epic-ben", "Benign Parent", "todo")
+	parentEdit, err := core.GetForUpdate("epic-ben")
+	if err != nil {
+		t.Fatalf("GetForUpdate parent: %v", err)
+	}
+	parentEdit.Type = "epic"
+	if err := core.Update(parentEdit, nil); err != nil {
 		t.Fatalf("setup: update parent type: %v", err)
 	}
+	parent, err := core.Get("epic-ben")
+	if err != nil {
+		t.Fatalf("Get parent: %v", err)
+	}
 
-	child := createTestNib(t, core, "task-ben", "Child Task", "todo")
+	createTestNib(t, core, "task-ben", "Child Task", "todo")
+	child, err := core.GetForUpdate("task-ben")
+	if err != nil {
+		t.Fatalf("GetForUpdate child: %v", err)
+	}
 	child.Type = "task"
 	child.Parent = "epic-ben"
 	if err := core.Update(child, nil); err != nil {

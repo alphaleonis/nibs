@@ -40,7 +40,7 @@ func TestLoadRecordsWhetherAnAreasFileWasRead(t *testing.T) {
 		if core.Areas() == nil || !core.Areas().IsEmpty() {
 			t.Errorf("Areas() = %v, want a non-nil empty vocabulary", core.Areas())
 		}
-		if core.areasState().fromFile {
+		if core.view().areas.fromFile {
 			t.Error("fromFile = true with no areas.yml, which would read a later absence as a vanished file")
 		}
 	})
@@ -54,7 +54,7 @@ func TestLoadRecordsWhetherAnAreasFileWasRead(t *testing.T) {
 		if !core.Areas().IsEmpty() {
 			t.Errorf("Areas() = %v, want empty", core.Areas().Paths())
 		}
-		if !core.areasState().fromFile {
+		if !core.view().areas.fromFile {
 			t.Error("fromFile = false after reading an areas.yml")
 		}
 	})

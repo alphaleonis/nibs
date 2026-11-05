@@ -190,11 +190,11 @@ func TestSearch_IDMatch_TrailingWhitespaceTrimmed(t *testing.T) {
 	}
 }
 
-func TestIDMatchesLocked_CappedAtDefaultSearchLimit(t *testing.T) {
+func TestIDMatchesInMap_CappedAtDefaultSearchLimit(t *testing.T) {
 	core, _ := mustLoadPrefixedCore(t)
 	defer func() { _ = core.Close() }()
 
-	// Populate the in-memory map directly; idMatchesLocked never touches the
+	// Populate the in-memory map directly; idMatchesInMap never touches the
 	// index or disk, and Create-ing 1000+ files here would be pure overhead.
 	// Writing without core.mu is safe only because this test is
 	// single-goroutine and the watcher is never started.
@@ -203,13 +203,11 @@ func TestIDMatchesLocked_CappedAtDefaultSearchLimit(t *testing.T) {
 		core.nibs[id] = &nib.Nib{ID: id}
 	}
 
-	core.mu.RLock()
-	matches := core.idMatchesLocked("aa", DefaultSearchLimit)
-	uncapped := core.idMatchesLocked("aa", 0)
-	core.mu.RUnlock()
+	matches := idMatchesInMap(core.nibs, "aa", core.configPrefix(), DefaultSearchLimit)
+	uncapped := idMatchesInMap(core.nibs, "aa", core.configPrefix(), 0)
 
 	if len(matches) != DefaultSearchLimit {
-		t.Fatalf("idMatchesLocked() returned %d matches, want %d", len(matches), DefaultSearchLimit)
+		t.Fatalf("idMatchesInMap() returned %d matches, want %d", len(matches), DefaultSearchLimit)
 	}
 	// Capped after sorting: the kept set is the DefaultSearchLimit smallest IDs.
 	wantLast := fmt.Sprintf("nibs-aa%04d", DefaultSearchLimit-1)
@@ -221,11 +219,11 @@ func TestIDMatchesLocked_CappedAtDefaultSearchLimit(t *testing.T) {
 	// intersection against an already-bounded working set is not fed a
 	// store-wide top-N.
 	if len(uncapped) != DefaultSearchLimit+5 {
-		t.Errorf("idMatchesLocked(limit 0) returned %d matches, want all %d", len(uncapped), DefaultSearchLimit+5)
+		t.Errorf("idMatchesInMap(limit 0) returned %d matches, want all %d", len(uncapped), DefaultSearchLimit+5)
 	}
 }
 
-func TestIDMatchesLocked_ForeignPrefixIDs(t *testing.T) {
+func TestIDMatchesInMap_ForeignPrefixIDs(t *testing.T) {
 	core, _ := mustLoadPrefixedCore(t)
 	defer func() { _ = core.Close() }()
 
@@ -258,17 +256,15 @@ func TestIDMatchesLocked_ForeignPrefixIDs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			core.mu.RLock()
-			matches := core.idMatchesLocked(tt.query, DefaultSearchLimit)
-			core.mu.RUnlock()
+			matches := idMatchesInMap(core.nibs, tt.query, core.configPrefix(), DefaultSearchLimit)
 
 			got := rawIDList(matches)
 			if len(got) != len(tt.want) {
-				t.Fatalf("idMatchesLocked(%q) = %v, want %v", tt.query, got, tt.want)
+				t.Fatalf("idMatchesInMap(%q) = %v, want %v", tt.query, got, tt.want)
 			}
 			for i := range tt.want {
 				if got[i] != tt.want[i] {
-					t.Fatalf("idMatchesLocked(%q) = %v, want %v", tt.query, got, tt.want)
+					t.Fatalf("idMatchesInMap(%q) = %v, want %v", tt.query, got, tt.want)
 				}
 			}
 		})

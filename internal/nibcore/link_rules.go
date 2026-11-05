@@ -25,19 +25,18 @@ func ValidateParentInMap(nibs map[string]*nib.Nib, b *nib.Nib, parentID string) 
 }
 
 // ValidateParent checks if a parent is valid for the given nib.
-// Thread-safe wrapper around ValidateParentInMap that handles prefix normalization.
+// Lock-free wrapper around ValidateParentInMap that handles prefix normalization.
 func (c *Core) ValidateParent(b *nib.Nib, parentID string) error {
 	if parentID == "" {
 		return nil
 	}
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	nibs := c.view().nibs
 	normalizedID := parentID
-	if _, ok := c.nibs[parentID]; !ok {
+	if _, ok := nibs[parentID]; !ok {
 		if c.config != nil && c.config.Nibs.Prefix != "" &&
 			!strings.HasPrefix(parentID, c.config.Nibs.Prefix) {
 			normalizedID = c.config.Nibs.Prefix + parentID
 		}
 	}
-	return ValidateParentInMap(c.nibs, b, normalizedID)
+	return ValidateParentInMap(nibs, b, normalizedID)
 }

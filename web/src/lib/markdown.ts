@@ -131,7 +131,8 @@ export function toggleTaskLine(body: string, ordinal: number): string {
 }
 
 /**
- * Rewrite `#<id>` tokens in the sanitized DOM's text nodes into mention links.
+ * Rewrite `#<id>` and `[[<id>]]` tokens in the sanitized DOM's text nodes into
+ * mention links. A bracketed link shows the bare id.
  * Not a marked extension, because block-level raw HTML bypasses the inline lexer.
  * Skips `<code>`, `<pre>` and existing `<a>`.
  */
@@ -158,16 +159,20 @@ function postProcessMentionsInDom(html: string, resolve: MentionResolver): strin
     }
     if (node.nodeType !== Node.TEXT_NODE) return;
     const text = node.nodeValue ?? "";
-    if (!text.includes("#")) return;
+    if (!text.includes("#") && !text.includes("[[")) return;
 
     // Local regex — avoids sharing `/g` lastIndex across recursive walk calls.
-    const pattern = /(^|[^A-Za-z0-9_])#([a-z0-9][a-z0-9-]*[a-z0-9])(?!-)/g;
+    // Group 1 is a hash id, group 2 a bracketed one. The hash boundary is a
+    // lookbehind, so a `]]` closing the previous match still counts as one.
+    const pattern =
+      /(?<![A-Za-z0-9_])#([a-z0-9][a-z0-9-]*[a-z0-9])(?!-)|\[\[([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\]\]/g;
     let lastIndex = 0;
     const frag = document.createDocumentFragment();
     let anyMatch = false;
     let m: RegExpExecArray | null;
     while ((m = pattern.exec(text)) !== null) {
-      const token = m[2];
+      const bracketed = m[2] !== undefined;
+      const token = bracketed ? m[2] : m[1];
       let fullId: string | null;
       try {
         fullId = resolve(token);
@@ -177,17 +182,16 @@ function postProcessMentionsInDom(html: string, resolve: MentionResolver): strin
       }
       if (!fullId) continue;
       anyMatch = true;
-      const matchStart = m.index + m[1].length; // skip the boundary char
-      if (matchStart > lastIndex) {
-        frag.appendChild(document.createTextNode(text.slice(lastIndex, matchStart)));
+      if (m.index > lastIndex) {
+        frag.appendChild(document.createTextNode(text.slice(lastIndex, m.index)));
       }
       const a = document.createElement("a");
       a.setAttribute("data-nib-id", fullId);
       a.setAttribute("href", `#${fullId}`);
       a.setAttribute("class", "mention-link text-link");
-      a.textContent = `#${token}`;
+      a.textContent = bracketed ? token : `#${token}`;
       frag.appendChild(a);
-      lastIndex = matchStart + 1 + token.length; // `#` + token
+      lastIndex = m.index + m[0].length;
     }
     if (!anyMatch) return;
     if (lastIndex < text.length) {
@@ -207,10 +211,10 @@ function postProcessMentionsInDom(html: string, resolve: MentionResolver): strin
  * nothing on their own. A caller must wire a handler that calls `toggleTaskLine`
  * (as ActiveNibView.handleProseClick does) or disable them.
  *
- * @param resolveMention Called with each mention token (the text after `#`);
- *   returns the full nib ID, or null to leave it as text. Return only a trusted
- *   nib ID: it lands in `href` and `data-nib-id`. A throw counts as unresolved.
- *   Mentions inside code are never rewritten.
+ * @param resolveMention Called with each mention token; returns the full nib ID,
+ *   or null to leave it as text. Return only a trusted nib ID: it lands in
+ *   `href` and `data-nib-id`. A throw counts as unresolved. Mentions inside
+ *   code are never rewritten.
  */
 export function renderMarkdown(body: string, resolveMention?: MentionResolver): string {
   if (!body) return "";

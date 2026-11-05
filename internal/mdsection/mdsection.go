@@ -123,17 +123,64 @@ func SetAtLevel(body string, matchLevel, appendLevel int, heading, content strin
 	return strings.TrimRight(body, "\n") + "\n\n" + section, true
 }
 
+// AppendAtLevel adds content at the end of the section matching at matchLevel,
+// after its subsections, or appends a new heading at appendLevel holding content
+// when none matches. The bool is true when it created the heading.
+//
+// A blank line separates content from the section's text, so each addition stays
+// its own Markdown paragraph. A section whose text is only blank lines takes
+// content alone, and so does a created heading, with a blank line after the
+// heading. Empty content leaves a matching section unchanged, as
+// nib.AppendWithSeparator does, and creates an empty heading when none matches.
+func AppendAtLevel(body string, matchLevel, appendLevel int, heading, content string) (string, bool) {
+	existing, found := Find(body, heading, matchLevel)
+	if !found {
+		if content == "" {
+			return SetAtLevel(body, matchLevel, appendLevel, heading, "")
+		}
+		return SetAtLevel(body, matchLevel, appendLevel, heading, "\n"+content+"\n")
+	}
+	if content == "" {
+		return body, false
+	}
+	updated := "\n" + content + "\n"
+	if kept := strings.TrimRight(existing, "\n"); strings.TrimSpace(kept) != "" {
+		updated = kept + "\n\n" + content + "\n"
+	}
+	return Replace(body, heading, updated, matchLevel), false
+}
+
 // headingLevels returns each line's heading level, or 0 for a line that is not a
 // heading — including one inside a fenced code block, where "# comment" is code.
-// A fence opens with a run of three or more backticks or tildes and closes on a
-// line holding only a run of the same character at least as long.
 func headingLevels(lines []string) []int {
 	levels := make([]int, len(lines))
+	fences := fenceOpeners(lines)
+	for i, line := range lines {
+		if fences[i] >= 0 {
+			continue
+		}
+		if trimmed := strings.TrimSpace(line); isHeading(trimmed) {
+			levels[i] = HeadingLevel(trimmed)
+		}
+	}
+	return levels
+}
+
+// fenceOpeners returns, for each line in a fenced code block, the index of the
+// line that opened that block, and -1 for every other line. The opener and the
+// closer belong to the block. A fence opens with a run of three or more
+// backticks or tildes and closes on a line holding only a run of the same
+// character at least as long; an unclosed fence runs to the end.
+func fenceOpeners(lines []string) []int {
+	openers := make([]int, len(lines))
 	var fenceChar byte
 	fenceLen := 0
+	opener := -1
 	for i, line := range lines {
+		openers[i] = -1
 		trimmed := strings.TrimSpace(line)
 		if fenceLen > 0 {
+			openers[i] = opener
 			if n := fenceRun(trimmed, fenceChar); n >= fenceLen && n == len(trimmed) {
 				fenceLen = 0
 			}
@@ -141,15 +188,12 @@ func headingLevels(lines []string) []int {
 		}
 		if len(trimmed) > 0 && (trimmed[0] == '`' || trimmed[0] == '~') {
 			if n := fenceRun(trimmed, trimmed[0]); n >= 3 {
-				fenceChar, fenceLen = trimmed[0], n
-				continue
+				fenceChar, fenceLen, opener = trimmed[0], n, i
+				openers[i] = i
 			}
 		}
-		if isHeading(trimmed) {
-			levels[i] = HeadingLevel(trimmed)
-		}
 	}
-	return levels
+	return openers
 }
 
 // fenceRun counts the leading run of c in line.

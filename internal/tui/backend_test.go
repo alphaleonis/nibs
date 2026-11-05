@@ -234,12 +234,12 @@ func (s *StubBackend) Root() string {
 	return s.RootDir
 }
 
-func (s *StubBackend) ReloadAfterEdit(id string) (*nib.Nib, error) {
+func (s *StubBackend) ReloadAfterEdit(id string) error {
 	if s.ReloadErr != nil {
-		return nil, s.ReloadErr
+		return s.ReloadErr
 	}
 	s.ReloadCalls = append(s.ReloadCalls, id)
-	return s.Nibs[id], nil
+	return nil
 }
 
 func (s *StubBackend) StartWatching() error {

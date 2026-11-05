@@ -106,6 +106,12 @@ describe("renderMarkdown mention rewriting", () => {
     expect(html).toContain("email#gx0f");
   });
 
+  it("does not rewrite #<id> after an underscore or a digit", () => {
+    const html = renderMarkdown("a_#gx0f 9#gx0f", () => "nibs-gx0f");
+    expect(html).not.toContain("data-nib-id");
+    expect(html).toContain("a_#gx0f 9#gx0f");
+  });
+
   it("strips XSS scripts but still rewrites a valid mention in the same body", () => {
     const html = renderMarkdown(
       '<script>alert(1)</script>#gx0f',
@@ -152,6 +158,96 @@ describe("renderMarkdown mention rewriting", () => {
     });
     expect(html).toContain("#gx0f");
     expect(html).not.toContain("data-nib-id");
+  });
+});
+
+describe("renderMarkdown bracketed [[<id>]] mentions", () => {
+  /** The mention anchors in rendered HTML, as [data-nib-id, text] pairs. */
+  function mentionLinks(html: string): [string | null, string | null][] {
+    const tpl = document.createElement("template");
+    tpl.innerHTML = html;
+    return Array.from(tpl.content.querySelectorAll("a.mention-link")).map((a) => [
+      a.getAttribute("data-nib-id"),
+      a.textContent,
+    ]);
+  }
+
+  it("renders a resolved [[<id>]] as a mention link whose text is the bare id", () => {
+    const html = renderMarkdown("see [[nibs-gx0f]] here", (t) =>
+      t === "nibs-gx0f" ? "nibs-gx0f" : null,
+    );
+    expect(mentionLinks(html)).toEqual([["nibs-gx0f", "nibs-gx0f"]]);
+    expect(html).not.toContain("[[");
+    expect(html).not.toContain("]]");
+    expect(html).toContain("see ");
+    expect(html).toContain(" here");
+  });
+
+  it("links a one-character bracketed id", () => {
+    const html = renderMarkdown("see [[x]]", (t) => (t === "x" ? "nibs-x" : null));
+    expect(mentionLinks(html)).toEqual([["nibs-x", "x"]]);
+  });
+
+  it("links brackets after a backslash, as the server counts them", () => {
+    const html = renderMarkdown("\\[[gx0f]]", () => "nibs-gx0f");
+    expect(mentionLinks(html)).toEqual([["nibs-gx0f", "gx0f"]]);
+  });
+
+  it("resolves a bracketed short id like a hash one", () => {
+    const html = renderMarkdown("[[gx0f]]", (t) => (t === "gx0f" ? "nibs-gx0f" : null));
+    expect(mentionLinks(html)).toEqual([["nibs-gx0f", "gx0f"]]);
+  });
+
+  it("leaves an unresolved [[<id>]] as literal text", () => {
+    const html = renderMarkdown("see [[unknown]]", () => null);
+    expect(mentionLinks(html)).toEqual([]);
+    expect(html).toContain("[[unknown]]");
+  });
+
+  it("does not rewrite [[<id>]] inside an inline code span", () => {
+    const html = renderMarkdown("use `[[gx0f]]` here", () => "nibs-gx0f");
+    expect(mentionLinks(html)).toEqual([]);
+    expect(html).toContain("<code>[[gx0f]]</code>");
+  });
+
+  it("does not rewrite [[<id>]] inside a fenced code block", () => {
+    const html = renderMarkdown("```\n[[gx0f]]\n```", () => "nibs-gx0f");
+    expect(mentionLinks(html)).toEqual([]);
+    expect(html).toContain("[[gx0f]]");
+  });
+
+  it("does not treat inner spaces or an alias as a mention", () => {
+    const html = renderMarkdown("[[ gx0f ]] and [[gx0f|text]]", () => "nibs-gx0f");
+    expect(mentionLinks(html)).toEqual([]);
+  });
+
+  it("links word-adjacent brackets, since the brackets delimit", () => {
+    const html = renderMarkdown("foo[[gx0f]]bar", () => "nibs-gx0f");
+    expect(mentionLinks(html)).toEqual([["nibs-gx0f", "gx0f"]]);
+    expect(html).toContain("foo<a");
+    expect(html).toContain("</a>bar");
+  });
+
+  it("links both forms in one text node, in order", () => {
+    const html = renderMarkdown(
+      "Bracketed [[aaaa]] versus hash #bbbb, then [[cccc]]#dddd.",
+      (t) => `nibs-${t}`,
+    );
+    expect(mentionLinks(html)).toEqual([
+      ["nibs-aaaa", "aaaa"],
+      ["nibs-bbbb", "#bbbb"],
+      ["nibs-cccc", "cccc"],
+      ["nibs-dddd", "#dddd"],
+    ]);
+    expect(html).toContain(" versus hash ");
+    expect(html).toContain(", then ");
+  });
+
+  it("links a hash inside brackets once, as the hash form", () => {
+    const html = renderMarkdown("[[#gx0f]]", () => "nibs-gx0f");
+    expect(mentionLinks(html)).toEqual([["nibs-gx0f", "#gx0f"]]);
+    expect(html).toContain("[[<a");
+    expect(html).toContain("</a>]]");
   });
 });
 

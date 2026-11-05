@@ -4527,14 +4527,22 @@ func TestAutoActivationWorksWithRequireIfMatch(t *testing.T) {
 	resolver := &Resolver{Reader: core, Writer: core, Validator: core, Blocking: core, Orderer: NewOrderer(core, core)}
 	ctx := context.Background()
 
-	parent := createTestNib(t, core, "epic-5", "Parent Epic", "todo")
+	createTestNib(t, core, "epic-5", "Parent Epic", "todo")
+	parent, err := core.GetForUpdate("epic-5")
+	if err != nil {
+		t.Fatalf("GetForUpdate parent: %v", err)
+	}
 	parentETag := parent.ETag() // before mutation
 	parent.Type = "epic"
 	if err := core.Update(parent, &parentETag); err != nil {
 		t.Fatalf("setup: update parent type: %v", err)
 	}
 
-	child := createTestNib(t, core, "task-5", "Child Task", "todo")
+	createTestNib(t, core, "task-5", "Child Task", "todo")
+	child, err := core.GetForUpdate("task-5")
+	if err != nil {
+		t.Fatalf("GetForUpdate child: %v", err)
+	}
 	childETag := child.ETag() // before mutation
 	child.Type = "task"
 	child.Parent = "epic-5"
@@ -4543,11 +4551,13 @@ func TestAutoActivationWorksWithRequireIfMatch(t *testing.T) {
 	}
 
 	// Set child to in-progress (must pass etag since require_if_match is on)
-	childETag = child.ETag()
+	childETag, err = core.CurrentETag("task-5")
+	if err != nil {
+		t.Fatalf("CurrentETag child: %v", err)
+	}
 	inProgress := "in-progress"
 	input := model.UpdateNibInput{Status: &inProgress, IfMatch: &childETag}
-	_, err := resolver.Mutation().UpdateNib(ctx, "task-5", input)
-	if err != nil {
+	if _, err := resolver.Mutation().UpdateNib(ctx, "task-5", input); err != nil {
 		t.Fatalf("UpdateNib failed: %v", err)
 	}
 

@@ -316,11 +316,11 @@ func (o *Orderer) backfillKeys(scope Scope, members []*nib.Nib) {
 		etag := b.ETag()
 		lastKey = newKey
 
-		// Mutate an OWNED clone from GetForUpdate, never the shared reader pointer
-		// (b is c.nibs[id]): a refused write must not leave the shared in-memory
-		// sibling showing a phantom key that was never persisted. GetForUpdate
-		// fails only not-found — the sibling was deleted concurrently, so there
-		// is nothing left to backfill.
+		// Mutate an OWNED clone from GetForUpdate, never the shared reader
+		// pointer (b is a published store pointer): a refused write must not
+		// leave the shared in-memory sibling showing a phantom key that was never
+		// persisted. GetForUpdate fails only not-found — the sibling was deleted
+		// concurrently, so there is nothing left to backfill.
 		clone, err := o.reader.GetForUpdate(b.ID)
 		if err != nil {
 			continue
@@ -348,8 +348,8 @@ func (o *Orderer) backfillKeys(scope Scope, members []*nib.Nib) {
 			}
 			continue
 		}
-		// The write installed the clone as the new c.nibs[id]; return that, not
-		// the pre-write pointer.
+		// Return the clone, which carries the key just written, not the
+		// pre-write pointer.
 		members[i] = clone
 	}
 }

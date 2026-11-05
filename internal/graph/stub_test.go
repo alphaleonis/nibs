@@ -41,10 +41,10 @@ type stubReader struct {
 	// — the index failure Core.Search surfaces when Bleve cannot answer.
 	searchErr error
 	// searchCalls counts Search invocations, searchAllCalls counts SearchAll.
-	// Either is the expensive read on these paths (a write lock for lazy init,
-	// a Bleve query, then a full scan of the store for id matches), so a test
-	// can pin how many of them one resolver call costs — and keeping them apart
-	// also pins WHICH bound a surface asked for.
+	// Either is the expensive read on these paths (a Bleve query, then a full
+	// scan of the store for id matches), so a test can pin how many of them one
+	// resolver call costs — and keeping them apart also pins WHICH bound a
+	// surface asked for.
 	searchCalls    int
 	searchAllCalls int
 }
@@ -65,6 +65,9 @@ func (s *stubReader) Get(id string) (*nib.Nib, error) {
 	}
 	return nil, nib.ErrNotFound
 }
+
+// AwaitWriters has nothing to wait for: the stub has no writers in flight.
+func (s *stubReader) AwaitWriters() {}
 
 // GetForUpdate mirrors nibcore.Core.GetForUpdate: return an owned Clone of the
 // shared nib (or the not-found error), so mutation sites under test never touch
@@ -208,7 +211,8 @@ func (s *stubWriter) Update(b *nib.Nib, ifMatch *string) error {
 		if s.store.nibs == nil {
 			s.store.nibs = map[string]*nib.Nib{}
 		}
-		s.store.nibs[b.ID] = b
+		// A copy, as Core.Update stores.
+		s.store.nibs[b.ID] = b.Clone()
 	}
 	s.updated = append(s.updated, b)
 	return nil

@@ -12,8 +12,8 @@ import "github.com/alphaleonis/nibs/internal/nib"
 //   - Whether failing to resolve is an error or an ending. An error aborts the
 //     walk and discards the partial chain; nil keeps what was reached.
 //   - Whether the walk yields live store pointers or snapshots. WalkParentChain
-//     returns what the step returned, so a caller whose result outlives the
-//     store lock supplies a snapshotting step (see NibReader.GetSnapshot).
+//     returns what the step returned, so a resolver that returns the chain
+//     supplies a snapshotting step (see NibReader.GetSnapshot).
 type ParentStep func(*nib.Nib) (*nib.Nib, error)
 
 // WalkParentChain walks up from start via step and returns the ancestors

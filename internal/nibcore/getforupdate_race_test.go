@@ -5,20 +5,12 @@ import (
 	"testing"
 )
 
-// TestGetForUpdateRaceAgainstArchive pins that GetForUpdate takes its
-// working-copy clone under the store lock. GetForUpdate resolves the shared
-// stored pointer and Clones it; Clone's `clone := *b` shallow-copies every
-// value field, including Path. Archive/Unarchive rewrite that same stored
-// pointer's Path in place under c.mu. If the Clone runs off-lock, its Path read
-// races the in-place Path write.
-//
-// Two goroutines per pair hammer the SAME nib: one loops GetForUpdate (the
-// off-lock read on the buggy code), the other loops Archive/Unarchive (the
-// in-place Path write under c.mu). With GetForUpdate cloning under c.mu.RLock
-// the read is serialized against the writer and this is `-race` clean; it fails
-// under `-race` if GetForUpdate ever reverts to cloning off-lock, so it is a
-// real detector guard, not skipped.
-func TestGetForUpdateRaceAgainstArchive(t *testing.T) {
+// TestPublishedNibReadRaceAgainstArchive pins that a published nib can be read
+// after the store lock is released while Archive and Unarchive move it. Both
+// install a fresh pointer for the new Path (see NibReader.GetSnapshot in
+// internal/graph/interfaces.go), so nothing writes the pointer a reader holds.
+// It fails under -race if either one writes Path in place.
+func TestPublishedNibReadRaceAgainstArchive(t *testing.T) {
 	core, _ := setupTestCore(t)
 
 	target := createTestNib(t, core, "target1", "Target", "completed")
@@ -29,8 +21,14 @@ func TestGetForUpdateRaceAgainstArchive(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 100; j++ {
-				// Clones the stored pointer; on the buggy code the Path read
-				// here happens off-lock.
+				live, err := core.Get(target.ID)
+				if err != nil {
+					t.Errorf("Get: %v", err)
+					return
+				}
+				// Every field of the live pointer is read here, outside c.mu.
+				_ = live.Clone()
+
 				got, err := core.GetForUpdate(target.ID)
 				if err != nil {
 					t.Errorf("GetForUpdate: %v", err)
@@ -45,7 +43,6 @@ func TestGetForUpdateRaceAgainstArchive(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 100; j++ {
-				// Rewrites the stored pointer's Path in place under c.mu.
 				if err := core.Archive(target.ID); err != nil {
 					t.Errorf("Archive: %v", err)
 					return

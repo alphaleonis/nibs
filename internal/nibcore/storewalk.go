@@ -29,8 +29,8 @@ var ErrNotRegularFile = errors.New("not a regular file")
 // was actually opened. Windows defines O_NONBLOCK and ignores it.
 //
 // Open every store file through here, including the paths no walk feeds: the
-// fsnotify watcher loads a single path on a Create event under the write lock,
-// where a hang wedges every reader too.
+// fsnotify watcher loads a single path on a Create event under c.mu, where a
+// hang wedges every writer too.
 func OpenRegularFile(path string) (*os.File, error) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {

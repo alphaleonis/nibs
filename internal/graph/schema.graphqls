@@ -743,10 +743,10 @@ type Nib {
   "Child nibs (nibs with this as parent, default sorted by order)"
   children(filter: NibFilter, sort: NibSort): [Nib!]!
 
-  # Mention fields — body-derived references via the `#<id>` sigil convention.
-  "IDs of nibs mentioned in this nib's body via `#<id>`"
+  # Mention fields — body-derived references written as `#<id>` or `[[<id>]]`.
+  "IDs of nibs mentioned in this nib's body via `#<id>` or `[[<id>]]`"
   mentionIds: [String!]!
-  "IDs of nibs whose bodies mention this nib via `#<id>`"
+  "IDs of nibs whose bodies mention this nib via `#<id>` or `[[<id>]]`"
   mentionedByIds: [String!]!
   """
   Nibs mentioned in this nib's body (outbound, resolved from mentionIds).

@@ -164,7 +164,7 @@ func TestETagNoFalseConflictAcrossSampleFixture(t *testing.T) {
 	}
 
 	for _, b := range core.All() {
-		stored, err := core.computeStoredETag(b)
+		stored, err := core.computeStoredETag(core.nibs, b)
 		if err != nil {
 			t.Fatalf("computeStoredETag(%s) unexpected error: %v", b.ID, err)
 		}

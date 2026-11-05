@@ -43,11 +43,8 @@ func (r *mutationResolver) reorderChildrenImpl(parentID string, childIDs []strin
 			// unattributable in a bulk mutation. %w keeps errors.As routing intact.
 			return nil, fmt.Errorf("failed to reorder %s: %w", b.ID, err)
 		}
-		// The write installed the clone as the new c.nibs[id]; return that.
-		ordered[i] = clone
 	}
-	// Detached snapshots: no live c.nibs pointer may escape to gqlgen's async
-	// marshaler (see NibReader.GetSnapshot).
+	// Snapshots, never live pointers (see NibReader.GetSnapshot).
 	return r.snapshotResults(ordered)
 }
 
@@ -109,7 +106,7 @@ func (r *mutationResolver) reorderSiblingsImpl(siblingIDs []string, afterID *str
 	}
 
 	prev := lower
-	for i, b := range block {
+	for _, b := range block {
 		newKey := nib.OrderBetween(prev, upper)
 		// An OWNED clone, and a nib-naming error wrap, for the reasons given in
 		// reorderChildrenImpl above.
@@ -121,11 +118,9 @@ func (r *mutationResolver) reorderSiblingsImpl(siblingIDs []string, afterID *str
 		if err := r.Writer.Update(clone, ifMatchPtr(etagByID, b.ID)); err != nil {
 			return nil, fmt.Errorf("failed to reorder %s: %w", b.ID, err)
 		}
-		block[i] = clone
 		prev = newKey
 	}
-	// Detached snapshots: no live c.nibs pointer may escape to gqlgen's async
-	// marshaler (see NibReader.GetSnapshot).
+	// Snapshots, never live pointers (see NibReader.GetSnapshot).
 	return r.snapshotResults(block)
 }
 

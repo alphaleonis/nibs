@@ -187,27 +187,10 @@ the repair or what to do instead.`,
 		// Record the close by ADDING an entry to ## Summary, never by replacing the
 		// section: a nib can be closed again under a different reason, and a
 		// replacing write would destroy the earlier rationale — the exact record
-		// this ritual exists to capture. Same shape as the Key Decisions merge
-		// below: find, extend, replace.
+		// this ritual exists to capture. The heading matches at any level and is
+		// created at "## " when absent.
 		entry := closeSummaryEntry(closeAs, closeNow(), summary)
-		newBody := b.Body
-		if existing, found := mdsection.Find(newBody, closeSummaryHeading, mdsection.AnyLevel); found {
-			// A blank line between entries keeps each one its own Markdown
-			// paragraph. Summaries run to several lines, so entries separated by a
-			// single newline would render as one run-on paragraph. A section that
-			// is only a stub heading has no earlier entry to separate from, so it
-			// takes the entry on its own — the same content the append branch below
-			// writes.
-			content := "\n" + entry + "\n"
-			if kept := strings.TrimRight(existing, "\n"); strings.TrimSpace(kept) != "" {
-				content = kept + "\n\n" + entry + "\n"
-			}
-			newBody = mdsection.Replace(newBody, closeSummaryHeading, content, mdsection.AnyLevel)
-		} else {
-			// Set is the wildcard-match variant (matches a "Summary" heading at any
-			// level); appendLevel 2 creates it at "## " when absent.
-			newBody, _ = mdsection.Set(newBody, 2, closeSummaryHeading, "\n"+entry+"\n")
-		}
+		newBody, _ := mdsection.AppendAtLevel(b.Body, mdsection.AnyLevel, 2, closeSummaryHeading, entry)
 
 		// Build update input
 		status := closeAs

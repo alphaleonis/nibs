@@ -68,7 +68,8 @@ WRITE  new "<title>" -t T create; also -s -p -e --area --parent --blocked-by --t
        set <id>           metadata/links; --clear %s; --remove-tag/-blocked-by/…
                           --milestone <ms> assigns to that milestone's queue, appended last (new cannot assign)
                           --area <path> places it in a declared area; nibs area %s prints and edits the set
-       body <id>          --set | --append | --section "## H" --set [--create] | --replace-old T --replace-new U
+       body <id>          --set | --append | --replace-old T --replace-new U | --section "## H" (--set|--append [--create] | --clear)
+                          --check|--uncheck|--remove <n,…> edit checklist items by number (Acceptance or --section); --checklist lists them
        mv <id…>           --after|--before <anchor> | --first | --parent <id> | --children-of <p> <id…>; 2+ ids need --block
                           --queue --after|--before <anchor> | --queue --first repositions within its queue
        rm <id…>           --archive (default) | --delete (irreversible); agents pass -f/--force
@@ -81,8 +82,7 @@ META   cheat · catalog <fields|filters|recipes|examples|hierarchy|areas|schema>
 VIEWS  id < ref < card < full (leanest→fullest). -f adds exact fields, e.g. -f "id,blocked-by(id,status)".
        get → full document · list/rel → ref TSV · --json → card. body & etag are opt-in (-f body/etag).
 INPUT  prose/multi-line is ALWAYS '-' (stdin) or '@FILE', never inline — body, new -d, close --summary.
-EXIT   0 ok · 1 uncategorized · 2 validation · 3 not-found · 4 conflict · 5 io.
-       --json error → {error:{code,message}}
+EXIT   0 ok · 1 uncategorized · 2 validation · 3 not-found · 4 conflict · 5 io · --json error → {error:{code,message}}
 TYPE   %s   (hierarchy: nibs catalog hierarchy)
 STATUS %s=%s · %s=%s   (-s/--no-status take either group%s)
 PRIO   %s (default normal)   EST  %s (s=1 m=3 l=5 xl=8; default m)

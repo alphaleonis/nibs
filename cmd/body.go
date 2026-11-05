@@ -12,6 +12,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/projection"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 var (
@@ -23,6 +24,11 @@ var (
 	bodyIfMatch    string
 	bodyJSON       bool
 	bodyCreate     bool
+	bodyClear      bool
+	bodyCheck      []string
+	bodyUncheck    []string
+	bodyRemove     []string
+	bodyChecklist  bool
 )
 
 var bodyCmd = &cobra.Command{
@@ -34,14 +40,19 @@ multi-line Markdown never has to ride on a shell argument.
 
 Operations (choose one):
   --set <chan>                 Replace the entire body.
-  --section "## H" --set <chan>  Replace the content under an EXISTING heading "## H".
-  --section "## H" --set <chan> --create  Upsert: replace if present, else create "## H".
   --append <chan>              Append a block to the body (its block carries its own heading).
   --replace-old T --replace-new U  Replace exactly one occurrence of T with U.
+  --section "## H" --set <chan>     Replace the content under an EXISTING heading "## H".
+  --section "## H" --append <chan>  Add to the end of "## H", after its subsections.
+  --section "## H" --clear          Empty "## H", deleting its subsections; keeps the heading.
+  --check N,… --uncheck N,… --remove N,…  Edit checklist items by number (combinable).
+  --checklist                       Print the numbered checklist; writes nothing.
 
---section --set targets an existing heading and errors if it is absent; add
---create to create the heading in place (upsert), or use --append, whose block
-carries its own heading. --create is valid only with --section --set.
+--section targets an existing heading and errors if it is absent; add --create
+to --section --set or --section --append to create the heading in place (--set
+then upserts), or use --append without --section, whose block carries its own
+heading. --section --append separates the new content from the section's
+existing content with a blank line.
 
 --section matches at the level you SPELL: "### H" matches only a level-3 heading
 and will NOT match (or clobber) a level-2 "## H"; a bare "H" (no #) matches a
@@ -52,6 +63,17 @@ the spelled level (a bare heading defaults to "##").
 does it fall back to a heading whose text is "<name> (…)" (a parenthetical
 suffix), so "Key Decisions" targets an exact "## Key Decisions" over a
 "## Key Decisions (Phase 1)".
+
+The checklist flags act on the Acceptance section ("Acceptance", else
+"Acceptance Criteria", at any level) unless --section names another. Items are
+the "- [ ]", "- [x]" and "* [X]" lines of that section and its subsections,
+nested ones included, outside fenced code, numbered from 1 in document order.
+Every number in one call refers to the list before the edit, so a removal does
+not shift the others. --remove deletes an item with its nested lines: the lines
+after it indented to its text, its wrapped lines and nested items; removing an
+item that holds a fenced block is refused. Checking a checked item is a
+successful no-op. After an edit the numbered list is printed; --json adds a
+"checklist" array beside "nib".
 
 The surgical --replace-old/--replace-new form matches exactly once: zero
 matches fail with TEXT_NOT_FOUND and more than one with TEXT_AMBIGUOUS (both
@@ -69,9 +91,23 @@ exit 2), each reporting the occurrence count.`,
 // short-circuits here (2 positionals) before RunE, and the no-trailing-"-" shape
 // (1 positional) would otherwise trip an unrelated inline-prose error in RunE —
 // so this single placement names the swallowed token and steers to the correct
-// order for both. When neither flag swallowed a flag token, it falls through to
-// the standard exactly-one-argument check.
+// order for both. The checklist flags take no input channel, so for them it catches
+// only a flag token bound as the item numbers (see swallowedIndexValue). When no
+// flag swallowed a flag token, it falls through to the standard
+// exactly-one-argument check.
 func bodyArgs(cmd *cobra.Command, args []string) error {
+	for _, f := range []struct {
+		name   string
+		values []string
+	}{{"check", bodyCheck}, {"uncheck", bodyUncheck}, {"remove", bodyRemove}} {
+		for _, value := range f.values {
+			if swallowed, ok := swallowedIndexValue(value); ok {
+				return cmdError(bodyJSON, output.ErrValidation,
+					"--%s expects item numbers like 1,3; %q was consumed as its value — write it as `--%s <n,…> %s`",
+					f.name, swallowed, f.name, swallowed)
+			}
+		}
+	}
 	if swallowed, ok := swallowedFlagValue(bodySet); ok {
 		return cmdError(bodyJSON, output.ErrValidation,
 			"--set expects an input channel ('-' or '@FILE'); %q was consumed as its value — write it as `--set - %s`",
@@ -98,38 +134,193 @@ func swallowedFlagValue(value string) (string, bool) {
 	return "", false
 }
 
+// bodyOperation is the one edit a `nibs body` call makes.
+type bodyOperation int
+
+const (
+	bodyOpSet bodyOperation = iota + 1
+	bodyOpAppend
+	bodyOpReplace
+	bodyOpClear
+	bodyOpChecklistEdit
+	bodyOpChecklistRead
+)
+
+// sectionRule is whether an operation takes --section.
+type sectionRule int
+
+const (
+	sectionOptional sectionRule = iota
+	sectionRequired
+	sectionForbidden
+	// sectionDefaultAcceptance is optional, and without --section the operation
+	// acts on the Acceptance section that acceptanceChecklist finds.
+	sectionDefaultAcceptance
+)
+
+// bodyOperationRule describes one operation: the flags that select it, whether
+// it takes --section, and whether --section --create applies to it.
+type bodyOperationRule struct {
+	// flags select the operation, and several of them combine in one call.
+	flags     []string
+	operation bodyOperation
+	section   sectionRule
+	creates   bool
+}
+
+// label spells the rule's flags as "--a/--b".
+func (r bodyOperationRule) label() string {
+	return "--" + strings.Join(r.flags, "/--")
+}
+
+// givenFlags returns the rule's flags that request their behavior.
+func (r bodyOperationRule) givenFlags(flags *pflag.FlagSet) []string {
+	var given []string
+	for _, name := range r.flags {
+		if bodyFlagGiven(flags, name) {
+			given = append(given, name)
+		}
+	}
+	return given
+}
+
+// bodyOperationRules lists every body operation. classifyBodyOperation derives
+// its operation checks and messages from these rows.
+var bodyOperationRules = []bodyOperationRule{
+	{flags: []string{"set"}, operation: bodyOpSet, section: sectionOptional, creates: true},
+	{flags: []string{"append"}, operation: bodyOpAppend, section: sectionOptional, creates: true},
+	{flags: []string{"replace-old"}, operation: bodyOpReplace, section: sectionForbidden},
+	{flags: []string{"clear"}, operation: bodyOpClear, section: sectionRequired},
+	{flags: []string{"check", "uncheck", "remove"}, operation: bodyOpChecklistEdit, section: sectionDefaultAcceptance},
+	{flags: []string{"checklist"}, operation: bodyOpChecklistRead, section: sectionDefaultAcceptance},
+}
+
+// bodyRequest is a classified `nibs body` call.
+type bodyRequest struct {
+	operation bodyOperation
+	// section is whether --section targets one heading.
+	section bool
+	// create is whether --create creates that heading when it is absent.
+	create bool
+	// acceptanceDefault is whether the operation acts on the Acceptance section
+	// because its rule is sectionDefaultAcceptance and --section is absent.
+	acceptanceDefault bool
+}
+
+// classifyBodyOperation returns the one operation the given flags request. It
+// returns an error naming the problem when the flags request no operation, more
+// than one, or a modifier the operation does not take. The caller reports that
+// error as a validation error (exit 2).
+func classifyBodyOperation(flags *pflag.FlagSet) (bodyRequest, error) {
+	if flags.Changed("replace-old") != flags.Changed("replace-new") {
+		return bodyRequest{}, errors.New("--replace-old and --replace-new must be used together")
+	}
+
+	var chosen []bodyOperationRule
+	var chosenLabels []string
+	for _, rule := range bodyOperationRules {
+		if given := rule.givenFlags(flags); len(given) > 0 {
+			chosen = append(chosen, rule)
+			chosenLabels = append(chosenLabels, "--"+strings.Join(given, "/--"))
+		}
+	}
+	section := bodyFlagGiven(flags, "section")
+	create := bodyFlagGiven(flags, "create")
+
+	if len(chosen) > 1 {
+		return bodyRequest{}, fmt.Errorf("choose one body operation; got %s", joinWords(chosenLabels, "and"))
+	}
+	if len(chosen) == 0 {
+		takesSection := func(r bodyOperationRule) bool { return r.section != sectionForbidden }
+		if section {
+			return bodyRequest{}, fmt.Errorf("--section needs an operation: %s", joinRuleFlags(bodyOperationRules, "or", takesSection))
+		}
+		return bodyRequest{}, fmt.Errorf("no body operation specified (use %s, or --section with %s)",
+			joinRuleFlags(bodyOperationRules, "or", func(r bodyOperationRule) bool { return r.section != sectionRequired }),
+			joinRuleFlags(bodyOperationRules, "or", takesSection))
+	}
+
+	rule := chosen[0]
+	switch {
+	case section && rule.section == sectionForbidden:
+		return bodyRequest{}, fmt.Errorf("--section does not combine with %s", rule.label())
+	case !section && rule.section == sectionRequired:
+		return bodyRequest{}, fmt.Errorf("%s requires --section to name the heading", rule.label())
+	case create && (!section || !rule.creates):
+		return bodyRequest{}, fmt.Errorf("--create is only valid with --section and %s",
+			joinRuleFlags(bodyOperationRules, "or", func(r bodyOperationRule) bool { return r.creates }))
+	}
+	return bodyRequest{
+		operation:         rule.operation,
+		section:           section,
+		create:            create,
+		acceptanceDefault: !section && rule.section == sectionDefaultAcceptance,
+	}, nil
+}
+
+// bodyRuleFor returns the row of bodyOperationRules for operation, and whether
+// one exists.
+func bodyRuleFor(operation bodyOperation) (bodyOperationRule, bool) {
+	for _, rule := range bodyOperationRules {
+		if rule.operation == operation {
+			return rule, true
+		}
+	}
+	return bodyOperationRule{}, false
+}
+
+// bodyFlagGiven returns whether the named flag requests its behavior. A bool flag
+// counts only when true, so "--create=false" means the same as no --create.
+func bodyFlagGiven(flags *pflag.FlagSet, name string) bool {
+	f := flags.Lookup(name)
+	if f.Value.Type() == "bool" {
+		return f.Value.String() == "true"
+	}
+	return f.Changed
+}
+
+// unhandledBodyOperationError reports an operation that a per-operation switch
+// has no case for. It is a defect in nibs, not in the caller's request.
+type unhandledBodyOperationError struct {
+	operation bodyOperation
+	in        string
+}
+
+func (e *unhandledBodyOperationError) Error() string {
+	return fmt.Sprintf("internal error: %s has no case for body operation %d", e.in, e.operation)
+}
+
+// joinRuleFlags returns the labels of the rules that keep accepts, joined by
+// commas and a final conjunction.
+func joinRuleFlags(rules []bodyOperationRule, conjunction string, keep func(bodyOperationRule) bool) string {
+	var names []string
+	for _, r := range rules {
+		if keep(r) {
+			names = append(names, r.label())
+		}
+	}
+	return joinWords(names, conjunction)
+}
+
+// joinWords joins names by commas and a final conjunction.
+func joinWords(names []string, conjunction string) string {
+	if len(names) <= 1 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " " + conjunction + " " + names[len(names)-1]
+}
+
 func runBody(cmd *cobra.Command, args []string) error {
 	app := getApp(cmd)
 	ctx := context.Background()
 	resolver := app.newResolver()
 
-	setChanged := cmd.Flags().Changed("set")
-	appendChanged := cmd.Flags().Changed("append")
-	sectionChanged := cmd.Flags().Changed("section")
-	replaceChanged := cmd.Flags().Changed("replace-old")
-
-	// --section names the target heading; the replacement content still rides on
-	// --set, so --section without --set has no content channel. Cobra's
-	// mutual-exclusion groups already keep --section away from --append and
-	// --replace-old, so the only invalid combination left to catch is bare
-	// --section. Check it before the none-set case for a more specific message.
-	if sectionChanged && !setChanged {
-		return cmdError(bodyJSON, output.ErrValidation,
-			"--section requires --set to supply the replacement content channel")
+	req, err := classifyBodyOperation(cmd.Flags())
+	if err != nil {
+		return cmdError(bodyJSON, output.ErrValidation, "%s", err)
 	}
-
-	// --create is an upsert modifier for --section --set only; it is meaningless
-	// on any other operation, so reject it loudly rather than ignore it.
-	if cmd.Flags().Changed("create") && (!sectionChanged || !setChanged) {
-		return cmdError(bodyJSON, output.ErrValidation,
-			"--create is only valid with --section --set")
-	}
-
-	// Require exactly one primary operation. Cobra's mutual-exclusion groups
-	// reject the "more than one" case; this catches "none at all".
-	if !setChanged && !appendChanged && !replaceChanged {
-		return cmdError(bodyJSON, output.ErrValidation,
-			"no body operation specified (use --set, --append, --section with --set, or --replace-old/--replace-new)")
+	if req.operation == bodyOpChecklistRead {
+		return runBodyChecklistRead(ctx, resolver, args[0], req)
 	}
 
 	// Find the nib; fall back to the archive and unarchive it (mirrors set).
@@ -148,17 +339,23 @@ func runBody(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	if req.operation == bodyOpChecklistEdit {
+		return runBodyChecklistEdit(ctx, resolver, cmd.Flags(), b, req)
+	}
+
 	// Snapshot the body before UpdateNib (below) reassigns b; the shadow-warning
 	// check reads this original for its pre-write EXACT other-level lookup.
 	// buildBodyInput itself never mutates b.Body — it only reads it to build a
 	// separate newBody — so this capture is a safety margin against future reorder.
 	originalBody := b.Body
 
-	input, sectionAppended, err := buildBodyInput(b, setChanged, appendChanged, sectionChanged, replaceChanged, bodyCreate)
+	input, sectionAppended, err := buildBodyInput(b, req)
+	var unhandled *unhandledBodyOperationError
+	if errors.As(err, &unhandled) {
+		return cmdError(bodyJSON, output.ErrUncategorized, "%s", err)
+	}
 	if err != nil {
-		// buildBodyInput only returns input-channel resolution errors and section
-		// validation errors; inputError maps a failed read to FILE_ERROR and a
-		// usage/validation error to VALIDATION.
+		// inputError maps a failed read to FILE_ERROR and any other error to VALIDATION.
 		return inputError(bodyJSON, err)
 	}
 
@@ -166,7 +363,7 @@ func runBody(cmd *cobra.Command, args []string) error {
 	// write reassigns b. Its append-vs-replace input is the write's own signal
 	// (sectionAppended), not a re-derivation. It rides alongside the card echo below
 	// (never blocking).
-	warning := sectionShadowWarning(originalBody, setChanged, sectionChanged, bodyCreate, sectionAppended)
+	warning := sectionShadowWarning(originalBody, req, sectionAppended)
 
 	if bodyIfMatch != "" {
 		input.IfMatch = &bodyIfMatch
@@ -184,59 +381,20 @@ func runBody(cmd *cobra.Command, args []string) error {
 	return echoCardWithWarning(cmd, bodyJSON, b, resolver.ProjectionResolver(ctx), card, warning)
 }
 
-// buildBodyInput resolves the requested body operation into an UpdateNibInput.
-// Exactly one of the flag-changed booleans is true (cobra enforces mutual
-// exclusion; the caller rejects the none-set case). --section combines with
-// --set to target one heading's content; create makes that pairing an upsert.
+// buildBodyInput resolves the classified body operation into an UpdateNibInput.
 //
-// The returned bool is sectionAppended, mdsection.SetAtLevel's append-vs-replace
-// result, and only `--section --set --create` produces a true: the plain
-// `--append` path and every other operation return false, because only a
-// section-create append can leave the written-but-shadowed heading that
-// sectionShadowWarning reports.
-func buildBodyInput(b *nib.Nib, setChanged, appendChanged, sectionChanged, replaceChanged, create bool) (model.UpdateNibInput, bool, error) {
+// The returned bool is sectionAppended: true only when a --section --create
+// request created its heading, because only a created heading can be the
+// written-but-shadowed heading that sectionShadowWarning reports.
+func buildBodyInput(b *nib.Nib, req bodyRequest) (model.UpdateNibInput, bool, error) {
 	var input model.UpdateNibInput
 
-	switch {
-	case sectionChanged:
-		// Derive heading text and match level from the flag via the shared helpers
-		// so this write and the shadow-warning check (sectionShadowWarning) can never
-		// disagree on what was targeted.
-		heading := sectionHeadingText(bodySection)
-		// matchLevel: a spelled level ("### H") matches only an existing heading at
-		// that exact level; a bare heading ("H") is a wildcard (0) matching any level.
-		// This keeps a "### Sub" request from silently clobbering a level-2 "## Sub".
-		matchLevel := sectionMatchLevel(bodySection)
-		content, err := resolveBodyFlag(bodySet, "")
-		if err != nil {
-			return input, false, err
-		}
-		if create {
-			// Upsert: replace a section matching at matchLevel if present, else append
-			// a new heading at the level the flag spells (bare defaults to level 2).
-			// SetAtLevel (not Set) because a spelled "### H" must gate the match to
-			// its exact level; the two clearly-named level vars can't be transposed.
-			newBody, sectionAppended := mdsection.SetAtLevel(b.Body, matchLevel, sectionHeadingLevel(bodySection), heading, strings.TrimRight(content, "\n"))
-			input.Body = &newBody
-			return input, sectionAppended, nil
-		}
-		// Strict default: --set replaces only; a heading absent at the requested
-		// level is a no-op in mdsection, so check first and fail loudly rather than
-		// silently doing nothing (or clobbering a same-named heading at another level).
-		if _, found := mdsection.Find(b.Body, heading, matchLevel); !found {
-			// An EXACT same-text heading at a DIFFERENT level than the spelled one
-			// changes the advice: don't blindly recommend --create (that would append
-			// a shadowed duplicate) — teach spelling the existing level instead.
-			// FindExact (not Find) so a lone parenthetical "H (…)" does NOT trip this:
-			// an exact --create heading would win the wildcard read over it, so the
-			// normal --create guidance is correct there.
-			_, otherLevel := mdsection.FindExact(b.Body, heading, mdsection.AnyLevel)
-			return input, false, &sectionNotFoundError{heading: bodySection, otherLevelExists: otherLevel}
-		}
-		newBody := mdsection.Replace(b.Body, heading, strings.TrimRight(content, "\n"), matchLevel)
-		input.Body = &newBody
+	if req.section {
+		return buildSectionInput(b, req)
+	}
 
-	case setChanged:
+	switch req.operation {
+	case bodyOpSet:
 		// Replace the whole body verbatim.
 		content, err := resolveBodyFlag(bodySet, "")
 		if err != nil {
@@ -244,22 +402,83 @@ func buildBodyInput(b *nib.Nib, setChanged, appendChanged, sectionChanged, repla
 		}
 		input.Body = &content
 
-	case appendChanged:
+	case bodyOpAppend:
 		appendText, err := resolveAppendFlag(bodyAppend)
 		if err != nil {
 			return input, false, err
 		}
 		input.BodyMod = &model.BodyModification{Append: &appendText}
 
-	case replaceChanged:
+	case bodyOpReplace:
 		// Surgical exact-once replace. The exactly-once check (and its
 		// TEXT_NOT_FOUND / TEXT_AMBIGUOUS outcomes) lives in the graph/nib layer.
 		input.BodyMod = &model.BodyModification{
 			Replace: []*model.ReplaceOperation{{Old: bodyReplaceOld, New: bodyReplaceNew}},
 		}
+
+	default:
+		return input, false, &unhandledBodyOperationError{operation: req.operation, in: "buildBodyInput"}
 	}
 
 	return input, false, nil
+}
+
+// buildSectionInput applies a --section operation to the one heading the flag
+// names. The heading matches as sectionHeadingText and sectionMatchLevel derive
+// it, the same derivation sectionShadowWarning reads.
+//
+// Without --create, a heading absent at the match level is a sectionNotFoundError
+// and nothing is written. mdsection.Replace would otherwise return the body
+// unchanged and report success.
+func buildSectionInput(b *nib.Nib, req bodyRequest) (model.UpdateNibInput, bool, error) {
+	var input model.UpdateNibInput
+	heading := sectionHeadingText(bodySection)
+	matchLevel := sectionMatchLevel(bodySection)
+	appendLevel := sectionHeadingLevel(bodySection)
+
+	var content string
+	switch req.operation {
+	case bodyOpSet:
+		text, err := resolveBodyFlag(bodySet, "")
+		if err != nil {
+			return input, false, err
+		}
+		content = strings.TrimRight(text, "\n")
+	case bodyOpAppend:
+		text, err := resolveAppendFlag(bodyAppend)
+		if err != nil {
+			return input, false, err
+		}
+		content = text
+	case bodyOpClear:
+		content = ""
+	default:
+		return input, false, &unhandledBodyOperationError{operation: req.operation, in: "buildSectionInput"}
+	}
+
+	if !req.create {
+		if _, found := mdsection.Find(b.Body, heading, matchLevel); !found {
+			// FindExact, so a lone parenthetical "H (…)" does not count as a
+			// heading at another level: an exact heading created by --create would
+			// win the wildcard read over it, so the ordinary --create advice holds.
+			_, otherLevel := mdsection.FindExact(b.Body, heading, mdsection.AnyLevel)
+			return input, false, &sectionNotFoundError{heading: bodySection, operation: req.operation, otherLevelExists: otherLevel}
+		}
+	}
+
+	// Without req.create the heading exists here, so created is true only for a create.
+	var newBody string
+	var created bool
+	switch req.operation {
+	case bodyOpAppend:
+		newBody, created = mdsection.AppendAtLevel(b.Body, matchLevel, appendLevel, heading, content)
+	case bodyOpSet, bodyOpClear:
+		newBody, created = mdsection.SetAtLevel(b.Body, matchLevel, appendLevel, heading, content)
+	default:
+		return input, false, &unhandledBodyOperationError{operation: req.operation, in: "buildSectionInput"}
+	}
+	input.Body = &newBody
+	return input, created, nil
 }
 
 // sectionHeadingText derives the heading TEXT a --section flag targets: the value
@@ -298,38 +517,59 @@ func sectionMatchLevel(flag string) int {
 
 // sectionNotFoundError signals that --section named a heading absent from the
 // body at the requested match level. It is a usage/validation error (not an I/O
-// failure), so inputError maps it to VALIDATION (exit 2). otherLevelExists is
-// true when a same-text heading DOES exist at a different level than the spelled
-// one: the message then teaches spelling that level (over a blind --create, which
-// would append a duplicate that wildcard readers may shadow — see
-// sectionShadowWarning).
+// failure), so inputError maps it to VALIDATION (exit 2). Its advice depends on
+// the operation, so it never suggests a flag that operation cannot take.
+//
+// otherLevelExists is true when a same-text heading DOES exist at a different
+// level than the spelled one. The message then teaches spelling that level
+// before --create, which would add a duplicate that wildcard readers may shadow
+// (see sectionShadowWarning).
 type sectionNotFoundError struct {
 	heading          string
+	operation        bodyOperation
 	otherLevelExists bool
 }
 
 func (e *sectionNotFoundError) Error() string {
+	rule, known := bodyRuleFor(e.operation)
+	if !known {
+		return fmt.Sprintf("section %q not found", e.heading)
+	}
 	if e.otherLevelExists {
+		if !rule.creates {
+			return fmt.Sprintf("no %q section — a same-named heading exists at another level; spell that level to target it", e.heading)
+		}
 		return fmt.Sprintf("no %q section — a same-named heading exists at another level; spell that level to target it, or add --create to add a new %q", e.heading, e.heading)
 	}
-	return fmt.Sprintf("section %q not found — --section --set replaces an existing section; use --append (its block carries the heading) to create one, or add --create to create it in place", e.heading)
+	switch e.operation {
+	case bodyOpSet:
+		return fmt.Sprintf("section %q not found — --section --set replaces an existing section; use --append (its block carries the heading) to create one, or add --create to create it in place", e.heading)
+	case bodyOpAppend:
+		return fmt.Sprintf("section %q not found — --section --append adds to an existing section; add --create to create it", e.heading)
+	case bodyOpClear:
+		return fmt.Sprintf("section %q not found — --section --clear empties an existing section, so there is nothing to clear", e.heading)
+	case bodyOpChecklistEdit, bodyOpChecklistRead:
+		return fmt.Sprintf("section %q not found — checklist items are numbered within an existing section", e.heading)
+	default:
+		return fmt.Sprintf("section %q not found", e.heading)
+	}
 }
 
-// sectionShadowWarning returns a non-blocking warning when a `--section --set
-// --create` request APPENDED a new heading at the spelled level while an EXACT
-// same-text heading already exists at a DIFFERENT level. The tool's own wildcard
-// readers — decision extraction (`nibs context`, via nibcontext.ExtractDecisions)
-// and the parent-nib "Key Decisions" merge (`nibs close`) — call mdsection.Find
-// at AnyLevel and surface only the FIRST matching heading, so the appended section
-// would be written-but-shadowed. Two same-text headings at different levels are
-// legitimate Markdown, so this warns rather than blocks.
+// sectionShadowWarning returns a non-blocking warning when a `--section --create`
+// request, with --set or --append, APPENDED a new heading at the spelled level
+// while an EXACT same-text heading already exists at a DIFFERENT level. The
+// tool's own wildcard readers — decision extraction (`nibs context`, via
+// nibcontext.ExtractDecisions) and the parent-nib "Key Decisions" merge (`nibs
+// close`) — call mdsection.Find at AnyLevel and surface only the FIRST matching
+// heading, so the appended section would be written-but-shadowed. Two same-text
+// headings at different levels are legitimate Markdown, so this warns rather than
+// blocks.
 //
 // The append-vs-replace decision is the write's own: sectionAppended is the bool
-// SetAtLevel returned, the single source of truth. A replace-in-place creates
-// nothing and so can never shadow; only an append can. This deliberately does NOT
-// re-derive the decision with a second Find — that duplicated the write's branch
-// and stayed correct only by the unenforced invariant that both used the same
-// matchLevel.
+// mdsection.SetAtLevel or mdsection.AppendAtLevel returned. A write into an
+// existing section creates nothing and so can never shadow; only a created
+// heading can. A second Find here would agree with the write only while both used
+// the same matchLevel.
 //
 // The other-level check uses FindExact (exact only): the appended heading is
 // EXACT, and an exact heading WINS a wildcard read over a parenthetical one — so a
@@ -339,14 +579,11 @@ func (e *sectionNotFoundError) Error() string {
 //
 // Returns "" when the write replaced in place (sectionAppended == false), when no
 // EXACT same-text heading exists at another level, or when this is not a
-// `--section --set --create` request. A bare --section ("X", matchLevel AnyLevel)
+// `--section --create` request. A bare --section ("X", matchLevel AnyLevel)
 // replaces an existing heading at any level rather than appending, so it never
 // trips this.
-func sectionShadowWarning(originalBody string, setChanged, sectionChanged, create, sectionAppended bool) string {
-	if !sectionChanged || !setChanged || !create {
-		return ""
-	}
-	if !sectionAppended {
+func sectionShadowWarning(originalBody string, req bodyRequest, sectionAppended bool) string {
+	if !req.section || !req.create || !sectionAppended {
 		return ""
 	}
 	heading := sectionHeadingText(bodySection)
@@ -455,17 +692,17 @@ func bodyMutationError(jsonOutput bool, err error) error {
 func init() {
 	bodyCmd.Flags().StringVar(&bodySet, "set", "", "Replace the body from the input channel: '-' for stdin or '@FILE' for a file (no inline text)")
 	bodyCmd.Flags().StringVar(&bodyAppend, "append", "", "Append a block from the input channel: '-' for stdin or '@FILE' for a file (no inline text)")
-	bodyCmd.Flags().StringVar(&bodySection, "section", "", "Heading whose content --set replaces (e.g. \"## Notes\"); matches exact text first, else a \"<name> (…)\" suffix; a spelled level matches only that level, a bare heading matches any level")
-	bodyCmd.Flags().BoolVar(&bodyCreate, "create", false, "With --section --set, create the heading if absent (upsert); default errors on a missing heading")
+	bodyCmd.Flags().StringVar(&bodySection, "section", "", "Heading that --set, --append, --clear or a checklist flag acts on (e.g. \"## Notes\"); matches exact text first, else a \"<name> (…)\" suffix; a spelled level matches only that level, a bare heading matches any level")
+	bodyCmd.Flags().BoolVar(&bodyCreate, "create", false, "Create the --section heading if absent; default errors on a missing heading")
+	bodyCmd.Flags().BoolVar(&bodyClear, "clear", false, "With --section, empty the section, subsections included, and keep its heading")
+	bodyCmd.Flags().StringArrayVar(&bodyCheck, "check", nil, "Check the checklist items with these 1-based numbers (e.g. 1,3; repeatable) in the Acceptance section or --section")
+	bodyCmd.Flags().StringArrayVar(&bodyUncheck, "uncheck", nil, "Uncheck the checklist items with these 1-based numbers (e.g. 1,3; repeatable) in the Acceptance section or --section")
+	bodyCmd.Flags().StringArrayVar(&bodyRemove, "remove", nil, "Remove the checklist items with these 1-based numbers (e.g. 1,3; repeatable), each with its nested lines, in the Acceptance section or --section")
+	bodyCmd.Flags().BoolVar(&bodyChecklist, "checklist", false, "Print the numbered checklist of the Acceptance section or --section, writing nothing")
 	bodyCmd.Flags().StringVar(&bodyReplaceOld, "replace-old", "", "Text to find and replace exactly once (requires --replace-new)")
 	bodyCmd.Flags().StringVar(&bodyReplaceNew, "replace-new", "", "Replacement text (requires --replace-old)")
 	bodyCmd.Flags().StringVar(&bodyIfMatch, "if-match", "", "Only update if etag matches (optimistic locking)")
 	bodyCmd.Flags().BoolVar(&bodyJSON, "json", false, "Output as JSON")
-
-	// One primary body operation at a time. --section pairs only with --set.
-	bodyCmd.MarkFlagsMutuallyExclusive("set", "append", "replace-old")
-	bodyCmd.MarkFlagsMutuallyExclusive("section", "append", "replace-old")
-	bodyCmd.MarkFlagsRequiredTogether("replace-old", "replace-new")
 
 	rootCmd.AddCommand(bodyCmd)
 }

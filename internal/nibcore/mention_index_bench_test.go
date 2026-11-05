@@ -63,6 +63,7 @@ func BenchmarkFindMentionedBy_WithIndex(b *testing.B) {
 	core.SetWarnWriter(nil)
 	core.nibs = nibs
 	core.mentionIdx.Rebuild(nibs)
+	core.publishLocked()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

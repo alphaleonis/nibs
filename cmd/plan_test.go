@@ -1064,3 +1064,27 @@ func TestPlanCommand_Milestone(t *testing.T) {
 		}
 	})
 }
+
+// A fenced example and a "[~]" marker are not acceptance items, so the rollup
+// agrees with the numbering `nibs body --check` addresses.
+func TestBuildPlan_AcceptanceRollupCountsOnlyChecklistItems(t *testing.T) {
+	resolver, create := setupPlanTest(t)
+
+	create("epic-1", "My Epic", "in-progress", "epic", "", "", "")
+	create("task-1", "Fenced Example", "todo", "task", "epic-1", "a0",
+		"## Acceptance\n\n- [x] real\n\n```md\n- [ ] example inside a fence\n```\n\n- [ ] second\n")
+	create("task-2", "Tilde Marker", "todo", "task", "epic-1", "a1",
+		"## Acceptance\n\n- [~] partial\n- [x] done\n")
+
+	plan, err := buildPlan(context.Background(), resolver, "epic-1", false)
+	if err != nil {
+		t.Fatalf("buildPlan error: %v", err)
+	}
+
+	if got := plan.Items[0].Acceptance; got == nil || got.Checked != 1 || got.Total != 2 {
+		t.Errorf("fenced example: Acceptance = %+v, want {Checked:1, Total:2}", got)
+	}
+	if got := plan.Items[1].Acceptance; got == nil || got.Checked != 1 || got.Total != 1 {
+		t.Errorf("[~] marker: Acceptance = %+v, want {Checked:1, Total:1}", got)
+	}
+}

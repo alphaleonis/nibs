@@ -8,25 +8,14 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/99designs/gqlgen/graphql"
-	"github.com/99designs/gqlgen/graphql/executor"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/nibcore"
 )
 
-// TestRelationshipResolversReturnSnapshots pins the rule that the Nib
-// relationship resolvers (Parent, Children, BlockedBy, Blocking) return
-// snapshots (clones) of related nibs, never the live *nib.Nib pointers held in
-// nibcore.Core's store. gqlgen reads scalar fields (e.g. path) off the returned
-// pointers asynchronously and off the store lock, while Archive/Unarchive
-// rewrite a stored nib's Path in place under the lock. Handing out a live
-// pointer is a data race; a snapshot detaches the returned value from the store.
-//
-// Each subtest captures a resolver's returned nib and its Path, then archives
-// the underlying stored nib (which rewrites its Path in place under c.mu). If
-// the resolver returned the live pointer, the captured Path mutates and the
-// assertion fails (proving the bug on unfixed code). With the clone fix the
-// captured Path is frozen.
+// TestRelationshipResolversReturnSnapshots covers the Nib relationship
+// resolvers (Parent, Children, BlockedBy, Blocking), which return GetSnapshot
+// clones of related nibs, never the live pointers nibcore.Core publishes.
 func TestRelationshipResolversReturnSnapshots(t *testing.T) {
 	t.Run("Parent", func(t *testing.T) {
 		resolver, core := setupTestResolver(t)
@@ -44,15 +33,7 @@ func TestRelationshipResolversReturnSnapshots(t *testing.T) {
 		if got == nil {
 			t.Fatal("Parent resolver returned nil")
 		}
-		before := got.Path
-
-		if err := core.Archive(parent.ID); err != nil {
-			t.Fatalf("Archive: %v", err)
-		}
-
-		if got.Path != before {
-			t.Errorf("captured parent Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got.Path, before)
-		}
+		assertDetached(t, core, got)
 	})
 
 	t.Run("Children", func(t *testing.T) {
@@ -71,15 +52,7 @@ func TestRelationshipResolversReturnSnapshots(t *testing.T) {
 		if len(got) != 1 {
 			t.Fatalf("Children resolver returned %d nibs, want 1", len(got))
 		}
-		before := got[0].Path
-
-		if err := core.Archive(child.ID); err != nil {
-			t.Fatalf("Archive: %v", err)
-		}
-
-		if got[0].Path != before {
-			t.Errorf("captured child Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got[0].Path, before)
-		}
+		assertDetached(t, core, got[0])
 	})
 
 	t.Run("BlockedBy", func(t *testing.T) {
@@ -98,15 +71,7 @@ func TestRelationshipResolversReturnSnapshots(t *testing.T) {
 		if len(got) != 1 {
 			t.Fatalf("BlockedBy resolver returned %d nibs, want 1", len(got))
 		}
-		before := got[0].Path
-
-		if err := core.Archive(blocker.ID); err != nil {
-			t.Fatalf("Archive: %v", err)
-		}
-
-		if got[0].Path != before {
-			t.Errorf("captured blocker Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got[0].Path, before)
-		}
+		assertDetached(t, core, got[0])
 	})
 
 	t.Run("Blocking", func(t *testing.T) {
@@ -126,90 +91,13 @@ func TestRelationshipResolversReturnSnapshots(t *testing.T) {
 		if len(got) != 1 {
 			t.Fatalf("Blocking resolver returned %d nibs, want 1", len(got))
 		}
-		before := got[0].Path
-
-		if err := core.Archive(blocked.ID); err != nil {
-			t.Fatalf("Archive: %v", err)
-		}
-
-		if got[0].Path != before {
-			t.Errorf("captured blocking nib Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got[0].Path, before)
-		}
+		assertDetached(t, core, got[0])
 	})
 }
 
-// TestRelationshipResolverRaceUnderExecutor drives the parent- and blockedBy-path
-// reads through the real gqlgen executor concurrently with Archive/Unarchive on
-// those related nibs. The child's `parent { path }` and `blockedBy { path }`
-// fields are marshaled asynchronously off the values the resolvers return, while
-// Archive/Unarchive rewrite the parent's and blocker's Path in place under c.mu.
-//
-// Because the resolvers now snapshot via Reader.GetSnapshot (clone-under-lock),
-// the marshaled values are detached copies and this is `-race` clean. It fails
-// under `-race` if a resolver ever reverts to handing out a live c.nibs pointer
-// (the nibs-yr1j regression), so it is a real detector guard, not skipped.
-func TestRelationshipResolverRaceUnderExecutor(t *testing.T) {
-	resolver, core := setupTestResolver(t)
-
-	parent := createTestNib(t, core, "parent1", "Parent", "todo")
-	blocker := createTestNib(t, core, "blocker1", "Blocker", "todo")
-	child := &nib.Nib{ID: "child1", Slug: "child", Title: "Child", Status: "todo", Parent: parent.ID, BlockedBy: []string{blocker.ID}}
-	mustCreate(t, core, child)
-
-	es := NewExecutableSchema(Config{Resolvers: resolver})
-	exec := executor.New(es)
-
-	runQuery := func() {
-		ctx := graphql.StartOperationTrace(context.Background())
-		params := &graphql.RawParams{
-			Query:     `query { nib(id: "child1") { parent { path } blockedBy { path } } }`,
-			Variables: map[string]any{},
-		}
-		opCtx, errs := exec.CreateOperationContext(ctx, params)
-		if len(errs) > 0 {
-			t.Errorf("CreateOperationContext: %v", errs)
-			return
-		}
-		ctx = graphql.WithOperationContext(ctx, opCtx)
-		handler, ctx := exec.DispatchOperation(ctx, opCtx)
-		// Assert the query actually succeeds and marshals `path`. Without this,
-		// a future regression that made the resolver error out (no `path` marshal)
-		// would never open the race window, leaving the -race guard silently green.
-		resp := handler(ctx)
-		if len(resp.Errors) > 0 {
-			t.Errorf("query returned errors (race window never opened): %v", resp.Errors)
-		}
-	}
-
-	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
-		wg.Add(2)
-		go func() { defer wg.Done(); runQuery() }()
-		go func() {
-			defer wg.Done()
-			_ = core.Archive(parent.ID)
-			_ = core.Unarchive(parent.ID)
-			_ = core.Archive(blocker.ID)
-			_ = core.Unarchive(blocker.ID)
-		}()
-	}
-	wg.Wait()
-}
-
-// TestQueryResolversReturnSnapshots extends the detachment rule to the
-// query-level and mention resolvers left untouched by the relationship-resolver
-// conversion: the top-level Nib and Nibs resolvers (including Nibs' search
-// branch), and the nib-level Mentions and MentionedBy resolvers. Each returns
-// nibs read out of nibcore.Core's store; gqlgen marshals their scalar fields
-// (e.g. path) asynchronously and off the store lock, while Archive rewrites a
-// stored nib's Path in place under c.mu. Handing out a live pointer is a data
-// race; a snapshot detaches the returned value from the store.
-//
-// Each subtest captures a resolver's returned nib and its Path, then archives
-// the underlying stored nib (which rewrites its Path in place under c.mu). If
-// the resolver returned the live pointer, the captured Path mutates and the
-// assertion fails (proving the bug on unfixed code). With the snapshot fix the
-// captured Path is frozen.
+// TestQueryResolversReturnSnapshots covers the top-level Nib and Nibs
+// resolvers (including Nibs' search branch) and the nib-level Mentions and
+// MentionedBy resolvers, which return GetSnapshot clones, never live pointers.
 func TestQueryResolversReturnSnapshots(t *testing.T) {
 	t.Run("QueryNib", func(t *testing.T) {
 		resolver, core := setupTestResolver(t)
@@ -225,15 +113,7 @@ func TestQueryResolversReturnSnapshots(t *testing.T) {
 		if got == nil {
 			t.Fatal("Nib resolver returned nil")
 		}
-		before := got.Path
-
-		if err := core.Archive(target.ID); err != nil {
-			t.Fatalf("Archive: %v", err)
-		}
-
-		if got.Path != before {
-			t.Errorf("captured nib Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got.Path, before)
-		}
+		assertDetached(t, core, got)
 	})
 
 	t.Run("QueryNibs", func(t *testing.T) {
@@ -251,15 +131,7 @@ func TestQueryResolversReturnSnapshots(t *testing.T) {
 		if idx < 0 {
 			t.Fatalf("Nibs resolver did not return %q", target.ID)
 		}
-		before := got[idx].Path
-
-		if err := core.Archive(target.ID); err != nil {
-			t.Fatalf("Archive: %v", err)
-		}
-
-		if got[idx].Path != before {
-			t.Errorf("captured nib Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got[idx].Path, before)
-		}
+		assertDetached(t, core, got[idx])
 	})
 
 	t.Run("QueryNibsSearch", func(t *testing.T) {
@@ -278,15 +150,7 @@ func TestQueryResolversReturnSnapshots(t *testing.T) {
 		if idx < 0 {
 			t.Fatalf("Nibs (search) resolver did not return %q", target.ID)
 		}
-		before := got[idx].Path
-
-		if err := core.Archive(target.ID); err != nil {
-			t.Fatalf("Archive: %v", err)
-		}
-
-		if got[idx].Path != before {
-			t.Errorf("captured search-hit Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got[idx].Path, before)
-		}
+		assertDetached(t, core, got[idx])
 	})
 
 	t.Run("Mentions", func(t *testing.T) {
@@ -294,7 +158,7 @@ func TestQueryResolversReturnSnapshots(t *testing.T) {
 		nr := resolver.Nib()
 		ctx := context.Background()
 
-		target := createTestNib(t, core, "target1", "Target", "todo")
+		createTestNib(t, core, "target1", "Target", "todo")
 		source := &nib.Nib{ID: "source1", Slug: "source", Title: "Source", Status: "todo", Body: "mentions #target1"}
 		mustCreate(t, core, source)
 
@@ -305,15 +169,7 @@ func TestQueryResolversReturnSnapshots(t *testing.T) {
 		if len(got) != 1 {
 			t.Fatalf("Mentions resolver returned %d nibs, want 1", len(got))
 		}
-		before := got[0].Path
-
-		if err := core.Archive(target.ID); err != nil {
-			t.Fatalf("Archive: %v", err)
-		}
-
-		if got[0].Path != before {
-			t.Errorf("captured mention Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got[0].Path, before)
-		}
+		assertDetached(t, core, got[0])
 	})
 
 	t.Run("MentionedBy", func(t *testing.T) {
@@ -332,15 +188,7 @@ func TestQueryResolversReturnSnapshots(t *testing.T) {
 		if len(got) != 1 {
 			t.Fatalf("MentionedBy resolver returned %d nibs, want 1", len(got))
 		}
-		before := got[0].Path
-
-		if err := core.Archive(source.ID); err != nil {
-			t.Fatalf("Archive: %v", err)
-		}
-
-		if got[0].Path != before {
-			t.Errorf("captured mentionedBy Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got[0].Path, before)
-		}
+		assertDetached(t, core, got[0])
 	})
 }
 
@@ -432,81 +280,9 @@ func TestMentionIDResolversDropDeletedNibs(t *testing.T) {
 	})
 }
 
-// TestQueryAndMentionResolverRaceUnderExecutor drives the query-level and
-// mention resolvers (nib, nibs, nibs+search, mentions, mentionedBy) through the
-// real gqlgen executor concurrently with Archive/Unarchive on the nibs they
-// return. Their `path` fields are marshaled asynchronously off the values the
-// resolvers return, while Archive/Unarchive rewrite the stored nibs' Path in
-// place under c.mu.
-//
-// Because the resolvers now snapshot via Reader.GetSnapshot (clone-under-lock),
-// the marshaled values are detached copies and this is `-race` clean. It fails
-// under `-race` if a resolver ever reverts to handing out a live c.nibs pointer,
-// so it is a real detector guard, not skipped.
-func TestQueryAndMentionResolverRaceUnderExecutor(t *testing.T) {
-	resolver, core := setupTestResolver(t)
-
-	target := createTestNib(t, core, "target1", "Findable Target", "todo")
-	source := &nib.Nib{ID: "source1", Slug: "source", Title: "Source", Status: "todo", Body: "mentions #target1"}
-	mustCreate(t, core, source)
-
-	es := NewExecutableSchema(Config{Resolvers: resolver})
-	exec := executor.New(es)
-
-	runQuery := func() {
-		ctx := graphql.StartOperationTrace(context.Background())
-		params := &graphql.RawParams{
-			Query: `query {
-				a: nib(id: "source1") { path mentions { path } }
-				b: nib(id: "target1") { path mentionedBy { path } }
-				c: nibs { path }
-				d: nibs(filter: { search: "Findable" }) { path }
-			}`,
-			Variables: map[string]any{},
-		}
-		opCtx, errs := exec.CreateOperationContext(ctx, params)
-		if len(errs) > 0 {
-			t.Errorf("CreateOperationContext: %v", errs)
-			return
-		}
-		ctx = graphql.WithOperationContext(ctx, opCtx)
-		handler, ctx := exec.DispatchOperation(ctx, opCtx)
-		// Assert the query actually succeeds and marshals `path`. Without this,
-		// a future regression that made a resolver error out (no `path` marshal)
-		// would never open the race window, leaving the -race guard silently green.
-		resp := handler(ctx)
-		if len(resp.Errors) > 0 {
-			t.Errorf("query returned errors (race window never opened): %v", resp.Errors)
-		}
-	}
-
-	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
-		wg.Add(2)
-		go func() { defer wg.Done(); runQuery() }()
-		go func() {
-			defer wg.Done()
-			_ = core.Archive(target.ID)
-			_ = core.Unarchive(target.ID)
-			_ = core.Archive(source.ID)
-			_ = core.Unarchive(source.ID)
-		}()
-	}
-	wg.Wait()
-}
-
-// TestMutationResolversReturnSnapshots extends the detachment rule to every
-// mutation resolver that returns nib data. Each returns a nib that gqlgen
-// marshals asynchronously and off the store lock, while Archive rewrites a
-// stored nib's Path in place under c.mu. Handing out the live c.nibs pointer
-// (the one Writer.Create/Writer.Update installed, or the one Reader.Get handed
-// back) is a data race; a GetSnapshot clone detaches the returned value.
-//
-// Each subtest drives a mutation resolver, captures the returned nib's Path,
-// then archives the underlying stored nib (which rewrites its Path in place
-// under c.mu). If the resolver returned the live pointer, the captured Path
-// mutates and the assertion fails (proving the bug on unfixed code). With the
-// snapshot fix the captured Path is frozen.
+// TestMutationResolversReturnSnapshots covers every mutation resolver that
+// returns nib data, which returns a GetSnapshot clone, never the pointer that
+// Writer.Create or Writer.Update installed or Reader.Get returned.
 func TestMutationResolversReturnSnapshots(t *testing.T) {
 	t.Run("CreateNib", func(t *testing.T) {
 		resolver, core := setupTestResolver(t)
@@ -520,15 +296,7 @@ func TestMutationResolversReturnSnapshots(t *testing.T) {
 		if got == nil {
 			t.Fatal("CreateNib resolver returned nil")
 		}
-		before := got.Path
-
-		if err := core.Archive(got.ID); err != nil {
-			t.Fatalf("Archive: %v", err)
-		}
-
-		if got.Path != before {
-			t.Errorf("captured nib Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got.Path, before)
-		}
+		assertDetached(t, core, got)
 	})
 
 	t.Run("UpdateNib", func(t *testing.T) {
@@ -546,15 +314,7 @@ func TestMutationResolversReturnSnapshots(t *testing.T) {
 		if got == nil {
 			t.Fatal("UpdateNib resolver returned nil")
 		}
-		before := got.Path
-
-		if err := core.Archive(target.ID); err != nil {
-			t.Fatalf("Archive: %v", err)
-		}
-
-		if got.Path != before {
-			t.Errorf("captured nib Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got.Path, before)
-		}
+		assertDetached(t, core, got)
 	})
 
 	t.Run("SetParent", func(t *testing.T) {
@@ -573,15 +333,7 @@ func TestMutationResolversReturnSnapshots(t *testing.T) {
 		if got == nil {
 			t.Fatal("SetParent resolver returned nil")
 		}
-		before := got.Path
-
-		if err := core.Archive(child.ID); err != nil {
-			t.Fatalf("Archive: %v", err)
-		}
-
-		if got.Path != before {
-			t.Errorf("captured nib Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got.Path, before)
-		}
+		assertDetached(t, core, got)
 	})
 
 	t.Run("AddBlocking", func(t *testing.T) {
@@ -599,15 +351,7 @@ func TestMutationResolversReturnSnapshots(t *testing.T) {
 		if got == nil {
 			t.Fatal("AddBlocking resolver returned nil")
 		}
-		before := got.Path
-
-		if err := core.Archive(source.ID); err != nil {
-			t.Fatalf("Archive: %v", err)
-		}
-
-		if got.Path != before {
-			t.Errorf("captured nib Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got.Path, before)
-		}
+		assertDetached(t, core, got)
 	})
 
 	t.Run("RemoveBlocking", func(t *testing.T) {
@@ -626,15 +370,7 @@ func TestMutationResolversReturnSnapshots(t *testing.T) {
 		if got == nil {
 			t.Fatal("RemoveBlocking resolver returned nil")
 		}
-		before := got.Path
-
-		if err := core.Archive(source.ID); err != nil {
-			t.Fatalf("Archive: %v", err)
-		}
-
-		if got.Path != before {
-			t.Errorf("captured nib Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got.Path, before)
-		}
+		assertDetached(t, core, got)
 	})
 
 	t.Run("AddBlockedBy", func(t *testing.T) {
@@ -652,15 +388,7 @@ func TestMutationResolversReturnSnapshots(t *testing.T) {
 		if got == nil {
 			t.Fatal("AddBlockedBy resolver returned nil")
 		}
-		before := got.Path
-
-		if err := core.Archive(blocked.ID); err != nil {
-			t.Fatalf("Archive: %v", err)
-		}
-
-		if got.Path != before {
-			t.Errorf("captured nib Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got.Path, before)
-		}
+		assertDetached(t, core, got)
 	})
 
 	t.Run("RemoveBlockedBy", func(t *testing.T) {
@@ -679,15 +407,7 @@ func TestMutationResolversReturnSnapshots(t *testing.T) {
 		if got == nil {
 			t.Fatal("RemoveBlockedBy resolver returned nil")
 		}
-		before := got.Path
-
-		if err := core.Archive(blocked.ID); err != nil {
-			t.Fatalf("Archive: %v", err)
-		}
-
-		if got.Path != before {
-			t.Errorf("captured nib Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got.Path, before)
-		}
+		assertDetached(t, core, got)
 	})
 
 	t.Run("ReorderNib", func(t *testing.T) {
@@ -705,15 +425,7 @@ func TestMutationResolversReturnSnapshots(t *testing.T) {
 		if got == nil {
 			t.Fatal("ReorderNib resolver returned nil")
 		}
-		before := got.Path
-
-		if err := core.Archive(a.ID); err != nil {
-			t.Fatalf("Archive: %v", err)
-		}
-
-		if got.Path != before {
-			t.Errorf("captured nib Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got.Path, before)
-		}
+		assertDetached(t, core, got)
 	})
 
 	t.Run("ReorderChildren", func(t *testing.T) {
@@ -734,15 +446,7 @@ func TestMutationResolversReturnSnapshots(t *testing.T) {
 		if len(got) != 2 {
 			t.Fatalf("ReorderChildren resolver returned %d nibs, want 2", len(got))
 		}
-		before := got[0].Path
-
-		if err := core.Archive(got[0].ID); err != nil {
-			t.Fatalf("Archive: %v", err)
-		}
-
-		if got[0].Path != before {
-			t.Errorf("captured nib Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got[0].Path, before)
-		}
+		assertDetached(t, core, got[0])
 	})
 
 	t.Run("ReorderSiblings", func(t *testing.T) {
@@ -764,15 +468,7 @@ func TestMutationResolversReturnSnapshots(t *testing.T) {
 		if len(got) != 1 {
 			t.Fatalf("ReorderSiblings resolver returned %d nibs, want 1", len(got))
 		}
-		before := got[0].Path
-
-		if err := core.Archive(got[0].ID); err != nil {
-			t.Fatalf("Archive: %v", err)
-		}
-
-		if got[0].Path != before {
-			t.Errorf("captured nib Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got[0].Path, before)
-		}
+		assertDetached(t, core, got[0])
 	})
 }
 
@@ -939,73 +635,18 @@ func TestReorderChildrenSurvivesConcurrentDelete(t *testing.T) {
 	}
 }
 
-// TestMutationResolverRaceUnderExecutor drives the removeBlocking mutation
-// through the real gqlgen executor concurrently with Archive/Unarchive on the nib
-// it returns (the source). The mutation's returned `path` field is marshaled
-// asynchronously off the value the resolver returns, while Archive/Unarchive
-// rewrite the stored nib's Path in place under c.mu.
-//
-// removeBlocking against a NON-EXISTENT target is chosen deliberately as the
-// demonstrator, to isolate exactly the return-value race this fix closes:
-//   - It sources its returned nib from Reader.Get (the shared pointer, WITHOUT an
-//     off-lock clone) rather than Reader.GetForUpdate, so the source's Path is
-//     never cloned off-lock during the mutation. The GetForUpdate-based mutations
-//     (update, setParent, reorder, ...) sourced their working nib from
-//     GetForUpdate, whose own input-side clone once raced Archive's in-place Path
-//     write independently of the returned value — a distinct nibcore concern,
-//     since closed by cloning under c.mu — so they could not cleanly isolate the
-//     return-value race this test guards.
-//   - A non-existent target makes the resolver skip its target-side write entirely
-//     (the existence guard is false), so there is no optimistic-concurrency etag
-//     collision under the 8-way concurrency below, and the ONLY off-lock read of
-//     the source's Path is the value handed to gqlgen. It is a documented no-op
-//     that still returns and marshals the source nib.
-//
-// Because the resolver now snapshots via Reader.GetSnapshot (clone-under-lock),
-// the marshaled value is a detached copy and this is `-race` clean. It fails
-// under `-race` if the mutation resolver ever reverts to handing out the live
-// c.nibs pointer, so it is a real detector guard, not skipped.
-func TestMutationResolverRaceUnderExecutor(t *testing.T) {
-	resolver, core := setupTestResolver(t)
-
-	createTestNib(t, core, "source1", "Source", "todo")
-
-	es := NewExecutableSchema(Config{Resolvers: resolver})
-	exec := executor.New(es)
-
-	runMutation := func() {
-		ctx := graphql.StartOperationTrace(context.Background())
-		params := &graphql.RawParams{
-			Query:     `mutation { removeBlocking(id: "source1", targetId: "nonexistent") { path } }`,
-			Variables: map[string]any{},
-		}
-		opCtx, errs := exec.CreateOperationContext(ctx, params)
-		if len(errs) > 0 {
-			t.Errorf("CreateOperationContext: %v", errs)
-			return
-		}
-		ctx = graphql.WithOperationContext(ctx, opCtx)
-		handler, ctx := exec.DispatchOperation(ctx, opCtx)
-		// Assert the mutation actually succeeds and marshals `path`. Without this,
-		// a future regression that made the resolver error out (no `path` marshal)
-		// would never open the race window, leaving the -race guard silently green.
-		resp := handler(ctx)
-		if len(resp.Errors) > 0 {
-			t.Errorf("mutation returned errors (race window never opened): %v", resp.Errors)
-		}
+// assertDetached fails when got is the pointer the store publishes for its id,
+// which means a resolver returned the live pointer instead of a GetSnapshot
+// clone (see NibReader.GetSnapshot).
+func assertDetached(t *testing.T, core *nibcore.Core, got *nib.Nib) {
+	t.Helper()
+	live, err := core.Get(got.ID)
+	if err != nil {
+		t.Fatalf("Get(%q): %v", got.ID, err)
 	}
-
-	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
-		wg.Add(2)
-		go func() { defer wg.Done(); runMutation() }()
-		go func() {
-			defer wg.Done()
-			_ = core.Archive("source1")
-			_ = core.Unarchive("source1")
-		}()
+	if got == live {
+		t.Errorf("resolver returned the live store pointer for %q, want a GetSnapshot clone", got.ID)
 	}
-	wg.Wait()
 }
 
 // nibIndexByID returns the index of the first nib with the given ID, or -1.
