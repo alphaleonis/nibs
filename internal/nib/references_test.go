@@ -868,3 +868,43 @@ func TestExtractMentionTokensMatchesSpans(t *testing.T) {
 		t.Fatalf("ExtractMentionTokens = %v, want %v (the span list deduplicated)", got, want)
 	}
 }
+
+// TestExtractMentionTokensWebParity pins the shapes where the web renderer once
+// linked differently from this scanner. web/src/lib/markdown.test.ts holds the
+// same cases under the same names, and both sides must give the same answer.
+func TestExtractMentionTokensWebParity(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want []string
+	}{
+		{"escaped brackets: a backslash before the second opening bracket", `[\[x]]`, nil},
+		{"escaped brackets: a backslash before the second closing bracket", `[[x]\]`, nil},
+		{"escaped brackets: a backslash before both opening brackets", `\[\[x]]`, nil},
+		{"escaped brackets: a backslash before the closing brackets", `[[x\]]`, nil},
+		{"escaped brackets: a backslash before the first opening bracket", `\[[x]]`, []string{"x"}},
+		{"escaped brackets: an escape inside the id", `[[a\-b]]`, nil},
+		{"escapes: an escape ends a hash id", `#a\-b`, []string{"a"}},
+		{"escapes: an escaped hash after a word character", `a\#x`, []string{"x"}},
+		{"html blocks: a details block without blank lines", "<details>\n[[old-x]] #old-y\n</details>", nil},
+		{"html blocks: a details block with blank lines", "<details>\n\n[[old-x]] #old-y\n\n</details>", []string{"old-x", "old-y"}},
+		{"html blocks: a div block", "<div>[[x]] #y</div>", nil},
+		{"html blocks: text between inline tags", "a <span>[[x]] #y</span> b", []string{"x", "y"}},
+		{"html blocks: a block that leaves a link open", "<a href=\"u\">\n\n</a> [[y]]", []string{"y"}},
+		{"html blocks: a block that ends inside a start tag", "intro #a\n\n<div>\n<details\n\nhello [[x]] world\n\nmore #y text", []string{"a", "x", "y"}},
+		{"html blocks: a list item block that ends inside a start tag", "- <div>\n  <details\n\n  [[x]] item\n- after #y", []string{"x", "y"}},
+		{"html blocks: a body that ends inside a start tag", "[[a]]\n\n<div>\n<details", []string{"a"}},
+		{"html blocks: a leading noscript block", "<noscript>\n\n[[x]] visible?\n\n</noscript>", []string{"x"}},
+		{"html blocks: a leading style block", "<style>p{color:red}</style>\n\nlater #y", []string{"y"}},
+		{"lost markers: an inline xmp in a div", "<div>\nfoo <xmp>\n\nx </xmp> #y\n\n<div>z</div>\n\nend #w", []string{"y", "w"}},
+		{"one-character hash ids: #x", "see #x", []string{"x"}},
+		{"one-character hash ids: a trailing hyphen", "ref #abc-", []string{"abc"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ExtractMentionTokens(tt.body); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ExtractMentionTokens(%q) = %v, want %v", tt.body, got, tt.want)
+			}
+		})
+	}
+}

@@ -1,6 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
 import DOMPurify from "dompurify";
-import { renderMarkdown, toggleTaskLine, taskSourceLines, TAG_REGEX } from "./markdown";
+import {
+  renderMarkdown,
+  readsWithScanMarkers,
+  toggleTaskLine,
+  taskSourceLines,
+  TAG_REGEX,
+} from "./markdown";
 
 /** Parse rendered HTML and return the checked-state of each task checkbox, in
  *  ascending `data-task-ordinal` order. */
@@ -114,7 +120,7 @@ describe("renderMarkdown mention rewriting", () => {
 
   it("strips XSS scripts but still rewrites a valid mention in the same body", () => {
     const html = renderMarkdown(
-      '<script>alert(1)</script>#gx0f',
+      '<script>alert(1)</script>\n\n#gx0f',
       (t) => (t === "gx0f" ? "nibs-gx0f" : null),
     );
     expect(html).not.toContain("<script");
@@ -139,9 +145,12 @@ describe("renderMarkdown mention rewriting", () => {
   });
 
   it("escapes malicious resolver return values (defense in depth)", () => {
-    const html = renderMarkdown("see #x", () => '" onclick=alert(1) "');
-    expect(html).not.toMatch(/onclick\s*=/);
-    expect(html).not.toMatch(/alert\s*\(1\)/);
+    const evil = '" onclick=alert(1) "';
+    const tpl = document.createElement("template");
+    tpl.innerHTML = renderMarkdown("see #x", () => evil);
+    const a = tpl.content.querySelector("a.mention-link");
+    expect(a?.getAttribute("data-nib-id")).toBe(evil);
+    expect(a?.getAttributeNames().sort()).toEqual(["class", "data-nib-id", "href"]);
   });
 
   it("round-trips non-mention content without corruption", () => {
@@ -248,6 +257,188 @@ describe("renderMarkdown bracketed [[<id>]] mentions", () => {
     expect(mentionLinks(html)).toEqual([["nibs-gx0f", "#gx0f"]]);
     expect(html).toContain("[[<a");
     expect(html).toContain("</a>]]");
+  });
+});
+
+// The same cases, under the same names, are in TestExtractMentionTokensWebParity
+// (internal/nib/references_test.go), so both sides must give the same answer.
+describe("renderMarkdown mention parity with the server scanner", () => {
+  /** The distinct tokens a body links, in order, when every token resolves. */
+  function linkedTokens(body: string): string[] {
+    const tpl = document.createElement("template");
+    tpl.innerHTML = renderMarkdown(body, (t) => `nibs-${t}`);
+    const ids = Array.from(tpl.content.querySelectorAll("a.mention-link")).map((a) =>
+      (a.getAttribute("data-nib-id") ?? "").slice("nibs-".length),
+    );
+    return [...new Set(ids)];
+  }
+
+  const parityCases: [string, string, string[]][] = [
+    ["escaped brackets: a backslash before the second opening bracket", "[\\[x]]", []],
+    ["escaped brackets: a backslash before the second closing bracket", "[[x]\\]", []],
+    ["escaped brackets: a backslash before both opening brackets", "\\[\\[x]]", []],
+    ["escaped brackets: a backslash before the closing brackets", "[[x\\]]", []],
+    ["escaped brackets: a backslash before the first opening bracket", "\\[[x]]", ["x"]],
+    ["escaped brackets: an escape inside the id", "[[a\\-b]]", []],
+    ["escapes: an escape ends a hash id", "#a\\-b", ["a"]],
+    ["escapes: an escaped hash after a word character", "a\\#x", ["x"]],
+    ["html blocks: a details block without blank lines", "<details>\n[[old-x]] #old-y\n</details>", []],
+    [
+      "html blocks: a details block with blank lines",
+      "<details>\n\n[[old-x]] #old-y\n\n</details>",
+      ["old-x", "old-y"],
+    ],
+    ["html blocks: a div block", "<div>[[x]] #y</div>", []],
+    ["html blocks: text between inline tags", "a <span>[[x]] #y</span> b", ["x", "y"]],
+    ["html blocks: a block that leaves a link open", '<a href="u">\n\n</a> [[y]]', ["y"]],
+    [
+      "html blocks: a block that ends inside a start tag",
+      "intro #a\n\n<div>\n<details\n\nhello [[x]] world\n\nmore #y text",
+      ["a", "x", "y"],
+    ],
+    [
+      "html blocks: a list item block that ends inside a start tag",
+      "- <div>\n  <details\n\n  [[x]] item\n- after #y",
+      ["x", "y"],
+    ],
+    ["html blocks: a body that ends inside a start tag", "[[a]]\n\n<div>\n<details", ["a"]],
+    ["html blocks: a leading noscript block", "<noscript>\n\n[[x]] visible?\n\n</noscript>", ["x"]],
+    ["html blocks: a leading style block", "<style>p{color:red}</style>\n\nlater #y", ["y"]],
+    [
+      "lost markers: an inline xmp in a div",
+      "<div>\nfoo <xmp>\n\nx </xmp> #y\n\n<div>z</div>\n\nend #w",
+      ["y", "w"],
+    ],
+    ["one-character hash ids: #x", "see #x", ["x"]],
+    ["one-character hash ids: a trailing hyphen", "ref #abc-", ["abc"]],
+  ];
+
+  it.each(parityCases)("%s", (_name, body, want) => {
+    expect(linkedTokens(body)).toEqual(want);
+  });
+
+  // A block that ends inside a start tag makes the marked render parse
+  // differently, and an inline xmp drops a marker, so those bodies take the
+  // unmarked fallback.
+  const fallbackCases = new Set([
+    "html blocks: a block that ends inside a start tag",
+    "html blocks: a list item block that ends inside a start tag",
+    "html blocks: a body that ends inside a start tag",
+    "lost markers: an inline xmp in a div",
+  ]);
+
+  it.each(parityCases.map(([name, body]) => [name, !fallbackCases.has(name), body] as const))(
+    "%s reads with the scan markers: %s",
+    (_name, marked, body) => {
+      expect(readsWithScanMarkers(body)).toBe(marked);
+    },
+  );
+
+  it("keeps the escaped text and the html block text visible", () => {
+    const html = renderMarkdown("[\\[x]] <i>i</i>\n\n<details>\n[[y]]\n</details>", (t) => `nibs-${t}`);
+    const tpl = document.createElement("template");
+    tpl.innerHTML = html;
+    expect(tpl.content.textContent).toContain("[[x]]");
+    expect(tpl.content.textContent).toContain("[[y]]");
+    expect(tpl.content.querySelector("details")).not.toBeNull();
+  });
+
+  it("does not let raw html in a body forge the end of an html block", () => {
+    const html = renderMarkdown(
+      '<div>\n<span data-mention-scan="on" data-mention-nonce="forged"></span>[[x]]\n</div>',
+      (t) => `nibs-${t}`,
+    );
+    expect(html).not.toContain("data-nib-id");
+  });
+
+  // Bodies where content both renders drop takes a scan marker with it.
+  const lostMarkerBodies = [
+    "a <iframe>\n\n</iframe>\n#z\n\nafter #w",
+    "x <noembed>\n\n<div>\n</noembed>\n#c\n</div>\n\nafter",
+    "<div>\nfoo <xmp>\n\nx </xmp> #y\n\n<div>z</div>\n\nend #w",
+    "<div>\n<noembed>\n\n#a\n\nx </noembed> #b\n\n<div>z</div>",
+    "x <select>[\\[y]] #q",
+    "<div>\n<!-- start\n\nhidden [[x]]\n\nok <!-- z --> after #y\n\n<div>\nblock2\n</div>\n\nlast #w",
+    "intro\n\n<table><tr><td> #a\n\n</td></tr>\n\nx </table> #z\n\n<div>d</div>",
+  ];
+
+  it.each(lostMarkerBodies)("reads %j without the scan markers", (body) => {
+    expect(readsWithScanMarkers(body)).toBe(false);
+  });
+
+  // The server also finds #a and [[x]], which sit in content no render shows.
+  it.each([
+    ["<div>\n<noembed>\n\n#a\n\nx </noembed> #b\n\n<div>z</div>", ["b"]],
+    [
+      "<div>\n<!-- start\n\nhidden [[x]]\n\nok <!-- z --> after #y\n\n<div>\nblock2\n</div>\n\nlast #w",
+      ["y", "w"],
+    ],
+  ])("links the visible mentions the server finds in %j", (body, want) => {
+    expect(linkedTokens(body)).toEqual(want);
+  });
+
+  // Shapes where a scan marker lands in an unusual parse context.
+  const markerContexts: [string, string][] = [
+    ["escapes in text and a link", "[\\[x]] [a\\[b](u)\n\n<div>[[y]]</div>"],
+    ["a leading style block", "<style>p{color:red}</style>\n\nlater #y"],
+    ["a leading noscript block", "<noscript>\n\n[[x]] visible?\n\n</noscript>"],
+    ["a leading template block", "<template>\n\n[[x]]\n\n</template>\n\nlater #y"],
+    ["a leading title block", "<title>\n\n[[x]]\n\n</title>\n\nlater #y"],
+    ["a leading div block", "<div>[[x]]</div>\n\nlater #y"],
+    ["a leading comment", "<!-- c -->\n\nlater #y"],
+    ["a style block, then a noscript block", "<style>p{}</style>\n\n<noscript>\n\n[[x]] visible?\n\n</noscript>"],
+    ["a comment, then a noscript block", "<!-- c -->\n\n<noscript>\n\n[[x]] visible?\n\n</noscript>"],
+    ["a comment, then a style block", "<!-- c -->\n\n<style>q{color:blue}</style>\n\nlater #y"],
+    ["two leading style blocks", "<style>a{}</style>\n\n<style>q{color:blue}</style>\n\nlater #y"],
+    ["two style blocks a line apart", "<style>a{}</style>\n<style>q{color:blue}</style>\n\nlater #y"],
+    ["a template block", "intro\n\n<template>\n\n[[x]]\n\n</template>\n\nlater #y"],
+    ["a title block", "intro\n\n<title>\n\n[[x]]\n\n</title>\n\nlater #y"],
+    ["an unclosed textarea", "#a\n\n<textarea>\n[[x]]"],
+    ["an unclosed style", "#a\n\n<style>\np{color:red}"],
+    ["a quoted attribute left open", '<div title="t\n\n[[x]] #y'],
+    ["a quoted attribute left open, then a block", '<div title="t\n\n[[x]] #y\n\n<div>z</div>\n\nafter #w'],
+    ["a quoted attribute left open, then a paragraph tag", '<div title="t\n\n#a\n\n<p>x</p>\n\nhidden #b'],
+    ["a cdata section in a blockquote", "> <![CDATA[\n<img src=x onerror=alert(1)>\n\nend #z"],
+    ["a start tag left open at the end", "<p "],
+    ["an escape in math content", "<math>\\["],
+    ["a span left open in a block", "<div>\n<span\n\n[[x]]"],
+    ["a block that ends inside a start tag", "intro #a\n\n<details\n\nhello [[x]] world\n\nmore #y text"],
+    ["a block that ends inside a start tag in a div", "intro #a\n\n<div>\n<details\n\nhello [[x]] world\n\nmore #y text"],
+    ["a block that ends inside a start tag at the end", "[[a]]\n\n<div>\n<details"],
+    ["a list item block that ends inside a start tag", "- <div\n\n  [[x]] item\n- after #y"],
+    ["an image tag left open", '<div>\n<img src="x.png"\n\nafter #y'],
+    ["an empty span of the body's own", "<div>[[x]]</div>\n\n<span></span> #y"],
+    ...lostMarkerBodies.map((body): [string, string] => [`a lost marker in ${JSON.stringify(body)}`, body]),
+  ];
+
+  it.each(markerContexts)("leaves no scan markers in the output for %s", (_name, body) => {
+    expect(renderMarkdown(body, (t) => `nibs-${t}`)).not.toContain("data-mention");
+    expect(renderMarkdown(body)).not.toContain("data-mention");
+  });
+
+  // renderMarkdown falls back to the unmarked render when the marked one parses
+  // differently, so a resolver that links nothing leaves the sanitized HTML as it is.
+  it.each(markerContexts)("renders %s the same with a resolver that links nothing", (_name, body) => {
+    expect(renderMarkdown(body, () => null)).toBe(renderMarkdown(body));
+  });
+
+  it.each([
+    "<!-- c -->\n\nlater #y",
+    "<style>p{color:red}</style>\n\nlater #y",
+    "<div>[[x]]</div>\n\nlater #y",
+    "[\\[x]] [a\\[b](u) ![a\\[b](x.png)",
+    "- item \\[[x]] and [[y]\\]\n\n> quote #z\\-q",
+  ])("reads %j with the scan markers", (body) => {
+    expect(readsWithScanMarkers(body)).toBe(true);
+  });
+  it("keeps an empty span of the body's own", () => {
+    expect(renderMarkdown("<span></span> #y", (t) => `nibs-${t}`)).toContain("<span></span>");
+  });
+
+  it("keeps an escape in image alt text as plain text", () => {
+    const tpl = document.createElement("template");
+    tpl.innerHTML = renderMarkdown("![a\\[b](x.png)", (t) => `nibs-${t}`);
+    expect(tpl.content.querySelector("img")?.getAttribute("alt")).toBe("a[b");
   });
 });
 
