@@ -162,12 +162,12 @@ type NibSubscriber interface {
 type AreaWriter interface {
 	// AddArea declares a new area at path, the FULL path of the new node. It
 	// rewrites no nib: nothing can be assigned to an area the vocabulary does not
-	// declare yet. ctx ends the verb's wait for the store's file lock, as below.
+	// declare yet. ctx ends the verb's wait for the store's locks, as below.
 	AddArea(ctx context.Context, path, description, color string) (nibcore.AreaEditResult, error)
 	// UpdateArea edits a declared node's name, description or color. A rename
 	// cascades to every nib assigned at or below it; an edit that changes no name
 	// rewrites none, since nothing stops being declared. ctx ends the verb's wait
-	// for the store's file lock — the one step that waits on another process.
+	// for the store's locks, the steps that wait for another writer.
 	UpdateArea(ctx context.Context, path string, u area.NodeUpdate) (nibcore.AreaEditResult, error)
 	// RemoveArea retires a declared node and the subtree it heads, disposing of
 	// every nib assigned at or below it as disposition says. ctx does the same here.

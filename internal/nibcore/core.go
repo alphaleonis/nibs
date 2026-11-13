@@ -130,7 +130,7 @@ type Core struct {
 	// mu serializes the writers and guards every field below it up to the
 	// subscriber maps. The ones readers see are the working copy publishLocked
 	// installs.
-	mu   sync.Mutex
+	mu   writerLock
 	nibs map[string]*nib.Nib // ID -> Nib
 
 	// Reverse-mention index, maintained alongside c.nibs.
@@ -215,6 +215,7 @@ func New(root string, cfg *config.Config) *Core {
 		layout:            store.NewLayout(root),
 		config:            cfg,
 		lockPath:          writeLockPath(root),
+		mu:                newWriterLock(),
 		nibs:              make(map[string]*nib.Nib),
 		mentionIdx:        newMentionIndex(),
 		subscribers:       make(map[uint64]*subscription),
@@ -225,6 +226,65 @@ func New(root string, cfg *config.Config) *Core {
 	c.warnWriter.Store(safetext.NewWriter(os.Stderr))
 	c.publishLocked()
 	return c
+}
+
+// writerLock is the mutex Core's writers share. A lock made by newWriterLock
+// behaves as a sync.Mutex does for Lock, Unlock and TryLock, and LockContext is
+// Lock for a caller that can be told to stop waiting. Every writer takes the same
+// one-slot channel, so a writer that waits through LockContext and one that waits
+// through Lock exclude each other. The zero value is not usable.
+type writerLock struct{ slot chan struct{} }
+
+func newWriterLock() writerLock {
+	return writerLock{slot: make(chan struct{}, 1)}
+}
+
+// requireMade panics on the zero value, whose nil channel would block forever.
+func (l writerLock) requireMade() {
+	if l.slot == nil {
+		panic("nibcore: writerLock not made by newWriterLock; build Core with New")
+	}
+}
+
+func (l writerLock) Lock() {
+	l.requireMade()
+	l.slot <- struct{}{}
+}
+
+func (l writerLock) TryLock() bool {
+	select {
+	case l.slot <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+// LockContext waits for the lock until ctx ends, then returns
+// *StoreLockWaitEndedError and holds nothing. A context already over is refused
+// even when the lock is free.
+func (l writerLock) LockContext(ctx context.Context) error {
+	l.requireMade()
+	if err := ctx.Err(); err != nil {
+		return &StoreLockWaitEndedError{Cause: err}
+	}
+	started := time.Now()
+	select {
+	case l.slot <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return &StoreLockWaitEndedError{Waited: time.Since(started), Cause: ctx.Err()}
+	}
+}
+
+// Unlock panics when the lock is not held, as sync.Mutex fails, because a
+// receive from the empty slot would block forever.
+func (l writerLock) Unlock() {
+	select {
+	case <-l.slot:
+	default:
+		panic("nibcore: Unlock of an unlocked writerLock")
+	}
 }
 
 // acquireWriteLock takes the cross-process advisory write lock for the whole
@@ -245,10 +305,9 @@ func (c *Core) acquireWriteLock() (func() error, error) {
 // confirmation prompt, or a `nibs config set-prefix` renaming every file in the
 // store. A context carrying no deadline waits exactly as acquireWriteLock does.
 //
-// Cancellation reaches the wait for the FILE lock only. c.mu is a plain mutex
-// every mutator takes first, and the others wait for the file lock under it with
-// a context carrying no end — so an edit still queued on c.mu behind one of them
-// cannot be told to stop until that one is done.
+// It ends the wait for the FILE lock only. A caller that also waits for c.mu
+// first takes it with c.mu.LockContext, because the other mutators wait for the
+// file lock while they hold c.mu.
 func (c *Core) acquireWriteLockContext(ctx context.Context) (func() error, error) {
 	return acquireFileLockWaiting(ctx, c.lockPath)
 }

@@ -116,8 +116,9 @@ const (
 )
 
 // StoreLockWaitEndedError reports a wait for the store's cross-process write
-// lock that ended before the lock was free, because the caller's context was
-// canceled or its deadline passed. Nothing was locked, so nothing was written.
+// lock, or for the writer lock Core's mutators share, that ended before the lock
+// was free. The wait ended because the caller's context was canceled or its
+// deadline passed. Nothing was locked, so nothing was written.
 // It unwraps to the context error, so errors.Is reaches context.Canceled and
 // context.DeadlineExceeded.
 type StoreLockWaitEndedError struct {
