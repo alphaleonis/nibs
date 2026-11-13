@@ -93,6 +93,10 @@ release:
   # Found by cutting v0.8.0-alpha.1, whose draft came out with
   # isPrerelease: false.
   prerelease: auto
+  # The release job never pushes its tag, so GitHub creates it here when the
+  # draft is published. The default, the default branch, can move before then.
+  # https://docs.github.com/en/rest/releases/releases#update-a-release
+  target_commitish: "{{ .FullCommit }}"
 
 # Do NOT set `changelog.disable: true`: the release workflow passes
 # `--release-notes` (from CHANGELOG.md), which GoReleaser loads inside the

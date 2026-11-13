@@ -5,8 +5,8 @@ Releases are built by a GitHub Actions workflow and published as draft GitHub Re
 ## Prerequisites
 
 - Push access to `main`
-- CI green on the `main` commit being released — the workflow refuses to tag a
-  commit whose latest CI run has not completed successfully
+- CI green on the `main` commit being released — the workflow refuses to release
+  a commit whose latest CI run has not completed successfully
 - A changelog entry for the version being released (stable releases only)
 
 ## Steps
@@ -50,16 +50,21 @@ The workflow will:
 1. Refuse to run unless dispatched from `main` and the latest CI run for that
    commit completed successfully (applies to pre-releases too)
 2. Validate the version format
-3. Verify a matching changelog entry exists (stable releases only)
-4. Extract release notes from the changelog, or generate a placeholder for pre-releases
-5. Create and push a git tag
-6. Build binaries for Linux, macOS, and Windows (amd64 + arm64) via GoReleaser
-7. Collect third-party dependency licenses via `go-licenses`
-8. Create a **draft** GitHub Release with the binaries and license notices
+3. Refuse a version that already has a tag, a release or a draft
+4. Verify a matching changelog entry exists (stable releases only)
+5. Extract release notes from the changelog, or generate a placeholder for pre-releases
+6. Tag the commit locally, without pushing the tag
+7. Build binaries for Linux, macOS, and Windows (amd64 + arm64) via GoReleaser
+8. Collect third-party dependency licenses via `go-licenses`
+9. Create a **draft** GitHub Release with the binaries and license notices
 
 ### 4. Review and publish
 
 The release is created as a draft. Review the release notes and attached archives on the [Releases page](https://github.com/alphaleonis/nibs/releases), then click **Publish**.
+
+The tag does not exist on GitHub until you publish: GitHub creates it then, at the
+commit the workflow built. So deleting a draft instead leaves nothing to clean up,
+and the version can be released again.
 
 ## What's in the archives
 
@@ -102,7 +107,7 @@ Unlike the attestation, this anchor is a key compiled into every nibs binary, wh
 
 This makes signing mandatory for every future release, in a stronger sense than it first appears: go-selfupdate fetches the validation asset during **detection**, so against a release published without a `checksums.txt.sig`, `nibs upgrade` fails with an error before downloading anything. Two consequences:
 
-- The release workflow must never publish unsigned. It doesn't: a missing key fails the run before tagging, and the signature is verified against these same public keys before the job finishes.
+- The release workflow must never publish unsigned. It doesn't: a missing key fails the run before anything is uploaded, and the signature is verified against these same public keys before the job finishes.
 - `nibs upgrade --version <tag>` cannot reach a release that predates signing.
 
 ### Rotating the signing key
@@ -111,7 +116,7 @@ Three keypairs were generated up front and all three public keys ship in every b
 
 To rotate, replace the `NIBS_SIGNING_KEY` secret in the `release` environment with the next private key and update the note above. No client change is needed: the verifier accepts a signature from any embedded key.
 
-The release job checks this for you before it tags or publishes anything:
+The release job checks this for you before it uploads anything:
 
 ```bash
 NIBS_SIGNING_KEY="$(cat nibs-signing-2.key)" go run ./internal/signing/cmd/verify -check-key

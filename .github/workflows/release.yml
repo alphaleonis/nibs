@@ -10,7 +10,7 @@ on:
         type: string
 
 permissions:
-  contents: write     # push tags and create the release
+  contents: write     # create the release
   actions: read       # read the CI run conclusion for the release commit
   # Both are for actions/attest-build-provenance below. id-token mints the
   # short-lived OIDC token that identifies this workflow to Sigstore; the
@@ -19,6 +19,12 @@ permissions:
   # already have — attestations: write only writes to the attestations API.
   id-token: write
   attestations: write
+
+# One release run at a time: the existing-release check runs long before the
+# draft exists, so two concurrent runs for one version could both pass it.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -114,6 +120,20 @@ jobs:
             exit 1
           fi
 
+      # A draft has no tag until it is published, so the tag check above
+      # cannot see a leftover draft. The list endpoint returns drafts.
+      - name: Check no release or draft carries this version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          TAGS=$(gh api "repos/$REPO/releases" --paginate --jq '.[].tag_name')
+          if grep -Fxq -- "$VERSION" <<<"$TAGS"; then
+            echo "::error::A release or draft for $VERSION already exists. Delete the draft, or release another version."
+            exit 1
+          fi
+
       - name: Verify changelog entry
         if: steps.version.outputs.prerelease == 'false'
         env:
@@ -145,12 +165,12 @@ jobs:
             fi
           fi
 
-      - name: Create and push tag
+      # GoReleaser reads the version from this tag, which stays local. GitHub
+      # creates the tag at the draft's target_commitish when it is published.
+      - name: Create local tag
         env:
           VERSION: ${{ inputs.version }}
-        run: |
-          git tag "$VERSION"
-          git push origin "$VERSION"
+        run: git tag "$VERSION"
 
       # Every tool this job runs — go, node, goreleaser, go-licenses — comes
       # from mise.toml, the same file ci.yml reads. That makes the published
@@ -172,8 +192,8 @@ jobs:
       - name: Build release inputs
         run: task release:prep
 
-      # Fail before anything is tagged or published if the signing secret does
-      # not correspond to a public key shipped in nibs binaries. Signing with a
+      # Fail before anything is published if the signing secret does not
+      # correspond to a public key shipped in nibs binaries. Signing with a
       # key no binary carries produces a perfectly valid-looking signature, so
       # nothing downstream would notice — until signature verification is
       # required, at which point every install refuses to upgrade and has to be
@@ -205,10 +225,11 @@ jobs:
       # a wrong key, versus a signature over the wrong bytes.
       #
       # This runs after publishing, so a failure here leaves a draft release to
-      # delete by hand — the tag is removed by the failure step below. That is
-      # the accepted cost of checking the real artifact: goreleaser signs and
-      # uploads within one command, so there is no point between them to stand.
-      # The draft is never public, and -check-key catches the likely cause first.
+      # delete by hand. The draft has no tag yet, so the draft is all there is
+      # to remove. That is the accepted cost of checking the real artifact:
+      # goreleaser signs and uploads within one command, so there is no point
+      # between them to stand. The draft is never public, and -check-key
+      # catches the likely cause first.
       - name: Verify the published signature
         run: go run ./internal/signing/cmd/verify -in dist/checksums.txt -sig dist/checksums.txt.sig
 
@@ -234,9 +255,3 @@ jobs:
             dist/*.zip
             dist/checksums.txt
             dist/checksums.txt.sig
-
-      - name: Delete tag on failure
-        if: failure()
-        env:
-          VERSION: ${{ inputs.version }}
-        run: git push origin --delete "$VERSION" || true

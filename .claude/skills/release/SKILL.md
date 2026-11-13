@@ -116,7 +116,13 @@ re-push. Poll instead, and read the conclusion rather than the exit status of th
 If CI is anything but `success`, **stop** — do not release from a red or unverified commit.
 
 ### 6. Dispatch the release
-Confirm the tag is free (`git tag -l <version>`), then:
+Confirm that neither a tag nor a release carries the version. Both commands must print
+nothing. The second lists drafts too, and a leftover draft has no tag, so the first misses it:
+
+    git ls-remote --tags origin "refs/tags/<version>"
+    gh api repos/alphaleonis/nibs/releases --paginate --jq '.[] | select(.tag_name == "<version>") | .tag_name'
+
+Then dispatch:
 
     gh workflow run release.yml --ref main -f version=<version>
 
@@ -167,6 +173,10 @@ Report the draft's URL and a short summary of what was released. **Do not publis
 the user to review the notes and archives and click Publish.
 
 ### 10. Housekeeping
-Fast-forward `develop` to the released commit so the next work isn't on a stale base:
+GitHub creates the tag when the draft is published, so after the user publishes, fetch it:
+
+    git fetch --tags
+
+Then fast-forward `develop` to the released commit so the next work isn't on a stale base:
 
     git switch develop && git merge --ff-only main && git push origin develop
