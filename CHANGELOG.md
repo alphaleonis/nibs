@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`nibs rel` takes `-c` and `-q`** — the size of the related set as a bare integer and the related ids one per line, with list's semantics, which is what the cheat sheet's FILTER block already promised of both verbs.
 - **Areas are declared, edited and retired over the API** — a project that declares no vocabulary yet gets one from its first declaration, an area's name, description and color are changed in one call, and the work assigned beneath a renamed or retired area is reassigned or unassigned as the call directs.
 - **The web manages the areas vocabulary** — the New menu creates an area from any view, each area row's menu (right-click or ⋯) creates one beneath it, edits it and retires it, asking where any work it holds should go, and palette colors follow the theme.
+- **The web's mapping mode puts the open milestones in a panel beside the table**, so rows dragged onto a milestone's card are assigned to it from any view, and each card shows the milestone's open and closed counts with a progress bar.
 - **`[[<id>]]` is a nib mention alongside `#<id>`** — it links in the web UI, counts toward `mentions-in`/`mentions-out`, and `nibs config set-prefix` retargets it.
 - **`nibs body --section "<heading>" --append` and `--clear`** add to the end of one section and empty it, where `--set` could only replace it.
 - **`nibs body --check`, `--uncheck` and `--remove` edit checklist items by number**, and `--checklist` prints the numbered list.
