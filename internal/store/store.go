@@ -11,8 +11,13 @@
 package store
 
 import (
+	"context"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
+	"time"
 )
 
 const (
@@ -139,16 +144,160 @@ type Marker struct {
 // of either kind, in one pass; resolve a store through it. Within one directory a
 // `.nibs` store wins over `.nibs.yml`. It matches `.nibs` by name, symlinks
 // included: cmd's bindNamedStore decides whether the match is a store.
+//
+// When the walk finds no marker and startDir is in a linked git worktree, it
+// checks the main working tree the same way; see mainWorktree. A worktree created
+// outside the main clone has no route to a store the main repository does not track.
 func FindNearestMarker(startDir string) (Marker, error) {
-	return findUpward(startDir, func(dir string) (Marker, bool) {
-		if candidate := filepath.Join(dir, DirName); isDir(candidate) {
-			return Marker{Kind: MarkerStore, Path: candidate}, true
+	marker, err := findUpward(startDir, markerIn)
+	if err != nil || marker.Kind != MarkerNone {
+		return marker, err
+	}
+	if mainTree := mainWorktree(startDir); mainTree != "" {
+		if found, ok := markerIn(mainTree); ok {
+			return found, nil
 		}
-		if candidate := filepath.Join(dir, LegacyProjectConfigFileName); isNonDir(candidate) {
-			return Marker{Kind: MarkerLegacyProject, Path: candidate}, true
+	}
+	return Marker{}, nil
+}
+
+// markerIn returns the nibs marker in dir itself, if any.
+func markerIn(dir string) (Marker, bool) {
+	if candidate := filepath.Join(dir, DirName); isDir(candidate) {
+		return Marker{Kind: MarkerStore, Path: candidate}, true
+	}
+	if candidate := filepath.Join(dir, LegacyProjectConfigFileName); isNonDir(candidate) {
+		return Marker{Kind: MarkerLegacyProject, Path: candidate}, true
+	}
+	return Marker{}, false
+}
+
+// gitTimeout bounds the git call, which normally takes milliseconds. The
+// directory may come from an archive, and a named pipe where git expects a file
+// blocks git until it is killed. The headroom is for a cold disk or a slow
+// Windows process start.
+var gitTimeout = 5 * time.Second
+
+// mainWorktree returns the main working tree of the linked git worktree that
+// holds startDir, or "" when there is none or git cannot tell.
+//
+// Only a common dir named `.git` has its working tree as its parent. A bare
+// repository's common dir and a --separate-git-dir one have no such parent. A
+// non-empty NIBS_CONFIG_ROOT must contain the main tree, as it bounds the walk.
+func mainWorktree(startDir string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir", "--show-toplevel")
+	cmd.Dir = startDir
+	cmd.Env = withoutRepoLocation(os.Environ())
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(strings.TrimSuffix(strings.ReplaceAll(string(out), "\r\n", "\n"), "\n"), "\n")
+	if len(lines) != 3 {
+		return ""
+	}
+	gitDir := filepath.Clean(filepath.FromSlash(lines[0]))
+	commonDir := filepath.Clean(filepath.FromSlash(lines[1]))
+	toplevel := filepath.Clean(filepath.FromSlash(lines[2]))
+	if filepath.Base(commonDir) != ".git" || !isRegisteredWorktree(gitDir, commonDir, toplevel) {
+		return ""
+	}
+	mainTree := filepath.Dir(commonDir)
+	if raw := os.Getenv("NIBS_CONFIG_ROOT"); raw != "" && !within(mainTree, raw) {
+		return ""
+	}
+	return mainTree
+}
+
+// isRegisteredWorktree reports whether the main repository at commonDir lists
+// toplevel as one of its linked worktrees, with gitDir as that worktree's entry.
+//
+// A `.git` file can name any gitdir and, through it, any common dir, so neither
+// is evidence alone. The entry must sit under `<commonDir>/worktrees`, and its
+// `gitdir` back-pointer, which the main repository holds, must name toplevel's
+// `.git`. That `.git` must be a regular file, as `git worktree add` writes it,
+// because a symlink to another worktree's `.git` resolves to what that entry names.
+func isRegisteredWorktree(gitDir, commonDir, toplevel string) bool {
+	if filepath.Dir(gitDir) != filepath.Join(commonDir, "worktrees") {
+		return false
+	}
+	dotGit := filepath.Join(toplevel, ".git")
+	if info, err := os.Lstat(dotGit); err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	raw, ok := readBackPointer(filepath.Join(gitDir, "gitdir"))
+	if !ok {
+		return false
+	}
+	backPointer := filepath.FromSlash(strings.TrimSpace(string(raw)))
+	if !filepath.IsAbs(backPointer) {
+		backPointer = filepath.Join(gitDir, backPointer)
+	}
+	return resolve(backPointer) == resolve(dotGit)
+}
+
+// maxBackPointerBytes bounds a back-pointer read. The file holds one path.
+const maxBackPointerBytes = 64 << 10
+
+// readBackPointer returns the contents of a worktree's back-pointer file, or
+// false when it cannot be read or is not a small regular file. git never opens
+// this file, so gitTimeout does not cover the read, and a named pipe would block it.
+func readBackPointer(path string) ([]byte, bool) {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, false
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, false
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, maxBackPointerBytes+1))
+	if err != nil || len(data) > maxBackPointerBytes {
+		return nil, false
+	}
+	return data, true
+}
+
+// withoutRepoLocation drops the variables that point git at a repository other
+// than the one around its working directory. A git hook sets GIT_DIR, and with
+// it set git reports that repository for any directory, even one outside it.
+func withoutRepoLocation(env []string) []string {
+	kept := env[:0:0]
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		switch strings.ToUpper(name) {
+		case "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR":
+			continue
 		}
-		return Marker{}, false
-	})
+		kept = append(kept, kv)
+	}
+	return kept
+}
+
+// within reports whether path is dir or below it, comparing resolved paths
+// because git prints path with its symlinks resolved.
+func within(path, dir string) bool {
+	rel, err := filepath.Rel(resolve(dir), resolve(path))
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// resolve returns path absolute and with symlinks evaluated, or as absolute as
+// it can be made when it cannot be resolved.
+func resolve(path string) string {
+	if r, err := filepath.EvalSymlinks(path); err == nil {
+		path = r
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return filepath.Clean(path)
 }
 
 // FindStore searches upward from startDir for a `.nibs` directory and returns its

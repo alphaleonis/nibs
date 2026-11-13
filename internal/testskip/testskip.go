@@ -169,6 +169,10 @@ var (
 	// so these guards are the whole of the coverage, and leaving the var unset
 	// everywhere would let them stop running without anything going red.
 	PosixFileModes = Capability{Name: "posix file modes", EnvVar: "NIBS_REQUIRE_POSIX_FILE_MODES"}
+
+	// Git covers a git executable on PATH, which the worktree fallback in store
+	// discovery shells out to and its fixtures build repositories with.
+	Git = Capability{Name: "git", EnvVar: "NIBS_REQUIRE_GIT"}
 )
 
 var (
