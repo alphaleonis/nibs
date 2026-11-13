@@ -59,13 +59,8 @@ checksum:
 # rclone and restic both ship, and the one go-selfupdate's own PatternValidator
 # example documents.
 #
-# `nibs upgrade` does NOT require this signature yet — it still runs
-# ChecksumValidator alone. That is deliberate. Producing the signature has to
-# come first and stand on its own for at least one release: if the validator
-# shipped at the same time, the first release where signing matters would also
-# be the first release where it had ever run, and a later release that failed
-# to sign would strand every user on the version demanding a signature, with no
-# route back but a manual reinstall (nibs-bw1u).
+# `nibs upgrade` requires this signature: against a release without one it
+# fails at detection, before any download, so a release must never ship unsigned.
 #
 # The signer is `go run`, not a prebuilt binary, because the release job already
 # has the pinned Go toolchain and this avoids a second build artifact to publish

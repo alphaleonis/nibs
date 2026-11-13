@@ -1,7 +1,7 @@
 ---
 name: release
 description: Cut a nibs release end-to-end — author and scrub the changelog, merge to main, wait for green CI, dispatch the gated Release workflow, verify and revise the draft, then stop for a human to publish. User-invoked only.
-invoke-by: user
+disable-model-invocation: true
 ---
 
 You are cutting a nibs release. `RELEASING.md` is the source of truth; follow the steps
@@ -148,11 +148,9 @@ all six platform archives (`nibs_{darwin,linux,windows}_{amd64,arm64}`) plus
 Check the signature by NAME, not by the count alone. `.goreleaser.yaml` signs the checksum
 file on every release — one signature anchors every archive, since `checksums.txt` already
 covers them all by digest — so a draft missing `checksums.txt.sig` means the signing step
-did not run, even though the release otherwise looks complete. That matters more than it
-appears: `nibs upgrade` deliberately does not verify the signature yet, precisely so
-signing can prove itself over several releases first, which only works if every release
-actually produces one. A silently unsigned release breaks that record with nothing failing
-at the time. Treat a missing `.sig` as a halt, not a warning.
+did not run, even though the release otherwise looks complete. `nibs upgrade` requires the
+signature and fails at detection against a release without one, so publishing it unsigned
+would make every upgrade error. Treat a missing `.sig` as a halt, not a warning.
 
 ### 8. Revise the release notes — required, do not skip
 Review the draft's rendered notes against our standards: Keep a Changelog structure, clear

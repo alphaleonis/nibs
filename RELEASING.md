@@ -100,7 +100,7 @@ Unlike the attestation, this anchor is a key compiled into every nibs binary, wh
 
 **`nibs upgrade` requires this signature.** It verifies `checksums.txt` against a key compiled into the binary, then verifies each archive against that checksums file.
 
-This makes signing mandatory for every future release, in a stronger sense than it first appears: go-selfupdate fetches the validation asset during **detection**, so a release published without a `checksums.txt.sig` is not merely rejected — it is not seen at all. Two consequences:
+This makes signing mandatory for every future release, in a stronger sense than it first appears: go-selfupdate fetches the validation asset during **detection**, so against a release published without a `checksums.txt.sig`, `nibs upgrade` fails with an error before downloading anything. Two consequences:
 
 - The release workflow must never publish unsigned. It doesn't: a missing key fails the run before tagging, and the signature is verified against these same public keys before the job finishes.
 - `nibs upgrade --version <tag>` cannot reach a release that predates signing.
