@@ -160,6 +160,10 @@ type Core struct {
 	// copied per publish; readState says what a reader may conclude from it.
 	searchIndex SearchIndex
 
+	// newSearchIndex builds the index that Search fills when none is installed.
+	// Tests swap it to make the fill fail.
+	newSearchIndex func() (SearchIndex, error)
+
 	// What searchIndex holds, by nib id: the digest of the text this Core last
 	// wrote there (see search_sync.go). It is what makes a reload index only the
 	// nibs that changed, so every path that indexes, drops or replaces the index
@@ -216,6 +220,7 @@ func New(root string, cfg *config.Config) *Core {
 		subscribers:       make(map[uint64]*subscription),
 		signalSubscribers: make(map[uint64]chan struct{}),
 		areasSubscribers:  make(map[uint64]chan struct{}),
+		newSearchIndex:    newBleveIndex,
 	}
 	c.warnWriter.Store(safetext.NewWriter(os.Stderr))
 	c.publishLocked()
@@ -741,28 +746,44 @@ func (c *Core) loadNib(path string) (*nib.Nib, error) {
 	return b, nil
 }
 
+// newBleveIndex returns an empty in-memory Bleve index.
+func newBleveIndex() (SearchIndex, error) {
+	idx, err := search.NewIndex()
+	if err != nil {
+		// A nil *search.Index in the interface would not compare equal to nil.
+		return nil, err
+	}
+	return idx, nil
+}
+
 // ensureSearchIndexLocked initializes the in-memory search index if not already
 // created. Must be called with c.mu held, so no writer can skip indexing a nib
 // that this call's whole-store fill has not read.
+//
+// It installs the index only after the fill succeeds. A failed fill leaves no
+// index, so the next search tries the fill again.
 func (c *Core) ensureSearchIndexLocked() error {
 	if c.searchIndex != nil {
 		return nil
 	}
 
-	idx, err := search.NewIndex()
+	idx, err := c.newSearchIndex()
 	if err != nil {
 		return fmt.Errorf("initializing search index: %w", err)
 	}
-
-	c.searchIndex = idx
 
 	allNibs := make([]*nib.Nib, 0, len(c.nibs))
 	for _, b := range c.nibs {
 		allNibs = append(allNibs, b)
 	}
-	if err := c.searchIndex.IndexNibs(allNibs); err != nil {
+	if err := idx.IndexNibs(allNibs); err != nil {
+		if closeErr := idx.Close(); closeErr != nil {
+			c.logWarn("failed to close the discarded search index: %v", closeErr)
+		}
 		return fmt.Errorf("populating search index: %w", err)
 	}
+
+	c.searchIndex = idx
 	c.recordAllIndexedLocked()
 
 	return nil
@@ -824,20 +845,18 @@ func (c *Core) search(query string, limit int) ([]*nib.Nib, error) {
 	return result, nil
 }
 
-// initSearchIndex builds the search index on first use and returns the read
-// state that carries it. It takes c.mu, so the first search waits for any
+// initSearchIndex builds the search index if none is installed and returns the
+// read state that carries it. It takes c.mu, so the first search waits for any
 // writer in progress.
 func (c *Core) initSearchIndex() (*readState, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	err := c.ensureSearchIndexLocked()
-	// Published even on failure, as every writer publishes: the index may be
-	// installed and partly filled. Another first search may have published it.
+	if err := c.ensureSearchIndexLocked(); err != nil {
+		return nil, err
+	}
+	// Another first search may have published it already.
 	if c.view().search == nil {
 		c.publishLocked()
-	}
-	if err != nil {
-		return nil, err
 	}
 	return c.view(), nil
 }
