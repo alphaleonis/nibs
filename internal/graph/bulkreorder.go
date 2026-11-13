@@ -63,18 +63,13 @@ func (r *mutationResolver) reorderSiblingsImpl(siblingIDs []string, afterID *str
 	}
 
 	// The non-moved siblings, in order — the block's own keys are about to be
-	// overwritten, so the bounds around the anchor come from here.
-	allSiblings := r.Orderer.Members(ScopeParent, parentID)
-	blockSet := make(map[string]struct{}, len(block))
-	for _, b := range block {
-		blockSet[b.ID] = struct{}{}
+	// overwritten, so the bounds around the anchor come from here. The anchor's
+	// key is read from this slice too, since the backfill may have just keyed it.
+	blockIDs := make([]string, len(block))
+	for i, b := range block {
+		blockIDs[i] = b.ID
 	}
-	others := make([]*nib.Nib, 0, len(allSiblings))
-	for _, s := range allSiblings {
-		if _, ok := blockSet[s.ID]; !ok {
-			others = append(others, s)
-		}
-	}
+	others := r.Orderer.keyedMembers(ScopeParent, parentID, blockIDs...)
 
 	var lower, upper string
 	switch pos.kind {
@@ -84,9 +79,9 @@ func (r *mutationResolver) reorderSiblingsImpl(siblingIDs []string, afterID *str
 			upper = others[0].Order
 		}
 	case posBefore:
-		upper = anchor.Order
 		for i, s := range others {
 			if s.ID == anchor.ID {
+				upper = s.Order
 				if i > 0 {
 					lower = others[i-1].Order
 				}
@@ -94,9 +89,9 @@ func (r *mutationResolver) reorderSiblingsImpl(siblingIDs []string, afterID *str
 			}
 		}
 	case posAfter:
-		lower = anchor.Order
 		for i, s := range others {
 			if s.ID == anchor.ID {
+				lower = s.Order
 				if i+1 < len(others) {
 					upper = others[i+1].Order
 				}
@@ -162,7 +157,7 @@ func (r *mutationResolver) validateBulkSiblings(siblingIDs []string, afterID *st
 			return nil, Position{}, nil, "", fmt.Errorf("duplicate id in sibling list: %s (resolved to %s)", id, b.ID)
 		}
 		seen[b.ID] = struct{}{}
-		// Group on the RESOLVED parent, the set Members enumerates below.
+		// Group on the RESOLVED parent, the set keyedMembers enumerates below.
 		bParentID := resolvedParentID(b, r.Reader)
 		if i == 0 {
 			parentID = bParentID

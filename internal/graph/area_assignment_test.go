@@ -283,36 +283,29 @@ func retireStoredArea(t *testing.T, core *nibcore.Core, id, area string) {
 	}
 }
 
-// TestBackfillOrderKeysStaysQuietOnAnUndeclaredArea guards the read-path flood
-// that Core.Update's area check opened up.
+// TestBackfillOrderKeysStaysQuietOnAnUndeclaredArea pins an `area:` the
+// vocabulary no longer declares as a stable, quiet backfill refusal.
 //
-// Orderer.backfillKeys writes from the hot Children/root READ path to install a
-// missing order key, and an unwritable sibling keeps Order == "" — so the write
-// is re-attempted on EVERY read. A nib carrying an `area:` the vocabulary no
-// longer declares is refused by that write permanently and identically, which
-// made the warning re-appear on every read of the parent, forever, for a
-// condition deliberately tolerated everywhere else (`nibs check` reports
-// nothing for it, so there is nothing to act on either).
-//
-// It is a stable class exactly like the etag divergence the suppression list
-// was built for, so it belongs in the same guard. The second subtest is what
-// keeps the first from passing vacuously: on the same read path, a sibling the
-// write DOES accept gets its key.
+// An unwritable sibling keeps Order == "", so every write that positions a nib
+// in its group retries the backfill and meets the same refusal. `nibs check`
+// reports nothing for an undeclared area, so a warning would repeat with
+// nothing to act on. The second subtest keeps the first from passing
+// vacuously: a sibling the write DOES accept gets its key.
 func TestBackfillOrderKeysStaysQuietOnAnUndeclaredArea(t *testing.T) {
-	t.Run("an undeclared area is a stable refusal, so the read path stays quiet", func(t *testing.T) {
+	t.Run("an undeclared area is a stable refusal, so the backfill stays quiet", func(t *testing.T) {
 		r, core := setupTestResolverWithAreas(t)
 		createTestNib(t, core, "area-bf1", "Unkeyed root", "todo")
 		retireStoredArea(t, core, "area-bf1", "retired/team")
 
 		stderr := captureStderr(t, func() {
-			// Model repeated tree renders/polls: each one re-attempts the
-			// backfill, because the refused write never persists a key.
+			// Each positioned write to the group retries the backfill, because
+			// the refused write never persists a key.
 			for i := 0; i < 3; i++ {
-				_ = r.Orderer.Members(ScopeParent, "")
+				_ = r.Orderer.keyedMembers(ScopeParent, "")
 			}
 		})
 		if strings.TrimSpace(stderr) != "" {
-			t.Errorf("a permanently refused backfill must not warn once per read; got %q", stderr)
+			t.Errorf("a permanently refused backfill must not warn once per write; got %q", stderr)
 		}
 		got, err := r.Reader.Get("area-bf1")
 		if err != nil {
@@ -322,15 +315,15 @@ func TestBackfillOrderKeysStaysQuietOnAnUndeclaredArea(t *testing.T) {
 			t.Errorf("shared nib left with phantom Order %q after a refused backfill write", got.Order)
 		}
 		if got.Area != "retired/team" {
-			t.Errorf("Area = %q, want the undeclared value to survive the read untouched", got.Area)
+			t.Errorf("Area = %q, want the undeclared value to survive the refused backfill untouched", got.Area)
 		}
 	})
 
-	t.Run("the same read path still installs a key when the write is accepted", func(t *testing.T) {
+	t.Run("the same backfill still installs a key when the write is accepted", func(t *testing.T) {
 		r, core := setupTestResolverWithAreas(t)
 		createTestNib(t, core, "area-bf2", "Unkeyed root", "todo")
 
-		_ = r.Orderer.Members(ScopeParent, "")
+		_ = r.Orderer.keyedMembers(ScopeParent, "")
 
 		got, err := r.Reader.Get("area-bf2")
 		if err != nil {

@@ -800,11 +800,7 @@ func TestBuildPlan_StructuralAxisReportsMilestoneTypedChildren(t *testing.T) {
 
 // TestBuildPlan_ReadsWithoutWriting pins plan as a pure question on BOTH
 // axes: an unkeyed member is reported with an empty order key and its file is
-// left byte-identical, rather than being backfilled to disk as a side effect
-// of the read. That is graph.Next's rule (internal/graph/next.go) — a question
-// must not edit files the caller never named, and must not fail differently on
-// a read-only store — and the reason plan enumerates the member set from a
-// membership.View rather than through Orderer.Members, which backfills.
+// left byte-identical.
 //
 // The comparison is over every file in the store's data directory, not the
 // unkeyed member's alone: a backfill misdirected onto the keyed member or onto

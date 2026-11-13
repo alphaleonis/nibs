@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"slices"
 	"sync/atomic"
 
 	"github.com/alphaleonis/nibs/internal/area"
@@ -45,7 +46,7 @@ type scopeOps struct {
 	setKey func(*nib.Nib, string)
 	// group resolves the nib's container; "" means what the Scope constant says.
 	group func(*nib.Nib, NibReader) string
-	// rawMembers enumerates the group unsorted and un-backfilled.
+	// rawMembers enumerates the group unsorted.
 	rawMembers             func(*Orderer, string) []*nib.Nib
 	emptyGroupIsMemberless bool
 	// defaultPlace positions b among siblings; never called with an empty set.
@@ -161,12 +162,26 @@ func NewOrderer(reader NibReader, writer NibWriter) *Orderer {
 	return &Orderer{reader: reader, writer: writer}
 }
 
-// Members returns the scope's group sorted by its ordering key, lazily
-// backfilling a key onto any member that lacks one. A memberless group id
-// returns nil.
+// Members returns the scope's group sorted by its ordering key, with unkeyed
+// members last by title. It never writes. A memberless group id returns nil.
 func (o *Orderer) Members(scope Scope, groupID string) []*nib.Nib {
 	ops := scope.ops()
 	members := ops.rawMembers(o, groupID)
+	nib.SortByKey(members, ops.key)
+	return members
+}
+
+// keyedMembers returns the group without the excluded ids, sorted, after
+// persisting a key onto each remaining member that lacks one. A key a write
+// computes against these members keeps its place on the next load only if
+// their keys are on disk too. The excluded nibs are the ones the write is about
+// to rekey. So they never anchor against themselves, default placement ignores
+// their old spot, and their files stay as the caller's if-match saw them.
+func (o *Orderer) keyedMembers(scope Scope, groupID string, exclude ...string) []*nib.Nib {
+	ops := scope.ops()
+	members := slices.DeleteFunc(o.Members(scope, groupID), func(m *nib.Nib) bool {
+		return slices.Contains(exclude, m.ID)
+	})
 	o.backfillKeys(scope, members)
 	nib.SortByKey(members, ops.key)
 	return members
@@ -190,7 +205,7 @@ func (o *Orderer) Place(scope Scope, b *nib.Nib, pl Placement) error {
 		return ops.errNoGroup(b.ID)
 	}
 
-	siblings := excludeSelf(o.Members(scope, groupID), b.ID)
+	siblings := o.keyedMembers(scope, groupID, b.ID)
 	if len(siblings) == 0 {
 		ops.setKey(b, nib.OrderInitial())
 		return nil
@@ -212,7 +227,7 @@ func (o *Orderer) Move(scope Scope, b *nib.Nib, pos Position) error {
 	if groupID == "" && ops.emptyGroupIsMemberless {
 		return ops.errNoGroup(b.ID)
 	}
-	siblings := excludeSelf(o.Members(scope, groupID), b.ID)
+	siblings := o.keyedMembers(scope, groupID, b.ID)
 	return o.position(scope, b, pos, siblings)
 }
 
@@ -227,7 +242,7 @@ func (o *Orderer) Recalculate(scope Scope, b *nib.Nib) {
 		ops.setKey(b, "")
 		return
 	}
-	siblings := excludeSelf(o.Members(scope, groupID), b.ID)
+	siblings := o.keyedMembers(scope, groupID, b.ID)
 	if len(siblings) == 0 {
 		ops.setKey(b, nib.OrderInitial())
 		return
@@ -258,18 +273,6 @@ func (o *Orderer) position(scope Scope, b *nib.Nib, pos Position, siblings []*ni
 	return fmt.Errorf("a move requires a position (after, before or first)")
 }
 
-// excludeSelf drops the nib being positioned, so it never anchors against
-// itself and default placement ignores its old spot.
-func excludeSelf(members []*nib.Nib, id string) []*nib.Nib {
-	filtered := make([]*nib.Nib, 0, len(members))
-	for _, m := range members {
-		if m.ID != id {
-			filtered = append(filtered, m)
-		}
-	}
-	return filtered
-}
-
 // sameGroup compares group ids alone: in a memberless scope two unassigned nibs
 // come back as the same group. Refuse that case before asking.
 func (o *Orderer) sameGroup(scope Scope, x, y *nib.Nib) bool {
@@ -277,8 +280,9 @@ func (o *Orderer) sameGroup(scope Scope, x, y *nib.Nib) bool {
 	return ops.group(x, o.reader) == ops.group(y, o.reader)
 }
 
-// backfillKeys assigns ordering keys to members that lack them, after the last
-// keyed member.
+// backfillKeys assigns and persists ordering keys for members that lack them,
+// after the last keyed member. Only a write that positions a nib in the group
+// calls it, through keyedMembers.
 func (o *Orderer) backfillKeys(scope Scope, members []*nib.Nib) {
 	if len(members) == 0 {
 		return
@@ -327,14 +331,12 @@ func (o *Orderer) backfillKeys(scope Scope, members []*nib.Nib) {
 		}
 		ops.setKey(clone, newKey)
 
-		// Best-effort persist: a sibling that cannot be written falls back to
-		// title sort, and Members returns no error, so nothing propagates. This
-		// runs on the hot Children/root READ path and leaves the key empty on
-		// failure, so the Update is re-attempted on EVERY read — warning on a
-		// refusal that repeats (an etag divergence, an `area:` the vocabulary no
-		// longer declares, an unparseable file) would flood stderr under a
-		// long-running `nibs serve`. fs.ErrNotExist is latched instead; see
-		// warnStalePathOnce.
+		// Best-effort persist: a sibling that cannot be written stays unkeyed
+		// and sorts last by title, and the positioning write still proceeds. The
+		// key stays empty, so every later write to the group meets the same
+		// refusal again. A refusal that repeats (an etag divergence, an `area:`
+		// the vocabulary no longer declares, an unparseable file) is therefore
+		// quiet. fs.ErrNotExist is latched instead; see warnStalePathOnce.
 		if err := o.writer.Update(clone, &etag); err != nil {
 			var etagMismatch *nibcore.ETagMismatchError
 			var unparseable *nibcore.OnDiskUnparseableError
@@ -358,12 +360,10 @@ func (o *Orderer) backfillKeys(scope Scope, members []*nib.Nib) {
 // reach a nib's file because nothing is at the path the loaded store recorded.
 //
 // Once, because the condition is store-wide rather than per-nib: unlatched, one
-// read warns per unkeyed sibling and every later read repeats the whole set.
+// positioned write warns per unkeyed sibling and every later one repeats the set.
 //
-// Not zero, because for a read-only reader this line is the only signal there
-// is: browsing through `nibs serve` or the TUI triggers no mutation, so the
-// write-boundary diagnostic (cmd/set.go's FILE_ERROR) never fires, and where
-// StartWatching failed nothing refreshes the store either.
+// Not zero, because the sibling is not the nib the write names, so the write
+// itself reports nothing about it.
 func (o *Orderer) warnStalePathOnce(id string, err error) {
 	if o.warnedStalePath.Swap(true) {
 		return
@@ -385,7 +385,7 @@ func (o *Orderer) positionAfter(scope Scope, b *nib.Nib, targetID string, siblin
 	targetID = normalizedID
 	for i, s := range siblings {
 		if s.ID == targetID {
-			// Defensive: production callers pass a group-filtered slice (Members).
+			// Defensive: production callers pass a group-filtered slice (keyedMembers).
 			if !o.sameGroup(scope, s, b) {
 				return ops.errAnchorNotMember(targetID)
 			}

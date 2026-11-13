@@ -263,8 +263,8 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 	// on a nib it then reports as failed. The blocking handlers persist each
 	// target directly; a real parent change (the type-change branch below and the
 	// parent block further down) and a milestone ASSIGNMENT each recalculate the
-	// order key, which reads its group through Orderer.backfillKeys — a lazy
-	// read-path repair that PERSISTS a key to any member that has none.
+	// order key, which keys its group through Orderer.backfillKeys — that
+	// PERSISTS a key to any member that has none.
 	if err := r.preValidateSubject(b, input.IfMatch); err != nil {
 		return nil, err
 	}

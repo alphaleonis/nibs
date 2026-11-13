@@ -416,8 +416,8 @@ func (c *Core) areasLocked() *loadedAreas {
 //
 // A reader takes no lock, so it does not wait for a writer, even one parked on
 // the store's file lock. A read waits only where it feeds a write, through
-// AwaitWriters (GetForUpdate, CurrentETag, and every query whose order-key
-// backfill writes), and on the first Search, which builds the index under c.mu
+// AwaitWriters (GetForUpdate, CurrentETag, and the mutation resolvers that
+// call it directly), and on the first Search, which builds the index under c.mu
 // (see initSearchIndex). Writers wait for each other on c.mu.
 type readState struct {
 	nibs        map[string]*nib.Nib
@@ -1378,9 +1378,9 @@ func (c *Core) CurrentETag(id string) (string, error) {
 //
 // Nothing is logged here. The OPEN branches are the normal freshly-created and
 // accepted-delete-race paths; the CLOSED ones RETURN a distinct error for the
-// caller to surface, and logging as well would flood stderr on the hot Children
-// read path (orderer.go's backfillKeys re-attempts the Update once per read for
-// a persistently uncertifiable sibling).
+// caller to surface, and logging as well would repeat on every retry:
+// orderer.go's backfillKeys re-attempts the Update on each positioned write to
+// a group that holds a persistently uncertifiable sibling.
 func (c *Core) computeStoredETag(nibs map[string]*nib.Nib, storedNib *nib.Nib) (string, error) {
 	if storedNib.Path == "" {
 		return storedNib.ETag(), nil

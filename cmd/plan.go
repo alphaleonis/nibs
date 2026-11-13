@@ -99,20 +99,8 @@ type Plan struct {
 // (cmd -> graph -> nibcore -> nib); the member set comes from a
 // membership.View, through whichever accessor planAxis paired with the axis.
 //
-// plan is a QUESTION, and asking it writes nothing. The member set is
-// enumerated and sorted here rather than fetched through Orderer.Members,
-// which backfills a missing ordering key onto a member as a side effect of
-// being read: graph.Next states the rule (internal/graph/next.go) — a question
-// must not edit files the caller never named, and must not fail differently on
-// a read-only store.
-//
-// Nothing is lost by not backfilling. nib.SortByKey orders unkeyed members by
-// title, which is the sequence a successful backfill freezes anyway, and a
-// backfill buys no reliability: where the write cannot land it leaves the key
-// empty regardless (see PlanItem.Order). What it costs is one rewritten file
-// per unkeyed member — the ones --open goes on to hide included, since the set
-// is read before it is filtered — each with a fresh updated_at, in a store the
-// user commits from.
+// plan is a QUESTION, and asking it writes nothing: an unkeyed member keeps
+// its empty key and sorts last by title (see PlanItem.Order).
 func buildPlan(ctx context.Context, resolver *graph.Resolver, containerID string, openOnly bool) (*Plan, error) {
 	container, err := resolver.Query().Nib(ctx, containerID)
 	if err != nil {
