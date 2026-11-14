@@ -30,37 +30,6 @@ function freshNonce(): string {
 // A private DOMPurify instance, so the hook below applies to this module only.
 const purify = DOMPurify(window);
 
-// --- mention scan markers ---------------------------------------------------
-//
-// The mention walk reads DOM text, where the source's backslashes and block
-// boundaries are gone. These empty spans carry them, so the walk finds the
-// mentions the server's scanner (internal/nib/references.go) finds:
-//   * `split` stands where a backslash escape was. The element splits the text
-//     node there, so `[\[x]]` does not read as `[[x]]` while `\[[x]]` still does.
-//   * `off` and `on` enclose a raw HTML block, whose text the server skips.
-// Markers carry the render nonce, so raw HTML in a body cannot forge one. They
-// are emitted only when a resolver will run the walk, which removes them.
-// `renderMarkdown` checks what it can of how they read back (see there).
-type ScanMarker = "split" | "off" | "on";
-const SCAN_ATTR = "data-mention-scan";
-const SCAN_NONCE_ATTR = "data-mention-nonce";
-let emitScanMarkers = false;
-// Markers emitted in the current render; reset before every parse.
-let emittedScanMarkers = 0;
-
-function scanMarker(kind: ScanMarker): string {
-  emittedScanMarkers++;
-  return `<span ${SCAN_ATTR}="${kind}" ${SCAN_NONCE_ATTR}="${renderNonce}"></span>`;
-}
-
-const HTML_ESCAPES: Record<string, string> = {
-  "&": "&amp;",
-  "<": "&lt;",
-  ">": "&gt;",
-  '"': "&quot;",
-  "'": "&#39;",
-};
-
 // Mentions are rewritten by the post-sanitize DOM walk, not a marked extension.
 const sharedMarked = new Marked();
 sharedMarked.use({
@@ -70,16 +39,6 @@ sharedMarked.use({
       // ENABLED so it is clickable; the checked state comes from re-rendering
       // after the source flips.
       return `<input type="checkbox" data-task-ordinal="${ordinal}" data-task-nonce="${renderNonce}"${checked ? " checked" : ""}> `;
-    },
-    // marked renders an escape token through `text`. An image's alt text uses a
-    // separate text renderer, so no marker lands in an attribute.
-    text(token: Tokens.Text | Tokens.Escape): string | false {
-      if (!emitScanMarkers || token.type !== "escape") return false;
-      return scanMarker("split") + token.text.replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]);
-    },
-    html(token: Tokens.HTML | Tokens.Tag): string | false {
-      if (!emitScanMarkers || !token.block) return false;
-      return scanMarker("off") + token.text + scanMarker("on");
     },
   },
 });
@@ -171,34 +130,12 @@ export function toggleTaskLine(body: string, ordinal: number): string {
   return parts.join("");
 }
 
-/** Sanitized HTML for a body, and the scan state its first node starts in. */
-interface SanitizedRender {
-  html: string;
-  /** The render nonce when the HTML carries scan markers, or null. */
-  nonce: string | null;
-  /** How many scan markers the HTML held before it was sanitized. */
-  markerCount: number;
-  startsInRawBlock: boolean;
-}
-
-function renderSanitized(body: string, withMarkers: boolean): SanitizedRender {
+function renderSanitized(body: string): string {
   taskOrdinalCounter = 0;
   renderNonce = freshNonce();
-  emitScanMarkers = withMarkers;
-  emittedScanMarkers = 0;
-  let html = sharedMarked.parse(body, { async: false });
-  // A leading marker would open <body> before a leading raw HTML block, so a
-  // body that starts with a <style> would parse differently.
-  let markerCount = emittedScanMarkers;
-  const leadingOff = scanMarker("off");
-  const startsInRawBlock = withMarkers && html.startsWith(leadingOff);
-  if (startsInRawBlock) {
-    html = html.slice(leadingOff.length);
-    markerCount--;
-  }
+  const html = sharedMarked.parse(body, { async: false });
   // data-* passes by default; listed because click delegation depends on both.
-  const safe = purify.sanitize(html, { ADD_ATTR: ["data-nib-id", "data-task-ordinal"] });
-  return { html: safe, nonce: withMarkers ? renderNonce : null, markerCount, startsInRawBlock };
+  return purify.sanitize(html, { ADD_ATTR: ["data-nib-id", "data-task-ordinal"] });
 }
 
 function toTemplate(html: string): HTMLTemplateElement {
@@ -207,127 +144,373 @@ function toTemplate(html: string): HTMLTemplateElement {
   return tpl;
 }
 
+// --- mentions ---------------------------------------------------------------
+//
+// The server's scanner (internal/nib/references.go) decides which text is a
+// mention, because the mention index and prefix rewrites use its answer. The web
+// takes that answer from marked's tokens, then links it where the rendered DOM
+// shows the same text. How the browser parses raw HTML decides only where a
+// mention can be linked, never which text is one.
+
+// The server's id grammar (MentionIDPattern).
+const MENTION_ID = "[a-z0-9](?:[a-z0-9-]*[a-z0-9])?";
+const LEADING_ID = new RegExp(`^${MENTION_ID}`);
+
 /**
- * Parses the marked render of `body` and removes its scan markers.
- *
- * @returns The parsed render and the text nodes inside raw HTML blocks, or null
- *   when the render without markers does not serialize the same as `plain`, a
- *   marker was lost, or block starts and ends do not alternate.
+ * A run of text that looks like a mention: `#` with the longest id after it, or
+ * `[[<id>]]`. Its key is that text, so the token side and the DOM side compare.
  */
-function readScanMarkers(
-  body: string,
-  plain: string,
-): { tpl: HTMLTemplateElement; rawText: Set<Node> } | null {
-  const render = renderSanitized(body, true);
-  const tpl = toTemplate(render.html);
-  const rawText = new Set<Node>();
-  const markers: Element[] = [];
-  let inRawBlock = render.startsInRawBlock;
-  const walker = document.createTreeWalker(tpl.content, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
-  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+interface Candidate {
+  key: string;
+  index: number;
+}
+
+function findCandidates(text: string): Candidate[] {
+  // Group 1 is a hash id, group 2 a bracketed one. A fresh regex per call keeps
+  // `/g` state local.
+  const pattern = new RegExp(`#(${MENTION_ID})|\\[\\[(${MENTION_ID})\\]\\]`, "g");
+  const out: Candidate[] = [];
+  for (let m = pattern.exec(text); m !== null; m = pattern.exec(text)) {
+    out.push({ key: m[0], index: m.index });
+  }
+  return out;
+}
+
+/**
+ * Where an expected candidate's text comes from. Markdown `text` is where the
+ * DOM shows it. `raw` HTML holds no mentions. `skipped` is markdown text inside
+ * an inline element the DOM walk skips, which the browser may still close first.
+ */
+type CandidateSource = "text" | "raw" | "skipped";
+
+/** A candidate the rendered text shows, and the id it mentions, or null when it is not a mention. */
+interface ExpectedCandidate {
+  key: string;
+  mention: string | null;
+  source: CandidateSource;
+}
+
+// The DOM walk skips these elements: code, existing links, and the elements whose
+// content the browser reads as text. The serializer writes a link in one of the
+// latter as markup that re-parses as text.
+const RAW_TEXT_TAGS = new Set(["iframe", "noembed", "noframes", "plaintext", "script", "style", "textarea", "title", "xmp"]);
+const SKIPPED_TAGS = new Set(["code", "pre", "a", "noscript", ...RAW_TEXT_TAGS]);
+
+/** Returns the text nodes under `root` that the mention walk reads, in document order. */
+function visibleTextNodes(root: Node): Text[] {
+  const out: Text[] = [];
+  const walk = (node: Node): void => {
     if (node.nodeType === Node.TEXT_NODE) {
-      if (inRawBlock) rawText.add(node);
+      out.push(node as Text);
+      return;
+    }
+    if (node.nodeType === Node.ELEMENT_NODE && SKIPPED_TAGS.has((node as Element).localName)) return;
+    node.childNodes.forEach(walk);
+  };
+  walk(root);
+  return out;
+}
+
+/**
+ * Returns the candidates in `body` in document order, each with the mention the
+ * server finds there.
+ *
+ * The text of code, links, images and link definitions is skipped, as the
+ * server skips it. Raw HTML holds no mentions, but the candidates in the text it
+ * shows are kept, so the DOM text pairs with them and links nothing.
+ */
+function expectedMentions(body: string): ExpectedCandidate[] {
+  const tokens = sharedMarked.lexer(body);
+  const out: ExpectedCandidate[] = [];
+  collectExpected(tokens, { out, leading: tokens[0] }, []);
+  return out;
+}
+
+interface CollectContext {
+  out: ExpectedCandidate[];
+  /** The body's first token, which the sanitizer may parse into the document head. */
+  leading: Token | undefined;
+}
+
+/**
+ * `openInline` holds the skipped elements an inline tag opened in the current
+ * block. It ends with the block, because the browser closes such an element in
+ * ways a stack cannot follow.
+ */
+function collectExpected(tokens: Token[], ctx: CollectContext, openInline: string[]): void {
+  // Adjacent text and escape tokens render as one DOM text node.
+  let text = "";
+  let escapes: number[] = [];
+  const flush = (): void => {
+    const source: CandidateSource = openInline.length === 0 ? "text" : "skipped";
+    if (text !== "") for (const c of segmentMentions(text, escapes)) ctx.out.push({ ...c, source });
+    text = "";
+    escapes = [];
+  };
+  for (const token of tokens) {
+    if (token.type === "text" && !(token as Tokens.Text).tokens) {
+      text += shownText(token as Tokens.Text);
       continue;
     }
-    const el = node as Element;
-    const isMarker =
-      el.tagName === "SPAN" &&
-      el.attributes.length === 2 &&
-      !el.hasChildNodes() &&
-      el.getAttribute(SCAN_NONCE_ATTR) === render.nonce;
-    if (!isMarker) continue;
-    markers.push(el);
-    // Raw HTML blocks do not nest, so `off` and `on` alternate unless one was lost.
-    const kind = el.getAttribute(SCAN_ATTR);
-    if (kind === "off" || kind === "on") {
-      if (inRawBlock === (kind === "off")) return null;
-      inRawBlock = kind === "off";
+    if (token.type === "escape") {
+      escapes.push(text.length);
+      text += token.text;
+      continue;
+    }
+    flush();
+    switch (token.type) {
+      case "code":
+      case "codespan":
+      case "link":
+      case "image":
+      case "def":
+        break;
+      case "html":
+        if ((token as Tokens.HTML | Tokens.Tag).block) {
+          for (const c of htmlCandidates(token.text, token === ctx.leading)) ctx.out.push(c);
+        } else {
+          trackInlineTag(token.text, openInline);
+        }
+        break;
+      case "list":
+        collectExpected((token as Tokens.List).items, ctx, []);
+        break;
+      case "table": {
+        const table = token as Tokens.Table;
+        for (const cell of [...table.header, ...table.rows.flat()]) collectExpected(cell.tokens, ctx, []);
+        break;
+      }
+      case "em":
+      case "strong":
+      case "del":
+        collectExpected((token as Tokens.Em).tokens, ctx, openInline);
+        break;
+      default: {
+        const kids = (token as { tokens?: Token[] }).tokens;
+        if (kids) collectExpected(kids, ctx, []);
+      }
     }
   }
-  if (inRawBlock || markers.length !== render.markerCount) return null;
-  for (const marker of markers) marker.remove();
-  // Text-node splits do not serialize, so any difference is one the markers
-  // caused in the parse or the sanitize.
-  if (tpl.innerHTML !== toTemplate(plain).innerHTML) return null;
-  return { tpl, rawText };
+  flush();
 }
 
 /**
- * Whether renderMarkdown reads the mentions of `body` with the scan markers.
- * False means it reads them from the unmarked render. Exported for tests.
+ * Returns the candidates in the text that raw `html` shows once sanitized, none
+ * of them a mention. The sanitizer parses a body's leading HTML into the head,
+ * so other HTML is parsed as body content, as it is in the whole render.
  */
-export function readsWithScanMarkers(body: string): boolean {
-  return readScanMarkers(body, renderSanitized(body, false).html) !== null;
+function htmlCandidates(html: string, leading: boolean): ExpectedCandidate[] {
+  // A candidate needs a `#` or `[[`, written out or as a character reference.
+  if (!html.includes("#") && !html.includes("[[") && !html.includes("&")) return [];
+  const out: ExpectedCandidate[] = [];
+  const tpl = toTemplate(purify.sanitize(html, { FORCE_BODY: !leading }));
+  for (const node of visibleTextNodes(tpl.content)) {
+    for (const c of findCandidates(node.nodeValue ?? "")) out.push({ key: c.key, mention: null, source: "raw" });
+  }
+  return out;
+}
+
+/** Updates `open`, the skipped elements open in a block, with one inline tag. */
+function trackInlineTag(tag: string, open: string[]): void {
+  const m = /^<(\/?)([A-Za-z][A-Za-z0-9-]*)/.exec(tag);
+  const name = m?.[2].toLowerCase();
+  // Sanitizing removes a noscript element but can keep its content as text.
+  if (m === null || name === undefined || name === "noscript" || !SKIPPED_TAGS.has(name)) return;
+  const top = open.at(-1);
+  // Only its own end tag ends an element whose content is text.
+  if (top !== undefined && RAW_TEXT_TAGS.has(top) && !(m[1] === "/" && name === top)) return;
+  if (m[1] === "") open.push(name);
+  else if (open.includes(name)) open.length = open.lastIndexOf(name);
+}
+
+/** The text the DOM shows for a text token, with its character references decoded. */
+function shownText(token: Tokens.Text): string {
+  // marked's renderer escapes text the same way, except for quotes and `>`.
+  const html = token.escaped
+    ? token.text
+    : token.text.replace(/<|&(?!(?:#\d{1,7}|#[Xx][a-fA-F0-9]{1,6}|\w+);)/g, (c) => (c === "<" ? "&lt;" : "&amp;"));
+  if (!html.includes("&") && !html.includes("<")) return html;
+  return toTemplate(html).content.textContent ?? "";
 }
 
 /**
- * Rewrite `#<id>` and `[[<id>]]` tokens in the text nodes of `tpl` into mention
- * links. A bracketed link shows the bare id.
- * Not a marked extension, because block-level raw HTML bypasses the inline lexer.
- * Skips `<code>`, `<pre>`, existing `<a>` and the text nodes in `rawText`.
+ * Returns the candidates in `text` with the mention the server finds at each.
+ * `escapes` holds the offset of each character a backslash escaped.
+ *
+ * The server reads the source, where a backslash stands before each of those
+ * characters. So a candidate that spans one holds no mention, except that an
+ * escaped character may start one, and a hash id ends before one.
  */
-function linkMentions(tpl: HTMLTemplateElement, resolve: MentionResolver, rawText: Set<Node>): string {
-  const SKIP = new Set(["CODE", "PRE", "A"]);
-
-  function walk(node: Node): void {
-    if (node.nodeType === Node.ELEMENT_NODE) {
-      const el = node as Element;
-      if (SKIP.has(el.tagName)) return;
-      // iterate over a snapshot; replaceChild mutates childNodes
-      const children = Array.from(node.childNodes);
-      for (const child of children) walk(child);
-      return;
+function segmentMentions(text: string, escapes: number[]): { key: string; mention: string | null }[] {
+  // Candidates come in ascending order, so escapes[e] is the first escape after each.
+  let e = 0;
+  return findCandidates(text).map(({ key, index }) => {
+    while (e < escapes.length && escapes[e] <= index) e++;
+    const nextEscape = escapes[e] ?? text.length;
+    if (key.startsWith("[[")) {
+      return { key, mention: nextEscape >= index + key.length ? key.slice(2, -2) : null };
     }
-    if (node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
-      const children = Array.from(node.childNodes);
-      for (const child of children) walk(child);
-      return;
-    }
-    if (node.nodeType !== Node.TEXT_NODE || rawText.has(node)) return;
-    const text = node.nodeValue ?? "";
-    if (!text.includes("#") && !text.includes("[[")) return;
+    const escaped = e > 0 && escapes[e - 1] === index;
+    if (index > 0 && !escaped && /[A-Za-z0-9_]/.test(text[index - 1])) return { key, mention: null };
+    return { key, mention: LEADING_ID.exec(text.slice(index + 1, nextEscape))?.[0] ?? null };
+  });
+}
 
-    // Local regex — avoids sharing `/g` lastIndex across recursive walk calls.
-    // Group 1 is a hash id, group 2 a bracketed one, both in the server's id
-    // grammar (MentionIDPattern). The hash boundary is a lookbehind, so a `]]`
-    // closing the previous match still counts as one.
-    const pattern =
-      /(?<![A-Za-z0-9_])#([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)|\[\[([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\]\]/g;
-    let lastIndex = 0;
+// The most edits diffPairs searches for. Its trace holds about MAX_EDITS² numbers.
+const MAX_EDITS = 1000;
+
+/**
+ * Returns the index pairs of equal keys that a shortest edit script from `a` to
+ * `b` keeps, in order, or null when every such script takes more than
+ * MAX_EDITS edits. It is Myers' O((N+M)D) diff.
+ */
+function diffPairs(a: string[], b: string[]): [number, number][] | null {
+  const n = a.length;
+  const m = b.length;
+  const max = Math.min(n + m, MAX_EDITS);
+  // v[k + max + 1] is the furthest x reached on diagonal k = x - y.
+  const off = max + 1;
+  const v = new Int32Array(2 * max + 3);
+  const trace: Int32Array[] = [];
+  for (let d = 0; d <= max; d++) {
+    trace.push(v.slice(off - d - 1, off + d + 2));
+    for (let k = -d; k <= d; k += 2) {
+      let x = k === -d || (k !== d && v[off + k - 1] < v[off + k + 1]) ? v[off + k + 1] : v[off + k - 1] + 1;
+      let y = x - k;
+      while (x < n && y < m && a[x] === b[y]) {
+        x++;
+        y++;
+      }
+      v[off + k] = x;
+      if (x >= n && y >= m) return backtrack(a, b, trace, d, n, m);
+    }
+  }
+  return null;
+}
+
+/** Walks the trace `diffPairs` recorded back from (n, m) and returns the pairs it passes. */
+function backtrack(a: string[], b: string[], trace: Int32Array[], dEnd: number, n: number, m: number): [number, number][] {
+  const pairs: [number, number][] = [];
+  let x = n;
+  let y = m;
+  for (let d = dEnd; d > 0; d--) {
+    // trace[d] holds v before step d, for diagonals -d - 1 through d + 1.
+    const prev = (k: number): number => trace[d][k + d + 1];
+    const k = x - y;
+    const down = k === -d || (k !== d && prev(k - 1) < prev(k + 1));
+    const prevK = down ? k + 1 : k - 1;
+    const prevX = prev(prevK);
+    const prevY = prevX - prevK;
+    const startX = down ? prevX : prevX + 1;
+    while (x > startX) pairs.push([--x, --y]);
+    x = prevX;
+    y = prevY;
+  }
+  while (x > 0 && y > 0 && a[x - 1] === b[y - 1]) pairs.push([--x, --y]);
+  return pairs.reverse();
+}
+
+/**
+ * Returns the index pairs of `found` and `expected` candidates with equal keys,
+ * in order, or none when the two lists differ in more than MAX_EDITS places.
+ *
+ * Text and raw candidates pair first. Each `skipped` candidate can then pair
+ * only with a found candidate left between the same two pairs.
+ */
+function alignCandidates(found: string[], expected: ExpectedCandidate[]): [number, number][] {
+  const firm: number[] = [];
+  const skipped: number[] = [];
+  expected.forEach((c, j) => (c.source === "skipped" ? skipped : firm).push(j));
+  const firstPass = diffPairs(
+    found,
+    firm.map((j) => expected[j].key),
+  );
+  if (firstPass === null) return [];
+  const pairs: [number, number][] = firstPass.map(([i, k]) => [i, firm[k]]);
+  if (skipped.length === 0) return pairs;
+
+  const out: [number, number][] = [];
+  let s = 0;
+  let fromFound = 0;
+  for (const pair of [...pairs, [found.length, expected.length] as [number, number]]) {
+    const gapSkipped: number[] = [];
+    while (s < skipped.length && skipped[s] < pair[1]) gapSkipped.push(skipped[s++]);
+    if (gapSkipped.length > 0 && pair[0] > fromFound) {
+      const gapFound = found.slice(fromFound, pair[0]);
+      const gapPairs = diffPairs(
+        gapFound,
+        gapSkipped.map((j) => expected[j].key),
+      );
+      for (const [i, k] of gapPairs ?? []) out.push([fromFound + i, gapSkipped[k]]);
+    }
+    if (pair[0] < found.length) out.push(pair);
+    fromFound = pair[0] + 1;
+  }
+  return out;
+}
+
+/** One mention to link: `node`'s text from `index` on is `text`. */
+interface MentionLink {
+  index: number;
+  text: string;
+  fullId: string;
+}
+
+/**
+ * Rewrites the mentions in sanitized `html` into mention links, and returns
+ * `html` itself when it links none. A bracketed link shows the bare id.
+ *
+ * A candidate in the DOM's text links only when `alignCandidates` pairs it with
+ * an expected mention. The walk reads the text `visibleTextNodes` returns.
+ */
+function linkMentions(html: string, expected: ExpectedCandidate[], resolve: MentionResolver): string {
+  const tpl = toTemplate(html);
+  const found: (Candidate & { node: Text })[] = [];
+  for (const node of visibleTextNodes(tpl.content)) {
+    for (const c of findCandidates(node.nodeValue ?? "")) found.push({ ...c, node });
+  }
+
+  const links = new Map<Text, MentionLink[]>();
+  const pairs = alignCandidates(
+    found.map((c) => c.key),
+    expected,
+  );
+  for (const [i, j] of pairs) {
+    const token = expected[j].mention;
+    if (token === null) continue;
+    let fullId: string | null;
+    try {
+      fullId = resolve(token);
+    } catch {
+      // A throwing resolver leaves the token unresolved.
+      fullId = null;
+    }
+    if (!fullId) continue;
+    const { node, index, key } = found[i];
+    const text = key.startsWith("[[") ? key : `#${token}`;
+    const list = links.get(node) ?? [];
+    list.push({ index, text, fullId });
+    links.set(node, list);
+  }
+  if (links.size === 0) return html;
+
+  for (const [node, list] of links) {
+    const value = node.nodeValue ?? "";
     const frag = document.createDocumentFragment();
-    let anyMatch = false;
-    let m: RegExpExecArray | null;
-    while ((m = pattern.exec(text)) !== null) {
-      const bracketed = m[2] !== undefined;
-      const token = bracketed ? m[2] : m[1];
-      let fullId: string | null;
-      try {
-        fullId = resolve(token);
-      } catch {
-        // A throwing resolver leaves the token unresolved.
-        fullId = null;
-      }
-      if (!fullId) continue;
-      anyMatch = true;
-      if (m.index > lastIndex) {
-        frag.appendChild(document.createTextNode(text.slice(lastIndex, m.index)));
-      }
+    let last = 0;
+    for (const { index, text, fullId } of list) {
+      if (index > last) frag.appendChild(document.createTextNode(value.slice(last, index)));
       const a = document.createElement("a");
       a.setAttribute("data-nib-id", fullId);
       a.setAttribute("href", `#${fullId}`);
       a.setAttribute("class", "mention-link text-link");
-      a.textContent = bracketed ? token : `#${token}`;
+      a.textContent = text.startsWith("[[") ? text.slice(2, -2) : text;
       frag.appendChild(a);
-      lastIndex = m.index + m[0].length;
+      last = index + text.length;
     }
-    if (!anyMatch) return;
-    if (lastIndex < text.length) {
-      frag.appendChild(document.createTextNode(text.slice(lastIndex)));
-    }
+    if (last < value.length) frag.appendChild(document.createTextNode(value.slice(last)));
     node.parentNode?.replaceChild(frag, node);
   }
-
-  walk(tpl.content);
   return tpl.innerHTML;
 }
 
@@ -338,13 +521,6 @@ function linkMentions(tpl: HTMLTemplateElement, resolve: MentionResolver, rawTex
  * nothing on their own. A caller must wire a handler that calls `toggleTaskLine`
  * (as ActiveNibView.handleProseClick does) or disable them.
  *
- * With a resolver, the body renders twice: once with scan markers and once
- * without. The marked render is used only when every marker it emitted reads
- * back, block starts and ends alternate, and its sanitized HTML without the
- * markers is identical to the unmarked render. Otherwise the mentions are read
- * from the unmarked render, where escapes and raw HTML blocks link as plain text
- * does.
- *
  * @param resolveMention Called with each mention token; returns the full nib ID,
  *   or null to leave it as text. Return only a trusted nib ID: it lands in
  *   `href` and `data-nib-id`. A throw counts as unresolved. Mentions inside
@@ -352,11 +528,9 @@ function linkMentions(tpl: HTMLTemplateElement, resolve: MentionResolver, rawTex
  */
 export function renderMarkdown(body: string, resolveMention?: MentionResolver): string {
   if (!body) return "";
-  const plain = renderSanitized(body, false).html;
-  if (!resolveMention || typeof document === "undefined") return plain;
-  const marked = readScanMarkers(body, plain);
-  if (marked !== null) return linkMentions(marked.tpl, resolveMention, marked.rawText);
-  return linkMentions(toTemplate(plain), resolveMention, new Set());
+  const html = renderSanitized(body);
+  if (!resolveMention || typeof document === "undefined") return html;
+  return linkMentions(html, expectedMentions(body), resolveMention);
 }
 
 export const TAG_REGEX = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
