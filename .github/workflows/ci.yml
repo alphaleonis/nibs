@@ -20,7 +20,7 @@ jobs:
   test:
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     env:
       # Where internal/testskip appends its tally of guards that did not run
@@ -36,38 +36,33 @@ jobs:
       # run in the workspace, which spares the windows leg the backslash-path
       # conversion NIBS_SKIP_REPORT needs.
       GO_TEST_EVENTS: go-test-events.json
-      # Required on BOTH legs: a symlink skip is now a regression in the
-      # environment rather than a limitation of it, whichever runner it happens
-      # on. Linux always supported them. The windows leg was left permissive
-      # until a run could answer whether those runners create a symlink without
-      # elevation — and the tally has now answered it, reporting `hostile
-      # filenames`, `named pipes` and `unreadable paths` while never once naming
-      # symlinks. Fifteen fixtures depend on that capability, several of them the
-      # only coverage a store-resolution refusal has, so requiring it is what
-      # stops a runner image change silently taking them out of the run.
+      # Every leg: the runners on all three create symlinks without elevation.
+      # Fifteen fixtures depend on that capability, several of them the only
+      # coverage a store-resolution refusal has, so requiring it stops a runner
+      # image change from silently taking them out of the run.
       NIBS_REQUIRE_SYMLINKS: '1'
       # Required rather than permissive: the store-walk guards that keep a FIFO
       # named `*.md` from blocking every command have no platform-independent
       # fixture beside them (a directory by that name is answered by the walk's
       # own IsDir branch and never reaches the regularity test), so a silent skip
       # here costs the whole guard rather than one spelling of it.
-      NIBS_REQUIRE_NAMED_PIPES: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
-      # Ubuntu only, and unfixably so: the deception guards need a FILENAME
+      NIBS_REQUIRE_NAMED_PIPES: ${{ matrix.os != 'windows-latest' && '1' || '' }}
+      # Not on Windows, and unfixably so: the deception guards need a FILENAME
       # carrying control characters and bidi overrides, which POSIX accepts and
-      # Windows rejects outright with ERROR_INVALID_NAME. So a skip on the linux
+      # Windows rejects outright with ERROR_INVALID_NAME. So a skip on a POSIX
       # leg means the fixture stopped being built rather than that the machine
       # could not build it, and the five guards it covers are the ones proving a
       # filename cannot rewrite a message that quotes it.
-      NIBS_REQUIRE_HOSTILE_FILENAMES: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
-      # Ubuntu only, and unfixably so: Windows stores no POSIX permission bits,
+      NIBS_REQUIRE_HOSTILE_FILENAMES: ${{ matrix.os != 'windows-latest' && '1' || '' }}
+      # Not on Windows, and unfixably so: Windows stores no POSIX permission bits,
       # and Go synthesizes FileMode.Perm() there from the read-only attribute
       # alone, so 0666 and 0444 are the only values a fixture can produce. The
       # four guards this covers are the whole of the coverage that a rewrite of
       # <store>/config.yml does not widen a private config's mode — a change
-      # that is silent at the point it happens — so a skip on the linux leg
+      # that is silent at the point it happens — so a skip on a POSIX leg
       # means they stopped running rather than that they could not.
-      NIBS_REQUIRE_POSIX_FILE_MODES: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
-      # Both legs, so a missing git fails the run instead of quietly dropping
+      NIBS_REQUIRE_POSIX_FILE_MODES: ${{ matrix.os != 'windows-latest' && '1' || '' }}
+      # Every leg, so a missing git fails the run instead of quietly dropping
       # the worktree-fallback and migrate fixtures.
       NIBS_REQUIRE_GIT: '1'
     steps:
@@ -83,7 +78,7 @@ jobs:
       #
       # On Windows mise works through shims rather than shell activation, which
       # is what `add_shims_to_path` (default true) provides — so `go`, `node`
-      # and `task` resolve on both matrix legs without a $GITHUB_PATH step.
+      # and `task` resolve on every matrix leg without a $GITHUB_PATH step.
       #
       # github_token is not optional in practice: mise resolves these tools from
       # GitHub releases, and the action warns that unauthenticated runs can hit
@@ -95,7 +90,7 @@ jobs:
       # caches — setup-go used to supply those, so without this the change
       # would trade the version drift for a cold Go cache on every run. Paths
       # come from `go env` because GOMODCACHE and GOCACHE differ per OS and
-      # this job is a two-OS matrix.
+      # this job is a multi-OS matrix.
       - name: Locate Go caches
         id: go-cache
         shell: bash
@@ -245,36 +240,14 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
       - run: cd web && npx vitest run --reporter=default
 
-  # The only macOS lane. The store's worktree fallback compares the paths git
-  # prints with the worktree's own, and the macOS temp directory sits behind the
-  # /var -> /private/var symlink. The package does not embed web/dist, so the
-  # job needs Go alone.
-  store-macos:
-    name: store (macos-latest)
-    runs-on: macos-latest
-    timeout-minutes: 20
-    env:
-      # macOS has all three capabilities, so a skip here means a fixture
-      # stopped running.
-      NIBS_REQUIRE_GIT: '1'
-      NIBS_REQUIRE_SYMLINKS: '1'
-      NIBS_REQUIRE_NAMED_PIPES: '1'
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          install_args: go
-      - run: go test -count=1 ./internal/store/
-
   # The browser lane, which no other gate covers: `task test` deliberately
   # leaves it out so a local run stays fast, so until this job existed a whole
   # e2e file could go red while every gate stayed green — two did, for days
   # (nibs-bgpm).
   #
-  # Its own job rather than a step in `test`: that job is a two-OS matrix, and
-  # these assertions are about the app rather than the platform, so a second leg
-  # would double the browser download to re-answer the same question.
+  # Its own job rather than a step in `test`: that job is a multi-OS matrix, and
+  # these assertions are about the app rather than the platform, so another leg
+  # would repeat the browser download to re-answer the same question.
   e2e:
     runs-on: ubuntu-latest
     # A backstop only: playwright already bounds each test and the server
