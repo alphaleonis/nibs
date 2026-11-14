@@ -45,38 +45,34 @@ set to `main`, and enter the version. Accepted formats:
 - `v0.1.0` — stable release (requires changelog entry)
 - `v0.1.0-alpha.1`, `v0.1.0-rc.1` — pre-release (changelog not required)
 
-The workflow runs five jobs in order:
+The workflow runs six jobs in order:
 
 1. **check**: refuses to run unless dispatched from `main` and the latest CI run
    for that commit completed successfully (pre-releases too). It validates the
    version format, refuses a version that already has a tag, verifies the
    changelog entry (stable releases only), and extracts the release notes from
    the changelog, or a placeholder for pre-releases.
-2. **build**: tags the commit locally without pushing the tag, runs
+2. **unreleased**: refuses a version that a release or draft already carries.
+   A draft has no tag, so **check** cannot see one. It runs beside **check**.
+3. **build**: tags the commit locally without pushing the tag, runs
    `task release:prep` (web assets, generated code, `go-licenses` notices), and
    builds the archives for Linux, macOS and Windows (amd64 + arm64) with
    GoReleaser, which does not publish.
-3. **sign**: waits for a reviewer to approve the `release` environment, which
+4. **sign**: waits for a reviewer to approve the `release` environment, which
    holds the signing key. It checks the archives against `checksums.txt`,
    checks that the key is one binaries trust, signs `checksums.txt`, and
    verifies the signature.
-4. **attest**: records a build provenance attestation for every asset.
-5. **publish**: checks that the files are the ones the sign job verified,
-   refuses a version that a release or draft already carries, and creates a
-   **draft** GitHub Release with the notes, the six archives, `checksums.txt`
-   and `checksums.txt.sig`.
+5. **attest**: records a build provenance attestation for every asset.
+6. **publish**: checks that the files are the ones the sign job verified,
+   repeats the **unreleased** check, and creates a **draft** GitHub Release
+   with the notes, the six archives, `checksums.txt` and `checksums.txt.sig`.
 
-Each job holds only the permissions it needs. Only **publish** holds
-`contents: write`, and it checks out no code and runs no build tools. The
-build job runs the install scripts of every npm package the web UI depends on,
-so it holds a read-only token and no secrets. The signing key exists only in
+Each job holds only the permissions it needs. Only **unreleased** and
+**publish** hold `contents: write`, and neither checks out code or runs build
+tools. The build job runs the install scripts of every npm package the web UI
+depends on, so it holds a read-only token and no secrets. The signing key exists only in
 the sign job, on a fresh runner. Any failure before **publish** leaves no
 draft behind.
-
-The workflow sees a leftover draft only in **publish**, after the build, the
-sign approval and the public attestation. Check for one before you dispatch:
-`gh api repos/alphaleonis/nibs/releases --paginate --jq '.[].tag_name'` must
-not list the version.
 
 ### 4. Approve the signing job
 

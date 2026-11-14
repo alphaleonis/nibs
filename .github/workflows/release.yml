@@ -9,9 +9,10 @@ on:
         required: true
         type: string
 
-# Each job grants itself what it needs. Only `publish` can write to the
-# repository, and it runs no build code. `build` runs the install scripts of
-# every package in web/package-lock.json, so it holds only a read token.
+# Each job grants itself what it needs. Only `unreleased` and `publish` can
+# write to the repository, and neither runs build code. `build` runs the install
+# scripts of every package in web/package-lock.json, so it holds only a read
+# token.
 permissions: {}
 
 # One release run at a time: the existing-release check runs before the draft
@@ -137,10 +138,28 @@ jobs:
           path: ${{ runner.temp }}/release-notes.md
           if-no-files-found: error
 
+  # Refuses a used version before the build and the sign approval. A draft has
+  # no tag, so the check job's tag check cannot see one, and the list endpoint
+  # returns drafts only to a token with write access. The job runs only gh.
+  unreleased:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # list draft releases
+    steps:
+      - name: Check no release or draft carries this version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAGS=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq '.[].tag_name')
+          if grep -Fxq -- "$VERSION" <<<"$TAGS"; then
+            echo "::error::A release or draft for $VERSION already exists. Delete the draft, or release another version."
+            exit 1
+          fi
+
   # Runs every third-party build dependency, so it holds no secret and only a
   # read token. Its one output is the `dist` artifact.
   build:
-    needs: check
+    needs: [check, unreleased]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -324,9 +343,8 @@ jobs:
           echo "$SIGNATURE_SHA256  checksums.txt.sig" | sha256sum --check --strict
           sha256sum --check --strict checksums.txt
 
-      # A draft has no tag until it is published, so the check job's tag check
-      # cannot see a leftover draft. The list endpoint returns drafts only to a
-      # token with write access, which is why this runs here.
+      # The unreleased job's check again, because a draft can appear while the
+      # run waits for the sign approval.
       - name: Check no release or draft carries this version
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

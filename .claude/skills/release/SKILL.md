@@ -118,8 +118,7 @@ If CI is anything but `success`, **stop** — do not release from a red or unver
 ### 6. Dispatch the release
 Confirm that neither a tag nor a release carries the version. Both commands must print
 nothing. The second lists drafts too, and a leftover draft has no tag, so the first misses it.
-The workflow catches a leftover draft only in its `publish` job, after the build, the sign
-approval and the public attestation, so this check is what keeps those from being wasted:
+The workflow refuses either case in its first jobs too, so this check only spares a failed run:
 
     git ls-remote --tags origin "refs/tags/<version>"
     gh api repos/alphaleonis/nibs/releases --paginate --jq '.[] | select(.tag_name == "<version>") | .tag_name'
