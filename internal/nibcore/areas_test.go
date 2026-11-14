@@ -88,8 +88,10 @@ func TestWatcherReloadsTheAreasVocabulary(t *testing.T) {
 	}
 	writeStoreAreas(t, nibsDir, "areas:\n    - name: frontend\n")
 
-	waitFor(t, "the reloaded vocabulary to declare frontend", func() bool {
-		return core.Areas().Exists("frontend")
+	// The vocabulary and the nib files reload on separate timers, in either order.
+	waitFor(t, "the reloaded vocabulary to declare frontend and the member to carry it", func() bool {
+		member, err := core.Get("tst-a001")
+		return core.Areas().Exists("frontend") && err == nil && member.Area == "frontend"
 	})
 
 	if core.Areas().Exists("web") {
