@@ -4,9 +4,10 @@ import (
 	"bytes"
 	"regexp"
 	"slices"
+	"sort"
 
-	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/text"
 	"github.com/yuin/goldmark/util"
 )
@@ -25,6 +26,14 @@ var leadingIDPattern = regexp.MustCompile(`^` + MentionIDPattern)
 // in the mention parse. goldmark rescans the rest of a line for each marker it
 // opens, so an unbounded prefix makes the parse quadratic in the line's length.
 const maxContainerDepth = 32
+
+// maxDefinitionParagraphLines is the most lines a paragraph may have for the
+// mention parse to read link reference definitions at its start. goldmark's
+// definition parser reads labels and titles through its own block reader, whose
+// cost spanReader describes, so a long paragraph of definitions parses in
+// quadratic time:
+// https://github.com/yuin/goldmark/blob/v1.8.5/parser/link_ref.go#L18
+const maxDefinitionParagraphLines = 1024
 
 // linkScanBudgetFactor times a body's length is the most bytes the mention
 // parse lets goldmark scan for inline link destinations. Every `](` is charged,
@@ -74,8 +83,7 @@ func ExtractMentionSpans(body string) []MentionSpan {
 	source := []byte(body)
 	boundContainerDepth(source)
 	boundLinkScans(source)
-	parser := goldmark.DefaultParser()
-	doc := parser.Parse(text.NewReader(source))
+	doc := newMentionParser().Parse(text.NewReader(source))
 
 	var out []MentionSpan
 
@@ -112,6 +120,82 @@ func ExtractMentionSpans(body string) []MentionSpan {
 	return out
 }
 
+// newMentionParser returns goldmark's default parser with each inline parser
+// reading through a spanReader, and with link reference definitions read only in
+// paragraphs of at most maxDefinitionParagraphLines lines.
+func newMentionParser() parser.Parser {
+	inline := parser.DefaultInlineParsers()
+	for i := range inline {
+		inline[i].Value = spanValueParser{inline[i].Value.(parser.InlineParser)}
+	}
+	transformers := parser.DefaultParagraphTransformers()
+	for i := range transformers {
+		transformers[i].Value = shortParagraphTransformer{transformers[i].Value.(parser.ParagraphTransformer)}
+	}
+	return parser.NewParser(
+		parser.WithBlockParsers(parser.DefaultBlockParsers()...),
+		parser.WithInlineParsers(inline...),
+		parser.WithParagraphTransformers(transformers...),
+	)
+}
+
+// spanValueParser is an inline parser that reads its block through a spanReader.
+type spanValueParser struct {
+	parser.InlineParser
+}
+
+// Parse relies on goldmark resetting the block reader to parent's lines before
+// it runs the inline parsers on parent:
+// https://github.com/yuin/goldmark/blob/v1.8.5/parser/parser.go#L1165
+func (p spanValueParser) Parse(parent ast.Node, block text.Reader, pc parser.Context) ast.Node {
+	return p.InlineParser.Parse(parent, spanReader{block, parent.Lines()}, pc)
+}
+
+// CloseBlock forwards to the wrapped parser, because goldmark finds close
+// blockers by asserting on the registered parser:
+// https://github.com/yuin/goldmark/blob/v1.8.5/parser/parser.go#L809
+func (p spanValueParser) CloseBlock(parent ast.Node, block text.Reader, pc parser.Context) {
+	if cb, ok := p.InlineParser.(parser.CloseBlocker); ok {
+		cb.CloseBlock(parent, block, pc)
+	}
+}
+
+// spanReader is a block reader whose Value reads only the lines that the segment
+// spans, and returns what goldmark's Value returns. goldmark's Value walks back
+// from the block's last line on each call, and the link parser calls it for each
+// label and title line, so a long paragraph of links parses in quadratic time:
+// https://github.com/yuin/goldmark/blob/v1.8.5/text/reader.go#L361-L385
+type spanReader struct {
+	text.Reader
+	lines *text.Segments
+}
+
+func (r spanReader) Value(seg text.Segment) []byte {
+	// goldmark's Value reads from the last line that starts at or before seg.Start
+	// to the first line that ends after seg.Stop, or to the block's last line.
+	n := r.lines.Len()
+	first := sort.Search(n, func(i int) bool { return r.lines.At(i).Start > seg.Start }) - 1
+	if first < 0 {
+		return r.Reader.Value(seg)
+	}
+	last := first + sort.Search(n-first, func(i int) bool { return r.lines.At(first+i).Stop > seg.Stop })
+	spanned := text.NewSegments()
+	spanned.AppendAll(r.lines.Sliced(first, min(last, n-1)+1))
+	return text.NewBlockReader(r.Source(), spanned).Value(seg)
+}
+
+// shortParagraphTransformer is a paragraph transformer that skips paragraphs of
+// more than maxDefinitionParagraphLines lines.
+type shortParagraphTransformer struct {
+	parser.ParagraphTransformer
+}
+
+func (t shortParagraphTransformer) Transform(node *ast.Paragraph, reader text.Reader, pc parser.Context) {
+	if node.Lines().Len() <= maxDefinitionParagraphLines {
+		t.ParagraphTransformer.Transform(node, reader, pc)
+	}
+}
+
 // ExtractMentionTokens returns the distinct ids that body mentions as `#<id>` or
 // `[[<id>]]`, in order of first appearance. Only CommonMark text is scanned: code
 // spans and blocks, links, autolinks, images, HTML blocks, raw inline HTML tags
@@ -121,7 +205,9 @@ func ExtractMentionSpans(body string) []MentionSpan {
 // opens more than maxContainerDepth list or blockquote markers is read as paragraph
 // text past that depth. Once the body's link destinations would scan more than
 // linkScanBudgetFactor times its length, that `](` and every later one are read as
-// text. Tokens are not checked against existing nibs.
+// text. A paragraph of more than maxDefinitionParagraphLines lines is read as text
+// even where it starts with link reference definitions. Tokens are not checked
+// against existing nibs.
 func ExtractMentionTokens(body string) []string {
 	spans := ExtractMentionSpans(body)
 	if len(spans) == 0 {
