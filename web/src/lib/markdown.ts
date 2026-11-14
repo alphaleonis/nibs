@@ -222,7 +222,7 @@ function visibleTextNodes(root: Node): Text[] {
 function expectedMentions(body: string): ExpectedCandidate[] {
   const tokens = sharedMarked.lexer(body);
   const out: ExpectedCandidate[] = [];
-  collectExpected(tokens, { out, leading: tokens[0] }, []);
+  collectExpected(tokens, { out, leading: tokens[0], references: new Map() }, []);
   return out;
 }
 
@@ -230,6 +230,8 @@ interface CollectContext {
   out: ExpectedCandidate[];
   /** The body's first token, which the sanitizer may parse into the document head. */
   leading: Token | undefined;
+  /** The text each character reference in the body shows, by the reference. */
+  references: Map<string, string>;
 }
 
 /**
@@ -240,20 +242,27 @@ interface CollectContext {
 function collectExpected(tokens: Token[], ctx: CollectContext, openInline: string[]): void {
   // Adjacent text and escape tokens render as one DOM text node.
   let text = "";
-  let escapes: number[] = [];
+  let breaks: number[] = [];
+  let decoded = new Set<number>();
   const flush = (): void => {
     const source: CandidateSource = openInline.length === 0 ? "text" : "skipped";
-    if (text !== "") for (const c of segmentMentions(text, escapes)) ctx.out.push({ ...c, source });
+    if (text !== "") for (const c of segmentMentions(text, breaks, decoded)) ctx.out.push({ ...c, source });
     text = "";
-    escapes = [];
+    breaks = [];
+    decoded = new Set();
   };
   for (const token of tokens) {
     if (token.type === "text" && !(token as Tokens.Text).tokens) {
-      text += shownText(token as Tokens.Text);
+      const shown = shownText(token as Tokens.Text, ctx.references);
+      for (const i of shown.decoded) {
+        breaks.push(text.length + i);
+        decoded.add(text.length + i);
+      }
+      text += shown.text;
       continue;
     }
     if (token.type === "escape") {
-      escapes.push(text.length);
+      breaks.push(text.length);
       text += token.text;
       continue;
     }
@@ -323,36 +332,89 @@ function trackInlineTag(tag: string, open: string[]): void {
   else if (open.includes(name)) open.length = open.lastIndexOf(name);
 }
 
-/** The text the DOM shows for a text token, with its character references decoded. */
-function shownText(token: Tokens.Text): string {
+// The character references marked's renderer keeps for the browser to decode.
+const CHARACTER_REFERENCE = /&(?:#\d{1,7}|#[Xx][a-fA-F0-9]{1,6}|\w+);/g;
+
+// A C1 control that no character reference shows, because the browser remaps that number:
+// https://html.spec.whatwg.org/multipage/parsing.html#numeric-character-reference-end-state
+const MARKER = "\u0080";
+const MARKED = new RegExp(`${CHARACTER_REFERENCE.source}|${MARKER}`, "g");
+const MARKED_OR_ESCAPED = new RegExp(`${CHARACTER_REFERENCE.source}|[${MARKER}<&]`, "g");
+const MARKER_INDEX = new RegExp(`${MARKER}(\\d+)${MARKER}`, "g");
+
+/**
+ * The text the DOM shows for a text token, and the offset in that text of each
+ * character that a character reference shows.
+ *
+ * The token decodes in one pass, so raw HTML in it parses in context, with a
+ * marker in place of each reference. A reference that an unclosed tag swallows
+ * vanishes with its marker. `references` caches the text each reference shows.
+ */
+function shownText(token: Tokens.Text, references: Map<string, string>): { text: string; decoded: number[] } {
+  // The marker character itself is marked too, so every marker in the decoded text is one of these.
+  const marked: string[] = [];
   // marked's renderer escapes text the same way, except for quotes and `>`.
-  const html = token.escaped
-    ? token.text
-    : token.text.replace(/<|&(?!(?:#\d{1,7}|#[Xx][a-fA-F0-9]{1,6}|\w+);)/g, (c) => (c === "<" ? "&lt;" : "&amp;"));
+  const html = token.text.replace(token.escaped ? MARKED : MARKED_OR_ESCAPED, (s) => {
+    if (s === "<") return "&lt;";
+    if (s === "&") return "&amp;";
+    marked.push(s);
+    return `${MARKER}${marked.length - 1}${MARKER}`;
+  });
+  const shown = decodeHtml(html);
+  if (marked.length === 0) return { text: shown, decoded: [] };
+  // A complete reference decodes the same in any context, so the new ones share one parse.
+  const fresh = [...new Set(marked)].filter((s) => s !== MARKER && !references.has(s));
+  if (fresh.length > 0) decodeHtml(fresh.join(MARKER)).split(MARKER).forEach((v, i) => references.set(fresh[i], v));
+
+  let text = "";
+  const decoded: number[] = [];
+  let last = 0;
+  for (const m of shown.matchAll(MARKER_INDEX)) {
+    text += shown.slice(last, m.index);
+    last = m.index + m[0].length;
+    const s = marked[Number(m[1])];
+    if (s === MARKER) {
+      text += s;
+      continue;
+    }
+    const value = references.get(s) ?? "";
+    for (let i = 0; i < value.length; i++) decoded.push(text.length + i);
+    text += value;
+  }
+  return { text: text + shown.slice(last), decoded };
+}
+
+function decodeHtml(html: string): string {
   if (!html.includes("&") && !html.includes("<")) return html;
   return toTemplate(html).content.textContent ?? "";
 }
 
 /**
  * Returns the candidates in `text` with the mention the server finds at each.
- * `escapes` holds the offset of each character a backslash escaped.
+ * `breaks` holds, in ascending order, the offset of each character a backslash
+ * escaped and of each character in `decoded`, the ones a character reference
+ * shows.
  *
- * The server reads the source, where a backslash stands before each of those
- * characters. So a candidate that spans one holds no mention, except that an
- * escaped character may start one, and a hash id ends before one.
+ * The server reads the source, where a backslash stands before an escaped
+ * character and a decoded character is still its reference. So a candidate that
+ * spans a break holds no mention, except that an escaped character may start one,
+ * and a hash id ends before a break. Before a `#`, a decoded character reads as
+ * the `;` that ends its reference.
  */
-function segmentMentions(text: string, escapes: number[]): { key: string; mention: string | null }[] {
-  // Candidates come in ascending order, so escapes[e] is the first escape after each.
-  let e = 0;
+function segmentMentions(text: string, breaks: number[], decoded: Set<number>): { key: string; mention: string | null }[] {
+  // Candidates come in ascending order, so breaks[b] is the first break after each.
+  let b = 0;
   return findCandidates(text).map(({ key, index }) => {
-    while (e < escapes.length && escapes[e] <= index) e++;
-    const nextEscape = escapes[e] ?? text.length;
+    if (decoded.has(index)) return { key, mention: null };
+    while (b < breaks.length && breaks[b] <= index) b++;
+    const nextBreak = breaks[b] ?? text.length;
     if (key.startsWith("[[")) {
-      return { key, mention: nextEscape >= index + key.length ? key.slice(2, -2) : null };
+      return { key, mention: nextBreak >= index + key.length ? key.slice(2, -2) : null };
     }
-    const escaped = e > 0 && escapes[e - 1] === index;
-    if (index > 0 && !escaped && /[A-Za-z0-9_]/.test(text[index - 1])) return { key, mention: null };
-    return { key, mention: LEADING_ID.exec(text.slice(index + 1, nextEscape))?.[0] ?? null };
+    const escaped = b > 0 && breaks[b - 1] === index;
+    const wordBefore = index > 0 && !decoded.has(index - 1) && /[A-Za-z0-9_]/.test(text[index - 1]);
+    if (wordBefore && !escaped) return { key, mention: null };
+    return { key, mention: LEADING_ID.exec(text.slice(index + 1, nextBreak))?.[0] ?? null };
   });
 }
 

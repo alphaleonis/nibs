@@ -206,8 +206,9 @@ func (t shortParagraphTransformer) Transform(node *ast.Paragraph, reader text.Re
 // text past that depth. Once the body's link destinations would scan more than
 // linkScanBudgetFactor times its length, that `](` and every later one are read as
 // text. A paragraph of more than maxDefinitionParagraphLines lines is read as text
-// even where it starts with link reference definitions. Tokens are not checked
-// against existing nibs.
+// even where it starts with link reference definitions. Character references are
+// not decoded, and the `#` in a numeric one such as `&#35;` is not a mention.
+// Tokens are not checked against existing nibs.
 func ExtractMentionTokens(body string) []string {
 	spans := ExtractMentionSpans(body)
 	if len(spans) == 0 {
@@ -240,6 +241,9 @@ func scanMentions(source []byte, segStart, segStop int, out []MentionSpan) []Men
 				continue
 			}
 		}
+		if inNumericReference(source, absSigil) {
+			continue
+		}
 		out = append(out, MentionSpan{
 			Token: string(chunk[match[2]:match[3]]),
 			Start: absSigil,
@@ -247,6 +251,26 @@ func scanMentions(source []byte, segStart, segStop int, out []MentionSpan) []Men
 		})
 	}
 	return out
+}
+
+// numericReference matches a numeric character reference after its `&`, in the
+// forms goldmark's renderer decodes:
+// https://github.com/yuin/goldmark/blob/v1.8.5/renderer/html/html.go#L873-L903
+var numericReference = regexp.MustCompile(`^#(?:[0-9]{1,7}|[xX][0-9a-fA-F]{1,6});`)
+
+// inNumericReference reports whether the `#` at source[sigil] belongs to a
+// numeric character reference. A backslash escapes the `&` only when it is not
+// itself escaped.
+func inNumericReference(source []byte, sigil int) bool {
+	amp := sigil - 1
+	if amp < 0 || source[amp] != '&' {
+		return false
+	}
+	backslashes := 0
+	for i := amp - 1; i >= 0 && source[i] == '\\'; i-- {
+		backslashes++
+	}
+	return backslashes%2 == 0 && numericReference.Match(source[sigil:])
 }
 
 // scanBracketMentions appends the `[[<id>]]` mentions whose id starts in
