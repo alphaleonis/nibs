@@ -2,6 +2,8 @@ package nib
 
 import (
 	"bytes"
+	"fmt"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,13 +12,15 @@ import (
 	"time"
 
 	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/text"
 )
 
 // Covers the link label reads in ExtractMentionSpans: a long paragraph of link
-// labels, titles or reference definitions parses quickly, and the parse
-// matches goldmark's default parser for paragraphs within the definition bound.
+// labels, nested labels, titles or reference definitions parses quickly, and the
+// parse matches goldmark's default parser for paragraphs within the definition
+// bound.
 
 // Each body is about 480 KB, which took seconds to parse with goldmark's default
 // parser.
@@ -37,6 +41,8 @@ func TestExtractMentionSpansLinkLabelParagraphsAreFast(t *testing.T) {
 		"long label":          "[a][" + repeatTo("a\n", size) + "]\n",
 		"long definition":     "[a]: x \"" + repeatTo("a\n", size) + "\"\n",
 		"long definition key": "[" + repeatTo("a\n", size) + "]: x\n",
+		"nested labels":       strings.Repeat("[", size/2) + strings.Repeat("]", size/2),
+		"nested label lines":  strings.Repeat("[\n", size/4) + strings.Repeat("]\n", size/4),
 	} {
 		t.Run(name, func(t *testing.T) {
 			start := time.Now()
@@ -94,6 +100,13 @@ func TestMentionParserMatchesGoldmark(t *testing.T) {
 		"definition wrap": "[a]:\n/a\n'title\nmore'\n\n[a]\n",
 		"mentions":        "[[tnib-a]] [x](#tnib-b \"#tnib-c\")\n[[tnib-d]][x]\n\n[x]: #tnib-e\n",
 		"long paragraph":  strings.Repeat("[a] [[b]] [c][]\n[d](x \"t\n", 400) + "\n[c]: /c\n[d]: /d\n",
+		"nested labels":   strings.Repeat("[", 300) + "a" + strings.Repeat("]", 300) + "\n\n[a]: /a\n",
+		"nested lines":    strings.Repeat("[\n", 300) + strings.Repeat("]\n", 300),
+		"links in labels": "[a [b](c) d] [e [f][g] h][g] [x ![i [j](k)](l) y](m) [[n](o)]\n\n[g]: /g\n",
+		"emphasis":        "*[a *b* c](d)* [_e_ [f]_](g) **[h** i] [*j](k)*\n",
+		"merged labels":   "x[a] y[b]z [c\n[d] e\n\n[d]: /d\n",
+		"labels at limit": labelsAt(maxLinkLabelLen, "") + labelsAt(maxLinkLabelLen+1, ""),
+		"indented labels": labelsAt(maxLinkLabelLen, "          ") + labelsAt(maxLinkLabelLen+1, "          "),
 	}
 	files, err := filepath.Glob(filepath.Join("..", "..", "testdata", "fixtures", "sample-project", ".nibs", "data", "*.md"))
 	if err != nil || len(files) == 0 {
@@ -114,6 +127,49 @@ func TestMentionParserMatchesGoldmark(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Each body is a short random mix of brackets, links, emphasis and line breaks,
+// where goldmark's check for a link in a link label decides the parse.
+func TestMentionParserMatchesGoldmarkOnRandomLabels(t *testing.T) {
+	pieces := []string{"[", "[", "]", "]", "![", "(x)", "[a](b)", "[a]", "[b][]", "a", " ", "\n", "*", "_", "`", "#tnib-a", "\\", "<", ">"}
+	rng := rand.New(rand.NewPCG(1, 2))
+	for i := range 5000 {
+		var b strings.Builder
+		for range 1 + rng.IntN(40) {
+			b.WriteString(pieces[rng.IntN(len(pieces))])
+		}
+		body := b.String() + "\n\n[a]: /a\n[b]: /b\n"
+		want := treeOf(goldmark.DefaultParser(), body)
+		if got := treeOf(newMentionParser(), body); got != want {
+			t.Fatalf("body %d %q:\ntree = %s\nwant %s", i, body, got, want)
+		}
+	}
+}
+
+// treeOf returns the kinds of the nodes p parses body into, with each text's
+// segment and line breaks.
+func treeOf(p parser.Parser, body string) string {
+	var b strings.Builder
+	_ = ast.Walk(p.Parse(text.NewReader([]byte(body))), func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			b.WriteString(")")
+			return ast.WalkContinue, nil
+		}
+		b.WriteString("(" + n.Kind().String())
+		if t, ok := n.(*ast.Text); ok {
+			fmt.Fprintf(&b, " %d-%d %t %t", t.Segment.Start, t.Segment.Stop, t.SoftLineBreak(), t.HardLineBreak())
+		}
+		return ast.WalkContinue, nil
+	})
+	return b.String()
+}
+
+// labelsAt returns a shortcut and a collapsed reference whose label is n bytes
+// once each line loses its indent, and the label's definition.
+func labelsAt(n int, indent string) string {
+	label := strings.Repeat("a", n%2) + strings.Repeat("a\n"+indent, n/2)
+	return "[" + label + "] [" + label + "][]\n\n[" + label + "]: /x\n\n"
 }
 
 func renderWith(t *testing.T, p parser.Parser, body string) string {
