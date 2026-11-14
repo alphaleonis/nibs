@@ -918,9 +918,21 @@ func listTokens(n int) []string {
 	return out
 }
 
+// anchorThenMentions returns a raw anchor, a markdown link, then n hash
+// mentions in one paragraph; listTokens returns their ids.
+func anchorThenMentions(n int) string {
+	var b strings.Builder
+	b.WriteString("x <a name=t> see [d](u)")
+	for i := range n {
+		fmt.Fprintf(&b, " #m%d", i)
+	}
+	return b.String()
+}
+
 // TestExtractMentionTokensWebParity pins the shapes where the web renderer once
 // linked differently from this scanner. web/src/lib/markdown.test.ts holds the
-// same cases under the same names, and both sides must give the same answer.
+// same cases under the same names, and both sides must give the same answer,
+// except where the web test states why it cannot.
 func TestExtractMentionTokensWebParity(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1009,6 +1021,25 @@ func TestExtractMentionTokensWebParity(t *testing.T) {
 		{"implicit closes: a quoted > before a code tag", `x <b title="1>2 <code>">#y</b> #y`, []string{"y"}},
 		{"alignment: an id many times after an html block that holds it", "<div>#x</div>\n\n#x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x", []string{"x"}},
 		{"alignment: html blocks and paragraphs that alternate one id", "<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x", []string{"x"}},
+		{"unclosed elements: an inline iframe left open into an html block", "x <iframe>\n\n<div>#x</iframe></div>\n\n#x", []string{"x"}},
+		{"unclosed elements: an inline link left open into the next paragraph", "<a href=\"x\">foo\n\nx#1 hid </a> #1 vis", []string{"1"}},
+		{"malformed html: a paragraph fostered out of a table between rows", "<table>\n<tr><td>see #a1</td><td>#a2</td></tr>\n\nNote: blocked by #m and [[n]].\n\n<tr><td>c</td></tr>\n</table>\n\nAfter #z", []string{"m", "n", "z"}},
+		{"unclosed elements: an inline link left open in a table cell", "| <a name=t> |\n|---|\n| c |\n\nafter #z\n\n<div>#z</div>", []string{"z"}},
+		{"unclosed elements: an html block that closes an inline link", "x <a name=t>\n\n<div></a></div>\n\n#z\n\n<div>#z</div>", []string{"z"}},
+		{"unclosed elements: a second inline link closes the first", "x <a name=t> y <a href=u>z</a>\n\n#q\n\n<div>#q</div>", []string{"q"}},
+		{"tables: a mention in a cell before an html block with the same id", "| a |\n|---|\n| #y |\n\n<div>#y</div>", []string{"y"}},
+		{"foreign content: a self-closed style in an svg", "Icon <svg><style/></svg>\n\n<div>#a</div>\n\nSee #a", []string{"a"}},
+		{"foreign content: a self-closed anchor in an svg", "Icon <svg viewBox=\"0 0 1 1\"><a href=\"#top\"/></svg>\n\nRelated to x#a, see [docs](u) and #a.", []string{"a"}},
+		{"foreign content: a self-closed anchor in an svg in one paragraph", `Icon <svg><a href="#top"/></svg> x#a [docs](u) #a`, []string{"a"}},
+		{"malformed html: an anchor swallowed by an end tag", `Press <kbd>Ctrl or </b <a href=u> x#a [d](u) #a`, []string{"a"}},
+		{"hidden mention: more than three open code elements, then an anchor reopened in code", "x <code><code><code><code> y\n\n</code></code></code> see x#a\n\n</code> z <code><a name=t>y</code> #a", []string{"a"}},
+		{"hidden mention: more than three open code elements, then a code end tag in an html block", "<code><code><code><code>\n\n</code></code></code> x#a\n\n<code><code>\n\n<div></code></div>\n\n#a", []string{"a"}},
+		{"hidden mention: prose about code tags, then a code end tag in an object", "Wrap it in <code>, <code>, <code> and <code>.\n\nClose with </code></code></code> as in issue x#a.\n\nThen </code> <code> <object></code></object> see #a.", []string{"a"}},
+		{"hidden mention: a raw-text end tag in link text, then an anchor reopened in code", "x <iframe> [</iframe>](u)\n\n<div>#a</div>\n\n</iframe>\n\nz <code><a name=t>y</code> #a", []string{"a"}},
+		{"hidden mention: a decoded hash after more than three code elements", "<code><code><code><code>\n\n</code></code></code> &#35;a </code> <code> <marquee></code></marquee> #a", []string{"a"}},
+		{"hidden mention: an anchor in an object, then an anchor reopened in code", "<object data=\"d.pdf\"><a href=\"d.pdf\">Download the PDF\n\n</object>\n\nThe build broke in x#a; see <code><a name=n>note</code> #a", []string{"a"}},
+		{"hidden mention: a decoded hash, then a hash after an ampersand", "<code><code><code><code>\n\n</code></code></code> &#35;a </code> <code> <marquee></code></marquee> &#a", []string{"a"}},
+		{"alignment: a raw anchor before a markdown link, then a long run of mentions", anchorThenMentions(1100), listTokens(1100)},
 		{"one-character hash ids: #x", "see #x", []string{"x"}},
 		{"one-character hash ids: a trailing hyphen", "ref #abc-", []string{"abc"}},
 	}

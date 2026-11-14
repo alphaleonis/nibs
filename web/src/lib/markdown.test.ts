@@ -277,6 +277,9 @@ describe("renderMarkdown mention parity with the server scanner", () => {
     return `<!-- #zz -->\n\n${Array.from({ length: n }, (_, i) => `- #m${i}\n`).join("")}\n<!-- #yy -->`;
   }
   const listTokens = (n: number): string[] => Array.from({ length: n }, (_, i) => `m${i}`);
+  /** A raw anchor, a markdown link, then n hash mentions in one paragraph. */
+  const anchorThenMentions = (n: number): string =>
+    `x <a name=t> see [d](u)${Array.from({ length: n }, (_, i) => ` #m${i}`).join("")}`;
   const items = (prefix: string, n: number): string =>
     Array.from({ length: n }, (_, i) => `- #${prefix}${i}\n`).join("");
   /** Brackets that only the DOM joins, n hash mentions, the bracketed id, then n more. */
@@ -406,6 +409,14 @@ describe("renderMarkdown mention parity with the server scanner", () => {
     ["implicit closes: a quoted > before a code tag", "x <b title=\"1>2 <code>\">#y</b> #y", ["y"]],
     ["alignment: an id many times after an html block that holds it", "<div>#x</div>\n\n#x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x", ["x"]],
     ["alignment: html blocks and paragraphs that alternate one id", "<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x", ["x"]],
+    ["unclosed elements: an inline link left open in a table cell", "| <a name=t> |\n|---|\n| c |\n\nafter #z\n\n<div>#z</div>", ["z"]],
+    ["unclosed elements: an html block that closes an inline link", "x <a name=t>\n\n<div></a></div>\n\n#z\n\n<div>#z</div>", ["z"]],
+    ["unclosed elements: a second inline link closes the first", "x <a name=t> y <a href=u>z</a>\n\n#q\n\n<div>#q</div>", ["q"]],
+    ["tables: a mention in a cell before an html block with the same id", "| a |\n|---|\n| #y |\n\n<div>#y</div>", ["y"]],
+    ["foreign content: a self-closed style in an svg", "Icon <svg><style/></svg>\n\n<div>#a</div>\n\nSee #a", ["a"]],
+    ["foreign content: a self-closed anchor in an svg", 'Icon <svg viewBox="0 0 1 1"><a href="#top"/></svg>\n\nRelated to x#a, see [docs](u) and #a.', ["a"]],
+    ["foreign content: a self-closed anchor in an svg in one paragraph", 'Icon <svg><a href="#top"/></svg> x#a [docs](u) #a', ["a"]],
+    ["malformed html: an anchor swallowed by an end tag", "Press <kbd>Ctrl or </b <a href=u> x#a [d](u) #a", ["a"]],
     ["one-character hash ids: #x", "see #x", ["x"]],
     ["one-character hash ids: a trailing hyphen", "ref #abc-", ["abc"]],
   ];
@@ -458,6 +469,54 @@ describe("renderMarkdown mention parity with the server scanner", () => {
       a.textContent ?? "",
     ]);
   }
+
+  /** Each mention link's parent tag, and its text after the word it ends. */
+  function linkWords(body: string): [string, string][] {
+    const tpl = document.createElement("template");
+    tpl.innerHTML = renderMarkdown(body, (t) => `nibs-${t}`);
+    return Array.from(tpl.content.querySelectorAll("a.mention-link")).map((a) => [
+      a.parentElement?.tagName ?? "",
+      (a.previousSibling?.textContent ?? "").split(/\s/).at(-1) + (a.textContent ?? ""),
+    ]);
+  }
+
+  // The stack cannot follow these tags: inside svg or math they are foreign
+  // elements, an end tag left unescaped swallows the <a> after it, and the browser
+  // moves the last paragraph ahead of the raw table.
+  it.each([
+    ["Icon <svg><style/></svg>\n\n<div>#a</div>\n\nSee #a", [["P", "#a"]]],
+    ['Icon <svg viewBox="0 0 1 1"><a href="#top"/></svg>\n\nRelated to x#a, see [docs](u) and #a.', [["P", "#a"]]],
+    ['Icon <svg><a href="#top"/></svg> x#a [docs](u) #a', [["P", "#a"]]],
+    ["Icon <svg><title/></svg>\n\n<!-- todo --><b>#a</b>\n\nSee #a", [["P", "#a"]]],
+    ["x <svg> <style>\n\n<div>#a</div>\n\n#a", [["P", "#a"]]],
+    ["Icon <math><style/></math>\n\n<div>#a</div>\n\nSee #a", [["P", "#a"]]],
+    ["Press <kbd>Ctrl or </b <a href=u> x#a [d](u) #a", [["KBD", "#a"]]],
+    [
+      "- #a <pre> #a <tr> #a\n  - </ifr &#35;a <A href=u>\n\n&#35;a x#b #b #a",
+      [
+        ["LI", "#a"],
+        ["P", "#b"],
+        ["P", "#a"],
+      ],
+    ],
+    ["[d](u) <title> |\n - &#35;a </title> </script>\n<table>\n<tr><td>\\#a</td></tr>\n\n\\#a", []],
+  ])("links only the mentions the server counts in %j", (body, want) => {
+    expect(linkWords(body)).toEqual(want);
+  });
+
+  // The server counts only the last mention, which the browser hides. The visible
+  // text with the same key is not a mention.
+  it.each([
+    ["hidden mention: more than three open code elements, then an anchor reopened in code", "x <code><code><code><code> y\n\n</code></code></code> see x#a\n\n</code> z <code><a name=t>y</code> #a"],
+    ["hidden mention: more than three open code elements, then a code end tag in an html block", "<code><code><code><code>\n\n</code></code></code> x#a\n\n<code><code>\n\n<div></code></div>\n\n#a"],
+    ["hidden mention: prose about code tags, then a code end tag in an object", "Wrap it in <code>, <code>, <code> and <code>.\n\nClose with </code></code></code> as in issue x#a.\n\nThen </code> <code> <object></code></object> see #a."],
+    ["hidden mention: a raw-text end tag in link text, then an anchor reopened in code", "x <iframe> [</iframe>](u)\n\n<div>#a</div>\n\n</iframe>\n\nz <code><a name=t>y</code> #a"],
+    ["hidden mention: a decoded hash after more than three code elements", "<code><code><code><code>\n\n</code></code></code> &#35;a </code> <code> <marquee></code></marquee> #a"],
+    ["hidden mention: an anchor in an object, then an anchor reopened in code", "<object data=\"d.pdf\"><a href=\"d.pdf\">Download the PDF\n\n</object>\n\nThe build broke in x#a; see <code><a name=n>note</code> #a"],
+    ["hidden mention: a decoded hash, then a hash after an ampersand", "<code><code><code><code>\n\n</code></code></code> &#35;a </code> <code> <marquee></code></marquee> &#a"],
+  ])("links nothing where %s", (_name, body) => {
+    expect(linkWords(body)).toEqual([]);
+  });
 
   it.each([
     ["the mention after an html block that holds the same text", "<div>#x</div>\n\n#x", [["P", "#x"]]],
@@ -514,12 +573,44 @@ describe("renderMarkdown mention parity with the server scanner", () => {
     expect(linkedTokens("<table><tr><td>#y</td></tr>\n\n#x")).toEqual([]);
   });
 
+  // The server also finds #m and [[n]], but the DOM fosters their paragraph ahead
+  // of the table's text, an order the keys cannot settle.
+  it("malformed html: a paragraph fostered out of a table between rows", () => {
+    const body =
+      "<table>\n<tr><td>see #a1</td><td>#a2</td></tr>\n\nNote: blocked by #m and [[n]].\n\n<tr><td>c</td></tr>\n</table>\n\nAfter #z";
+    expect(linkedTokens(body)).toEqual(["z"]);
+  });
+
+  // The server finds the mentions these mirrored rows name, but the collector resets
+  // its open elements at each block, which the browser does not.
+  it.each([
+    // The browser keeps the iframe open and hides the html block's #x, whose candidate takes the visible #x.
+    ["unclosed elements: an inline iframe left open into an html block", "x <iframe>\n\n<div>#x</iframe></div>\n\n#x", []],
+    // The browser reopens the anchor in the next paragraph and hides x#1, whose candidate takes the visible #1.
+    ["unclosed elements: an inline link left open into the next paragraph", '<a href="x">foo\n\nx#1 hid </a> #1 vis', []],
+    // The markdown link closes the raw anchor, but the collector keeps it open, so 1100 mentions exceed MAX_EDITS.
+    ["alignment: a raw anchor before a markdown link, then a long run of mentions", anchorThenMentions(1100), []],
+  ])("%s", (_name, body, want) => {
+    expect(linkedTokens(body)).toEqual(want);
+  });
+
   // Each `[<foo></foo>[x]]` is a candidate only the DOM shows, so each one is an edit.
   it.each([
     [1000, ["y"]],
     [1001, []],
   ])("with %i edits between the DOM and the tokens, links %j", (n, want) => {
     expect(linkedTokens(`${"[<foo></foo>[x]] ".repeat(n)}\n\n#y`)).toEqual(want);
+  });
+
+  // An xmp from an html block shows the rest of the body as text, so the DOM stays
+  // small while the body opens many <code> elements.
+  it.each([
+    ["table cells", `<xmp>\n\nx ${"<code>".repeat(20000)}\n\n| h |\n|---|\n${"| #a |\n".repeat(20000)}`],
+    ["paragraphs", `<xmp>\n\n${"x <code>\n\n".repeat(80000)}#a`],
+  ])("renders many open elements before %s in linear time", (_name, body) => {
+    const start = performance.now();
+    renderMarkdown(body, (t) => `nibs-${t}`);
+    expect(performance.now() - start).toBeLessThan(1500);
   });
 
   it("renders many unterminated start tags in linear time", () => {

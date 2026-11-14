@@ -236,8 +236,8 @@ interface CollectContext {
 
 /**
  * `openInline` holds the skipped elements an inline tag opened in the current
- * block. It ends with the block, because the browser closes such an element in
- * ways a stack cannot follow.
+ * block. It ends with the block, though the browser keeps a raw-text element,
+ * an `a` or a `code` open into later blocks.
  */
 function collectExpected(tokens: Token[], ctx: CollectContext, openInline: string[]): void {
   // Adjacent text and escape tokens render as one DOM text node.
