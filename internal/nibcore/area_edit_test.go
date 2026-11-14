@@ -1017,6 +1017,110 @@ func TestAreaEditStopsWaitingForTheStoreLockWhenItsContextEnds(t *testing.T) {
 	}
 }
 
+// An Update parks on the store's file lock while it holds c.mu, so the edit's
+// context must end the wait for c.mu too. Afterwards the parked Update and a
+// second edit both finish, which a leaked writer slot would hang.
+func TestAreaEditStopsWaitingForAParkedWriterWhenItsContextEnds(t *testing.T) {
+	core, nibsDir := areaVerbCore(t)
+	before := storedAreasOf(t, nibsDir)
+
+	release, err := acquireFileLock(core.lockPath)
+	if err != nil {
+		t.Fatalf("holding the store's write lock: %v", err)
+	}
+	released := false
+	defer func() {
+		if !released {
+			_ = release()
+		}
+	}()
+
+	// GetForUpdate takes c.mu briefly, so it runs here: otherwise the wait below
+	// could see that hold rather than the parked Update's.
+	edit, err := core.GetForUpdate("nibs-ae03")
+	if err != nil {
+		t.Fatalf("GetForUpdate: %v", err)
+	}
+	edit.Title = "Retitled while parked"
+	updateDone := make(chan error, 1)
+	go func() { updateDone <- core.Update(edit, nil) }()
+	waitForWriterHoldingMu(t, core)
+
+	const waited = 150 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	timer := time.AfterFunc(waited, cancel)
+	defer timer.Stop()
+	editDone := make(chan error, 1)
+	go func() {
+		_, err := core.UpdateArea(ctx, "web", area.NodeUpdate{NewName: ptrTo("platform")})
+		editDone <- err
+	}()
+
+	select {
+	case err := <-editDone:
+		var ioErr *AreaEditIOError
+		if !errors.As(err, &ioErr) {
+			t.Fatalf("error = %v (%T), want the IO class so the surfaces report it as rerunnable", err, err)
+		}
+		if ioErr.Phase != AreaEditPhaseLock {
+			t.Errorf("Phase = %d, want AreaEditPhaseLock (%d)", ioErr.Phase, AreaEditPhaseLock)
+		}
+		var ended *StoreLockWaitEndedError
+		if !errors.As(ioErr.Cause, &ended) {
+			t.Fatalf("Cause = %v (%T), want *StoreLockWaitEndedError", ioErr.Cause, ioErr.Cause)
+		}
+		if !errors.Is(ended, context.Canceled) {
+			t.Errorf("Cause = %v, want it to unwrap to context.Canceled", ended)
+		}
+		if ended.Waited < waited/2 {
+			t.Errorf("Waited = %s, want at least %s — the edit must have waited for the writer, not refused on sight",
+				ended.Waited, waited/2)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the edit was still waiting behind the parked writer after its context was canceled")
+	}
+
+	select {
+	case err := <-updateDone:
+		t.Fatalf("the parked Update finished while the file lock was held (err=%v)", err)
+	default:
+	}
+	released = true
+	if err := release(); err != nil {
+		t.Fatalf("releasing the store's write lock: %v", err)
+	}
+	select {
+	case err := <-updateDone:
+		if err != nil {
+			t.Fatalf("the parked Update: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the parked Update did not finish after the file lock was released")
+	}
+
+	if after := storedAreasOf(t, nibsDir); after != before {
+		t.Errorf("the vocabulary was rewritten by an edit that never held the writer lock:\n%s", after)
+	}
+
+	retry := make(chan error, 1)
+	go func() {
+		_, err := core.UpdateArea(context.Background(), "web", area.NodeUpdate{NewName: ptrTo("platform")})
+		retry <- err
+	}()
+	select {
+	case err := <-retry:
+		if err != nil {
+			t.Fatalf("the edit after the canceled one: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the edit after the canceled one never got the writer lock")
+	}
+	if b, err := core.Get("nibs-ae01"); err != nil || b.Area != "platform" {
+		t.Errorf("nibs-ae01 area = %q (err %v), want platform after the rename", b.Area, err)
+	}
+}
+
 // TestAreaEditRefusesAContextAlreadyOver pins the other end of the same rule: a
 // verb handed a context that is already over does not start a cascading rewrite
 // of the store for a caller that is no longer there. It takes no lock, so the

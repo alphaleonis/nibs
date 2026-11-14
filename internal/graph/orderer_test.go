@@ -88,6 +88,25 @@ func TestOrderer_Members(t *testing.T) {
 }
 
 func TestOrderer_BackfillOrderKeys(t *testing.T) {
+	t.Run("Members writes nothing and keys nothing", func(t *testing.T) {
+		ordered := &nib.Nib{ID: "o-1", Title: "Zulu", Order: "a0"}
+		unordered := &nib.Nib{ID: "u-1", Title: "Alpha", Order: ""}
+
+		writer := &stubWriter{}
+		orderer := NewOrderer(newOrdererReader(unordered, ordered), writer)
+		roots := orderer.Members(ScopeParent, "")
+
+		if got := nibIDs(roots); !equalStrings(got, []string{"o-1", "u-1"}) {
+			t.Errorf("roots = %v, want [o-1 u-1]", got)
+		}
+		if roots[1].Order != "" {
+			t.Errorf("unkeyed root reports order %q after a read", roots[1].Order)
+		}
+		if len(writer.updated) != 0 {
+			t.Errorf("a read persisted %v", nibIDs(writer.updated))
+		}
+	})
+
 	t.Run("assigns keys to unordered root siblings", func(t *testing.T) {
 		root1 := &nib.Nib{ID: "root-1", Title: "Alpha", Order: ""}
 		root2 := &nib.Nib{ID: "root-2", Title: "Beta", Order: ""}
@@ -96,7 +115,7 @@ func TestOrderer_BackfillOrderKeys(t *testing.T) {
 		reader := newOrdererReader(root1, root2)
 
 		orderer := NewOrderer(reader, writer)
-		roots := orderer.Members(ScopeParent, "")
+		roots := orderer.keyedMembers(ScopeParent, "")
 
 		if len(roots) != 2 {
 			t.Fatalf("got %d roots, want 2", len(roots))
@@ -121,7 +140,7 @@ func TestOrderer_BackfillOrderKeys(t *testing.T) {
 		reader := newOrdererReader(ordered, unordered)
 
 		orderer := NewOrderer(reader, writer)
-		roots := orderer.Members(ScopeParent, "")
+		roots := orderer.keyedMembers(ScopeParent, "")
 
 		if len(roots) != 2 {
 			t.Fatalf("got %d roots, want 2", len(roots))
@@ -157,7 +176,7 @@ func TestOrderer_BackfillOrderKeys(t *testing.T) {
 		reader := newOrdererReader(root1, root2)
 
 		orderer := NewOrderer(reader, writer)
-		orderer.Members(ScopeParent, "")
+		orderer.keyedMembers(ScopeParent, "")
 
 		if len(writer.updated) != 0 {
 			t.Errorf("expected no update calls when all nibs already ordered, got %d", len(writer.updated))

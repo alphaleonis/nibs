@@ -111,12 +111,12 @@ func TestMigrateRelocationCarriesTheStoresGitRepository(t *testing.T) {
 		"leg-a1--one.md": layoutNib,
 	})
 	if out, err := exec.Command("git", "-C", storeDir, "init", "-q").CombinedOutput(); err != nil {
-		t.Skipf("git init failed (git unavailable?): %v\n%s", err, out)
+		testskip.Unavailable(t, testskip.Git, "git init failed (git unavailable?): %v\n%s", err, out)
 	}
 	gitCommitAll(t, storeDir)
 	before, err := exec.Command("git", "-C", storeDir, "rev-parse", "HEAD").Output()
 	if err != nil {
-		t.Skipf("git rev-parse failed: %v", err)
+		testskip.Unavailable(t, testskip.Git, "git rev-parse failed: %v", err)
 	}
 
 	if out, migrateErr := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty"); migrateErr != nil {
@@ -510,7 +510,7 @@ func migrateGateFixtures() map[string]migrateGateFixture {
 		"dirty-store": {build: func(t *testing.T) string {
 			_, storeDir := writeLegacyStore(t, "", map[string]string{"leg-a1--one.md": layoutNib})
 			if out, err := exec.Command("git", "-C", storeDir, "init", "-q").CombinedOutput(); err != nil {
-				t.Skipf("git init failed (git unavailable?): %v\n%s", err, out)
+				testskip.Unavailable(t, testskip.Git, "git init failed (git unavailable?): %v\n%s", err, out)
 			}
 			// A committed baseline plus one uncommitted change.
 			gitCommitAll(t, storeDir)
@@ -523,11 +523,11 @@ func migrateGateFixtures() map[string]migrateGateFixture {
 			})
 			// The store repo is clean, so only the PROJECT repo can refuse.
 			if out, err := exec.Command("git", "-C", storeDir, "init", "-q").CombinedOutput(); err != nil {
-				t.Skipf("git init failed (git unavailable?): %v\n%s", err, out)
+				testskip.Unavailable(t, testskip.Git, "git init failed (git unavailable?): %v\n%s", err, out)
 			}
 			gitCommitAll(t, storeDir)
 			if out, err := exec.Command("git", "-C", projectDir, "init", "-q").CombinedOutput(); err != nil {
-				t.Skipf("git init failed (git unavailable?): %v\n%s", err, out)
+				testskip.Unavailable(t, testskip.Git, "git init failed (git unavailable?): %v\n%s", err, out)
 			}
 			return storeDir
 		}},
@@ -1138,7 +1138,7 @@ func TestMigrateRefusesToRelocateALinkedGitWorktree(t *testing.T) {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = mainRepo
 		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Skipf("git %v: %v\n%s", args, err, out)
+			testskip.Unavailable(t, testskip.Git, "git %v: %v\n%s", args, err, out)
 		}
 	}
 	if err := os.RemoveAll(storeDir); err != nil {
@@ -1147,7 +1147,7 @@ func TestMigrateRefusesToRelocateALinkedGitWorktree(t *testing.T) {
 	add := exec.Command("git", "worktree", "add", "-q", "-b", "storebranch", storeDir)
 	add.Dir = mainRepo
 	if out, err := add.CombinedOutput(); err != nil {
-		t.Skipf("git worktree add: %v\n%s", err, out)
+		testskip.Unavailable(t, testskip.Git, "git worktree add: %v\n%s", err, out)
 	}
 	writeFileT(t, filepath.Join(storeDir, "leg-a1--one.md"), layoutNib)
 	if info, err := os.Lstat(filepath.Join(storeDir, ".git")); err != nil || !info.Mode().IsRegular() {
@@ -1182,7 +1182,7 @@ func TestMigrateRefusesToRelocateALinkedGitWorktree(t *testing.T) {
 	initPlain := exec.Command("git", "init", "-q")
 	initPlain.Dir = plainStore
 	if out, initErr := initPlain.CombinedOutput(); initErr != nil {
-		t.Skipf("git init: %v\n%s", initErr, out)
+		testskip.Unavailable(t, testskip.Git, "git init: %v\n%s", initErr, out)
 	}
 	if out, plainErr := runRootWith(t, "--nibs-path", plainStore, "migrate", "--allow-dirty"); plainErr != nil {
 		t.Fatalf("migrate refused a plain repository store: %v\nout: %s", plainErr, out)

@@ -30,6 +30,37 @@ function freshNonce(): string {
 // A private DOMPurify instance, so the hook below applies to this module only.
 const purify = DOMPurify(window);
 
+// --- mention scan markers ---------------------------------------------------
+//
+// The mention walk reads DOM text, where the source's backslashes and block
+// boundaries are gone. These empty spans carry them, so the walk finds the
+// mentions the server's scanner (internal/nib/references.go) finds:
+//   * `split` stands where a backslash escape was. The element splits the text
+//     node there, so `[\[x]]` does not read as `[[x]]` while `\[[x]]` still does.
+//   * `off` and `on` enclose a raw HTML block, whose text the server skips.
+// Markers carry the render nonce, so raw HTML in a body cannot forge one. They
+// are emitted only when a resolver will run the walk, which removes them.
+// `renderMarkdown` checks what it can of how they read back (see there).
+type ScanMarker = "split" | "off" | "on";
+const SCAN_ATTR = "data-mention-scan";
+const SCAN_NONCE_ATTR = "data-mention-nonce";
+let emitScanMarkers = false;
+// Markers emitted in the current render; reset before every parse.
+let emittedScanMarkers = 0;
+
+function scanMarker(kind: ScanMarker): string {
+  emittedScanMarkers++;
+  return `<span ${SCAN_ATTR}="${kind}" ${SCAN_NONCE_ATTR}="${renderNonce}"></span>`;
+}
+
+const HTML_ESCAPES: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+};
+
 // Mentions are rewritten by the post-sanitize DOM walk, not a marked extension.
 const sharedMarked = new Marked();
 sharedMarked.use({
@@ -39,6 +70,16 @@ sharedMarked.use({
       // ENABLED so it is clickable; the checked state comes from re-rendering
       // after the source flips.
       return `<input type="checkbox" data-task-ordinal="${ordinal}" data-task-nonce="${renderNonce}"${checked ? " checked" : ""}> `;
+    },
+    // marked renders an escape token through `text`. An image's alt text uses a
+    // separate text renderer, so no marker lands in an attribute.
+    text(token: Tokens.Text | Tokens.Escape): string | false {
+      if (!emitScanMarkers || token.type !== "escape") return false;
+      return scanMarker("split") + token.text.replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]);
+    },
+    html(token: Tokens.HTML | Tokens.Tag): string | false {
+      if (!emitScanMarkers || !token.block) return false;
+      return scanMarker("off") + token.text + scanMarker("on");
     },
   },
 });
@@ -130,17 +171,102 @@ export function toggleTaskLine(body: string, ordinal: number): string {
   return parts.join("");
 }
 
-/**
- * Rewrite `#<id>` and `[[<id>]]` tokens in the sanitized DOM's text nodes into
- * mention links. A bracketed link shows the bare id.
- * Not a marked extension, because block-level raw HTML bypasses the inline lexer.
- * Skips `<code>`, `<pre>` and existing `<a>`.
- */
-function postProcessMentionsInDom(html: string, resolve: MentionResolver): string {
-  if (typeof document === "undefined") return html;
+/** Sanitized HTML for a body, and the scan state its first node starts in. */
+interface SanitizedRender {
+  html: string;
+  /** The render nonce when the HTML carries scan markers, or null. */
+  nonce: string | null;
+  /** How many scan markers the HTML held before it was sanitized. */
+  markerCount: number;
+  startsInRawBlock: boolean;
+}
+
+function renderSanitized(body: string, withMarkers: boolean): SanitizedRender {
+  taskOrdinalCounter = 0;
+  renderNonce = freshNonce();
+  emitScanMarkers = withMarkers;
+  emittedScanMarkers = 0;
+  let html = sharedMarked.parse(body, { async: false });
+  // A leading marker would open <body> before a leading raw HTML block, so a
+  // body that starts with a <style> would parse differently.
+  let markerCount = emittedScanMarkers;
+  const leadingOff = scanMarker("off");
+  const startsInRawBlock = withMarkers && html.startsWith(leadingOff);
+  if (startsInRawBlock) {
+    html = html.slice(leadingOff.length);
+    markerCount--;
+  }
+  // data-* passes by default; listed because click delegation depends on both.
+  const safe = purify.sanitize(html, { ADD_ATTR: ["data-nib-id", "data-task-ordinal"] });
+  return { html: safe, nonce: withMarkers ? renderNonce : null, markerCount, startsInRawBlock };
+}
+
+function toTemplate(html: string): HTMLTemplateElement {
   const tpl = document.createElement("template");
   tpl.innerHTML = html;
+  return tpl;
+}
 
+/**
+ * Parses the marked render of `body` and removes its scan markers.
+ *
+ * @returns The parsed render and the text nodes inside raw HTML blocks, or null
+ *   when the render without markers does not serialize the same as `plain`, a
+ *   marker was lost, or block starts and ends do not alternate.
+ */
+function readScanMarkers(
+  body: string,
+  plain: string,
+): { tpl: HTMLTemplateElement; rawText: Set<Node> } | null {
+  const render = renderSanitized(body, true);
+  const tpl = toTemplate(render.html);
+  const rawText = new Set<Node>();
+  const markers: Element[] = [];
+  let inRawBlock = render.startsInRawBlock;
+  const walker = document.createTreeWalker(tpl.content, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      if (inRawBlock) rawText.add(node);
+      continue;
+    }
+    const el = node as Element;
+    const isMarker =
+      el.tagName === "SPAN" &&
+      el.attributes.length === 2 &&
+      !el.hasChildNodes() &&
+      el.getAttribute(SCAN_NONCE_ATTR) === render.nonce;
+    if (!isMarker) continue;
+    markers.push(el);
+    // Raw HTML blocks do not nest, so `off` and `on` alternate unless one was lost.
+    const kind = el.getAttribute(SCAN_ATTR);
+    if (kind === "off" || kind === "on") {
+      if (inRawBlock === (kind === "off")) return null;
+      inRawBlock = kind === "off";
+    }
+  }
+  if (inRawBlock || markers.length !== render.markerCount) return null;
+  for (const marker of markers) marker.remove();
+  // Text-node splits do not serialize, so any difference is one the markers
+  // caused in the parse or the sanitize.
+  if (tpl.innerHTML !== toTemplate(plain).innerHTML) return null;
+  return { tpl, rawText };
+}
+
+/**
+ * Whether renderMarkdown reads the mentions of `body` with the scan markers.
+ * False means it reads them from the unmarked render. Exported for tests.
+ */
+export function readsWithScanMarkers(body: string): boolean {
+  return readScanMarkers(body, renderSanitized(body, false).html) !== null;
+}
+
+/**
+ * Rewrite `#<id>` and `[[<id>]]` tokens in the text nodes of `tpl` into mention
+ * links. A bracketed link shows the bare id.
+ * Not a marked extension, because block-level raw HTML bypasses the inline lexer.
+ * Skips `<code>`, `<pre>`, existing `<a>` and the text nodes in `rawText`.
+ */
+function linkMentions(tpl: HTMLTemplateElement, resolve: MentionResolver, rawText: Set<Node>): string {
   const SKIP = new Set(["CODE", "PRE", "A"]);
 
   function walk(node: Node): void {
@@ -157,15 +283,16 @@ function postProcessMentionsInDom(html: string, resolve: MentionResolver): strin
       for (const child of children) walk(child);
       return;
     }
-    if (node.nodeType !== Node.TEXT_NODE) return;
+    if (node.nodeType !== Node.TEXT_NODE || rawText.has(node)) return;
     const text = node.nodeValue ?? "";
     if (!text.includes("#") && !text.includes("[[")) return;
 
     // Local regex — avoids sharing `/g` lastIndex across recursive walk calls.
-    // Group 1 is a hash id, group 2 a bracketed one. The hash boundary is a
-    // lookbehind, so a `]]` closing the previous match still counts as one.
+    // Group 1 is a hash id, group 2 a bracketed one, both in the server's id
+    // grammar (MentionIDPattern). The hash boundary is a lookbehind, so a `]]`
+    // closing the previous match still counts as one.
     const pattern =
-      /(?<![A-Za-z0-9_])#([a-z0-9][a-z0-9-]*[a-z0-9])(?!-)|\[\[([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\]\]/g;
+      /(?<![A-Za-z0-9_])#([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)|\[\[([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\]\]/g;
     let lastIndex = 0;
     const frag = document.createDocumentFragment();
     let anyMatch = false;
@@ -211,6 +338,13 @@ function postProcessMentionsInDom(html: string, resolve: MentionResolver): strin
  * nothing on their own. A caller must wire a handler that calls `toggleTaskLine`
  * (as ActiveNibView.handleProseClick does) or disable them.
  *
+ * With a resolver, the body renders twice: once with scan markers and once
+ * without. The marked render is used only when every marker it emitted reads
+ * back, block starts and ends alternate, and its sanitized HTML without the
+ * markers is identical to the unmarked render. Otherwise the mentions are read
+ * from the unmarked render, where escapes and raw HTML blocks link as plain text
+ * does.
+ *
  * @param resolveMention Called with each mention token; returns the full nib ID,
  *   or null to leave it as text. Return only a trusted nib ID: it lands in
  *   `href` and `data-nib-id`. A throw counts as unresolved. Mentions inside
@@ -218,13 +352,11 @@ function postProcessMentionsInDom(html: string, resolve: MentionResolver): strin
  */
 export function renderMarkdown(body: string, resolveMention?: MentionResolver): string {
   if (!body) return "";
-  taskOrdinalCounter = 0;
-  renderNonce = freshNonce();
-  const html = sharedMarked.parse(body, { async: false });
-  // data-* passes by default; listed because click delegation depends on both.
-  const safe = purify.sanitize(html, { ADD_ATTR: ["data-nib-id", "data-task-ordinal"] });
-  if (!resolveMention) return safe;
-  return postProcessMentionsInDom(safe, resolveMention);
+  const plain = renderSanitized(body, false).html;
+  if (!resolveMention || typeof document === "undefined") return plain;
+  const marked = readScanMarkers(body, plain);
+  if (marked !== null) return linkMentions(marked.tpl, resolveMention, marked.rawText);
+  return linkMentions(toTemplate(plain), resolveMention, new Set());
 }
 
 export const TAG_REGEX = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;

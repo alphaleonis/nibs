@@ -121,7 +121,7 @@ func freezeGuardCases() []freezeGuardCase {
 			covers: []string{"Update"},
 			// The Orderer / bulk-reorder resolvers (internal/graph) funnel every
 			// stored-nib order write through Core.Update (clone from GetForUpdate,
-			// set Order, Update) — see orderer.go:backfillOrderKeys and
+			// set Order, Update) — see orderer.go:backfillKeys and
 			// bulkreorder.go. That graph orchestration can't be driven from an
 			// internal nibcore test (graph imports nibcore — an import cycle), so we
 			// drive its sole store-write funnel here with the exact Order-key change

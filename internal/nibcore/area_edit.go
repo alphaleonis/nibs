@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/yamlfile"
@@ -20,9 +21,9 @@ import (
 // the cross-process file lock. A surface that took the file lock first and then
 // reached back into Core for the vocabulary, the member set or the cascade —
 // each of which takes c.mu — deadlocks against a concurrent Update holding c.mu
-// and parked on the file lock, wedging every reader in this process and every
-// other nibs process on the machine. No area surface touches either lock; keep
-// it that way.
+// and parked on the file lock. That wedges every writer in this process, the
+// reads readState says wait for a writer, and every writer in the other nibs
+// processes on the machine. No area surface touches either lock; keep it that way.
 //
 // Every refusal below carries FIELDS and no prescription: a sentence naming
 // `nibs area rm --unassign` or `unassign: true` belongs to the surface that has
@@ -569,9 +570,11 @@ type areaPlan struct {
 // callers report success, so nothing ever says to rerun, and the members it
 // moved are write-refused from then on.
 //
-// It WAITS for the file lock rather than refusing, matching every other store
-// mutation: the other holder is another nibs process finishing one operation.
-// Only ctx ends that wait — acquireWriteLockContext says why no deadline can.
+// It WAITS for both locks rather than refusing, matching every other store
+// mutation: the other holder is another writer finishing one operation. Only ctx
+// ends either wait — acquireWriteLockContext says why no deadline can. A writer
+// holding c.mu may itself be parked on the file lock, so the wait for c.mu is no
+// shorter than the wait for the file.
 //
 // THE COST IS WRITER AVAILABILITY. c.mu is held from before the file lock is
 // asked for until after the reload — a wait for another process, the cascade,
@@ -596,7 +599,10 @@ type areaPlan struct {
 // A failure to re-read is a REFUSAL, never a fallback to the vocabulary already
 // loaded.
 func (c *Core) editArea(ctx context.Context, path string, plan func(before, now *area.Vocabulary) (areaPlan, error)) (AreaEditResult, error) {
-	c.mu.Lock()
+	started := time.Now()
+	if err := c.mu.LockContext(ctx); err != nil {
+		return AreaEditResult{}, &AreaEditIOError{Phase: AreaEditPhaseLock, Path: path, File: c.layout.AreasPath(), Cause: err}
+	}
 	defer c.publishAndUnlock()
 
 	beforeState := c.areasLocked()
@@ -604,6 +610,11 @@ func (c *Core) editArea(ctx context.Context, path string, plan func(before, now 
 
 	release, err := c.acquireWriteLockContext(ctx)
 	if err != nil {
+		// The caller waited for both locks, so the report covers both.
+		var ended *StoreLockWaitEndedError
+		if errors.As(err, &ended) {
+			ended.Waited = time.Since(started)
+		}
 		return AreaEditResult{}, &AreaEditIOError{Phase: AreaEditPhaseLock, Path: path, File: c.layout.AreasPath(), Cause: err}
 	}
 	defer func() { _ = release() }()

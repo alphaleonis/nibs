@@ -8,6 +8,7 @@ import (
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/util"
 )
 
 // MentionIDPattern is the id grammar mentionPattern matches; tests build their
@@ -24,6 +25,11 @@ var leadingIDPattern = regexp.MustCompile(`^` + MentionIDPattern)
 // in the mention parse. goldmark rescans the rest of a line for each marker it
 // opens, so an unbounded prefix makes the parse quadratic in the line's length.
 const maxContainerDepth = 32
+
+// linkScanBudgetFactor times a body's length is the most bytes the mention
+// parse lets goldmark scan for inline link destinations. Every `](` is charged,
+// including ones goldmark would not treat as a link start, so it is an upper bound.
+const linkScanBudgetFactor = 4
 
 // MentionForm is the spelling a mention is written in.
 type MentionForm int
@@ -67,6 +73,7 @@ func ExtractMentionSpans(body string) []MentionSpan {
 
 	source := []byte(body)
 	boundContainerDepth(source)
+	boundLinkScans(source)
 	parser := goldmark.DefaultParser()
 	doc := parser.Parse(text.NewReader(source))
 
@@ -112,7 +119,9 @@ func ExtractMentionSpans(body string) []MentionSpan {
 // inline tags are scanned. A `#` preceded by an ASCII letter, digit or `_` is not
 // a mention, and neither are brackets that hold anything but an id. A line that
 // opens more than maxContainerDepth list or blockquote markers is read as paragraph
-// text past that depth. Tokens are not checked against existing nibs.
+// text past that depth. Once the body's link destinations would scan more than
+// linkScanBudgetFactor times its length, that `](` and every later one are read as
+// text. Tokens are not checked against existing nibs.
 func ExtractMentionTokens(body string) []string {
 	spans := ExtractMentionSpans(body)
 	if len(spans) == 0 {
@@ -264,7 +273,66 @@ func isThematicBreakLine(line []byte) bool {
 	return count >= 3
 }
 
+// boundLinkScans overwrites with '.' the '(' of each `](` from the first one
+// whose destination scan does not fit the body's budget, so goldmark reads
+// those as text. goldmark can scan an unclosed destination to the end of its
+// line, so a run of unclosed links makes the parse quadratic.
+// Byte offsets do not change, and no mention's bytes do either.
+func boundLinkScans(src []byte) {
+	budget := linkScanBudgetFactor * len(src)
+	for i := 0; ; {
+		k := bytes.Index(src[i:], linkOpen)
+		if k < 0 {
+			return
+		}
+		paren := i + k + 1
+		i = paren + 1
+		if budget >= 0 {
+			budget -= destinationScanLen(src[i:], budget)
+		}
+		if budget < 0 {
+			src[paren] = '.'
+		}
+	}
+}
+
+// destinationScanLen returns how many bytes of s goldmark scans for a link
+// destination when s follows an inline link's '(', or limit+1 once that passes
+// limit. It follows parseLinkDestination:
+// https://github.com/yuin/goldmark/blob/v1.8.5/parser/link.go#L342-L381
+func destinationScanLen(s []byte, limit int) int {
+	i := 0
+	for i < len(s) && i <= limit && util.IsSpace(s[i]) {
+		i++
+	}
+	if i < len(s) && s[i] == '<' {
+		for i++; i < len(s) && i <= limit && s[i] != '>' && s[i] != '\n'; i++ {
+			if s[i] == '\\' && i+1 < len(s) && util.IsPunct(s[i+1]) {
+				i++
+			}
+		}
+		return min(i, limit+1)
+	}
+	for opened := 0; i < len(s) && i <= limit; i++ {
+		switch c := s[i]; {
+		case c == '\\' && i+1 < len(s) && util.IsPunct(s[i+1]):
+			i++
+		case c == '(':
+			opened++
+		case c == ')':
+			opened--
+			if opened < 0 {
+				return i
+			}
+		case util.IsSpace(c):
+			return i
+		}
+	}
+	return min(i, limit+1)
+}
+
 var (
+	linkOpen     = []byte("](")
 	bracketOpen  = []byte("[[")
 	bracketClose = []byte("]]")
 )

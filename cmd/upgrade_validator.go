@@ -24,8 +24,7 @@ func (s signatureValidator) Validate(_ string, release, asset []byte) error {
 }
 
 // GetValidationAssetName names the detached signature to fetch alongside the
-// file, matching what .goreleaser.yaml's `signs` stage publishes
-// (`signature: "${artifact}.sig"`).
+// file, matching the checksums.txt.sig that release.yml's publish job uploads.
 func (s signatureValidator) GetValidationAssetName(releaseFilename string) string {
 	return releaseFilename + ".sig"
 }

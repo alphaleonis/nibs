@@ -118,9 +118,7 @@ func ActiveMilestone(view *membership.View) *nib.Nib {
 // exists, `next` speaks only for it: an empty queue, or one yielding nothing
 // startable, is reported as such rather than routed around.
 //
-// Next never writes. Read the queue the way this does — enumerate the group,
-// sort by the key — not through Orderer.Members, which backfills a missing
-// milestone_order onto members as a side effect of being read.
+// Next never writes.
 func Next(reader NibReader, blocking BlockingChecker) NextResult {
 	w := &nextWalk{
 		view:     membership.Compute(reader.All()),

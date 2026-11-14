@@ -314,18 +314,11 @@ func TestNextReportsASkippedInversion(t *testing.T) {
 	}
 }
 
-// TestNextLeavesTheStoreUnchanged is the guard for the read-only decision:
-// `next` reads a queue without going through Orderer.Members, which backfills
-// a missing milestone_order onto members as a side effect of being read. The
-// queue below holds an unkeyed member precisely to trip that write, and the
-// whole store must come back byte-identical — a question may not edit files
+// TestNextLeavesTheStoreUnchanged is the guard for the read-only decision.
+// The queue below holds an unkeyed member, the one a backfill would write, and
+// the whole store must come back byte-identical — a question may not edit files
 // the caller never named, and must not need a writable store to be asked.
 func TestNextLeavesTheStoreUnchanged(t *testing.T) {
-	// The nibs carry no created_at/updated_at, and that costs the guard nothing.
-	// Measured by routing this walk's queue read through Orderer.Members and
-	// running the guard both ways: stamped or not, the backfill lands and the
-	// comparison fails on ne2 gaining `milestone_order: aV`. A synthesized etag
-	// does not refuse the write, so stamping the fixture would only be ballast.
 	nibsPath := writeStoreFiles(t, map[string]string{
 		"nm1--wave.md":    "---\nversion: 2\ntitle: Wave One\nstatus: in-progress\ntype: milestone\norder: a\n---\n",
 		"ne1--keyed.md":   "---\nversion: 2\ntitle: Keyed entry\nstatus: draft\ntype: epic\nmilestone: nm1\nmilestone_order: a0\n---\n",

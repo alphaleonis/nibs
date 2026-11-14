@@ -78,10 +78,9 @@ func forEachScope(t *testing.T, run func(t *testing.T, scope Scope, fx scopeFixt
 	}
 }
 
-// TestScopeMembersSortsAndBackfills: Members returns the group sorted by the
-// scope's key, assigning a key to any member that lacks one (appended last)
-// and persisting it through the writer.
-func TestScopeMembersSortsAndBackfills(t *testing.T) {
+// TestScopeMembersSortsWithoutWriting: Members returns the group sorted by the
+// scope's key, unkeyed members last, and persists nothing.
+func TestScopeMembersSortsWithoutWriting(t *testing.T) {
 	forEachScope(t, func(t *testing.T, scope Scope, fx scopeFixture) {
 		reader, writer := fx.build()
 		o := NewOrderer(reader, writer)
@@ -91,10 +90,28 @@ func TestScopeMembersSortsAndBackfills(t *testing.T) {
 		if got := nibIDs(members); !equalStrings(got, want) {
 			t.Fatalf("Members(%v, %q) = %v, want %v", scope, fx.groupID, got, want)
 		}
-		last := members[len(members)-1]
-		if fx.key(last) == "" {
-			t.Error("the unkeyed member was not backfilled")
+		if got := fx.key(members[len(members)-1]); got != "" {
+			t.Errorf("Members keyed the unkeyed member with %q", got)
 		}
+		if len(writer.updated) != 0 {
+			t.Errorf("Members persisted %v, want no writes", nibIDs(writer.updated))
+		}
+	})
+}
+
+// TestScopeKeyedMembersBackfills: keyedMembers assigns a key to any member that
+// lacks one, appended last, and persists it through the writer.
+func TestScopeKeyedMembersBackfills(t *testing.T) {
+	forEachScope(t, func(t *testing.T, scope Scope, fx scopeFixture) {
+		reader, writer := fx.build()
+		o := NewOrderer(reader, writer)
+
+		members := o.keyedMembers(scope, fx.groupID)
+		want := []string{"ka", "kb", "kc", "bf"}
+		if got := nibIDs(members); !equalStrings(got, want) {
+			t.Fatalf("keyedMembers(%v, %q) = %v, want %v", scope, fx.groupID, got, want)
+		}
+		last := members[len(members)-1]
 		if fx.key(last) <= "c0" {
 			t.Errorf("backfilled key %q does not append after c0", fx.key(last))
 		}
@@ -233,7 +250,7 @@ func TestScopeCrossScopeIsolation(t *testing.T) {
 
 		reader2, _ := fx.build()
 		o2 := NewOrderer(reader2, &stubWriter{store: &reader2.stubReader})
-		members := o2.Members(scope, fx.groupID)
+		members := o2.keyedMembers(scope, fx.groupID)
 		for _, m := range members {
 			if got := fx.otherKey(m); got != "keep" {
 				t.Errorf("a %v-scope backfill changed %s's other-scope key to %q", scope, m.ID, got)

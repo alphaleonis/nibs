@@ -25,7 +25,7 @@ import (
 // not composed from what seemed reasonable — and each names a value GitHub
 // computes rather than one a caller supplies:
 //
-//   - runner.*             the runner's own facts (runner.temp, 4 uses)
+//   - runner.*             the runner's own facts (runner.temp, 3 uses)
 //   - matrix.*             the matrix values these workflows declare themselves
 //   - steps.*.outputs.*    a value an earlier step in the same job produced
 //   - github.repository    fixed by the repository

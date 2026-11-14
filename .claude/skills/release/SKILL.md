@@ -1,7 +1,7 @@
 ---
 name: release
 description: Cut a nibs release end-to-end — author and scrub the changelog, merge to main, wait for green CI, dispatch the gated Release workflow, verify and revise the draft, then stop for a human to publish. User-invoked only.
-invoke-by: user
+disable-model-invocation: true
 ---
 
 You are cutting a nibs release. `RELEASING.md` is the source of truth; follow the steps
@@ -116,17 +116,24 @@ re-push. Poll instead, and read the conclusion rather than the exit status of th
 If CI is anything but `success`, **stop** — do not release from a red or unverified commit.
 
 ### 6. Dispatch the release
-Confirm the tag is free (`git tag -l <version>`), then:
+Confirm that neither a tag nor a release carries the version. Both commands must print
+nothing. The second lists drafts too, and a leftover draft has no tag, so the first misses it.
+The workflow refuses either case in its first jobs too, so this check only spares a failed run:
+
+    git ls-remote --tags origin "refs/tags/<version>"
+    gh api repos/alphaleonis/nibs/releases --paginate --jq '.[] | select(.tag_name == "<version>") | .tag_name'
+
+Then dispatch:
 
     gh workflow run release.yml --ref main -f version=<version>
 
 Find the new run (`gh run list --workflow=release.yml --limit 1 --json databaseId`) and poll
 it the same way as step 5. If it fails at the gate or any step, stop and report.
 
-**The run will sit at `status: waiting` until a human approves it.** `release.yml` targets
-the `release` environment, which requires a reviewer — this is not a hang and not something
-to work around. Confirm that is what it is waiting on, then hand the run URL to the user and
-ask them to approve:
+**The run will sit at `status: waiting` until a human approves it.** Once the `check` and
+`build` jobs pass, the `sign` job targets the `release` environment, which requires a
+reviewer — this is not a hang and not something to work around. Confirm that is what it is
+waiting on, then hand the run URL to the user and ask them to approve:
 
     gh api repos/alphaleonis/nibs/actions/runs/<id>/pending_deployments \
       --jq '.[] | {environment: .environment.name, current_user_can_approve, reviewers: [.reviewers[]? | .reviewer.login]}'
@@ -145,14 +152,12 @@ Confirm: `isDraft=true`; the body (notes) is non-empty and matches the changelog
 all six platform archives (`nibs_{darwin,linux,windows}_{amd64,arm64}`) plus
 `checksums.txt` **and `checksums.txt.sig`** are attached (8 assets).
 
-Check the signature by NAME, not by the count alone. `.goreleaser.yaml` signs the checksum
-file on every release — one signature anchors every archive, since `checksums.txt` already
+Check the signature by NAME, not by the count alone. The workflow's `sign` job signs the
+checksum file on every release — one signature anchors every archive, since `checksums.txt` already
 covers them all by digest — so a draft missing `checksums.txt.sig` means the signing step
-did not run, even though the release otherwise looks complete. That matters more than it
-appears: `nibs upgrade` deliberately does not verify the signature yet, precisely so
-signing can prove itself over several releases first, which only works if every release
-actually produces one. A silently unsigned release breaks that record with nothing failing
-at the time. Treat a missing `.sig` as a halt, not a warning.
+did not run, even though the release otherwise looks complete. `nibs upgrade` requires the
+signature and fails at detection against a release without one, so publishing it unsigned
+would make every upgrade error. Treat a missing `.sig` as a halt, not a warning.
 
 ### 8. Revise the release notes — required, do not skip
 Review the draft's rendered notes against our standards: Keep a Changelog structure, clear
@@ -169,6 +174,10 @@ Report the draft's URL and a short summary of what was released. **Do not publis
 the user to review the notes and archives and click Publish.
 
 ### 10. Housekeeping
-Fast-forward `develop` to the released commit so the next work isn't on a stale base:
+GitHub creates the tag when the draft is published, so after the user publishes, fetch it:
+
+    git fetch --tags
+
+Then fast-forward `develop` to the released commit so the next work isn't on a stale base:
 
     git switch develop && git merge --ff-only main && git push origin develop

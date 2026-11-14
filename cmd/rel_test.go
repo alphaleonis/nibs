@@ -1363,3 +1363,24 @@ func stringSliceEqual(a, b []string) bool {
 	}
 	return true
 }
+
+// TestChildrenReadsWriteNothing runs `rel --rel children` and `plan` through the
+// full CLI on a parent whose children carry no order key.
+func TestChildrenReadsWriteNothing(t *testing.T) {
+	nibsDir := setupRelCobraTest(t, map[string]string{
+		"p1--parent-epic.md": "---\nversion: 2\ntitle: Parent Epic\nstatus: in-progress\ntype: epic\n---\n",
+		"c1--zulu.md":        "---\nversion: 2\ntitle: Zulu\nstatus: todo\ntype: task\nparent: p1\n---\n",
+		"c2--alpha.md":       "---\nversion: 2\ntitle: Alpha\nstatus: todo\ntype: task\nparent: p1\n---\n",
+	})
+	t.Cleanup(func() { planJSON, planOpen, planWithOrder = false, false, false })
+	before := storeSnapshot(t, nibsDir)
+
+	env := decodeRelEnvelope(t, runRelJSON(t, "--nibs-path", nibsDir, "rel", "p1", "--rel", "children", "--json"))
+	if got := relEnvIDOrder(env); !slices.Equal(got, []string{"c2", "c1"}) {
+		t.Errorf("children = %v, want [c2 c1] (unkeyed members sort by title)", got)
+	}
+	assertStoreUnchanged(t, before, storeSnapshot(t, nibsDir))
+
+	runRelJSON(t, "--nibs-path", nibsDir, "plan", "p1", "--json")
+	assertStoreUnchanged(t, before, storeSnapshot(t, nibsDir))
+}

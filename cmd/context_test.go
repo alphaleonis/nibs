@@ -762,12 +762,8 @@ func TestContextDetailCarriesNeitherActiveMilestoneNorNext(t *testing.T) {
 }
 
 // TestContextLeavesTheStoreUnchanged holds `nibs context` to asking a question
-// and nothing else. graph.Next reads the active milestone's queue from a
-// membership view rather than through Orderer.Members, which backfills a
-// missing milestone_order onto members as a side effect of being read, and the
-// queue below carries an unkeyed member so that a regression routing this path
-// back through the Orderer lands a write. That mutation does fail this test,
-// on a rewritten ne2--unkeyed.md — the guard bites for the thing it names.
+// and nothing else. The queue below carries an unkeyed member, the one a
+// backfill would write.
 //
 // The comparison covers every file at the top level of the store's data
 // directory, not the unkeyed member's alone: a backfill misdirected onto the

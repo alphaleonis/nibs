@@ -130,7 +130,7 @@ type Core struct {
 	// mu serializes the writers and guards every field below it up to the
 	// subscriber maps. The ones readers see are the working copy publishLocked
 	// installs.
-	mu   sync.Mutex
+	mu   writerLock
 	nibs map[string]*nib.Nib // ID -> Nib
 
 	// Reverse-mention index, maintained alongside c.nibs.
@@ -159,6 +159,10 @@ type Core struct {
 	// Search index (optional, lazy-initialized). The index is live rather than
 	// copied per publish; readState says what a reader may conclude from it.
 	searchIndex SearchIndex
+
+	// newSearchIndex builds the index that Search fills when none is installed.
+	// Tests swap it to make the fill fail.
+	newSearchIndex func() (SearchIndex, error)
 
 	// What searchIndex holds, by nib id: the digest of the text this Core last
 	// wrote there (see search_sync.go). It is what makes a reload index only the
@@ -211,15 +215,76 @@ func New(root string, cfg *config.Config) *Core {
 		layout:            store.NewLayout(root),
 		config:            cfg,
 		lockPath:          writeLockPath(root),
+		mu:                newWriterLock(),
 		nibs:              make(map[string]*nib.Nib),
 		mentionIdx:        newMentionIndex(),
 		subscribers:       make(map[uint64]*subscription),
 		signalSubscribers: make(map[uint64]chan struct{}),
 		areasSubscribers:  make(map[uint64]chan struct{}),
+		newSearchIndex:    newBleveIndex,
 	}
 	c.warnWriter.Store(safetext.NewWriter(os.Stderr))
 	c.publishLocked()
 	return c
+}
+
+// writerLock is the mutex Core's writers share. A lock made by newWriterLock
+// behaves as a sync.Mutex does for Lock, Unlock and TryLock, and LockContext is
+// Lock for a caller that can be told to stop waiting. Every writer takes the same
+// one-slot channel, so a writer that waits through LockContext and one that waits
+// through Lock exclude each other. The zero value is not usable.
+type writerLock struct{ slot chan struct{} }
+
+func newWriterLock() writerLock {
+	return writerLock{slot: make(chan struct{}, 1)}
+}
+
+// requireMade panics on the zero value, whose nil channel would block forever.
+func (l writerLock) requireMade() {
+	if l.slot == nil {
+		panic("nibcore: writerLock not made by newWriterLock; build Core with New")
+	}
+}
+
+func (l writerLock) Lock() {
+	l.requireMade()
+	l.slot <- struct{}{}
+}
+
+func (l writerLock) TryLock() bool {
+	select {
+	case l.slot <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+// LockContext waits for the lock until ctx ends, then returns
+// *StoreLockWaitEndedError and holds nothing. A context already over is refused
+// even when the lock is free.
+func (l writerLock) LockContext(ctx context.Context) error {
+	l.requireMade()
+	if err := ctx.Err(); err != nil {
+		return &StoreLockWaitEndedError{Cause: err}
+	}
+	started := time.Now()
+	select {
+	case l.slot <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return &StoreLockWaitEndedError{Waited: time.Since(started), Cause: ctx.Err()}
+	}
+}
+
+// Unlock panics when the lock is not held, as sync.Mutex fails, because a
+// receive from the empty slot would block forever.
+func (l writerLock) Unlock() {
+	select {
+	case <-l.slot:
+	default:
+		panic("nibcore: Unlock of an unlocked writerLock")
+	}
 }
 
 // acquireWriteLock takes the cross-process advisory write lock for the whole
@@ -240,10 +305,9 @@ func (c *Core) acquireWriteLock() (func() error, error) {
 // confirmation prompt, or a `nibs config set-prefix` renaming every file in the
 // store. A context carrying no deadline waits exactly as acquireWriteLock does.
 //
-// Cancellation reaches the wait for the FILE lock only. c.mu is a plain mutex
-// every mutator takes first, and the others wait for the file lock under it with
-// a context carrying no end — so an edit still queued on c.mu behind one of them
-// cannot be told to stop until that one is done.
+// It ends the wait for the FILE lock only. A caller that also waits for c.mu
+// first takes it with c.mu.LockContext, because the other mutators wait for the
+// file lock while they hold c.mu.
 func (c *Core) acquireWriteLockContext(ctx context.Context) (func() error, error) {
 	return acquireFileLockWaiting(ctx, c.lockPath)
 }
@@ -416,8 +480,8 @@ func (c *Core) areasLocked() *loadedAreas {
 //
 // A reader takes no lock, so it does not wait for a writer, even one parked on
 // the store's file lock. A read waits only where it feeds a write, through
-// AwaitWriters (GetForUpdate, CurrentETag, and every query whose order-key
-// backfill writes), and on the first Search, which builds the index under c.mu
+// AwaitWriters (GetForUpdate, CurrentETag, and the mutation resolvers that
+// call it directly), and on the first Search, which builds the index under c.mu
 // (see initSearchIndex). Writers wait for each other on c.mu.
 type readState struct {
 	nibs        map[string]*nib.Nib
@@ -741,28 +805,44 @@ func (c *Core) loadNib(path string) (*nib.Nib, error) {
 	return b, nil
 }
 
+// newBleveIndex returns an empty in-memory Bleve index.
+func newBleveIndex() (SearchIndex, error) {
+	idx, err := search.NewIndex()
+	if err != nil {
+		// A nil *search.Index in the interface would not compare equal to nil.
+		return nil, err
+	}
+	return idx, nil
+}
+
 // ensureSearchIndexLocked initializes the in-memory search index if not already
 // created. Must be called with c.mu held, so no writer can skip indexing a nib
 // that this call's whole-store fill has not read.
+//
+// It installs the index only after the fill succeeds. A failed fill leaves no
+// index, so the next search tries the fill again.
 func (c *Core) ensureSearchIndexLocked() error {
 	if c.searchIndex != nil {
 		return nil
 	}
 
-	idx, err := search.NewIndex()
+	idx, err := c.newSearchIndex()
 	if err != nil {
 		return fmt.Errorf("initializing search index: %w", err)
 	}
-
-	c.searchIndex = idx
 
 	allNibs := make([]*nib.Nib, 0, len(c.nibs))
 	for _, b := range c.nibs {
 		allNibs = append(allNibs, b)
 	}
-	if err := c.searchIndex.IndexNibs(allNibs); err != nil {
+	if err := idx.IndexNibs(allNibs); err != nil {
+		if closeErr := idx.Close(); closeErr != nil {
+			c.logWarn("failed to close the discarded search index: %v", closeErr)
+		}
 		return fmt.Errorf("populating search index: %w", err)
 	}
+
+	c.searchIndex = idx
 	c.recordAllIndexedLocked()
 
 	return nil
@@ -824,20 +904,18 @@ func (c *Core) search(query string, limit int) ([]*nib.Nib, error) {
 	return result, nil
 }
 
-// initSearchIndex builds the search index on first use and returns the read
-// state that carries it. It takes c.mu, so the first search waits for any
+// initSearchIndex builds the search index if none is installed and returns the
+// read state that carries it. It takes c.mu, so the first search waits for any
 // writer in progress.
 func (c *Core) initSearchIndex() (*readState, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	err := c.ensureSearchIndexLocked()
-	// Published even on failure, as every writer publishes: the index may be
-	// installed and partly filled. Another first search may have published it.
+	if err := c.ensureSearchIndexLocked(); err != nil {
+		return nil, err
+	}
+	// Another first search may have published it already.
 	if c.view().search == nil {
 		c.publishLocked()
-	}
-	if err != nil {
-		return nil, err
 	}
 	return c.view(), nil
 }
@@ -1378,9 +1456,9 @@ func (c *Core) CurrentETag(id string) (string, error) {
 //
 // Nothing is logged here. The OPEN branches are the normal freshly-created and
 // accepted-delete-race paths; the CLOSED ones RETURN a distinct error for the
-// caller to surface, and logging as well would flood stderr on the hot Children
-// read path (orderer.go's backfillKeys re-attempts the Update once per read for
-// a persistently uncertifiable sibling).
+// caller to surface, and logging as well would repeat on every retry:
+// orderer.go's backfillKeys re-attempts the Update on each positioned write to
+// a group that holds a persistently uncertifiable sibling.
 func (c *Core) computeStoredETag(nibs map[string]*nib.Nib, storedNib *nib.Nib) (string, error) {
 	if storedNib.Path == "" {
 		return storedNib.ETag(), nil

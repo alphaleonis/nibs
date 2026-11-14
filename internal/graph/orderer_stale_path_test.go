@@ -46,13 +46,12 @@ func stalePathFixture(t *testing.T, core *nibcore.Core, parentID, childID string
 // sibling-order half of the set-prefix resurrection bug, pinned where it
 // originates rather than one layer down.
 //
-// backfillKeys is a WRITE on the hot Children/root READ path: any sibling
-// lacking an order key is persisted a fresh one, through Writer.Update, using
-// the path this process recorded when it loaded the store. `nibs config
-// set-prefix` renames every one of those files, so a creating write would put
-// each rewritten sibling back at its pre-rename name — a second copy of the nib
-// under a prefix the config no longer declares, produced by a plain READ of the
-// parent and reported to nobody, since Members returns no error.
+// backfillKeys persists a key through Writer.Update, using the path this
+// process recorded when it loaded the store. `nibs config set-prefix` renames
+// every one of those files, so a creating write would put each rewritten sibling
+// back at its pre-rename name. That second copy of the nib would carry a prefix
+// the config no longer declares, and nobody would be told, since backfillKeys
+// returns no error.
 //
 // Core.Update's non-creating writer is what closes it, so this guard sits above
 // that fix rather than beside it: it fails if the orderer is ever pointed at a
@@ -67,10 +66,10 @@ func TestBackfillOrderKeysRefusesAStalePathRatherThanResurrectingIt(t *testing.T
 		t.Fatalf("read the live file: %v", err)
 	}
 
-	members := r.Orderer.Members(ScopeParent, "bp1")
+	members := r.Orderer.keyedMembers(ScopeParent, "bp1")
 
 	if _, err := os.Lstat(stale); !errors.Is(err, fs.ErrNotExist) {
-		t.Errorf("a read of the parent resurrected %s at its pre-rename path (lstat err = %v)", filepath.Base(stale), err)
+		t.Errorf("the backfill resurrected %s at its pre-rename path (lstat err = %v)", filepath.Base(stale), err)
 	}
 	after, err := os.ReadFile(live)
 	if err != nil {
@@ -99,20 +98,13 @@ func TestBackfillOrderKeysRefusesAStalePathRatherThanResurrectingIt(t *testing.T
 
 // TestBackfillOrderKeysStalePathWarnsOnceAndThenStaysQuiet is the classification
 // half: the refusal above lands in backfillKeys' best-effort arm, which cannot
-// propagate — Members returns no error — so all it can choose is how loudly to
-// say it.
+// propagate, so all it can choose is how loudly to say it.
 //
-// Once, not never and not per read. Never is what suppressing the whole errno
-// class gives, and it is too quiet: a hand-deleted nib file reaches the same arm
-// (errors.Is matches the chain, and fsutil's bare os.Lstat miss is in it), it is
-// neither store-wide nor self-healing, and a reader browsing through `nibs serve`
-// or the TUI triggers no mutation, so the write-boundary diagnostic never fires
-// for them. Per read is too loud: the condition is one store, not one per nib, so
-// each read warns once per unkeyed sibling and nothing this loop does clears it.
-//
-// Neither the flood nor the silence is hypothetical: `nibs serve` treats a failed
-// StartWatching as a warning rather than a fatal, and without a watcher nothing
-// ever refreshes the store.
+// Once, not never and not per retry. Never is too quiet: a hand-deleted nib
+// file reaches the same arm (errors.Is matches the chain, and fsutil's bare
+// os.Lstat miss is in it), and it is neither store-wide nor self-healing. Per
+// retry is too loud: the condition is one store, not one per nib, so each
+// positioned write would warn once per unkeyed sibling.
 func TestBackfillOrderKeysStalePathWarnsOnceAndThenStaysQuiet(t *testing.T) {
 	r, core := setupTestResolver(t)
 
@@ -124,18 +116,18 @@ func TestBackfillOrderKeysStalePathWarnsOnceAndThenStaysQuiet(t *testing.T) {
 
 	stalePathFixture(t, core, "fp1", "fs1")
 
-	const reads = 4
+	const retries = 4
 	ordererStderr := captureStderr(t, func() {
-		// Model repeated tree renders/polls: the sibling never gets a key
-		// persisted, so needsBackfill never clears and every read re-attempts.
-		for range reads {
-			_ = r.Orderer.Members(ScopeParent, "fp1")
+		// The sibling never gets a key persisted, so needsBackfill never clears
+		// and every positioned write to the group retries.
+		for range retries {
+			_ = r.Orderer.keyedMembers(ScopeParent, "fp1")
 		}
 	})
 
 	lines := warningLines(ordererStderr)
 	if len(lines) != 1 {
-		t.Errorf("the orderer emitted %d warnings across %d reads, want exactly 1 (the latch): %q", len(lines), reads, lines)
+		t.Errorf("the orderer emitted %d warnings across %d retries, want exactly 1 (the latch): %q", len(lines), retries, lines)
 	}
 	if len(lines) > 0 && !strings.Contains(lines[0], "fs1") {
 		t.Errorf("the one warning does not name the sibling it is about: %q", lines[0])
@@ -143,17 +135,17 @@ func TestBackfillOrderKeysStalePathWarnsOnceAndThenStaysQuiet(t *testing.T) {
 	// The nibcore half of the same property. No line reaches this buffer today —
 	// Core.Update returns its refusal without logging — and that is what it pins:
 	// a warn added beside that return is the flood in its other spelling, once per
-	// unkeyed sibling per read rather than once per read, and reaches the same
-	// stderr by the other route, where this Orderer's latch cannot bound it.
+	// unkeyed sibling per retry, and reaches the same stderr by the other route,
+	// where this Orderer's latch cannot bound it.
 	if got := strings.TrimSpace(nibcoreWarn.String()); got != "" {
-		t.Errorf("nibcore warned about a moved store across %d reads; want none, got %q", reads, got)
+		t.Errorf("nibcore warned about a moved store across %d retries; want none, got %q", retries, got)
 	}
 }
 
 // TestBackfillOrderKeysStalePathLatchIsPerOrderer pins the latch's SCOPE, which
 // is what makes warning once rather than never a real signal: a fresh Orderer
 // warns again. `nibs serve` and `nibs tui` build one at startup and keep it for
-// the process, so one line per process is what a long-lived reader gets; every
+// the process, so one line per process is what a long-lived server gets; every
 // CLI command builds its own (App.newResolver), so none of them inherits another
 // command's silence.
 func TestBackfillOrderKeysStalePathLatchIsPerOrderer(t *testing.T) {
@@ -161,13 +153,13 @@ func TestBackfillOrderKeysStalePathLatchIsPerOrderer(t *testing.T) {
 	core.SetWarnWriter(nil)
 	stalePathFixture(t, core, "lp1", "ls1")
 
-	first := warningLines(captureStderr(t, func() { _ = r.Orderer.Members(ScopeParent, "lp1") }))
+	first := warningLines(captureStderr(t, func() { _ = r.Orderer.keyedMembers(ScopeParent, "lp1") }))
 	if len(first) != 1 {
 		t.Fatalf("the first Orderer emitted %d warnings, want 1: %q", len(first), first)
 	}
 
 	fresh := NewOrderer(r.Reader, r.Writer)
-	second := warningLines(captureStderr(t, func() { _ = fresh.Members(ScopeParent, "lp1") }))
+	second := warningLines(captureStderr(t, func() { _ = fresh.keyedMembers(ScopeParent, "lp1") }))
 	if len(second) != 1 {
 		t.Errorf("a fresh Orderer emitted %d warnings, want 1 — the latch must not be shared: %q", len(second), second)
 	}

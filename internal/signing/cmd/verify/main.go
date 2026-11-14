@@ -3,10 +3,10 @@
 //
 //	-check-key   Sign a canary in memory with NIBS_SIGNING_KEY and verify it
 //	             against the embedded keys. The release workflow runs it before
-//	             goreleaser.
+//	             signing.
 //
 //	-in / -sig   Verify a file and its detached signature. The release workflow
-//	             runs it on checksums.txt after goreleaser.
+//	             runs it on checksums.txt after signing.
 //
 // Neither mode prints key material, and -check-key never writes the key to disk.
 package main

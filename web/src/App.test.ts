@@ -1097,7 +1097,9 @@ describe("App", () => {
   // slot -> TreeTable's applier — has to be connected for this to pass; the prop
   // is optional, so a dropped wire type-checks and reconciles nothing.
   it("drops a selection the incoming lens has no row for when the view is switched", async () => {
-    const user = userEvent.setup();
+    // The first menu's scroll lock can still hold pointer-events: none on <body>
+    // when the second open clicks the View button.
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
     // The switch persists the level, so restore whatever this file's other tests
     // expect to find (a fresh, unwritten store).
     const savedPrefs = localStorage.getItem("nibs-filter-preferences");

@@ -916,7 +916,7 @@ func TestMigrateDirtyGitRefusal(t *testing.T) {
 		nibsDir := setupMigrateStore(t, v0Files)
 		gitOut, err := exec.Command("git", "-C", nibsDir, "init", "-q").CombinedOutput()
 		if err != nil {
-			t.Skipf("git init failed (git unavailable?): %v\n%s", err, gitOut)
+			testskip.Unavailable(t, testskip.Git, "git init failed (git unavailable?): %v\n%s", err, gitOut)
 		}
 		// Untracked files count as dirty in --porcelain, which is exactly the
 		// state that would be unrecoverable after a bad migration.
@@ -978,7 +978,7 @@ func TestMigrateDirtyGitRefusal(t *testing.T) {
 		projectDir := filepath.Dir(nibsDir)
 		gitOut, err := exec.Command("git", "-C", projectDir, "init", "-q").CombinedOutput()
 		if err != nil {
-			t.Skipf("git init failed (git unavailable?): %v\n%s", err, gitOut)
+			testskip.Unavailable(t, testskip.Git, "git init failed (git unavailable?): %v\n%s", err, gitOut)
 		}
 		if err := os.WriteFile(filepath.Join(projectDir, ".gitignore"), []byte(".nibs/\n"), 0644); err != nil {
 			t.Fatal(err)
@@ -1004,7 +1004,7 @@ func TestMigrateDirtyGitRefusal(t *testing.T) {
 		projectDir := filepath.Dir(nibsDir)
 		gitOut, err := exec.Command("git", "-C", projectDir, "init", "-q").CombinedOutput()
 		if err != nil {
-			t.Skipf("git init failed (git unavailable?): %v\n%s", err, gitOut)
+			testskip.Unavailable(t, testskip.Git, "git init failed (git unavailable?): %v\n%s", err, gitOut)
 		}
 
 		_, err = runRootWith(t, "--nibs-path", nibsDir, "migrate")
@@ -1311,7 +1311,7 @@ func TestMigrateRefusalsAreCoded(t *testing.T) {
 		})
 		gitOut, err := exec.Command("git", "-C", nibsDir, "init", "-q").CombinedOutput()
 		if err != nil {
-			t.Skipf("git init failed (git unavailable?): %v\n%s", err, gitOut)
+			testskip.Unavailable(t, testskip.Git, "git init failed (git unavailable?): %v\n%s", err, gitOut)
 		}
 		_, runErr := runRootWith(t, "--nibs-path", nibsDir, "migrate")
 		if got := codeOf(t, runErr); got != output.ErrValidation {

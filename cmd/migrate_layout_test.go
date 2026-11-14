@@ -474,11 +474,11 @@ func TestMigrateLayoutGuardsTheProjectRepoToo(t *testing.T) {
 	// The store itself is a committed, clean repo, so only the PROJECT repo's
 	// state can make this refuse.
 	if out, err := exec.Command("git", "-C", storeDir, "init", "-q").CombinedOutput(); err != nil {
-		t.Skipf("git init failed (git unavailable?): %v\n%s", err, out)
+		testskip.Unavailable(t, testskip.Git, "git init failed (git unavailable?): %v\n%s", err, out)
 	}
 	gitCommitAll(t, storeDir)
 	if out, err := exec.Command("git", "-C", projectDir, "init", "-q").CombinedOutput(); err != nil {
-		t.Skipf("git init failed (git unavailable?): %v\n%s", err, out)
+		testskip.Unavailable(t, testskip.Git, "git init failed (git unavailable?): %v\n%s", err, out)
 	}
 	// .nibs.yml is untracked in the project repo, i.e. unrecoverable if the
 	// migration deletes it.
@@ -517,7 +517,7 @@ func gitCommitAll(t *testing.T, repo string) {
 	for _, args := range cmds {
 		full := append([]string{"-C", repo}, args...)
 		if out, err := exec.Command("git", full...).CombinedOutput(); err != nil {
-			t.Skipf("git %v failed: %v\n%s", args, err, out)
+			testskip.Unavailable(t, testskip.Git, "git %v failed: %v\n%s", args, err, out)
 		}
 	}
 }

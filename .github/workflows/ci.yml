@@ -67,6 +67,9 @@ jobs:
       # that is silent at the point it happens — so a skip on the linux leg
       # means they stopped running rather than that they could not.
       NIBS_REQUIRE_POSIX_FILE_MODES: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
+      # Both legs, so a missing git fails the run instead of quietly dropping
+      # the worktree-fallback and migrate fixtures.
+      NIBS_REQUIRE_GIT: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # Every tool this job runs — go, node, task — is installed by mise from
@@ -241,6 +244,28 @@ jobs:
       - run: go test -race -count=1 -timeout=20m ./internal/nibcore/... ./internal/graph/...
         if: matrix.os == 'ubuntu-latest'
       - run: cd web && npx vitest run --reporter=default
+
+  # The only macOS lane. The store's worktree fallback compares the paths git
+  # prints with the worktree's own, and the macOS temp directory sits behind the
+  # /var -> /private/var symlink. The package does not embed web/dist, so the
+  # job needs Go alone.
+  store-macos:
+    name: store (macos-latest)
+    runs-on: macos-latest
+    timeout-minutes: 20
+    env:
+      # macOS has all three capabilities, so a skip here means a fixture
+      # stopped running.
+      NIBS_REQUIRE_GIT: '1'
+      NIBS_REQUIRE_SYMLINKS: '1'
+      NIBS_REQUIRE_NAMED_PIPES: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          install_args: go
+      - run: go test -count=1 ./internal/store/
 
   # The browser lane, which no other gate covers: `task test` deliberately
   # leaves it out so a local run stays fast, so until this job existed a whole
