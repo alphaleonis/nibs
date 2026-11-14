@@ -613,6 +613,16 @@ describe("renderMarkdown mention parity with the server scanner", () => {
     expect(performance.now() - start).toBeLessThan(1500);
   });
 
+  it("links many mentions in one paragraph in linear time", () => {
+    const start = performance.now();
+    const html = renderMarkdown("#a #b ".repeat(8000), (t) => `nibs-${t}`);
+    const elapsed = performance.now() - start;
+    const tpl = document.createElement("template");
+    tpl.innerHTML = html;
+    expect(tpl.content.querySelectorAll("a.mention-link")).toHaveLength(16000);
+    expect(elapsed).toBeLessThan(5000);
+  });
+
   it("renders many unterminated start tags in linear time", () => {
     const body = "<div\n" + "<a ".repeat(80000);
     const start = performance.now();

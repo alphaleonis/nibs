@@ -205,7 +205,8 @@ function visibleTextNodes(root: Node): Text[] {
       return;
     }
     if (node.nodeType === Node.ELEMENT_NODE && SKIPPED_TAGS.has((node as Element).localName)) return;
-    node.childNodes.forEach(walk);
+    // jsdom rebuilds a read `childNodes` list on each insert, so linking many mentions would be O(n²).
+    for (let child = node.firstChild; child; child = child.nextSibling) walk(child);
   };
   walk(root);
   return out;
