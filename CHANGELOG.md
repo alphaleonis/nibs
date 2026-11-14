@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`[[<id>]]` is a nib mention alongside `#<id>`** — it links in the web UI, counts toward `mentions-in`/`mentions-out`, and `nibs config set-prefix` retargets it.
 - **`nibs body --section "<heading>" --append` and `--clear`** add to the end of one section and empty it, where `--set` could only replace it.
 - **`nibs body --check`, `--uncheck` and `--remove` edit checklist items by number**, and `--checklist` prints the numbered list.
+- **A linked git worktree with no store of its own uses the main clone's**, so nibs works in a worktree created outside the main checkout.
 
 ### Changed
 - **The web's Tree view no longer lists milestones** — a milestone is a waypoint outside the parent graph, so a view spined on parentage had nothing to nest under it; Flat still shows every nib, and the Milestone column shows the assignment.
@@ -64,7 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **A running `nibs serve` now reports a second file claiming a nib id it already holds**, instead of silently answering with whichever of the two the filesystem happened to deliver last.
 - **A pre-layout project nested under a store no longer resolves to that ancestor store**, where `nibs migrate` moved and rewrote the ancestor's nib files while leaving the project it was run in untouched.
 - **`nibs serve` answers queries while one of its edits waits for another nibs process to finish writing**, where every read stalled until that edit completed.
-- **A nib body with one deeply nested list or blockquote line no longer stalls every command**, where a 480 KB body of nested markers took over a minute to load.
+- **A nib body with one deeply nested list or blockquote line, or a long run of unclosed links, no longer stalls every command**, where a 480 KB body of either took tens of seconds to load.
 - **Text read from a file can no longer rewrite the terminal**, such as a control sequence in a config value or a nib body reaching a message that echoes it.
 - **Commands a refusal prescribes are quoted for the shell of the platform printing them**, instead of POSIX quoting that `cmd.exe` passes through literally.
 - **`nibs prime` no longer primes an agent for a project it cannot use** — a pre-layout project now gets the same migration refusal as every other command, in place of instructions whose every command refuses there.
@@ -82,7 +83,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`nibs config set-prefix` now edits only the prefix key of your config file**, instead of rewriting it from the merged read model — which discarded the file's comments, baked user-level settings into the project, and dropped any key this build does not model; a config holding a second YAML document is refused rather than rewritten from the first one alone.
 - **The roadmap no longer omits outstanding work** — it expanded epics alone, so a feature or bug with children rendered as one bare bullet while its children appeared in no section at all, and an open container whose children had all closed vanished entirely even while `nibs next` was offering it as the thing to do.
 - **The roadmap's backlog now shows exactly the work outside every milestone** — items under a milestone hidden by a `--status` filter no longer leak into the backlog, and a work item whose parent link names no nib now appears there instead of vanishing from the roadmap entirely.
-- **`nibs plan` no longer writes to the store when you read it** — it backfilled a missing order key to disk as a side effect of listing, leaving a clean `.nibs` repo dirty and restamping `updated_at`.
+- **Reading a nib's children no longer writes to the store** — `nibs plan`, `nibs rel --rel children` and the GraphQL `children` field backfilled a missing order key to disk as a side effect, leaving a clean `.nibs` repo dirty and restamping `updated_at`.
+- **A search after a failed search-index build retries the build**, where the partly filled index answered every later search in that process with nibs missing.
+- **The web links a `#<id>` mention only where the server counts one**, where a one-character id went unlinked, `#abc-` linked `ab`, and a mention inside a raw HTML block linked though no mention count included it.
 - **`nibs new` no longer silently shadows an existing nib when a generated id collides** — a colliding draw is redrawn, and a caller-supplied duplicate id is refused as a conflict instead of leaving two files claiming one id.
 - **An edit racing a `nibs config set-prefix` is no longer reported as saved when it was not** — every write verb wrote to the path it loaded at startup, leaving the edit on a resurrected copy under the nib's old name while the live file kept the old value, and exiting 0.
 - **`nibs new` no longer names a file under a prefix the store has stopped using** — a create parked behind a `nibs config set-prefix` refuses rather than drawing from the vocabulary it loaded at startup, since a nib's id comes from its filename and cannot be relabeled afterwards.
@@ -124,6 +127,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Security
 - **`nibs serve` now bounds how deep and how wide a query may recurse, and refuses a disallowed origin instead of answering it** — a page at any origin could otherwise make it resolve a tree that multiplied at every level.
 - **The release workflow no longer pastes its version input into the shell programs it runs**, where a dispatched value could run as code on the job that holds the signing key.
+- **Release build code never runs beside the signing key or a release write token** — archives are signed on a fresh runner, and only a job that runs no build code can create the release.
 
 ## v0.8.4 - 2026-10-26
 
