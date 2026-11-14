@@ -108,6 +108,12 @@ func TestRefusalIsScopedToThePolicyFlag(t *testing.T) {
 			wantRefusal: true,
 		},
 		{
+			name:        "a WSL1 kernel, which capitalizes Microsoft, refuses too",
+			refuseOnWSL: true,
+			osrelease:   "4.4.0-19041-Microsoft",
+			wantRefusal: true,
+		},
+		{
 			name:        "the opt-in overrides the policy flag",
 			refuseOnWSL: true,
 			osrelease:   wslKernel,
