@@ -12,7 +12,10 @@ package store
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -148,17 +151,33 @@ type Marker struct {
 // When the walk finds no marker and startDir is in a linked git worktree, it
 // checks the main working tree the same way; see mainWorktree. A worktree created
 // outside the main clone has no route to a store the main repository does not track.
+// It returns a *GitTimeoutError when git does not answer in time.
 func FindNearestMarker(startDir string) (Marker, error) {
 	marker, err := findUpward(startDir, markerIn)
 	if err != nil || marker.Kind != MarkerNone {
 		return marker, err
 	}
-	if mainTree := mainWorktree(startDir); mainTree != "" {
+	mainTree, err := mainWorktree(startDir)
+	if err != nil {
+		return Marker{}, err
+	}
+	if mainTree != "" {
 		if found, ok := markerIn(mainTree); ok {
 			return found, nil
 		}
 	}
 	return Marker{}, nil
+}
+
+// GitTimeoutError reports that git did not say before the deadline whether Dir
+// is in a linked worktree, so a store in a main working tree went unchecked.
+type GitTimeoutError struct {
+	Dir     string
+	Timeout time.Duration
+}
+
+func (e *GitTimeoutError) Error() string {
+	return fmt.Sprintf("git did not answer within %s whether %s is in a linked git worktree", e.Timeout, e.Dir)
 }
 
 // markerIn returns the nibs marker in dir itself, if any.
@@ -179,12 +198,16 @@ func markerIn(dir string) (Marker, bool) {
 var gitTimeout = 5 * time.Second
 
 // mainWorktree returns the main working tree of the linked git worktree that
-// holds startDir, or "" when there is none or git cannot tell.
+// holds startDir, or "" when there is none or git fails. It returns a
+// *GitTimeoutError when git does not finish before gitTimeout.
 //
 // Only a common dir named `.git` has its working tree as its parent. A bare
 // repository's common dir and a --separate-git-dir one have no such parent. A
 // non-empty NIBS_CONFIG_ROOT must contain the main tree, as it bounds the walk.
-func mainWorktree(startDir string) string {
+func mainWorktree(startDir string) (string, error) {
+	if !underGitFile(startDir) {
+		return "", nil
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir", "--show-toplevel")
@@ -193,23 +216,54 @@ func mainWorktree(startDir string) string {
 	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
 	if err != nil {
-		return ""
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", &GitTimeoutError{Dir: startDir, Timeout: gitTimeout}
+		}
+		return "", nil
 	}
 	lines := strings.Split(strings.TrimSuffix(strings.ReplaceAll(string(out), "\r\n", "\n"), "\n"), "\n")
 	if len(lines) != 3 {
-		return ""
+		return "", nil
 	}
 	gitDir := filepath.Clean(filepath.FromSlash(lines[0]))
 	commonDir := filepath.Clean(filepath.FromSlash(lines[1]))
 	toplevel := filepath.Clean(filepath.FromSlash(lines[2]))
 	if filepath.Base(commonDir) != ".git" || !isRegisteredWorktree(gitDir, commonDir, toplevel) {
-		return ""
+		return "", nil
 	}
 	mainTree := filepath.Dir(commonDir)
 	if raw := os.Getenv("NIBS_CONFIG_ROOT"); raw != "" && !within(mainTree, raw) {
-		return ""
+		return "", nil
 	}
-	return mainTree
+	return mainTree, nil
+}
+
+// underGitFile reports whether a regular `.git` file sits in startDir or above
+// it, or whether an entry on the way cannot be checked. Without such a file no
+// toplevel can pass isRegisteredWorktree, so git need not run.
+//
+// The walk continues past a `.git` directory, because git skips one that is not
+// a repository and keeps searching upward.
+func underGitFile(startDir string) bool {
+	dir, err := filepath.Abs(startDir)
+	if err != nil {
+		return true
+	}
+	for {
+		info, err := os.Lstat(filepath.Join(dir, ".git"))
+		if err != nil {
+			if !errors.Is(err, fs.ErrNotExist) {
+				return true
+			}
+		} else if info.Mode().IsRegular() {
+			return true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		dir = parent
+	}
 }
 
 // isRegisteredWorktree reports whether the main repository at commonDir lists

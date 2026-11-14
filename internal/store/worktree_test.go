@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -272,19 +273,42 @@ func TestFindNearestMarker_Worktree(t *testing.T) {
 			},
 		},
 		{
-			// git blocks opening the pipe, so only the deadline ends the call.
-			name: "a named pipe that git opens gives no fallback",
+			// No `.git` file sits above the start, so no linked worktree can hold
+			// it and git must not run at all.
+			name: "a main clone whose git would hang gives no fallback",
 			build: func(t *testing.T, root string) (string, Marker) {
 				shortenGitTimeout(t)
-				hang := mkSub(t, root, "hang")
-				fake := mkSub(t, hang, "fake")
-				writeFile(t, filepath.Join(hang, ".git"), "gitdir: fake\n")
-				writeFile(t, filepath.Join(fake, "HEAD"), "ref: refs/heads/main\n")
-				commondir := filepath.Join(fake, "commondir")
-				if err := mkfifo(commondir); err != nil {
-					testskip.Unavailable(t, testskip.NamedPipes, "mkfifo(%s): %v", commondir, err)
+				mainTree := filepath.Join(root, "m")
+				initRepo(t, mainTree)
+				hangGit(t, filepath.Join(mainTree, ".git"))
+				return mkSub(t, mainTree, "sub"), Marker{}
+			},
+		},
+		{
+			// A symlinked `.git` cannot pass isRegisteredWorktree, so git need
+			// not run even though it would follow the link and hang.
+			name: "a .git symlink to a gitdir whose git would hang gives no fallback",
+			build: func(t *testing.T, root string) (string, Marker) {
+				shortenGitTimeout(t)
+				mainTree := filepath.Join(root, "m")
+				initRepo(t, mainTree)
+				hangGit(t, filepath.Join(mainTree, ".git"))
+				evil := mkSub(t, root, "evil")
+				if err := os.Symlink(filepath.Join(mainTree, ".git"), filepath.Join(evil, ".git")); err != nil {
+					testskip.SymlinkUnavailable(t, err)
 				}
-				return hang, Marker{}
+				return evil, Marker{}
+			},
+		},
+		{
+			// git skips a `.git` directory that is not a repository and keeps
+			// walking to the worktree's `.git` file.
+			name: "an empty .git directory below a linked worktree's root still falls back",
+			build: func(t *testing.T, root string) (string, Marker) {
+				mainTree, wt := mainWithWorktree(t, root)
+				sub := mkSub(t, wt, "sub")
+				mkSub(t, sub, ".git")
+				return sub, Marker{Kind: MarkerStore, Path: mkStore(t, mainTree)}
 			},
 		},
 		{
@@ -313,5 +337,69 @@ func TestFindNearestMarker_Worktree(t *testing.T) {
 				t.Errorf("FindNearestMarker() = %+v, want %+v", got, want)
 			}
 		})
+	}
+}
+
+// hangGit makes git block on gitDir until it is killed, by putting a named pipe
+// where git reads the commondir file.
+func hangGit(t *testing.T, gitDir string) {
+	t.Helper()
+	commondir := filepath.Join(gitDir, "commondir")
+	if err := mkfifo(commondir); err != nil {
+		testskip.Unavailable(t, testskip.NamedPipes, "mkfifo(%s): %v", commondir, err)
+	}
+}
+
+// TestFindNearestMarker_GitTimeout covers a git call that only the deadline
+// ends, under a `.git` file of the shape a linked worktree or a submodule has.
+func TestFindNearestMarker_GitTimeout(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		testskip.Unavailable(t, testskip.Git, "git is not on PATH: %v", err)
+	}
+	for _, sub := range []string{"", filepath.Join("a", "b")} {
+		t.Run("start "+filepath.ToSlash(filepath.Join("hang", sub)), func(t *testing.T) {
+			shortenGitTimeout(t)
+			root := t.TempDir()
+			t.Setenv("NIBS_CONFIG_ROOT", root)
+			hang := mkSub(t, root, "hang")
+			fake := mkSub(t, hang, "fake")
+			writeFile(t, filepath.Join(hang, ".git"), "gitdir: fake\n")
+			writeFile(t, filepath.Join(fake, "HEAD"), "ref: refs/heads/main\n")
+			hangGit(t, fake)
+			start := filepath.Join(hang, sub)
+			if err := os.MkdirAll(start, 0o755); err != nil {
+				t.Fatalf("MkdirAll: %v", err)
+			}
+
+			got, err := FindNearestMarker(start)
+			var timeout *GitTimeoutError
+			if !errors.As(err, &timeout) {
+				t.Fatalf("FindNearestMarker() = %+v, %v; want a *GitTimeoutError", got, err)
+			}
+			if got.Kind != MarkerNone {
+				t.Errorf("FindNearestMarker() = %+v, want no marker beside the timeout", got)
+			}
+			if timeout.Dir != start || timeout.Timeout != gitTimeout {
+				t.Errorf("GitTimeoutError = %+v, want Dir %q and Timeout %v", timeout, start, gitTimeout)
+			}
+		})
+	}
+}
+
+// TestUnderGitFile_UnreadableEntry covers a `.git` entry the walk cannot
+// check, which leaves the answer to git.
+func TestUnderGitFile_UnreadableEntry(t *testing.T) {
+	locked := mkSub(t, t.TempDir(), "locked")
+	start := mkSub(t, locked, "sub")
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	if _, err := os.Lstat(filepath.Join(start, ".git")); !os.IsPermission(err) {
+		testskip.Unavailable(t, testskip.UnreadablePaths, "Lstat under a mode-0 directory returned %v", err)
+	}
+
+	if !underGitFile(start) {
+		t.Error("underGitFile() = false for an entry it cannot check, want true so git decides")
 	}
 }

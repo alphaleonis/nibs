@@ -304,8 +304,11 @@ func resolveStoreDir() (string, error) {
 	// marker kind) cannot answer "which is nearer" without re-deriving depth
 	// from the paths they return, and a sub-project that binds to an ancestor
 	// store has `nibs migrate` rewrite a store its user never named.
-	marker, err := store.FindNearestMarker(cwd)
+	marker, err := findNearestMarkerFn(cwd)
 	if err != nil {
+		if refusal := gitTimeoutRefusal(cwd, err); refusal != nil {
+			return "", refusal
+		}
 		return "", fmt.Errorf("searching for a nibs store: %w", err)
 	}
 	switch marker.Kind {
@@ -316,6 +319,10 @@ func resolveStoreDir() (string, error) {
 	}
 	return "", noStoreFoundError(cwd)
 }
+
+// findNearestMarkerFn is store.FindNearestMarker, replaceable so a test can make
+// git time out without waiting for the real deadline.
+var findNearestMarkerFn = store.FindNearestMarker
 
 // bindNamedStore validates dir as a nibs store and returns it, or the refusal
 // explaining why it is not one.
@@ -519,6 +526,18 @@ func preLayoutProjectError(cwd, legacy string) error {
 // marker of its own and this message is reached only when there is nothing.
 func noStoreFoundError(cwd string) error {
 	return fmt.Errorf("no %s directory found in %s or any parent directory (run `nibs init` to create one)", store.DirName, cwd)
+}
+
+// gitTimeoutRefusal explains a walk from cwd that found no marker while git
+// timed out on the worktree fallback, or returns nil when err is not that.
+// It must not advise `nibs init`, because a main working tree may hold the store.
+func gitTimeoutRefusal(cwd string, err error) error {
+	var timeout *store.GitTimeoutError
+	if !errors.As(err, &timeout) {
+		return nil
+	}
+	return fmt.Errorf("cannot tell whether a nibs store serves %s: no %s directory is in it or any parent directory, but git did not answer within %s whether it is in a linked git worktree, whose main working tree may hold the store; re-run, or pass the store directory with --nibs-path",
+		cwd, store.DirName, timeout.Timeout)
 }
 
 // preLayoutRemedy answers, for a project whose pre-layout `.nibs.yml` is at

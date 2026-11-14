@@ -691,6 +691,15 @@ func storeResolutionRefusalCases() []refusalCase {
 			},
 		},
 		{
+			// git timed out on whether the cwd is in a linked worktree, so a
+			// store in a main working tree went unchecked.
+			name: "no marker above the cwd and git timed out",
+			build: func(t *testing.T) (string, string) {
+				stubGitTimeout(t)
+				return discovered(bareProject(t))(t)
+			},
+		},
+		{
 			// The pre-layout config is there but cannot be parsed, so whether it
 			// declares a `nibs.path` is unknown — a third answer, and the one whose
 			// advice is "do NOT run `nibs init` until you know". The file it tells
