@@ -9,59 +9,44 @@ on:
         required: true
         type: string
 
-permissions:
-  contents: write     # create the release
-  actions: read       # read the CI run conclusion for the release commit
-  # Both are for actions/attest-build-provenance below. id-token mints the
-  # short-lived OIDC token that identifies this workflow to Sigstore; the
-  # attestation is signed against that identity, so there is no key to store or
-  # rotate. Neither grants anything to the rest of the job that it did not
-  # already have — attestations: write only writes to the attestations API.
-  id-token: write
-  attestations: write
+# Each job grants itself what it needs. Only `publish` can write to the
+# repository, and it runs no build code. `build` runs the install scripts of
+# every package in web/package-lock.json, so it holds only a read token.
+permissions: {}
 
-# One release run at a time: the existing-release check runs long before the
-# draft exists, so two concurrent runs for one version could both pass it.
+# One release run at a time: the existing-release check runs before the draft
+# exists, so two concurrent runs for one version could both pass it.
 concurrency:
   group: release
   cancel-in-progress: false
 
+# A `${{ }}` expression is substituted into the script text before any shell
+# reads it, so a value the dispatcher chooses — the input, and the ref the run
+# was dispatched from — is program source rather than data, and no amount of
+# quoting at the call site changes that: a value carrying a quote closes the
+# string and the rest parses as code. The steps below therefore take such values
+# through `env:` and read them as shell variables. internal/ciguard enforces
+# that as an ALLOWLIST: a `run:` body may interpolate the paths listed in its
+# `allowedPaths`, and naming anything else fails `task test`.
+#
+# One gap survives the allowlist: a value written to `$GITHUB_OUTPUT` and read
+# back as `steps.*.outputs.*` is laundered past the check. The only such output
+# read inside a `run:` body is `version.prerelease`, which the check job writes
+# as one of the two literals `true` and `false`.
+env:
+  VERSION: ${{ inputs.version }}
+
 jobs:
-  release:
+  check:
     runs-on: ubuntu-latest
-    # The `release` environment is what holds NIBS_SIGNING_KEY. Scoping the
-    # secret to an environment rather than the repository means it is handed
-    # only to a run that satisfies that environment's protection rules
-    # (required reviewers, branch restriction), instead of to anything able to
-    # trigger a workflow. The key is decrypted onto the runner for the duration
-    # of the job, which is inherent — SHA-pinning every action above is what
-    # keeps third-party code from being repointed at something that reads it.
-    environment: release
+    permissions:
+      contents: read
+      actions: read     # read the CI run conclusion for the release commit
+    outputs:
+      prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
-      # A `${{ }}` expression is substituted into the script text before any
-      # shell reads it, so a value the dispatcher chooses — the input, and the
-      # ref the run was dispatched from — is program source rather than data,
-      # and no amount of quoting at the call site changes that: a value carrying
-      # a quote closes the string and the rest parses as code. The steps below
-      # therefore take both through `env:` and read them as shell variables.
-      # internal/ciguard enforces that, and enforces it as an ALLOWLIST: a `run:`
-      # body may interpolate the paths listed in its `allowedPaths` and naming
-      # anything else fails `task test`. The list is not repeated here on
-      # purpose — this comment stated the rule's contents three times and went
-      # stale three times, which is what the inversion was for. What is durable
-      # is the shape: a context nobody has vetted fails by DEFAULT rather than by
-      # having been thought of, so the rule needs no round of catching up each
-      # time GitHub adds a context.
-      #
-      # One gap survives the inversion and is not closed by it: a value written
-      # to `$GITHUB_OUTPUT` and read back as `steps.*.outputs.*` is laundered
-      # past the check. The only such output here is `version.prerelease`, which
-      # the step above writes as one of the two literals `true` and `false`
-      # rather than as anything derived from the input's text.
       - name: Validate version format
         id: version
-        env:
-          VERSION: ${{ inputs.version }}
         run: |
           if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-.+)?$ ]]; then
             echo "::error::Version must match vX.Y.Z or vX.Y.Z-suffix format (got: $VERSION)"
@@ -110,34 +95,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Check tag does not exist
-        env:
-          VERSION: ${{ inputs.version }}
         run: |
           if git rev-parse "$VERSION" >/dev/null 2>&1; then
             echo "::error::Tag $VERSION already exists"
             exit 1
           fi
 
-      # A draft has no tag until it is published, so the tag check above
-      # cannot see a leftover draft. The list endpoint returns drafts.
-      - name: Check no release or draft carries this version
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          TAGS=$(gh api "repos/$REPO/releases" --paginate --jq '.[].tag_name')
-          if grep -Fxq -- "$VERSION" <<<"$TAGS"; then
-            echo "::error::A release or draft for $VERSION already exists. Delete the draft, or release another version."
-            exit 1
-          fi
-
       - name: Verify changelog entry
         if: steps.version.outputs.prerelease == 'false'
-        env:
-          VERSION: ${{ inputs.version }}
         run: |
           if ! grep -q "^## $VERSION" CHANGELOG.md; then
             echo "::error::CHANGELOG.md has no entry for $VERSION"
@@ -145,8 +113,6 @@ jobs:
           fi
 
       - name: Extract release notes
-        env:
-          VERSION: ${{ inputs.version }}
         run: |
           if [[ "${{ steps.version.outputs.prerelease }}" == "true" ]]; then
             echo "Pre-release build from $(git rev-parse --short HEAD)." > ${{ runner.temp }}/release-notes.md
@@ -165,93 +131,237 @@ jobs:
             fi
           fi
 
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-notes
+          path: ${{ runner.temp }}/release-notes.md
+          if-no-files-found: error
+
+  # Runs every third-party build dependency, so it holds no secret and only a
+  # read token. Its one output is the `dist` artifact.
+  build:
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
       # GoReleaser reads the version from this tag, which stays local. GitHub
-      # creates the tag at the draft's target_commitish when it is published.
+      # creates the tag at the draft's target commit when it is published.
       - name: Create local tag
-        env:
-          VERSION: ${{ inputs.version }}
         run: git tag "$VERSION"
 
       # Every tool this job runs — go, node, goreleaser, go-licenses — comes
-      # from mise.toml, the same file ci.yml reads. That makes the published
-      # binaries the work of the toolchain CI built and tested this commit
-      # with (nibs-23f0), and it puts the two release-path tools under an exact
-      # pin instead of `~> v2` and `@latest` (nibs-ag7i).
+      # from mise.toml, the same file ci.yml reads, so the published binaries
+      # are built by the toolchain CI tested this commit with.
       - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
-      # Everything the archives need — generated code, web assets, license
-      # notices — is built HERE rather than in .goreleaser.yaml's before-hooks,
-      # and the ordering is a security boundary. Before-hooks inherit the
-      # environment of the goreleaser process, so hooks running `npm ci` (which
-      # executes install scripts for every package in web/package-lock.json)
-      # would run with NIBS_SIGNING_KEY readable. Running the work before the
-      # key is ever in scope means the key-bearing step has no third-party
-      # children. See the note in .goreleaser.yaml before adding a hook there.
+      # Generated code, web assets and license notices; runs `npm ci`.
       - name: Build release inputs
         run: task release:prep
 
-      # Fail before anything is published if the signing secret does not
-      # correspond to a public key shipped in nibs binaries. Signing with a
-      # key no binary carries produces a perfectly valid-looking signature, so
-      # nothing downstream would notice — until signature verification is
-      # required, at which point every install refuses to upgrade and has to be
-      # reinstalled by hand. Producing a signature is only evidence of anything
-      # if it is checked against the keys that will do the checking.
+      # .goreleaser.yaml disables its release stage, and --skip=publish keeps
+      # that true if the config ever enables one.
+      - name: Build archives
+        run: goreleaser release --clean --skip=publish
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
+          if-no-files-found: error
+
+  # Signs on a fresh runner, from a fresh checkout. In the build job, npm
+  # install scripts can rewrite files a later step runs, such as the signer, so
+  # the key never enters that job.
+  sign:
+    needs: build
+    runs-on: ubuntu-latest
+    # The `release` environment holds NIBS_SIGNING_KEY and requires a reviewer,
+    # so this job waits for approval. Every later job needs this one, so nothing
+    # is attested or published without that approval.
+    environment: release
+    permissions:
+      contents: read
+    outputs:
+      checksums-sha256: ${{ steps.digests.outputs.checksums }}
+      signature-sha256: ${{ steps.digests.outputs.signature }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # Go alone, and no cache: a cache another job saved could hold a
+      # toolchain that job's build dependencies replaced.
+      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          install_args: go
+          cache: false
+
+      # Outside the checkout, so nothing the build job produced sits where
+      # `go run` reads its module and workspace files.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: ${{ runner.temp }}/dist
+
+      # The signature covers checksums.txt alone, so it vouches for the
+      # archives only if checksums.txt matches them.
+      - name: Check the archives against checksums.txt
+        working-directory: ${{ runner.temp }}/dist
+        run: sha256sum --check --strict checksums.txt
+
+      # Signing with a key no binary carries produces a valid-looking signature
+      # that every `nibs upgrade` then rejects, so check the key first.
       - name: Verify the signing key is one binaries trust
         run: go run ./internal/signing/cmd/verify -check-key
         env:
           NIBS_SIGNING_KEY: ${{ secrets.NIBS_SIGNING_KEY }}
 
-      # GoReleaser runs as the pinned binary mise installed rather than through
-      # goreleaser-action, so the version that assembles the archives and
-      # generates checksums.txt is the one mise.toml names — the action's
-      # `version:` input was a second, separately-floating copy that Renovate's
-      # github-actions manager does not read. It also removes a third-party
-      # action from a job holding `contents: write`.
-      - name: Release
-        run: goreleaser release --clean --release-notes=${{ runner.temp }}/release-notes.md
+      # Empty or absent fails here rather than publishing unsigned — see
+      # internal/signing/cmd/sign.
+      - name: Sign checksums.txt
+        run: go run ./internal/signing/cmd/sign -in "$RUNNER_TEMP/dist/checksums.txt" -out "$RUNNER_TEMP/dist/checksums.txt.sig"
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Signs checksums.txt via .goreleaser.yaml's `signs` stage. GoReleaser
-          # passes its own environment to that command, so this reaches the
-          # signer without being named again there. Empty or absent fails the
-          # release rather than publishing unsigned — see internal/signing.
           NIBS_SIGNING_KEY: ${{ secrets.NIBS_SIGNING_KEY }}
 
-      # The -check-key step above proves the key is trusted; this proves the
-      # file actually published is the one that got signed. Different failures:
-      # a wrong key, versus a signature over the wrong bytes.
-      #
-      # This runs after publishing, so a failure here leaves a draft release to
-      # delete by hand. The draft has no tag yet, so the draft is all there is
-      # to remove. That is the accepted cost of checking the real artifact:
-      # goreleaser signs and uploads within one command, so there is no point
-      # between them to stand. The draft is never public, and -check-key
-      # catches the likely cause first.
-      - name: Verify the published signature
-        run: go run ./internal/signing/cmd/verify -in dist/checksums.txt -sig dist/checksums.txt.sig
+      # The key check proves the key is trusted; this proves the signature is
+      # over these bytes. A failure here stops the run before any draft exists.
+      - name: Verify the signature
+        run: go run ./internal/signing/cmd/verify -in "$RUNNER_TEMP/dist/checksums.txt" -sig "$RUNNER_TEMP/dist/checksums.txt.sig"
 
-      # Provenance for what was just published: a signed statement that these
-      # exact bytes were built by this workflow, from this repository, at this
-      # commit. checksums.txt alone cannot say that — it lives in the same
-      # release as the archives it vouches for, so it catches corruption in
-      # transit but not anyone able to write that release (nibs-bw1u).
-      #
-      # Anchored in Sigstore and GitHub's OIDC identity rather than a key we
-      # hold, so there is nothing to store, protect or rotate. `nibs upgrade`
-      # does not consume this — go-selfupdate verifies a checksum file, not an
-      # attestation — so this covers humans and install.sh; the self-update
-      # path is the other half of nibs-bw1u.
-      #
-      # Verify a downloaded asset with:
-      #   gh attestation verify nibs_linux_amd64.tar.gz --repo alphaleonis/nibs
+      # The publish job compares its downloads against these digests.
+      - name: Record digests
+        id: digests
+        working-directory: ${{ runner.temp }}/dist
+        run: |
+          echo "checksums=$(sha256sum checksums.txt | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "signature=$(sha256sum checksums.txt.sig | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signature
+          path: ${{ runner.temp }}/dist/checksums.txt.sig
+          if-no-files-found: error
+
+  # Provenance: a signed statement that these exact bytes were built by this
+  # workflow, from this repository, at this commit. checksums.txt alone cannot
+  # say that, because anyone able to write the release can replace both.
+  #
+  # Anchored in Sigstore and GitHub's OIDC identity, so there is no key to
+  # store or rotate. `nibs upgrade` and the install scripts do not check it.
+  # Verify a downloaded asset with:
+  #   gh attestation verify nibs_linux_amd64.tar.gz --repo alphaleonis/nibs
+  attest:
+    needs: [build, sign]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write       # mint the OIDC token that Sigstore signs against
+      attestations: write   # store the attestation
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: release
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signature
+          path: release
+
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
-            dist/*.tar.gz
-            dist/*.zip
-            dist/checksums.txt
-            dist/checksums.txt.sig
+            release/*.tar.gz
+            release/*.zip
+            release/checksums.txt
+            release/checksums.txt.sig
+
+  # The only job that can write to the repository. It checks out no code and
+  # runs no build tools: it downloads the artifacts, checks them, and creates
+  # the draft.
+  publish:
+    needs: [check, sign, attest]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the draft release
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: release
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signature
+          path: release
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-notes
+          path: notes
+
+      # Pins every uploaded byte to what the sign job verified: checksums.txt
+      # and its signature by digest, and each archive through checksums.txt.
+      - name: Check the files against what the sign job verified
+        working-directory: release
+        env:
+          CHECKSUMS_SHA256: ${{ needs.sign.outputs.checksums-sha256 }}
+          SIGNATURE_SHA256: ${{ needs.sign.outputs.signature-sha256 }}
+        run: |
+          echo "$CHECKSUMS_SHA256  checksums.txt" | sha256sum --check --strict
+          echo "$SIGNATURE_SHA256  checksums.txt.sig" | sha256sum --check --strict
+          sha256sum --check --strict checksums.txt
+
+      # A draft has no tag until it is published, so the check job's tag check
+      # cannot see a leftover draft. The list endpoint returns drafts only to a
+      # token with write access, which is why this runs here.
+      - name: Check no release or draft carries this version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAGS=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq '.[].tag_name')
+          if grep -Fxq -- "$VERSION" <<<"$TAGS"; then
+            echo "::error::A release or draft for $VERSION already exists. Delete the draft, or release another version."
+            exit 1
+          fi
+
+      # --draft with --target creates no tag: GitHub creates it at the target
+      # commit when the draft is published, and the default branch can move
+      # before then.
+      #
+      # --prerelease is not cosmetic: `nibs upgrade` filters on GitHub's
+      # prerelease flag, not on the tag's semver suffix, so an unmarked
+      # pre-release is offered to every user as a stable upgrade.
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRERELEASE: ${{ needs.check.outputs.prerelease }}
+        run: |
+          # Only a line whose name sha256sum reads as one word passes, and the
+          # name comes from that match, so the uploaded set is the checked set.
+          archives=()
+          while IFS= read -r line || [[ -n "$line" ]]; do
+            if [[ ! "$line" =~ ^[0-9a-f]{64}\ \ ([A-Za-z0-9._-]+)$ ]]; then
+              echo "::error::checksums.txt has an unexpected line: $line"
+              exit 1
+            fi
+            archives+=("${BASH_REMATCH[1]}")
+          done < release/checksums.txt
+          flags=(--repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" --title "$VERSION" --notes-file notes/release-notes.md)
+          if [[ "$PRERELEASE" == "true" ]]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "$VERSION" "${flags[@]}" \
+            "${archives[@]/#/release/}" release/checksums.txt release/checksums.txt.sig

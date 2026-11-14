@@ -117,7 +117,9 @@ If CI is anything but `success`, **stop** — do not release from a red or unver
 
 ### 6. Dispatch the release
 Confirm that neither a tag nor a release carries the version. Both commands must print
-nothing. The second lists drafts too, and a leftover draft has no tag, so the first misses it:
+nothing. The second lists drafts too, and a leftover draft has no tag, so the first misses it.
+The workflow catches a leftover draft only in its `publish` job, after the build, the sign
+approval and the public attestation, so this check is what keeps those from being wasted:
 
     git ls-remote --tags origin "refs/tags/<version>"
     gh api repos/alphaleonis/nibs/releases --paginate --jq '.[] | select(.tag_name == "<version>") | .tag_name'
@@ -129,10 +131,10 @@ Then dispatch:
 Find the new run (`gh run list --workflow=release.yml --limit 1 --json databaseId`) and poll
 it the same way as step 5. If it fails at the gate or any step, stop and report.
 
-**The run will sit at `status: waiting` until a human approves it.** `release.yml` targets
-the `release` environment, which requires a reviewer — this is not a hang and not something
-to work around. Confirm that is what it is waiting on, then hand the run URL to the user and
-ask them to approve:
+**The run will sit at `status: waiting` until a human approves it.** Once the `check` and
+`build` jobs pass, the `sign` job targets the `release` environment, which requires a
+reviewer — this is not a hang and not something to work around. Confirm that is what it is
+waiting on, then hand the run URL to the user and ask them to approve:
 
     gh api repos/alphaleonis/nibs/actions/runs/<id>/pending_deployments \
       --jq '.[] | {environment: .environment.name, current_user_can_approve, reviewers: [.reviewers[]? | .reviewer.login]}'
@@ -151,8 +153,8 @@ Confirm: `isDraft=true`; the body (notes) is non-empty and matches the changelog
 all six platform archives (`nibs_{darwin,linux,windows}_{amd64,arm64}`) plus
 `checksums.txt` **and `checksums.txt.sig`** are attached (8 assets).
 
-Check the signature by NAME, not by the count alone. `.goreleaser.yaml` signs the checksum
-file on every release — one signature anchors every archive, since `checksums.txt` already
+Check the signature by NAME, not by the count alone. The workflow's `sign` job signs the
+checksum file on every release — one signature anchors every archive, since `checksums.txt` already
 covers them all by digest — so a draft missing `checksums.txt.sig` means the signing step
 did not run, even though the release otherwise looks complete. `nibs upgrade` requires the
 signature and fails at detection against a release without one, so publishing it unsigned

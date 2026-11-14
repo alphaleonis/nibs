@@ -1,6 +1,6 @@
-// Command sign writes a detached Ed25519 signature over a file. GoReleaser runs it
-// on checksums.txt, which covers the archives; `nibs upgrade` checks that chain
-// (cmd/upgrade_validator.go).
+// Command sign writes a detached Ed25519 signature over a file. The release
+// workflow runs it on checksums.txt, which covers the archives; `nibs upgrade`
+// checks that chain (cmd/upgrade_validator.go).
 //
 // The private key comes as PEM in NIBS_SIGNING_KEY, never as a flag or a file.
 // Print nothing derived from it, including in errors.
@@ -38,8 +38,7 @@ func run(in, out string) error {
 	keyPEM := os.Getenv(keyEnv)
 	if keyPEM == "" {
 		return fmt.Errorf("%s is unset or empty. It must hold the PEM-encoded Ed25519 private key.\n"+
-			"  In CI it comes from the `release` environment secret of the same name.\n"+
-			"  For a local dry run, skip signing instead: goreleaser release --snapshot --clean --skip=sign", keyEnv)
+			"  In CI it comes from the `release` environment secret of the same name", keyEnv)
 	}
 
 	key, err := parsePrivateKey([]byte(keyPEM))

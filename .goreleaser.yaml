@@ -1,23 +1,13 @@
 version: 2
 
-# There are deliberately NO `before.hooks` here. Everything a release archive
-# needs — generated code, web assets, third-party license notices — is built by
-# `task release:prep`, which must run BEFORE goreleaser.
+# GoReleaser only builds, archives and checksums here. It runs in release.yml's
+# build job, which also runs the npm packages that `task release:prep` installs,
+# so that job holds neither the signing key nor a token that can write releases.
+# Later jobs sign checksums.txt and create the draft. Keep this file build-only:
+# no `signs`, no publisher, and no `release` enabled.
 #
-# This is a security boundary, not a preference. The release job sets
-# NIBS_SIGNING_KEY on the step that runs goreleaser, and before-hooks inherit
-# that environment (verified against goreleaser 2.17.1). The old hooks ran
-# `cd web && npm ci`, which executes install/postinstall scripts for every
-# package in web/package-lock.json — so the release signing key was readable by
-# hundreds of third-party packages, and a key taken that way cannot be revoked
-# for binaries already shipped.
-#
-# Adding a hook here puts third-party code back inside the key-bearing process.
-# Do not add one. If a release needs another build step, add it to
-# `task release:prep`, which runs before the key is in scope.
-#
-# Consequence to know: without `task release:prep` the Go build fails rather
-# than producing a broken archive, because embed.go embeds web/dist.
+# Put build steps in `task release:prep`, not in `before.hooks`. Without that
+# task the Go build fails, because embed.go embeds web/dist.
 
 builds:
   - env:
@@ -54,54 +44,10 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
-# Sign the checksum file, not each archive: checksums.txt already covers every
-# archive by digest, so one signature anchors all of them. This is the shape
-# rclone and restic both ship, and the one go-selfupdate's own PatternValidator
-# example documents.
-#
-# `nibs upgrade` requires this signature: against a release without one it
-# fails at detection, before any download, so a release must never ship unsigned.
-#
-# The signer is `go run`, not a prebuilt binary, because the release job already
-# has the pinned Go toolchain and this avoids a second build artifact to publish
-# and version. The private key reaches it through NIBS_SIGNING_KEY in the
-# environment — never an argument, which would be visible in the process list.
-#
-# For a local dry run there is no key, so skip this stage rather than inventing
-# one: goreleaser release --snapshot --clean --skip=sign
-signs:
-  - id: checksums
-    artifacts: checksum
-    signature: "${artifact}.sig"
-    cmd: go
-    args:
-      - run
-      - ./internal/signing/cmd/sign
-      - -in
-      - "${artifact}"
-      - -out
-      - "${signature}"
-
+# release.yml's publish job creates the GitHub release from dist/.
 release:
-  draft: true
-  # `auto` marks the GitHub release as a pre-release when the tag carries a
-  # pre-release indicator (v0.8.0-alpha.1, v1.0.0-rc1). GoReleaser's default is
-  # `false`, which is not merely cosmetic here: `nibs upgrade` filters on
-  # GitHub's prerelease flag, not on the tag's semver suffix
-  # (go-selfupdate detect.go — `rel.GetPrerelease() && !up.prerelease`), so an
-  # unmarked pre-release is offered to every user as a routine stable upgrade.
-  # Found by cutting v0.8.0-alpha.1, whose draft came out with
-  # isPrerelease: false.
-  prerelease: auto
-  # The release job never pushes its tag, so GitHub creates it here when the
-  # draft is published. The default, the default branch, can move before then.
-  # https://docs.github.com/en/rest/releases/releases#update-a-release
-  target_commitish: "{{ .FullCommit }}"
+  disable: true
 
-# Do NOT set `changelog.disable: true`: the release workflow passes
-# `--release-notes` (from CHANGELOG.md), which GoReleaser loads inside the
-# changelog pipe. Disabling the changelog skips that pipe entirely, so the
-# notes are never read and the GitHub release body comes out empty. With the
-# pipe enabled and `--release-notes` set, GoReleaser uses the file verbatim and
-# generates no commit changelog (early return in the changelog pipe). See
-# nibs-gyj5.
+# release.yml extracts the release notes from CHANGELOG.md.
+changelog:
+  disable: true

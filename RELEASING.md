@@ -45,20 +45,45 @@ set to `main`, and enter the version. Accepted formats:
 - `v0.1.0` — stable release (requires changelog entry)
 - `v0.1.0-alpha.1`, `v0.1.0-rc.1` — pre-release (changelog not required)
 
-The workflow will:
+The workflow runs five jobs in order:
 
-1. Refuse to run unless dispatched from `main` and the latest CI run for that
-   commit completed successfully (applies to pre-releases too)
-2. Validate the version format
-3. Refuse a version that already has a tag, a release or a draft
-4. Verify a matching changelog entry exists (stable releases only)
-5. Extract release notes from the changelog, or generate a placeholder for pre-releases
-6. Tag the commit locally, without pushing the tag
-7. Build binaries for Linux, macOS, and Windows (amd64 + arm64) via GoReleaser
-8. Collect third-party dependency licenses via `go-licenses`
-9. Create a **draft** GitHub Release with the binaries and license notices
+1. **check**: refuses to run unless dispatched from `main` and the latest CI run
+   for that commit completed successfully (pre-releases too). It validates the
+   version format, refuses a version that already has a tag, verifies the
+   changelog entry (stable releases only), and extracts the release notes from
+   the changelog, or a placeholder for pre-releases.
+2. **build**: tags the commit locally without pushing the tag, runs
+   `task release:prep` (web assets, generated code, `go-licenses` notices), and
+   builds the archives for Linux, macOS and Windows (amd64 + arm64) with
+   GoReleaser, which does not publish.
+3. **sign**: waits for a reviewer to approve the `release` environment, which
+   holds the signing key. It checks the archives against `checksums.txt`,
+   checks that the key is one binaries trust, signs `checksums.txt`, and
+   verifies the signature.
+4. **attest**: records a build provenance attestation for every asset.
+5. **publish**: checks that the files are the ones the sign job verified,
+   refuses a version that a release or draft already carries, and creates a
+   **draft** GitHub Release with the notes, the six archives, `checksums.txt`
+   and `checksums.txt.sig`.
 
-### 4. Review and publish
+Each job holds only the permissions it needs. Only **publish** holds
+`contents: write`, and it checks out no code and runs no build tools. The
+build job runs the install scripts of every npm package the web UI depends on,
+so it holds a read-only token and no secrets. The signing key exists only in
+the sign job, on a fresh runner. Any failure before **publish** leaves no
+draft behind.
+
+The workflow sees a leftover draft only in **publish**, after the build, the
+sign approval and the public attestation. Check for one before you dispatch:
+`gh api repos/alphaleonis/nibs/releases --paginate --jq '.[].tag_name'` must
+not list the version.
+
+### 4. Approve the signing job
+
+The run waits at the **sign** job until a reviewer of the `release` environment
+approves it. Approve it from the run's page once **build** has passed.
+
+### 5. Review and publish
 
 The release is created as a draft. Review the release notes and attached archives on the [Releases page](https://github.com/alphaleonis/nibs/releases), then click **Publish**.
 
@@ -94,7 +119,7 @@ This is anchored in Sigstore and GitHub's OIDC identity rather than a key this p
 
 ### The signed checksum file
 
-Releases also publish `checksums.txt.sig`, a detached Ed25519 signature over `checksums.txt`, produced in the release job from a key held in the `release` environment. Verify it with the matching public key from `internal/signing/keys/`:
+Releases also publish `checksums.txt.sig`, a detached Ed25519 signature over `checksums.txt`, produced in the release workflow's sign job from a key held in the `release` environment. Verify it with the matching public key from `internal/signing/keys/`:
 
 ```bash
 openssl pkeyutl -verify -pubin -inkey nibs-signing-1.pub \
@@ -107,7 +132,7 @@ Unlike the attestation, this anchor is a key compiled into every nibs binary, wh
 
 This makes signing mandatory for every future release, in a stronger sense than it first appears: go-selfupdate fetches the validation asset during **detection**, so against a release published without a `checksums.txt.sig`, `nibs upgrade` fails with an error before downloading anything. Two consequences:
 
-- The release workflow must never publish unsigned. It doesn't: a missing key fails the run before anything is uploaded, and the signature is verified against these same public keys before the job finishes.
+- The release workflow must never publish unsigned. It doesn't: a missing key fails the run before anything is uploaded, and the signature is verified against these same public keys before the draft is created.
 - `nibs upgrade --version <tag>` cannot reach a release that predates signing.
 
 ### Rotating the signing key
@@ -116,7 +141,7 @@ Three keypairs were generated up front and all three public keys ship in every b
 
 To rotate, replace the `NIBS_SIGNING_KEY` secret in the `release` environment with the next private key and update the note above. No client change is needed: the verifier accepts a signature from any embedded key.
 
-The release job checks this for you before it uploads anything:
+The sign job checks this for you before it signs anything:
 
 ```bash
 NIBS_SIGNING_KEY="$(cat nibs-signing-2.key)" go run ./internal/signing/cmd/verify -check-key
@@ -131,7 +156,7 @@ Rotation limits future exposure; it cannot un-trust a stolen key on binaries alr
 To test the release build locally:
 
 `go-licenses` and `goreleaser` are pinned in `mise.toml`, so `mise install`
-provides both at the same versions the release job uses — there is nothing to
+provides both at the same versions the release workflow uses — there is nothing to
 install by hand.
 
 ```bash
@@ -141,22 +166,18 @@ mise install
 task release:prep
 
 # Dry-run GoReleaser
-goreleaser release --snapshot --clean --skip=sign
+goreleaser release --snapshot --clean
 ```
 
-`task release:prep` is required, and is not merely a convenience: `.goreleaser.yaml`
-deliberately has **no `before.hooks`**, because before-hooks inherit the environment
-of the goreleaser process — which in CI holds the signing key. Running `npm ci` there
-would expose the key to install scripts from every package in the web dependency tree.
-Forgetting the prep step fails loudly rather than producing a broken archive
+`task release:prep` is required: `.goreleaser.yaml` has no `before.hooks`, so
+without it the Go build fails rather than producing a broken archive
 (`embed.go:5:12: pattern all:web/dist: no matching files found`).
 
-`--skip=sign` is not optional locally: the release signs `checksums.txt` with the
-Ed25519 key held in the `release` environment, and there is no key on a developer
-machine. Without the flag the dry run fails at the signing stage — deliberately,
-because a release that cannot sign must fail rather than publish unsigned.
+The dry run produces the archives and `checksums.txt` in `dist/`, the files the
+build job uploads. It does not sign: signing happens only in the release
+workflow's sign job, from the key held in the `release` environment.
 
 Run `goreleaser` through `mise exec -- goreleaser …` if mise's shims are not on
-your PATH. Note the dry run executes `.goreleaser.yaml`'s `before` hooks, which
-include `cd web && npm ci` — so do not start it while a `task` run is
-installing (see CLAUDE.md).
+your PATH. `task release:prep` installs the web dependencies through
+`task web:install`, so do not start it while another `task` run is installing
+(see CLAUDE.md).
