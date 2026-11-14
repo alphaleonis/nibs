@@ -132,7 +132,8 @@ if [[ -r $osrelease_file ]]; then
 	read -r osrelease <"$osrelease_file" || true
 fi
 
-if [[ $refuse_on_wsl == 1 && ${osrelease,,} == *microsoft* && ${NIBS_UNCAPPED:-} != 1 ]]; then
+# A bracket per letter matches any letter case, since macOS's bash 3.2 has no ${var,,}.
+if [[ $refuse_on_wsl == 1 && $osrelease == *[Mm][Ii][Cc][Rr][Oo][Ss][Oo][Ff][Tt]* && ${NIBS_UNCAPPED:-} != 1 ]]; then
 	# printf, not a `cat` heredoc, for the same reason the check above avoids
 	# grep: the refusal must not depend on a binary that might not be there.
 	printf '%s\n' \
