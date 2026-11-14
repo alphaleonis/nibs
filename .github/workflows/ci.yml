@@ -67,6 +67,9 @@ jobs:
       # that is silent at the point it happens — so a skip on the linux leg
       # means they stopped running rather than that they could not.
       NIBS_REQUIRE_POSIX_FILE_MODES: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
+      # Both legs, so a missing git fails the run instead of quietly dropping
+      # the worktree-fallback and migrate fixtures.
+      NIBS_REQUIRE_GIT: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # Every tool this job runs — go, node, task — is installed by mise from

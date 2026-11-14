@@ -171,7 +171,8 @@ var (
 	PosixFileModes = Capability{Name: "posix file modes", EnvVar: "NIBS_REQUIRE_POSIX_FILE_MODES"}
 
 	// Git covers a git executable on PATH, which the worktree fallback in store
-	// discovery shells out to and its fixtures build repositories with.
+	// discovery shells out to and the store and migrate fixtures build
+	// repositories with.
 	Git = Capability{Name: "git", EnvVar: "NIBS_REQUIRE_GIT"}
 )
 
