@@ -82,12 +82,6 @@ export function taskSourceLines(body: string): number[] {
   const childrenOf = (t: Token): Token[] | undefined =>
     t.type === "list" ? (t as Tokens.List).items : (t as { tokens?: Token[] }).tokens;
 
-  const countNewlines = (s: string): number => {
-    let n = 0;
-    for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) === 10) n++;
-    return n;
-  };
-
   const lines: number[] = [];
 
   // `siblings[0]` starts on source line `startLine`.
@@ -223,7 +217,7 @@ function visibleTextNodes(root: Node): Text[] {
 function expectedMentions(body: string): ExpectedCandidate[] {
   const tokens = sharedMarked.lexer(body);
   const out: ExpectedCandidate[] = [];
-  collectExpected(tokens, { out, leading: tokens[0], references: new Map() }, []);
+  collectExpected(tokens, { out, leading: tokens[0], references: new Map(), htmlLines: serverHtmlLines(body) }, [], 0);
   return out;
 }
 
@@ -233,26 +227,53 @@ interface CollectContext {
   leading: Token | undefined;
   /** The text each character reference in the body shows, by the reference. */
   references: Map<string, string>;
+  /** Whether the server reads each source line, by its 0-based number, as part of an HTML block. */
+  htmlLines: Uint8Array;
+}
+
+function countNewlines(s: string): number {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) === 10) n++;
+  return n;
 }
 
 /**
  * `openInline` holds the skipped elements an inline tag opened in the current
  * block. It ends with the block, though the browser keeps a raw-text element,
- * an `a` or a `code` open into later blocks.
+ * an `a` or a `code` open into later blocks. `tokens[0]` starts on source line
+ * `startLine`.
  */
-function collectExpected(tokens: Token[], ctx: CollectContext, openInline: string[]): void {
+function collectExpected(tokens: Token[], ctx: CollectContext, openInline: string[], startLine: number): void {
   // Adjacent text and escape tokens render as one DOM text node.
   let text = "";
   let breaks: number[] = [];
   let decoded = new Set<number>();
+  // The source lines the buffered text starts and ends on.
+  let firstLine = -1;
+  let lastLine = -1;
   const flush = (): void => {
     const source: CandidateSource = openInline.length === 0 ? "text" : "skipped";
-    if (text !== "") for (const c of segmentMentions(text, breaks, decoded)) ctx.out.push({ ...c, source });
+    let line = firstLine;
+    let from = 0;
+    for (const c of text === "" ? [] : segmentMentions(text, breaks, decoded)) {
+      // A newline that a character reference shows is not a line break in the source.
+      for (; from < c.index; from++) if (text.charCodeAt(from) === 10 && !decoded.has(from)) line++;
+      const inHtml = ctx.htmlLines[Math.min(line, lastLine)] === 1;
+      ctx.out.push({ key: c.key, mention: inHtml ? null : c.mention, source });
+    }
     text = "";
     breaks = [];
     decoded = new Set();
+    firstLine = -1;
   };
+  let line = startLine;
   for (const token of tokens) {
+    const tokenLine = line;
+    line += countNewlines(token.raw);
+    if ((token.type === "text" && !(token as Tokens.Text).tokens) || token.type === "escape") {
+      if (firstLine < 0) firstLine = tokenLine;
+      lastLine = line;
+    }
     if (token.type === "text" && !(token as Tokens.Text).tokens) {
       const shown = shownText(token as Tokens.Text, ctx.references);
       for (const i of shown.decoded) {
@@ -283,21 +304,25 @@ function collectExpected(tokens: Token[], ctx: CollectContext, openInline: strin
         }
         break;
       case "list":
-        collectExpected((token as Tokens.List).items, ctx, []);
+        collectExpected((token as Tokens.List).items, ctx, [], tokenLine);
         break;
       case "table": {
+        // A table's rows follow its header and delimiter lines, one row a line.
         const table = token as Tokens.Table;
-        for (const cell of [...table.header, ...table.rows.flat()]) collectExpected(cell.tokens, ctx, []);
+        for (const cell of table.header) collectExpected(cell.tokens, ctx, [], tokenLine);
+        table.rows.forEach((row, r) => {
+          for (const cell of row) collectExpected(cell.tokens, ctx, [], tokenLine + 2 + r);
+        });
         break;
       }
       case "em":
       case "strong":
       case "del":
-        collectExpected((token as Tokens.Em).tokens, ctx, openInline);
+        collectExpected((token as Tokens.Em).tokens, ctx, openInline, tokenLine);
         break;
       default: {
         const kids = (token as { tokens?: Token[] }).tokens;
-        if (kids) collectExpected(kids, ctx, []);
+        if (kids) collectExpected(kids, ctx, [], tokenLine);
       }
     }
   }
@@ -331,6 +356,181 @@ function trackInlineTag(tag: string, open: string[]): void {
   if (top !== undefined && RAW_TEXT_TAGS.has(top) && !(m[1] === "/" && name === top)) return;
   if (m[1] === "") open.push(name);
   else if (open.includes(name)) open.length = open.lastIndexOf(name);
+}
+
+// The server's markdown parser is goldmark, whose HTML block start and end conditions differ from marked's:
+// https://github.com/yuin/goldmark/blob/v1.8.5/parser/html_block.go#L13-L214
+const SERVER_BLOCK_TAGS = new Set(
+  (
+    "address article aside base basefont blockquote body caption center col colgroup dd details dialog dir div dl dt " +
+    "fieldset figcaption figure footer form frame frameset h1 h2 h3 h4 h5 h6 head header hr html iframe legend li " +
+    "link main menu menuitem meta nav noframes ol optgroup option p param search section summary table tbody td " +
+    "tfoot th thead title tr track ul"
+  ).split(" "),
+);
+// The `u` flag folds case as Go's `(?i)` does, so `ſ` matches `s`.
+const SERVER_HTML_TYPE1_OPEN = /^ {0,3}<(?:script|pre|style|textarea)(?:[\t\f\r ][^\n]*|\/?>[^\n]*|)$/iu;
+const SERVER_HTML_TYPE1_CLOSE = /<\/(?:script|pre|style|textarea)>/iu;
+// Types 2 to 5: a comment, a processing instruction, a declaration and CDATA, each with the text that ends it.
+const SERVER_HTML_DELIMITED: [RegExp, string][] = [
+  [/^ {0,3}<!--/, "-->"],
+  [/^ {0,3}<\?/, "?>"],
+  [/^ {0,3}<![A-Z]/, ">"],
+  [/^ {0,3}<!\[CDATA\[/, "]]>"],
+];
+const SERVER_ATTRIBUTE = `(?:[\\r\\n \\t]+[a-zA-Z_:][a-zA-Z0-9:._-]*(?:[\\r\\n \\t]*=[\\r\\n \\t]*(?:[^"'=<>\`\\x00-\\x20]+|'[^']*'|"[^"]*"))?)`;
+// goldmark's `[a-zA-Z]+[a-zA-Z0-9\-]*` matches the same tags, but backtracks quadratically in JavaScript.
+const SERVER_HTML_TYPE7 = new RegExp(`^ {0,3}<(/ *)?([a-zA-Z][a-zA-Z0-9-]*)(${SERVER_ATTRIBUTE}*) *\\/?> *$`);
+const SERVER_HTML_TYPE6 = /^ {0,3}<(?:\/ *)?([a-zA-Z][a-zA-Z0-9-]*)(?: [^\n]*|\/?>[^\n]*|)$/;
+const SERVER_FENCE = /^ {0,3}(`{3,}(?=[^`]*$)|~{3,})/;
+const SERVER_FENCE_CLOSE = /^ {0,3}(`+|~+)[ \t]*$/;
+// A list marker, then the spaces before the item's content, or none when the item is empty or its content is indented code.
+const SERVER_LIST_ITEM = /^(?<marker> {0,3}(?:[-+*]|(?<number>\d{1,9})[.)]))(?:(?<empty>[ \t]*$)|(?<gap> {1,4})(?=[^ ])|(?= {5}))/;
+const SERVER_NOT_PARAGRAPH = /^ {0,3}(?:#{1,6}(?:[ \t]|$)|(?:-[ \t]*){3,}$|(?:\*[ \t]*){3,}$|(?:_[ \t]*){3,}$)/;
+
+/** The groups of a `SERVER_LIST_ITEM` match. */
+interface ListItem {
+  marker: string;
+  number?: string;
+  gap?: string;
+  empty?: string;
+}
+
+/**
+ * Returns how the server's HTML block that starts on `line` ends, or null when
+ * none starts there. It is "blank" for a block that ends before the next blank
+ * line, or else a test that accepts the block's last line. `paragraph` is
+ * whether the line before is paragraph text.
+ */
+function serverHtmlBlockStart(line: string, paragraph: boolean): "blank" | ((line: string) => boolean) | null {
+  if (SERVER_HTML_TYPE1_OPEN.test(line)) return (l) => SERVER_HTML_TYPE1_CLOSE.test(l);
+  for (const [open, close] of SERVER_HTML_DELIMITED) if (open.test(line)) return (l) => l.includes(close);
+  const m = SERVER_HTML_TYPE7.exec(line);
+  if (m !== null) {
+    const tag = m[2].toLowerCase();
+    if (SERVER_BLOCK_TAGS.has(tag)) return "blank";
+    // goldmark lets a textarea tag start a type 7 block, and reads an end tag as one only when no space follows its slash.
+    const closeWithAttributes = m[1] === "/" && m[3] !== "";
+    if (!paragraph && tag !== "script" && tag !== "style" && tag !== "pre" && !closeWithAttributes) return "blank";
+  }
+  const m6 = SERVER_HTML_TYPE6.exec(line);
+  return m6 !== null && SERVER_BLOCK_TAGS.has(m6[1].toLowerCase()) ? "blank" : null;
+}
+
+/**
+ * Returns whether `content`, a line without the list markers before it, is
+ * paragraph text that a later line can continue. Text in a blockquote is, and
+ * a blockquote's heading, fence or HTML block is not.
+ */
+function serverParagraphText(content: string): boolean {
+  const inner = content.replace(/^(?: {0,3}> ?)+/, "");
+  return (
+    !/^[ \t]*$/.test(inner) &&
+    !SERVER_NOT_PARAGRAPH.test(inner) &&
+    serverHtmlBlockStart(inner, false) === null &&
+    !SERVER_FENCE.test(inner)
+  );
+}
+
+/**
+ * Returns whether the server reads each line of `body` as part of an HTML block,
+ * by the 0-based number marked gives the line.
+ *
+ * It follows list items by their content columns, and ends a block or a fence
+ * where its list item ends. It reads a blockquote line as paragraph text, and
+ * a line with two list markers as opening only the first item.
+ */
+function serverHtmlLines(body: string): Uint8Array {
+  // goldmark ends a line only at `\n`.
+  const lines = body.split("\n").map((l) => (l.endsWith("\r") ? l.slice(0, -1) : l));
+  const html = new Uint8Array(lines.length);
+  let open: ReturnType<typeof serverHtmlBlockStart> = null;
+  let fence = "";
+  // The content column of the list item the open block or fence is in, or 0 outside a list.
+  let openItem = 0;
+  let paragraph = false;
+  // The content columns of the open list items, outermost first.
+  const items: number[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const blank = /^[ \t\r]*$/.test(line);
+    const indent = /^ */.exec(line)?.[0].length ?? 0;
+    // A block or a fence takes no lazy line, so a line indented less than its list item's content ends both.
+    const inItem = blank || indent >= openItem;
+    if (open !== null) {
+      if (inItem && !(open === "blank" && blank)) {
+        html[i] = 1;
+        if (open !== "blank" && open(line)) open = null;
+        continue;
+      }
+      open = null;
+    }
+    if (fence !== "") {
+      if (inItem) {
+        const close = SERVER_FENCE_CLOSE.exec(line.slice(openItem));
+        if (close !== null && close[1][0] === fence[0] && close[1].length >= fence.length) fence = "";
+        continue;
+      }
+      fence = "";
+    }
+    if (blank) {
+      paragraph = false;
+      continue;
+    }
+    // The line belongs to the deepest list item whose content column it reaches, unless it continues a paragraph.
+    let depth = items.length;
+    while (depth > 0 && items[depth - 1] > indent) depth--;
+    const column = depth > 0 ? items[depth - 1] : 0;
+    const rest = line.slice(column);
+    const item = (SERVER_NOT_PARAGRAPH.test(rest) ? null : (SERVER_LIST_ITEM.exec(rest)?.groups ?? null)) as ListItem | null;
+    // A new list cannot interrupt a paragraph with an empty item, or with a numbered one that does not start at 1.
+    const newList = items.length === depth;
+    const interrupts: boolean = !paragraph || !newList || (item?.empty === undefined && Number(item?.number ?? 1) === 1);
+    const marker: ListItem | null = interrupts ? item : null;
+    const start: ReturnType<typeof serverHtmlBlockStart> = marker === null ? serverHtmlBlockStart(rest, paragraph) : null;
+    const opened: RegExpExecArray | null = marker === null && start === null ? SERVER_FENCE.exec(rest) : null;
+    // A blockquote line ends the list items it is not indented into, though it reads as paragraph text here.
+    const quote = /^ {0,3}>/.test(rest);
+    const lazy: boolean = paragraph && marker === null && start === null && opened === null && !quote && !SERVER_NOT_PARAGRAPH.test(rest);
+    if (!lazy) items.length = depth;
+    if (marker !== null) {
+      const content = column + marker.marker.length + (marker.gap?.length ?? 1);
+      items.push(content);
+      // The text after the marker can open a block, or be indented code, which is not paragraph text.
+      const first: string = marker.gap === undefined ? "" : rest.slice(marker.marker.length + marker.gap.length);
+      const inner = first === "" ? null : serverHtmlBlockStart(first, false);
+      const innerFence = first === "" || inner !== null ? null : SERVER_FENCE.exec(first);
+      if (inner !== null) {
+        html[i] = 1;
+        open = inner !== "blank" && inner(first) ? null : inner;
+        openItem = content;
+      } else if (innerFence !== null) {
+        fence = innerFence[1];
+        openItem = content;
+      }
+      paragraph = inner === null && innerFence === null && serverParagraphText(first);
+    } else if (start !== null) {
+      html[i] = 1;
+      // A block of types 1 to 5 can end on its first line.
+      open = start !== "blank" && start(line) ? null : start;
+      openItem = column;
+      paragraph = false;
+    } else if (opened !== null) {
+      fence = opened[1];
+      openItem = column;
+      paragraph = false;
+    } else {
+      // A line 4 columns past its container is indented code, which a paragraph would take as text.
+      paragraph = lazy || (!/^(?: {4}| {0,3}\t)/.test(rest) && serverParagraphText(rest));
+    }
+  }
+  if (!body.includes("\r")) return html;
+  // marked also ends a line at a lone `\r`, so one server line can hold several of marked's.
+  const out: number[] = [];
+  lines.forEach((l, i) => {
+    for (let n = l.split("\r").length; n > 0; n--) out.push(html[i]);
+  });
+  return Uint8Array.from(out);
 }
 
 // The character references marked's renderer keeps for the browser to decode.
@@ -402,20 +602,20 @@ function decodeHtml(html: string): string {
  * and a hash id ends before a break. Before a `#`, a decoded character reads as
  * the `;` that ends its reference.
  */
-function segmentMentions(text: string, breaks: number[], decoded: Set<number>): { key: string; mention: string | null }[] {
+function segmentMentions(text: string, breaks: number[], decoded: Set<number>): (Candidate & { mention: string | null })[] {
   // Candidates come in ascending order, so breaks[b] is the first break after each.
   let b = 0;
   return findCandidates(text).map(({ key, index }) => {
-    if (decoded.has(index)) return { key, mention: null };
+    if (decoded.has(index)) return { key, index, mention: null };
     while (b < breaks.length && breaks[b] <= index) b++;
     const nextBreak = breaks[b] ?? text.length;
     if (key.startsWith("[[")) {
-      return { key, mention: nextBreak >= index + key.length ? key.slice(2, -2) : null };
+      return { key, index, mention: nextBreak >= index + key.length ? key.slice(2, -2) : null };
     }
     const escaped = b > 0 && breaks[b - 1] === index;
     const wordBefore = index > 0 && !decoded.has(index - 1) && /[A-Za-z0-9_]/.test(text[index - 1]);
-    if (wordBefore && !escaped) return { key, mention: null };
-    return { key, mention: LEADING_ID.exec(text.slice(index + 1, nextBreak))?.[0] ?? null };
+    if (wordBefore && !escaped) return { key, index, mention: null };
+    return { key, index, mention: LEADING_ID.exec(text.slice(index + 1, nextBreak))?.[0] ?? null };
   });
 }
 
@@ -474,39 +674,62 @@ function backtrack(a: string[], b: string[], trace: Int32Array[], dEnd: number, 
 }
 
 /**
+ * Returns the pairs `diffPairs(a, b)` finds, each with whether a diff of the
+ * reversed lists pairs the same two indexes, or null when `diffPairs` finds none.
+ *
+ * Where a key repeats, more than one shortest edit script can pair it, and the
+ * two directions can pick different ones. A pair is settled when both directions
+ * find it.
+ */
+function settledPairs(a: string[], b: string[]): { pairs: [number, number][]; settled: boolean[] } | null {
+  const pairs = diffPairs(a, b);
+  if (pairs === null) return null;
+  // Both directions take the same number of edits, so the reversed diff stays under MAX_EDITS too.
+  const reversed = diffPairs([...a].reverse(), [...b].reverse()) ?? [];
+  const partner = new Int32Array(a.length).fill(-1);
+  for (const [i, k] of reversed) partner[a.length - 1 - i] = b.length - 1 - k;
+  return { pairs, settled: pairs.map(([i, k]) => partner[i] === k) };
+}
+
+/**
  * Returns the index pairs of `found` and `expected` candidates with equal keys,
  * in order, or none when the two lists differ in more than MAX_EDITS places.
  *
  * Text and raw candidates pair first. Each `skipped` candidate can then pair
- * only with a found candidate left between the same two pairs.
+ * only with a found candidate left between the same two pairs. A pair that the
+ * keys do not settle, as `settledPairs` decides, is left out, though it still
+ * bounds the skipped candidates.
  */
 function alignCandidates(found: string[], expected: ExpectedCandidate[]): [number, number][] {
   const firm: number[] = [];
   const skipped: number[] = [];
   expected.forEach((c, j) => (c.source === "skipped" ? skipped : firm).push(j));
-  const firstPass = diffPairs(
+  const firstPass = settledPairs(
     found,
     firm.map((j) => expected[j].key),
   );
   if (firstPass === null) return [];
-  const pairs: [number, number][] = firstPass.map(([i, k]) => [i, firm[k]]);
-  if (skipped.length === 0) return pairs;
+  const pairs: [number, number][] = firstPass.pairs.map(([i, k]) => [i, firm[k]]);
+  if (skipped.length === 0) return pairs.filter((_, p) => firstPass.settled[p]);
 
   const out: [number, number][] = [];
   let s = 0;
   let fromFound = 0;
-  for (const pair of [...pairs, [found.length, expected.length] as [number, number]]) {
+  for (let p = 0; p <= pairs.length; p++) {
+    const pair: [number, number] = p < pairs.length ? pairs[p] : [found.length, expected.length];
     const gapSkipped: number[] = [];
     while (s < skipped.length && skipped[s] < pair[1]) gapSkipped.push(skipped[s++]);
     if (gapSkipped.length > 0 && pair[0] > fromFound) {
       const gapFound = found.slice(fromFound, pair[0]);
-      const gapPairs = diffPairs(
+      const gap = settledPairs(
         gapFound,
         gapSkipped.map((j) => expected[j].key),
       );
-      for (const [i, k] of gapPairs ?? []) out.push([fromFound + i, gapSkipped[k]]);
+      gap?.pairs.forEach(([i, k], g) => {
+        if (gap.settled[g]) out.push([fromFound + i, gapSkipped[k]]);
+      });
     }
-    if (pair[0] < found.length) out.push(pair);
+    if (p < pairs.length && firstPass.settled[p]) out.push(pair);
     fromFound = pair[0] + 1;
   }
   return out;

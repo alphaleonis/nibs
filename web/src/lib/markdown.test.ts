@@ -351,6 +351,48 @@ describe("renderMarkdown mention parity with the server scanner", () => {
     ["html blocks: a body that ends inside a start tag", "[[a]]\n\n<div>\n<details", ["a"]],
     ["html blocks: a leading noscript block", "<noscript>\n\n[[x]] visible?\n\n</noscript>", ["x"]],
     ["html blocks: a leading style block", "<style>p{color:red}</style>\n\nlater #y", ["y"]],
+    ["html blocks: a textarea end tag line", "</textarea>\n#x", []],
+    ["html blocks: an indented end tag that interrupts a paragraph", "x\n </noframes> #a", []],
+    ["html blocks: a space after the slash of an end tag", "</ div>\n#x", []],
+    ["html blocks: an end tag line in a list item", "- x\n  </div> #a\n- #b", ["b"]],
+    ["html blocks: a pre left open in a list item", "- x\n  <pre>\n- #b", ["b"]],
+    ["html blocks: a pre at an outer list item's column", "- a\n  - b\n  <pre>\n- #c1\n\nlater #d1", ["c1", "d1"]],
+    ["html blocks: an end tag at an outer list item's column", "- a\n  - b\n  </div>\n#c1\n\nok #c2", ["c1", "c2"]],
+    ["html blocks: an html block at an outer list item's column after a blank line", "- a\n  - b\n\n  <div>\n#c1", ["c1"]],
+    ["html blocks: an html block between two list item columns", "- a\n  - b\n   <div>\n#c", ["c"]],
+    ["html blocks: an html block at a nested list item's column", "- a\n  - b\n    <div>\n  #c\n#d", ["c", "d"]],
+    ["html blocks: an html block in a third-level list item", "- a\n  - b\n    - c\n    <div>\n  #d\n#e", ["d", "e"]],
+    ["html blocks: an html block one column short of a list item", "- a\n <div>\n#b", []],
+    ["html blocks: an html block in an ordered list item", "1. a\n   <div>\n#b", ["b"]],
+    ["html blocks: an html block after a lazy line in a list item", "- a\nlazy\n  <div>\n- #b", ["b"]],
+    ["html blocks: a numbered line that cannot interrupt a paragraph", "x\n2. y\n   <div>\n#b", []],
+    ["html blocks: an indented code line in a list item", "- a\n\n      <div>\n  #b\n\n#c", ["b", "c"]],
+    ["html blocks: an html block after an indented code line", "    </div> #a1\n<custom-el>\n<pre>\n\n</pre> #a3", ["a3"]],
+    ["html blocks: a lone carriage return", "x #a1\r <div> #a2", ["a1", "a2"]],
+    ["html blocks: an end tag after a lone carriage return", "x\r#a\n</ div>\n#b", ["a"]],
+    ["list items: a heading on the marker line", "- # h\nx\n    <div>\n  #a1", ["a1"]],
+    ["list items: a numbered heading on the marker line", "1. # Title\nSome text\n      <div>\n   and #a1", ["a1"]],
+    ["list items: indented code on the marker line", "-     code\nx\n    <div>\n  #a1\n\nok #a2", ["a1", "a2"]],
+    ["list items: a heading on a nested marker line", "- a\n  - # h\n  x\n      <div>\n    #a1", ["a1"]],
+    ["list items: a marker and five spaces", "-     \nx\n    <div>\n  #a1", ["a1"]],
+    ["list items: a marker, a space and a tab", "- \t\nx\n    <div>\n  #a1", ["a1"]],
+    ["list items: an html block on the marker line", "- </ div>\nx\n    </ div> #a1", ["a1"]],
+    ["list items: a fence on the marker line", "- ```\nx\n    <div>\n  #a1", ["a1"]],
+    ["list items: a thematic break on the marker line", "- ***\nx\n    <div>\n  #a1", ["a1"]],
+    ["list items: an end tag the server reads as html on the marker line", "- </ div>\n  #a1\n- #b", ["b"]],
+    ["list items: a numbered sibling with a wider gap", "1. a\n2.  b\n    <div>\n   #c", ["c"]],
+    ["list items: an empty item cannot interrupt a paragraph", "x\n*\n  </ div>\n#b", []],
+    ["list items: a fence that its list item ends", "- a\n  ```\n</ div>\n#b", []],
+    ["list items: a fence closed in a nested list item", "- a\n  - b\n    ```\n    ```\n    </ div>\n    #c", []],
+    ["list items: an empty item before an end tag", "- a\n-\n</ x-y>\n#b", []],
+    ["list items: an html block one column into an empty item", "-\n </ div>\n#x", []],
+    ["list items: a whitespace-only item cannot interrupt a paragraph", "x\n* \t\n  </ div>\n#b", []],
+    ["list items: an html end tag in a fence on the marker line", "- ```\n  </ div>\n  ```\n  #a", ["a"]],
+    ["list items: an html block in a blockquote on the marker line", "- > <div>\n</pre> #a1\n    <![CDATA[\n x #b", ["a1", "b"]],
+    ["list items: an html block in a blockquote in a list item", "- a\n  > <div>\n</pre> #a1\n    <![CDATA[\n x #b", ["a1", "b"]],
+    ["html blocks: a line that is only carriage returns", "<div>\n\r\r\n#a", ["a"]],
+    ["html blocks: a blockquote line that ends a list item", "- #a1\n> #b2\n    </div> #a5", ["a1", "b2", "a5"]],
+    ["html blocks: a blockquote inside a list item", "- a\n  > q\n  </div>\n#b", ["b"]],
     [
       "lost markers: an inline xmp in a div",
       "<div>\nfoo <xmp>\n\nx </xmp> #y\n\n<div>z</div>\n\nend #w",
@@ -500,12 +542,15 @@ describe("renderMarkdown mention parity with the server scanner", () => {
       ],
     ],
     ["[d](u) <title> |\n - &#35;a </title> </script>\n<table>\n<tr><td>\\#a</td></tr>\n\n\\#a", []],
+    ["</textarea>\n#x", []],
+    ["x\n </noframes> #a", []],
+    ["</ div>\n#x", []],
   ])("links only the mentions the server counts in %j", (body, want) => {
     expect(linkWords(body)).toEqual(want);
   });
 
-  // The server counts only the last mention, which the browser hides. The visible
-  // text with the same key is not a mention.
+  // The server counts only mentions that the browser hides. The visible text with
+  // the same key is not a mention.
   it.each([
     ["hidden mention: more than three open code elements, then an anchor reopened in code", "x <code><code><code><code> y\n\n</code></code></code> see x#a\n\n</code> z <code><a name=t>y</code> #a"],
     ["hidden mention: more than three open code elements, then a code end tag in an html block", "<code><code><code><code>\n\n</code></code></code> x#a\n\n<code><code>\n\n<div></code></div>\n\n#a"],
@@ -514,6 +559,9 @@ describe("renderMarkdown mention parity with the server scanner", () => {
     ["hidden mention: a decoded hash after more than three code elements", "<code><code><code><code>\n\n</code></code></code> &#35;a </code> <code> <marquee></code></marquee> #a"],
     ["hidden mention: an anchor in an object, then an anchor reopened in code", "<object data=\"d.pdf\"><a href=\"d.pdf\">Download the PDF\n\n</object>\n\nThe build broke in x#a; see <code><a name=n>note</code> #a"],
     ["hidden mention: a decoded hash, then a hash after an ampersand", "<code><code><code><code>\n\n</code></code></code> &#35;a </code> <code> <marquee></code></marquee> &#a"],
+    ["hidden mention: a hash after an ampersand, then a decoded hash", "<marquee><a name=t>y</object>\n&#a [d ](u) &#35;a"],
+    ["hidden mention: a table cell inside an anchor left open", "x <a name=t>\n\n| a |\n|---|\n| [d](u) #y |\n\n</a> x#y"],
+    ["hidden mention: an indented end tag in a table row", "| a | b |\n|---|---|\n| <noframes> #a |  #a-\n </noframes> |\n | x &#35;a \\#a |   |"],
   ])("links nothing where %s", (_name, body) => {
     expect(linkWords(body)).toEqual([]);
   });
