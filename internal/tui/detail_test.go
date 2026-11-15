@@ -271,7 +271,7 @@ func TestTheLinksBoxFitsAShortTerminal(t *testing.T) {
 	for _, width := range []int{30, 46, 76, 80, 160} {
 		for height := minSupportedHeight; height <= 16; height++ {
 			t.Run(fmt.Sprintf("%dx%d", width, height), func(t *testing.T) {
-				app := enterHelpView(t, detailSweepView(t), width, height)
+				app := enterFrameView(t, detailSweepView(t), width, height)
 				if got := len(app.detail.links); got != 1 {
 					t.Fatalf("premise failed: the nib carries %d links, want 1", got)
 				}
@@ -597,18 +597,18 @@ func TestTheStoredLinkListPagesTheRowsTheBoxPaints(t *testing.T) {
 
 // At eight rows a refusal and the links box cannot both be drawn whatever the
 // box costs: the header is four rows, the footer wraps the message across two
-// above its help row, and the box's own floor is three. Ten rows for eight.
+// above its hint row, and the box's own floor is three. Ten rows for eight.
 //
 // The box is what gives, for the same reason the body already does — a refusal
 // the reader cannot see is the defect the footer was taught to wrap for, and
-// the help row is how the reader acts on it.
+// the hint row is how the reader acts on it.
 func TestTheLinksBoxGivesItsRowsToARefusal(t *testing.T) {
 	const (
 		width  = 80
 		height = 8
 	)
 	view := detailSweepView(t)
-	app := enterHelpView(t, view, width, height)
+	app := enterFrameView(t, view, width, height)
 	refuseStatusChange(t, app, view)
 
 	content := app.View().Content
@@ -619,7 +619,7 @@ func TestTheLinksBoxGivesItsRowsToARefusal(t *testing.T) {
 		t.Errorf("the frame does not carry the refusal:\n%s", painted)
 	}
 	if !strings.Contains(painted, "e edit") {
-		t.Errorf("the frame does not carry the help row the refusal is acted on from:\n%s", painted)
+		t.Errorf("the frame does not carry the hint row the refusal is acted on from:\n%s", painted)
 	}
 }
 
@@ -663,7 +663,7 @@ func detailBoxesDrawn(t *testing.T, app *App) (links, body bool) {
 //
 // Everything they read is clipped: renderFooter ends with clipToWidth, and
 // frameText cuts each line the way the alt screen does. The two footer pieces
-// under test survive furthest, being the leftmost items of the help row —
+// under test survive furthest, being the leftmost items of the hint row —
 // "100%  tab switch" is sixteen cells — while the sentinels go first, since the
 // link row spends its left columns on a label before it reaches the id.
 // Measured against the frame's own answer: below 24 columns
@@ -711,18 +711,18 @@ func TestTheDetailFooterDescribesTheFrameItPaints(t *testing.T) {
 				t.Fatalf("premise failed: %d columns is below the width these oracles can answer at (%d)", geo.width, detailFooterMinWidth)
 			}
 			view := detailSweepView(t)
-			app := enterHelpView(t, view, geo.width, geo.height)
+			app := enterFrameView(t, view, geo.width, geo.height)
 			refuseStatusChange(t, app, view)
 
 			content := app.View().Content
 			assertFrameFitsTerminal(t, content, geo.width, geo.height)
 			painted := frameText(content, geo.width, geo.height)
 
-			// The help row as the reader has it, clipped to the terminal like
+			// The hint row as the reader has it, clipped to the terminal like
 			// everything else in the frame. The two pieces under test are its
 			// leftmost items, so above the floor a missing one means the footer
 			// withheld it rather than the right edge taking it.
-			row := detailHelpRow(t, app)
+			row := detailHintRow(t, app)
 
 			// The sentinels are read off the same clipped frame, so they are
 			// checked against what View will paint before they are believed: a
@@ -783,14 +783,14 @@ func TestTheDetailFooterDescribesTheFrameItPaints(t *testing.T) {
 	}
 }
 
-// detailHelpRow is the frame's last row: the footer's help row as the terminal
+// detailHintRow is the frame's last row: the footer's hint row as the terminal
 // shows it.
 //
 // There is no unclipped one to read — renderFooter ends with clipToWidth, so
 // the row is cut to the width before it is ever painted, and reading it back
 // cannot tell a hint the footer withheld from one the right edge took. What
 // keeps the two apart is detailFooterMinWidth, below which the sweeps do not go.
-func detailHelpRow(t *testing.T, app *App) string {
+func detailHintRow(t *testing.T, app *App) string {
 	t.Helper()
 	if app.state != viewDetail {
 		t.Fatalf("premise failed: expected the detail view, got state %d", app.state)
@@ -814,14 +814,14 @@ func TestTheDetailFooterAtTheMeasuredGeometries(t *testing.T) {
 	} {
 		t.Run(fmt.Sprintf("%dx%d", geo.width, geo.height), func(t *testing.T) {
 			view := detailSweepView(t)
-			app := enterHelpView(t, view, geo.width, geo.height)
+			app := enterFrameView(t, view, geo.width, geo.height)
 			refuseStatusChange(t, app, view)
 
 			painted := frameText(app.View().Content, geo.width, geo.height)
 			if got := detailBodyBoxOnScreen(painted); got != geo.wantBody {
 				t.Fatalf("premise failed: body on screen = %v, want %v:\n%s", got, geo.wantBody, painted)
 			}
-			row := detailHelpRow(t, app)
+			row := detailHintRow(t, app)
 			if got := detailScrollPctRe.MatchString(row); got != geo.wantBody {
 				t.Errorf("scroll position in the footer = %v with the body on screen = %v:\n%s\n%s",
 					got, geo.wantBody, row, painted)
@@ -834,11 +834,11 @@ func TestTheDetailFooterAtTheMeasuredGeometries(t *testing.T) {
 // the load-bearing half of how the two are allowed to know about each other.
 // contentAvail measures the region to decide whether the links box and the body
 // fit, so a footer whose height moved with that decision would be measuring
-// itself. Both pieces sit in the help row, which clipToWidth cuts rather than
-// wraps, so it is one row whatever it carries; the status message above it is
-// sized from the message, the width and the terminal height alone.
+// itself. The scroll percentage sits in the hint row, which clipToWidth cuts
+// rather than wraps, so it is one row whatever it carries; the status message
+// above it is sized from the message, the width and the terminal height alone.
 //
-// Give either piece a row of its own and the sizing pass and the painting pass
+// Give the percentage a row of its own and the sizing pass and the painting pass
 // stop agreeing — the frame overruns the terminal, or gives back rows nothing
 // claims. This is what fails first when that happens.
 func TestTheDetailFooterRegionHeightIgnoresWhatWasPainted(t *testing.T) {
@@ -850,24 +850,15 @@ func TestTheDetailFooterRegionHeightIgnoresWhatWasPainted(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				view := detailSweepView(t)
-				app := enterHelpView(t, view, geo.width, geo.height)
+				app := enterFrameView(t, view, geo.width, geo.height)
 				if refused {
 					refuseStatusChange(t, app, view)
 				}
-				for _, expanded := range []bool{false, true} {
-					d := app.detail
-					d.helpExpanded = expanded
-					base := lipgloss.Height(d.footerRegion(paintedFrame{}))
-					for _, p := range []paintedFrame{
-						{links: true},
-						{body: true},
-						{links: true, body: true},
-					} {
-						if got := lipgloss.Height(d.footerRegion(p)); got != base {
-							t.Errorf("expanded=%v: the footer region is %d rows for %+v and %d rows for the zero value — contentAvail measures one and View paints the other",
-								expanded, got, p, base)
-						}
-					}
+				d := app.detail
+				base := lipgloss.Height(d.renderFooter(paintedFrame{}))
+				if got := lipgloss.Height(d.renderFooter(paintedFrame{body: true})); got != base {
+					t.Errorf("the footer is %d rows with the body painted and %d rows for the zero value — contentAvail measures one and View paints the other",
+						got, base)
 				}
 			})
 		}

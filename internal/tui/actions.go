@@ -31,6 +31,9 @@ const (
 	ctxFilterInput
 	// ctxTextInput is any other focused text box, such as the create modal.
 	ctxTextInput
+	// ctxPalette is the ? overlay, whose query box takes every key no action
+	// there is bound to.
+	ctxPalette
 	numKeyContexts
 )
 
@@ -49,6 +52,7 @@ var keyContextNames = [numKeyContexts]string{
 	ctxConfirm:        "confirm dialog",
 	ctxFilterInput:    "filter input",
 	ctxTextInput:      "text input",
+	ctxPalette:        "action palette",
 }
 
 func (c keyContext) String() string {
@@ -104,18 +108,23 @@ const (
 	actInputAccept   actionName = "input.accept"
 	actInputCancel   actionName = "input.cancel"
 	actHelp          actionName = "app.help"
+	actPaletteUp     actionName = "palette.up"
+	actPaletteDown   actionName = "palette.down"
+	actPaletteRun    actionName = "palette.run"
+	actPaletteClose  actionName = "palette.close"
 	actQuit          actionName = "app.quit"
 	actForceQuit     actionName = "app.force_quit"
 )
 
-// actionState is what an action's Hint and Ready read: the app as it is when a
-// key arrives.
+// actionState is what an action's Hint, Label and Ready read: the app as it is
+// when a key arrives.
 type actionState struct {
-	ctx      keyContext
-	prefix   string // the pending prefix, or "" when none is
-	hasNib   bool   // a nib is under the list cursor, or the nib view shows one
-	selected int    // nibs marked in the list
-	filtered bool   // a tag or text filter narrows the list
+	ctx        keyContext
+	prefix     string // the pending prefix, or "" when none is
+	hasNib     bool   // a nib is under the list cursor, or the nib view shows one
+	selected   int    // nibs marked in the list
+	filtered   bool   // a tag or text filter narrows the list
+	linksShown bool   // the nib view draws its links box
 }
 
 // action is one named thing a key can do. Dispatch reads the actions table, and
@@ -129,6 +138,8 @@ type action struct {
 	Keys []string
 	// Hint reports whether the action is worth a footer hint now; nil means never.
 	Hint func(actionState) bool
+	// Label is the hint's text; nil means Desc.
+	Label func(actionState) string
 	// Ready reports whether the action can run now, and why not; nil means always.
 	// A key bound to an action that is not ready does nothing.
 	Ready func(actionState) (ok bool, why string)
@@ -156,11 +167,76 @@ func allKeyContexts() []keyContext {
 
 func hintAlways(actionState) bool { return true }
 
-func hintWithSelection(st actionState) bool { return st.selected > 0 }
+// marking reports whether the list has nibs marked, which turns its hints to
+// the actions that edit every marked nib.
+func marking(st actionState) bool { return st.ctx == ctxList && st.selected > 0 }
 
-func hintWithoutSelection(st actionState) bool { return st.selected == 0 }
+func inNibView(st actionState) bool { return slices.Contains(nibViewCtx, st.ctx) }
 
-func hintToClear(st actionState) bool { return st.selected > 0 || st.filtered }
+func hintOnFocused(st actionState) bool { return st.ctx == ctxList && st.selected == 0 }
+
+func hintOnFocusedOrNibView(st actionState) bool { return hintOnFocused(st) || inNibView(st) }
+
+func hintBulkOrNibView(st actionState) bool { return marking(st) || inNibView(st) }
+
+func hintOutsideMarking(st actionState) bool { return !marking(st) }
+
+// hintLeave hints esc in the list only when it has a selection or a filter to
+// clear, and never in the confirm dialog, whose n hint already says cancel.
+func hintLeave(st actionState) bool {
+	switch st.ctx {
+	case ctxList:
+		return st.selected > 0 || st.filtered
+	case ctxConfirm:
+		return false
+	}
+	return true
+}
+
+func hintFilter(st actionState) bool {
+	switch st.ctx {
+	case ctxList:
+		return st.selected == 0 && !st.filtered
+	case ctxNibLinks:
+		return false
+	}
+	return true
+}
+
+func label(text string) func(actionState) string {
+	return func(actionState) string { return text }
+}
+
+func labelOpen(st actionState) string {
+	switch st.ctx {
+	case ctxList:
+		return "open"
+	case ctxNibLinks:
+		return "follow"
+	case ctxBlockingPicker:
+		return "apply"
+	}
+	return "choose"
+}
+
+func labelLeave(st actionState) string {
+	switch {
+	case marking(st):
+		return "clear"
+	case st.ctx == ctxList:
+		return "clear filter"
+	case inNibView(st):
+		return "back"
+	}
+	return "cancel"
+}
+
+func labelAccept(st actionState) string {
+	if st.ctx == ctxTextInput {
+		return "create"
+	}
+	return "apply"
+}
 
 // readyOnNib needs a nib under the cursor, or the one the nib view shows.
 func readyOnNib(st actionState) (bool, string) {
@@ -192,31 +268,46 @@ var actions = []action{
 	{Name: actDown, Group: "Move", Desc: "move down", Contexts: browsing, Keys: []string{"down", "j"}},
 	{Name: actPageUp, Group: "Move", Desc: "page up", Contexts: browsing, Keys: []string{"pgup"}},
 	{Name: actPageDown, Group: "Move", Desc: "page down", Contexts: browsing, Keys: []string{"pgdown"}},
-	{Name: actTop, Group: "Move", Desc: "go to the top", Contexts: browsing, Keys: []string{"g g", "home"}},
-	{Name: actBottom, Group: "Move", Desc: "go to the bottom", Contexts: browsing, Keys: []string{"G", "end"}},
+	{Name: actTop, Group: "Move", Desc: "go to the top", Contexts: browsing, Keys: []string{"g g", "home"}, Label: label("top")},
+	{Name: actBottom, Group: "Move", Desc: "go to the bottom", Contexts: browsing, Keys: []string{"G", "end"}, Label: label("bottom")},
 	{Name: actFoldRow, Group: "Move", Desc: "fold the row, or go to its parent", Contexts: []keyContext{ctxList}, Keys: []string{"left"}},
 	{Name: actUnfoldRow, Group: "Move", Desc: "unfold the row", Contexts: []keyContext{ctxList}, Keys: []string{"right"}},
 	{Name: actFoldSubtree, Group: "Move", Desc: "fold the row's subtree", Contexts: []keyContext{ctxList}, Keys: []string{"ctrl+left"}},
 	{Name: actUnfoldSubtree, Group: "Move", Desc: "unfold the row's subtree", Contexts: []keyContext{ctxList}, Keys: []string{"ctrl+right"}},
 	{Name: actFoldAll, Group: "Move", Desc: "fold every row", Contexts: []keyContext{ctxList}, Keys: []string{"<"}},
 	{Name: actUnfoldAll, Group: "Move", Desc: "unfold every row", Contexts: []keyContext{ctxList}, Keys: []string{">"}},
-	{Name: actFocusNext, Group: "Move", Desc: "focus the next pane", Contexts: nibViewCtx, Keys: []string{"tab"}, Hint: hintAlways},
+	{Name: actFocusNext, Group: "Move", Desc: "focus the next pane", Contexts: nibViewCtx, Keys: []string{"tab"},
+		Hint: func(st actionState) bool { return st.linksShown }, Label: label("switch")},
 	{Name: actFocusPrev, Group: "Move", Desc: "focus the previous pane", Contexts: nibViewCtx, Keys: []string{"shift+tab"}},
+	{Name: actPaletteUp, Group: "Move", Desc: "highlight the previous action", Contexts: []keyContext{ctxPalette}, Keys: []string{"up"}},
+	{Name: actPaletteDown, Group: "Move", Desc: "highlight the next action", Contexts: []keyContext{ctxPalette}, Keys: []string{"down"}},
 
-	{Name: actOpen, Group: "Go", Desc: "open", Contexts: slices.Concat([]keyContext{ctxList, ctxNibLinks}, allPickers), Keys: []string{"enter"}, Hint: hintWithoutSelection},
-	{Name: actLeave, Group: "Go", Desc: "leave", Contexts: slices.Concat(browsing, []keyContext{ctxConfirm}), Keys: []string{"esc"}, Hint: hintToClear},
+	{Name: actOpen, Group: "Go", Desc: "open", Contexts: slices.Concat([]keyContext{ctxList, ctxNibLinks}, allPickers), Keys: []string{"enter"},
+		Hint: hintOutsideMarking, Label: labelOpen},
+	{Name: actLeave, Group: "Go", Desc: "leave, or clear the selection or filter", Contexts: slices.Concat(browsing, []keyContext{ctxConfirm}), Keys: []string{"esc"},
+		Hint: hintLeave, Label: labelLeave},
 	{Name: actJumpBack, Group: "Go", Desc: "jump back", Contexts: nibContexts, Keys: []string{"backspace"}, Ready: readyToJumpBack},
+	{Name: actPaletteRun, Group: "Go", Desc: "run the highlighted action", Contexts: []keyContext{ctxPalette}, Keys: []string{"enter"},
+		Hint: hintAlways, Label: label("run")},
+	{Name: actPaletteClose, Group: "Go", Desc: "close the palette", Contexts: []keyContext{ctxPalette}, Keys: []string{"esc"},
+		Hint: hintAlways, Label: label("close")},
 
-	{Name: actSelect, Group: "Edit", Desc: "select", Contexts: []keyContext{ctxList, ctxBlockingPicker}, Keys: []string{"space"}, Hint: hintWithSelection},
-	{Name: actCreate, Group: "Edit", Desc: "create", Contexts: []keyContext{ctxList}, Keys: []string{"n"}, Hint: hintWithoutSelection},
-	{Name: actEdit, Group: "Edit", Desc: "edit in $EDITOR", Contexts: nibContexts, Keys: []string{"e"}, Hint: hintWithoutSelection, Ready: readyOnNib},
-	{Name: actStatus, Group: "Edit", Desc: "change status", Contexts: nibContexts, Keys: []string{"s"}, Hint: hintWithSelection, Ready: readyOnTargets},
-	{Name: actType, Group: "Edit", Desc: "change type", Contexts: nibContexts, Keys: []string{"t"}, Ready: readyOnTargets},
-	{Name: actParent, Group: "Edit", Desc: "set parent", Contexts: nibContexts, Keys: []string{"p"}, Ready: readyOnTargets},
+	{Name: actSelect, Group: "Edit", Desc: "select", Contexts: []keyContext{ctxList, ctxBlockingPicker}, Keys: []string{"space"},
+		Hint: func(st actionState) bool { return st.ctx == ctxBlockingPicker }, Label: label("toggle")},
+	{Name: actCreate, Group: "Edit", Desc: "create", Contexts: []keyContext{ctxList}, Keys: []string{"n"}, Hint: hintOnFocused},
+	{Name: actEdit, Group: "Edit", Desc: "edit in $EDITOR", Contexts: nibContexts, Keys: []string{"e"},
+		Hint: hintOnFocusedOrNibView, Label: label("edit"), Ready: readyOnNib},
+	{Name: actStatus, Group: "Edit", Desc: "change status", Contexts: nibContexts, Keys: []string{"s"},
+		Hint: hintBulkOrNibView, Label: label("status"), Ready: readyOnTargets},
+	{Name: actType, Group: "Edit", Desc: "change type", Contexts: nibContexts, Keys: []string{"t"},
+		Hint: marking, Label: label("type"), Ready: readyOnTargets},
+	{Name: actParent, Group: "Edit", Desc: "set parent", Contexts: nibContexts, Keys: []string{"p"},
+		Hint: marking, Label: label("parent"), Ready: readyOnTargets},
 	{Name: actBlocking, Group: "Edit", Desc: "manage blocking", Contexts: nibContexts, Keys: []string{"b"}, Ready: readyOnNib},
 	{Name: actPriority, Group: "Edit", Desc: "change priority", Contexts: nibContexts, Ready: readyOnTargets},
 	{Name: actEstimate, Group: "Edit", Desc: "change estimate", Contexts: nibContexts, Ready: readyOnTargets},
-	{Name: actModify, Group: "Edit", Desc: "modify a field", Contexts: nibContexts, Keys: []string{"m"}, Ready: readyOnTargets},
+	{Name: actModify, Group: "Edit", Desc: "modify a field", Contexts: nibContexts, Keys: []string{"m"},
+		Hint: marking, Label: label("modify"), Ready: readyOnTargets},
 	{Name: actMoveUp, Group: "Edit", Desc: "move up among siblings", Contexts: []keyContext{ctxList}, Keys: []string{"ctrl+up"}},
 	{Name: actMoveDown, Group: "Edit", Desc: "move down among siblings", Contexts: []keyContext{ctxList}, Keys: []string{"ctrl+down"}},
 	{Name: actArchive, Group: "Edit", Desc: "archive", Contexts: []keyContext{ctxList}, Keys: []string{"a"}, Ready: readyOnNib},
@@ -225,19 +316,26 @@ var actions = []action{
 	{Name: actConfirmYes, Group: "Edit", Desc: "confirm", Contexts: []keyContext{ctxConfirm}, Keys: []string{"y", "Y"}, Hint: hintAlways},
 	{Name: actConfirmNo, Group: "Edit", Desc: "cancel", Contexts: []keyContext{ctxConfirm}, Keys: []string{"n", "N"}, Hint: hintAlways},
 
-	{Name: actHideClosed, Group: "View", Desc: "hide closed nibs", Contexts: []keyContext{ctxList, ctxParentPicker}, Keys: []string{"z h"}},
+	{Name: actHideClosed, Group: "View", Desc: "hide or show closed nibs", Contexts: []keyContext{ctxList, ctxParentPicker}, Keys: []string{"z h"},
+		Hint: func(st actionState) bool { return st.ctx == ctxParentPicker }, Label: label("toggle closed")},
 	{Name: actWideMode, Group: "View", Desc: "wide mode", Contexts: []keyContext{ctxList}, Keys: []string{"W"}},
 
-	{Name: actFilter, Group: "Find", Desc: "filter", Contexts: filterTargets, Keys: []string{"/"}, Hint: hintWithoutSelection},
+	{Name: actFilter, Group: "Find", Desc: "filter", Contexts: filterTargets, Keys: []string{"/"}, Hint: hintFilter},
 	{Name: actTagFilter, Group: "Find", Desc: "filter by tag", Contexts: []keyContext{ctxList}, Keys: []string{"g t"}},
 	{Name: actFilterApply, Group: "Find", Desc: "apply the filter", Contexts: []keyContext{ctxFilterInput}, Keys: []string{"up", "down"}},
-	{Name: actInputAccept, Group: "Find", Desc: "accept", Contexts: textInputs, Keys: []string{"enter"}, Hint: hintAlways},
+	{Name: actInputAccept, Group: "Find", Desc: "accept", Contexts: textInputs, Keys: []string{"enter"}, Hint: hintAlways, Label: labelAccept},
 	{Name: actInputCancel, Group: "Find", Desc: "cancel", Contexts: textInputs, Keys: []string{"esc"}, Hint: hintAlways},
 
-	{Name: actHelp, Group: "App", Desc: "help", Contexts: nibContexts, Keys: []string{"?"}, Hint: hintAlways},
-	{Name: actQuit, Group: "App", Desc: "quit", Contexts: browsing, Keys: []string{"q"}, Hint: hintAlways},
+	{Name: actHelp, Group: "App", Desc: "list and run actions", Contexts: browsing, Keys: []string{"?"}, Hint: hintAlways, Label: label("help")},
+	{Name: actQuit, Group: "App", Desc: "quit", Contexts: browsing, Keys: []string{"q"},
+		Hint: func(st actionState) bool { return slices.Contains(nibContexts, st.ctx) }},
 	{Name: actForceQuit, Group: "App", Desc: "quit from anywhere", Contexts: everyContext, Keys: []string{"ctrl+c"}},
 }
+
+// actionGroups is the order the palette and the hint row list the groups in.
+// Edit comes before Go so a hint row clipped to a narrow terminal keeps the
+// edit keys.
+var actionGroups = []string{"Move", "Edit", "Go", "View", "Find", "App"}
 
 // actionByName returns the action named name, or nil when the table has none.
 func actionByName(name actionName) *action {

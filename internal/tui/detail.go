@@ -143,7 +143,7 @@ type detailModel struct {
 	cols          ui.ResponsiveColumns
 	statusMessage string
 	statusKind    statusKind
-	helpExpanded  bool // set by App
+	hints         string // the rendered hint row, set by App
 }
 
 func newDetailModel(b *nib.Nib, backend Backend, cfg *config.Config, width, height int) detailModel {
@@ -200,8 +200,7 @@ func (m detailModel) linkRows() int {
 // The border color shows focus, so the border is never dropped on its own;
 // linksSection drops the whole box when it does not fit.
 //
-// It sizes a copy of the list: contentFloor renders this box too, and the
-// stored list must keep its size.
+// It sizes a copy of the list, so the stored one keeps its size.
 func (m detailModel) linksBox() string {
 	if len(m.links) == 0 {
 		return ""
@@ -331,11 +330,7 @@ func (m detailModel) route(msg tea.Msg) (detailModel, tea.Cmd) {
 		m.linkList.SetSize(msg.Width-8, m.linkRows())
 
 		headerHeight := m.calculateHeaderHeight()
-		helpHt := m.currentHelpHeight()
 		footerHeight := 2
-		if helpHt > 0 {
-			footerHeight = 1 + helpHt
-		}
 		vpWidth := msg.Width - 4
 		vpHeight := msg.Height - headerHeight - footerHeight
 
@@ -486,7 +481,7 @@ func (m detailModel) View() string {
 	// painted body, not the height Update estimated. The footer's height does not
 	// depend on this (see measuredFooterRegion).
 	body := m.renderBodyBox(avail)
-	footer := m.footerRegion(paintedFrame{links: linksSection != "", body: body != ""})
+	footer := m.renderFooter(paintedFrame{body: body != ""})
 	if body != "" {
 		rows = append(rows, body)
 	}
@@ -515,79 +510,44 @@ func (m *detailModel) renderBodyBox(avail int) string {
 		Render(m.viewport.View())
 }
 
-// footerRegion is everything drawn below the body: the compact footer, or —
-// when the help panel is expanded — the status message with the panel beneath.
-// The expanded panel lists esc, ? and q itself, so it replaces the help row but
-// not the status message.
-func (m detailModel) footerRegion(painted paintedFrame) string {
-	if !m.helpExpanded {
-		return m.renderFooter(painted)
-	}
-	return expandedFooterRegion(detailExpandedEntries(), m.statusMessage, m.statusKind, m.width, m.height, m.contentFloor())
-}
-
-// paintedFrame is which of the two droppable boxes View drew above the footer.
+// paintedFrame is what View drew above the footer.
 type paintedFrame struct {
-	links bool
-	body  bool
+	body bool
 }
 
-// measuredFooterRegion renders the footer region for contentAvail to measure.
+// measuredFooterRegion renders the footer for contentAvail to measure.
 //
 // It passes a zero paintedFrame, since contentAvail is what decides the painted
-// frame. Keep the region's height independent of paintedFrame: everything it
-// toggles sits in the help row, which is one row because renderFooter clips it.
+// frame. Keep the footer's height independent of paintedFrame: everything it
+// toggles sits in the hint row, which is one row because renderFooter clips it.
 func (m detailModel) measuredFooterRegion() string {
-	return m.footerRegion(paintedFrame{})
+	return m.renderFooter(paintedFrame{})
 }
 
 // minBodyHeight is the fewest rows the body box occupies: its border, around a
 // viewport of one row.
 const minBodyHeight = 3
 
-// contentFloor is the rows the help panel's budget holds back: the rendered
-// header, the links box when there is one, and the body's minimum.
+// renderFooter returns the detail view's footer: the status message, then the
+// scroll percentage and the hint row.
 //
-// Both the links box and the body's minimum are counted even where View drops
-// them, which errs toward a smaller panel.
-func (m detailModel) contentFloor() int {
-	return lipgloss.Height(m.renderHeader()) + minBodyHeight + blockLines(m.linksBox())
-}
-
-// renderFooter returns the abbreviated footer for the detail view.
-//
-// The scroll percentage appears only for a painted body and tab only for a
-// painted links box; neither leaves a placeholder.
+// The scroll percentage appears only for a painted body, and leaves no
+// placeholder.
 func (m detailModel) renderFooter(painted paintedFrame) string {
 	var footer string
 	if painted.body {
 		scrollPct := int(m.viewport.ScrollPercent() * 100)
 		footer += helpStyle.Render(fmt.Sprintf("%d%%", scrollPct)) + "  "
 	}
-	if painted.links {
-		footer += renderHelpKey("tab", "switch") + "  "
-	}
-	footer += renderHelpKey("e", "edit") + "  " +
-		renderHelpKey("s", "status") + "  " +
-		renderHelpKey("esc", "back") + "  " +
-		renderHelpKey("?", "more") + "  " +
-		renderHelpKey("q", "quit")
+	footer += m.hints
 
 	if m.statusMessage != "" {
-		// On its own lines above the help row, so the keys stay on screen.
+		// On its own lines above the hint row, so the keys stay on screen.
 		footer = renderStatusMessage(m.statusMessage, m.statusKind, m.width, maxStatusFooterLines(m.height)) + "\n" + footer
 	}
-	// The help row does not wrap, so clip it; the status message is already
+	// The hint row does not wrap, so clip it; the status message is already
 	// wrapped to width.
 	return clipToWidth(footer, m.width)
-}
-
-// currentHelpHeight returns the help panel height (0 when collapsed).
-func (m detailModel) currentHelpHeight() int {
-	if !m.helpExpanded {
-		return 0
-	}
-	return helpPanelHeight(detailExpandedEntries(), m.width, helpRowBudget(m.height, m.contentFloor(), 0))
 }
 
 // calculateHeaderHeight estimates the header and links box height to size the

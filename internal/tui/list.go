@@ -134,8 +134,9 @@ type listModel struct {
 	// Selected on the next reload, then cleared.
 	selectByID string
 
-	// Set by App.
-	helpExpanded    bool
+	// Set by App. hints is the rendered hint row, which the footer shows when it
+	// has no status message.
+	hints           string
 	updateAvailable bool
 	updateLatest    string
 }
@@ -260,7 +261,7 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		// Reserve space for border, "\n", and footer/help panel
+		// Reserve space for border, "\n", and footer
 		m.list.SetSize(msg.Width-2, msg.Height-3-m.footerHeight())
 		m.cols = ui.CalculateResponsiveColumns(msg.Width, m.hasTags)
 		m.applyWideMode()
@@ -784,26 +785,11 @@ func (m listModel) View() string {
 		return "Loading..."
 	}
 
-	// Inner height: total - border(2) - "\n"(1) - footer/panel height
-	footer := m.footerRegion()
+	// Inner height: total - border(2) - "\n"(1) - footer height
+	footer := m.Footer()
 	innerHeight := m.height - 3 - max(1, lipgloss.Height(footer))
 	return m.viewContent(innerHeight) + "\n" + footer
 }
-
-// footerRegion is everything drawn below the list box: the compact footer, or
-// the expanded help panel laid out by expandedFooterRegion.
-func (m listModel) footerRegion() string {
-	if !m.helpExpanded {
-		return m.Footer()
-	}
-	return expandedFooterRegion(m.expandedHelpEntries(), m.statusMessage, m.statusKind, m.width, m.height, listBoxFloor)
-}
-
-// listBoxFloor is the list box's minimum height: however small an innerHeight
-// it is given, a paginated list renders six rows and one that fits on a page
-// five. A footer region taller than height-listBoxFloor runs past the
-// terminal's last row.
-const listBoxFloor = 6
 
 // viewContent renders the bordered list; innerHeight excludes the border rows.
 func (m listModel) viewContent(innerHeight int) string {
@@ -948,61 +934,31 @@ func (m listModel) buildBorderTopLine() string {
 	return buf.String()
 }
 
-// Footer renders the compact list footer: the selection count, the status
-// message or a context-dependent row of keys, and the update indicator.
+// Footer renders the list footer: the selection count, the status message or
+// else the hint row, and the update indicator.
 func (m listModel) Footer() string {
-	var help string
-
 	var selectionPrefix string
 	if len(m.selectedNibs) > 0 {
 		selectionStyle := lipgloss.NewStyle().Foreground(ui.ColorWarning).Bold(true)
 		selectionPrefix = selectionStyle.Render(fmt.Sprintf("(%d selected) ", len(m.selectedNibs)))
 	}
 
-	helpLabel := "more"
-	if m.helpExpanded {
-		helpLabel = "less"
-	}
-
-	if len(m.selectedNibs) > 0 {
-		help = renderHelpKey("space", "toggle") + "  " +
-			renderHelpKey("s", "status") + "  " +
-			renderHelpKey("t", "type") + "  " +
-			renderHelpKey("esc", "clear") + "  " +
-			renderHelpKey("?", helpLabel) + "  " +
-			renderHelpKey("q", "quit")
-	} else if m.hasActiveFilter() {
-		help = renderHelpKey("enter", "view") + "  " +
-			renderHelpKey("n", "create") + "  " +
-			renderHelpKey("e", "edit") + "  " +
-			renderHelpKey("esc", "clear filter") + "  " +
-			renderHelpKey("?", helpLabel) + "  " +
-			renderHelpKey("q", "quit")
-	} else {
-		help = renderHelpKey("enter", "view") + "  " +
-			renderHelpKey("n", "create") + "  " +
-			renderHelpKey("e", "edit") + "  " +
-			renderHelpKey("/", "filter") + "  " +
-			renderHelpKey("?", helpLabel) + "  " +
-			renderHelpKey("q", "quit")
-	}
-
 	footer := selectionPrefix
 	if m.statusMessage != "" {
 		footer += renderStatusMessage(m.statusMessage, m.statusKind, m.width-lipgloss.Width(selectionPrefix), maxStatusFooterLines(m.height))
 	} else {
-		footer += help
+		footer += m.hints
 	}
 
 	footer += m.updateIndicator()
 
-	// The key row and the update indicator do not wrap, so clip them.
+	// The hint row and the update indicator do not wrap, so clip them.
 	return clipToWidth(footer, m.width)
 }
 
-// footerHeight is the row count of footerRegion, at least one.
+// footerHeight is the row count of Footer, at least one.
 func (m listModel) footerHeight() int {
-	return max(1, lipgloss.Height(m.footerRegion()))
+	return max(1, lipgloss.Height(m.Footer()))
 }
 
 // updateIndicator returns the footer's "update available" hint, or "" when no
@@ -1015,19 +971,6 @@ func (m listModel) updateIndicator() string {
 	return "  " + style.Render(fmt.Sprintf("↑ nibs %s available — nibs upgrade", m.updateLatest))
 }
 
-// expandedHelpEntries returns all keybindings for the expanded help panel,
-// including context-sensitive footer entries (esc, ?, q).
-func (m listModel) expandedHelpEntries() []helpEntry {
-	entries := listHelpEntries()
-	if len(m.selectedNibs) > 0 {
-		entries = append(entries, helpEntry{"esc", "clear"})
-	} else if m.hasActiveFilter() {
-		entries = append(entries, helpEntry{"esc", "clear filter"})
-	}
-	entries = append(entries, helpEntry{"?", "less"}, helpEntry{"q", "quit"})
-	return entries
-}
-
 // updateTitle sets the border title from the project name; buildBorderTopLine
 // adds the badges.
 func (m *listModel) updateTitle() {
@@ -1035,8 +978,9 @@ func (m *listModel) updateTitle() {
 }
 
 // ViewConstrained renders the bordered list without footer, for the left pane
-// in two-column mode. The result is height rows tall, but at small heights it
-// can reach listBoxFloor.
+// in two-column mode. The result is height rows tall, except at small heights:
+// however small a height it is given, a paginated list renders six rows and one
+// that fits on a page five.
 func (m listModel) ViewConstrained(width, height int) string {
 	m.width = width
 	m.height = height

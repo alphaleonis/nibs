@@ -214,6 +214,7 @@ func (m statusPickerModel) View() string {
 	}
 
 	return renderPickerModal(pickerModalConfig{
+		Context:     ctxStatusPicker,
 		Title:       "Select Status",
 		NibTitle:    m.nibTitle,
 		NibID:       nibID,

@@ -40,6 +40,7 @@ const (
 	viewCreateModal
 	viewCreateTypePicker
 	viewConfirmDialog
+	viewPalette
 )
 
 const (
@@ -153,7 +154,7 @@ type App struct {
 	modifyPicker   modifyPickerModel
 	createModal    createModalModel
 	confirmDialog  confirmDialog
-	helpExpanded   bool          // help panel expanded (non-modal, toggles with ?)
+	palette        paletteModel
 	history        []detailModel // stack of previous detail views for back navigation
 	backend        Backend
 	config         *config.Config
@@ -232,11 +233,13 @@ func (a *App) keyContext() keyContext {
 		return ctxTextInput
 	case viewConfirmDialog:
 		return ctxConfirm
+	case viewPalette:
+		return ctxPalette
 	}
 	return ctxList
 }
 
-// actionState snapshots what the actions' Hint and Ready read.
+// actionState snapshots what the actions' Hint, Label and Ready read.
 func (a *App) actionState() actionState {
 	st := actionState{
 		ctx:      a.keyContext(),
@@ -246,6 +249,7 @@ func (a *App) actionState() actionState {
 	}
 	if a.state == viewDetail {
 		st.hasNib = a.detail.nib != nil
+		st.linksShown = a.detail.linksSection() != ""
 	} else {
 		_, st.hasNib = a.list.list.SelectedItem().(nibItem)
 	}
@@ -270,7 +274,7 @@ func (a *App) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	case pending != "":
 		// The key ended a sequence nothing is bound to.
 		return nil
-	case ctx == ctxFilterInput, ctx == ctxTextInput:
+	case ctx == ctxFilterInput, ctx == ctxTextInput, ctx == ctxPalette:
 		return a.updateActiveView(msg)
 	case slices.Contains(allPickers, ctx):
 		return a.updateActiveView(acceleratorMsg{key: key})
@@ -289,31 +293,30 @@ func (a *App) runAction(act *action) tea.Cmd {
 	case actQuit, actForceQuit:
 		return tea.Quit
 	case actHelp:
-		a.toggleHelp()
+		a.palette = newPaletteModel(a.state, a.actionState(), a.width, a.height)
+		a.state = viewPalette
+		return a.palette.Init()
+	case actPaletteClose:
+		a.state = a.palette.origin
 		return nil
+	case actPaletteRun:
+		return a.runPaletteEntry()
 	case actTagFilter:
 		return func() tea.Msg { return openTagPickerMsg{} }
 	}
 	return a.updateActiveView(actionMsg{name: act.Name})
 }
 
-// toggleHelp shows or hides the help panel below the list or the nib view.
-func (a *App) toggleHelp() {
-	a.helpExpanded = !a.helpExpanded
-	if a.state == viewList {
-		a.list.helpExpanded = a.helpExpanded
-		footerH := a.list.footerHeight()
-		if a.isTwoColumnMode() {
-			leftWidth, _ := calculatePaneWidths(a.width)
-			contentHeight := a.height - footerH
-			a.list.list.SetSize(leftWidth-2, contentHeight-2)
-		} else {
-			a.list.list.SetSize(a.width-2, a.height-3-footerH)
-		}
-		return
+// runPaletteEntry closes the palette and runs its highlighted action in the
+// view the palette was opened from, as the action's key would have. An entry
+// that is not ready leaves the palette open.
+func (a *App) runPaletteEntry() tea.Cmd {
+	e, ok := a.palette.highlighted()
+	if !ok || !e.ready {
+		return nil
 	}
-	a.detail.helpExpanded = a.helpExpanded
-	a.detail, _ = a.detail.Update(tea.WindowSizeMsg{Width: a.width, Height: a.height})
+	a.state = a.palette.origin
+	return a.runAction(e.act)
 }
 
 // Update handles messages
@@ -325,19 +328,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.width = msg.Width
 		a.height = msg.Height
 
-		// Sub-models size themselves around the help panel.
-		a.list.helpExpanded = a.helpExpanded
-		a.detail.helpExpanded = a.helpExpanded
-
-		if a.helpExpanded {
-			footerH := a.list.footerHeight()
-			if a.isTwoColumnMode() {
-				leftWidth, _ := calculatePaneWidths(a.width)
-				contentHeight := a.height - footerH
-				a.list.list.SetSize(leftWidth-2, contentHeight-2)
-			} else {
-				a.list.list.SetSize(a.width-2, a.height-3-footerH)
-			}
+		// The view under the palette is drawn too, so it takes the new size.
+		if a.state == viewPalette {
+			a.state = a.palette.origin
+			a.updateActiveView(msg)
+			a.state = viewPalette
 		}
 
 		if a.isTwoColumnMode() {
@@ -384,10 +379,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case nibsChangedMsg:
-		if a.state == viewDetail {
+		if a.nibViewOnScreen() {
 			updatedNib, err := a.backend.GetNib(context.Background(), a.detail.nib.ID)
 			if err != nil || updatedNib == nil {
-				// The nib was deleted.
+				// The nib is gone or unreadable, so any overlay on it closes too.
 				a.state = viewList
 				a.history = nil
 			} else {
@@ -828,8 +823,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(a.history) > 0 {
 			a.detail = a.history[len(a.history)-1]
 			a.history = a.history[:len(a.history)-1]
-			// Help may have been toggled since this view was pushed.
-			a.detail.helpExpanded = a.helpExpanded
+			// The terminal may have been resized since this view was pushed.
 			a.detail, _ = a.detail.Update(tea.WindowSizeMsg{Width: a.width, Height: a.height})
 		} else {
 			a.state = viewList
@@ -872,6 +866,8 @@ func (a *App) updateActiveView(msg tea.Msg) tea.Cmd {
 		a.createModal, cmd = a.createModal.Update(msg)
 	case viewConfirmDialog:
 		a.confirmDialog, cmd = a.confirmDialog.Update(msg)
+	case viewPalette:
+		a.palette, cmd = a.palette.Update(msg)
 	}
 	return cmd
 }
@@ -899,7 +895,7 @@ func (a *App) renderTwoColumnView() string {
 	leftWidth, rightWidth := calculatePaneWidths(a.width)
 
 	// The footer may be several lines tall.
-	footer := a.list.footerRegion()
+	footer := a.list.Footer()
 	contentHeight := a.height - max(1, lipgloss.Height(footer))
 
 	leftPane := a.list.ViewConstrained(leftWidth, contentHeight)
@@ -922,7 +918,16 @@ func (a *App) View() tea.View {
 
 // render produces the screen content for the active state.
 func (a *App) render() string {
-	switch a.state {
+	hints := hintRow(actions, a.actionState())
+	a.list.hints = hints
+	a.detail.hints = hints
+	return a.renderState(a.state)
+}
+
+// renderState draws state, which is the active state or the one the palette
+// was opened from.
+func (a *App) renderState(state viewState) string {
+	switch state {
 	case viewList:
 		if a.isTwoColumnMode() {
 			return a.renderTwoColumnView()
@@ -950,8 +955,24 @@ func (a *App) render() string {
 		return a.createModal.ModalView(a.getBackgroundView(), a.width, a.height)
 	case viewConfirmDialog:
 		return a.confirmDialog.ModalView(a.getBackgroundView(), a.width, a.height)
+	case viewPalette:
+		return a.palette.ModalView(a.renderState(a.palette.origin), a.width, a.height)
 	}
 	return ""
+}
+
+// nibViewOnScreen reports whether the nib view is drawn, on its own or under
+// the palette or a modal, the same way render finds the view underneath.
+func (a *App) nibViewOnScreen() bool {
+	state := a.state
+	if state == viewPalette {
+		state = a.palette.origin
+	}
+	switch state {
+	case viewList, viewDetail, viewTagPicker:
+		return state == viewDetail
+	}
+	return a.previousState == viewDetail
 }
 
 // getBackgroundView returns the view to show behind modal pickers
@@ -969,15 +990,9 @@ func (a *App) getBackgroundView() string {
 	}
 }
 
-// initDetailModel creates a detail model with the current help state and an
-// empty footer.
+// initDetailModel creates a detail model with an empty footer.
 func (a *App) initDetailModel(n *nib.Nib) detailModel {
-	m := newDetailModel(n, a.backend, a.config, a.width, a.height)
-	m.helpExpanded = a.helpExpanded
-	if a.helpExpanded {
-		m, _ = m.Update(tea.WindowSizeMsg{Width: a.width, Height: a.height})
-	}
-	return m
+	return newDetailModel(n, a.backend, a.config, a.width, a.height)
 }
 
 // reportMutationFailures reports a picker's failed mutations in the footer of

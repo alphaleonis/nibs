@@ -110,8 +110,7 @@ func (m createModalModel) View() string {
 		Width(withBorder(modalWidth - 6)).
 		Render(m.textInput.View())
 
-	help := helpKeyStyle.Render("enter") + " " + helpStyle.Render("create") + "  " +
-		helpKeyStyle.Render("esc") + " " + helpStyle.Render("cancel")
+	help := hintRowWithin(actions, actionState{ctx: ctxTextInput}, modalWidth-4)
 
 	content := header + "\n\n" + inputBox + "\n\n" + help
 

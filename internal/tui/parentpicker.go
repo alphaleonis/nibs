@@ -200,13 +200,6 @@ func (m *parentPickerModel) toggleHideCompleted() tea.Cmd {
 	return m.rebuildList()
 }
 
-func hideCompletedHelpText(hiding bool) string {
-	if hiding {
-		return "show completed"
-	}
-	return "hide completed"
-}
-
 // rebuildList rebuilds the list items from allEligible, applying hideCompleted.
 // While a filter is applied the list shows nothing until the returned command's
 // matches reach Update.
@@ -352,10 +345,10 @@ func (m parentPickerModel) View() string {
 	}
 
 	return renderPickerModal(pickerModalConfig{
+		Context:     ctxParentPicker,
 		NibTitle:    m.nibTitle,
 		NibID:       nibID,
 		ListContent: m.list.View(),
-		ExtraHelp:   []helpEntry{{"z h", hideCompletedHelpText(m.hideCompleted)}},
 		Width:       m.width,
 		WidthPct:    60,
 		MaxWidth:    80,

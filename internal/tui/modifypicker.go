@@ -176,10 +176,10 @@ func (m modifyPickerModel) View() string {
 		nibID = m.targets.nibs[0].ID
 	}
 	return renderPickerModal(pickerModalConfig{
+		Context:     ctxModifyPicker,
 		NibTitle:    m.targets.title,
 		NibID:       nibID,
 		ListContent: strings.Join(lines, "\n"),
-		NoFilter:    true,
 		Width:       m.width,
 	})
 }

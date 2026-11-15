@@ -266,6 +266,7 @@ func (m blockingPickerModel) View() string {
 	}
 
 	return renderPickerModal(pickerModalConfig{
+		Context:     ctxBlockingPicker,
 		Title:       "Manage Blocking",
 		NibTitle:    m.nibTitle,
 		NibID:       m.nibID,

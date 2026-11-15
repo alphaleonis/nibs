@@ -209,12 +209,12 @@ func (m typePickerModel) View() string {
 	}
 
 	return renderPickerModal(pickerModalConfig{
+		Context:     ctxTypePicker,
 		Title:       "Select Type",
 		NibTitle:    m.nibTitle,
 		NibID:       nibID,
 		ListContent: listContent,
 		Description: description,
-		NoFilter:    true,
 		Width:       m.width,
 	})
 }

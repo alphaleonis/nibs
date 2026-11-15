@@ -62,15 +62,6 @@ func renderStatusMessage(msg string, kind statusKind, width, maxLines int) strin
 	return strings.Join(lines, "\n")
 }
 
-// statusBlock renders a footer status message in at most maxLines rows, or ""
-// when there is none.
-func statusBlock(msg string, kind statusKind, width, maxLines int) string {
-	if msg == "" {
-		return ""
-	}
-	return renderStatusMessage(msg, kind, width, maxLines)
-}
-
 // blockLines is lipgloss.Height, except that an absent block takes zero rows
 // (lipgloss.Height("") is 1).
 func blockLines(block string) int {
@@ -78,17 +69,6 @@ func blockLines(block string) int {
 		return 0
 	}
 	return lipgloss.Height(block)
-}
-
-// helpRowBudget is how many rows the expanded help panel may take on a
-// height-row terminal after holdBack rows for the view above and statusLines
-// rows for the status block.
-//
-// holdBack is that view's floor: the fewest rows it occupies at any height,
-// which differs between the list box and the detail header. Zero or less means
-// no room for the panel; the status message keeps its rows.
-func helpRowBudget(height, holdBack, statusLines int) int {
-	return max(1, height-holdBack) - statusLines
 }
 
 // applyFilterStyles paints a list's filter prompt and cursor in the primary color.
@@ -112,11 +92,6 @@ var (
 
 	helpStyle = lipgloss.NewStyle().
 			Foreground(ui.ColorMuted)
-
-	// Marks the keybindings the help panel's row budget could not hold.
-	helpHiddenStyle = lipgloss.NewStyle().
-			Foreground(ui.ColorWarning).
-			Italic(true)
 
 	helpKeyStyle = lipgloss.NewStyle().
 			Foreground(ui.ColorPrimary).

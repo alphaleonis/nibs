@@ -54,8 +54,7 @@ func (d confirmDialog) View(width, height int) string {
 
 	header := lipgloss.NewStyle().Bold(true).Render(d.title)
 
-	help := helpKeyStyle.Render("y") + " " + helpStyle.Render("confirm") + "  " +
-		helpKeyStyle.Render("n/esc") + " " + helpStyle.Render("cancel")
+	help := hintRowWithin(actions, actionState{ctx: ctxConfirm}, modalWidth-2)
 
 	borderColor := ui.ColorPrimary
 	if d.action == "delete" {

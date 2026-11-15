@@ -2,8 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +13,7 @@ import (
 )
 
 // A list taking filter input owns every printable key, so q and ? become part
-// of the filter text instead of quitting or toggling help.
+// of the filter text instead of quitting or opening the palette.
 func TestAFilteringListTakesQAndQuestionMark(t *testing.T) {
 	stubViews := []struct {
 		name   string
@@ -69,7 +67,6 @@ func TestAFilteringListTakesQAndQuestionMark(t *testing.T) {
 			if got := v.filter(app).FilterState(); got != list.Filtering {
 				t.Fatalf("premise failed: filter state = %v after /, want filtering", got)
 			}
-			helpBefore := app.helpExpanded
 
 			_, quitCmd := app.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
 			app.Update(tea.KeyPressMsg{Code: '?', Text: "?"})
@@ -79,9 +76,6 @@ func TestAFilteringListTakesQAndQuestionMark(t *testing.T) {
 			}
 			if got := v.filter(app).FilterValue(); got != "q?" {
 				t.Errorf("filter text = %q, want %q", got, "q?")
-			}
-			if app.helpExpanded != helpBefore {
-				t.Error("typing ? into the filter toggled the help panel")
 			}
 			if quitCmd != nil {
 				if _, quit := runCmdNonBlocking(quitCmd).(tea.QuitMsg); quit {
@@ -105,44 +99,16 @@ func runCmdNonBlocking(cmd tea.Cmd) tea.Msg {
 	}
 }
 
-// helpEntryOnScreen is how an entry reads once the frame is collapsed to single
-// spaces. Only the first nine characters of the description are asked for:
-// minHelpDescWidth is ten and the cut marker takes one of them, so that much
-// survives any narrowing the panel does — which lets the assertion read the
-// painted panel without re-deriving the truncation it is checking.
-func helpEntryOnScreen(e helpEntry) string {
-	desc := []rune(e.Desc)
-	desc = desc[:min(len(desc), 9)]
-	return strings.Join(strings.Fields(e.Key+" "+string(desc)), " ")
+// frameView is one of the three compositions a frame is drawn in. Each pays
+// for its footer out of a different frame.
+type frameView struct {
+	name  string
+	enter func(t *testing.T, app *App, width int)
 }
 
-// assertHelpPanelIntact fails for every keybinding the expanded panel promises
-// but does not paint. Entries fill down then across, so a panel that ran past
-// the terminal's last row loses the bottom of each column — ? and q among them
-// — with nothing on screen to say those keys exist.
-func assertHelpPanelIntact(t *testing.T, frame string, entries []helpEntry) {
-	t.Helper()
-	for _, e := range entries {
-		if want := helpEntryOnScreen(e); !strings.Contains(frame, want) {
-			t.Errorf("the help panel lost %q:\n%s", want, frame)
-		}
-	}
-}
-
-// expandedHelpView is one of the three compositions the panel is drawn into.
-// Each pays for the panel out of a different frame, so each has its own hold-back.
-type expandedHelpView struct {
-	name    string
-	enter   func(t *testing.T, app *App, width int)
-	entries func(app *App) []helpEntry
-}
-
-func expandedHelpViews() []expandedHelpView {
-	return []expandedHelpView{
-		{
-			name:    "list",
-			entries: func(app *App) []helpEntry { return app.list.expandedHelpEntries() },
-		},
+func frameViews() []frameView {
+	return []frameView{
+		{name: "list"},
 		{
 			name: "detail",
 			enter: func(t *testing.T, app *App, _ int) {
@@ -151,7 +117,6 @@ func expandedHelpViews() []expandedHelpView {
 					t.Fatalf("premise failed: expected the detail view, got state %d", app.state)
 				}
 			},
-			entries: func(*App) []helpEntry { return detailExpandedEntries() },
 		},
 		{
 			// W leaves wide mode, which is what puts the list beside the
@@ -164,14 +129,13 @@ func expandedHelpViews() []expandedHelpView {
 					t.Fatalf("premise failed: two-column mode = %v at width %d, want %v", app.isTwoColumnMode(), width, want)
 				}
 			},
-			entries: func(app *App) []helpEntry { return app.list.expandedHelpEntries() },
 		},
 	}
 }
 
-// enterHelpView drives the real key path into one composition at a given
-// terminal size, leaving the help panel as it found it.
-func enterHelpView(t *testing.T, view expandedHelpView, width, height int) *App {
+// enterFrameView drives the real key path into one composition at a given
+// terminal size.
+func enterFrameView(t *testing.T, view frameView, width, height int) *App {
 	t.Helper()
 	app := setupRealBackendApp(t, queueRefusalNibs())
 	app.Update(tea.WindowSizeMsg{Width: width, Height: height})
@@ -185,8 +149,8 @@ func enterHelpView(t *testing.T, view expandedHelpView, width, height int) *App 
 }
 
 // refuseStatusChange drives a status change the model refuses, so the view is
-// holding a message the footer region has to find room for.
-func refuseStatusChange(t *testing.T, app *App, view expandedHelpView) {
+// holding a message the footer has to find room for.
+func refuseStatusChange(t *testing.T, app *App, view frameView) {
 	t.Helper()
 	sendKey(app, tea.KeyPressMsg{Code: 's', Text: "s"})
 	selectStatus(t, app, "completed")
@@ -199,177 +163,25 @@ func refuseStatusChange(t *testing.T, app *App, view expandedHelpView) {
 	}
 }
 
-// openExpandedHelp drives the real key path into one composition with the help
-// panel open, and refuses a status change first when refused is set, so the
-// model is holding a message the region has to find room for.
-func openExpandedHelp(t *testing.T, view expandedHelpView, width, height int, refused bool) *App {
-	t.Helper()
-	app := enterHelpView(t, view, width, height)
-	sendKey(app, tea.KeyPressMsg{Code: '?', Text: "?"})
-	if !app.helpExpanded {
-		t.Fatal("premise failed: ? did not expand the help panel")
-	}
-	if refused {
-		refuseStatusChange(t, app, view)
-	}
-	return app
-}
-
-// The expanded help panel replaces the footer's help keys — and used to take
-// the status message down with them, since both View methods returned
-// content+panel and never rendered the message the model was still holding. A
-// user with ? open got exactly the pre-nibs-au40 silence: the picker closed,
-// the list refreshed, and the refusal was nowhere.
-//
-// The panel is itself tall, so this pins both halves at once: the refusal has to
-// be legible, and the panel's own rows have to survive sharing the screen with
-// it.
-func TestTheExpandedHelpPanelAndTheStatusMessageShareTheScreen(t *testing.T) {
-	const termHeight = 24
-	wantRefusal := "Status change failed: " + queueRefusal()
-
-	for _, refused := range []bool{false, true} {
-		for _, width := range []int{80, 100, 120, 160} {
-			for _, view := range expandedHelpViews() {
-				name := fmt.Sprintf("%s/%d", view.name, width)
-				if refused {
-					name += "/refused"
-				}
-				t.Run(name, func(t *testing.T) {
-					app := openExpandedHelp(t, view, width, termHeight, refused)
+// The palette is a modal over the view it was opened from, and has as many
+// lines as that view has actions, so it scrolls instead of running past the
+// terminal.
+func TestThePaletteFitsTheTerminal(t *testing.T) {
+	for _, height := range sweepHeights {
+		for _, width := range sweepWidths {
+			for _, view := range frameViews() {
+				t.Run(fmt.Sprintf("%s/%dx%d", view.name, width, height), func(t *testing.T) {
+					app := enterFrameView(t, view, width, height)
+					pressKeys(app, "?")
+					if app.state != viewPalette {
+						t.Fatalf("premise failed: ? opened state %d, not the palette", app.state)
+					}
 					content := app.View().Content
-					painted := frameText(content, width, termHeight)
-
-					if refused && !strings.Contains(painted, wantRefusal) {
-						t.Errorf("the frame does not carry the refusal with the help panel open.\nwant: %q\ngot:  %q", wantRefusal, painted)
-					}
-					assertHelpPanelIntact(t, painted, view.entries(app))
-
-					if got := lipgloss.Height(content); got > termHeight {
-						t.Errorf("frame is %d lines tall for a %d-line terminal — the bottom is clipped", got, termHeight)
-					}
-					if got := lipgloss.Width(content); got > width {
-						t.Errorf("frame is %d columns wide for a %d-column terminal — the right edge is cut", got, width)
+					assertFrameFitsTerminal(t, content, width, height)
+					if painted := frameText(content, width, height); !strings.Contains(painted, "Actions") {
+						t.Errorf("the palette is not on screen:\n%s", painted)
 					}
 				})
-			}
-		}
-	}
-}
-
-// The panel is not exempt from the budget the status message keeps. Given a
-// row bound it packs into more and narrower columns instead of running past it,
-// which is what lets a message share the region: the list's twenty-four
-// keybindings at eighty columns laid out as one column of twenty-four rows,
-// taller than the terminal on its own.
-func TestHelpPanelPacksIntoItsRowBudget(t *testing.T) {
-	entries := append(listHelpEntries(), helpEntry{"?", "less"}, helpEntry{"q", "quit"})
-
-	tests := []struct {
-		name    string
-		width   int
-		maxRows int
-	}{
-		{name: "narrow terminal, no message", width: 80, maxRows: helpRowBudget(24, listBoxFloor, 0)},
-		{name: "narrow terminal, three-line message", width: 80, maxRows: helpRowBudget(24, listBoxFloor, 3)},
-		{name: "wide terminal", width: 160, maxRows: helpRowBudget(24, listBoxFloor, 0)},
-		{name: "unbounded", width: 80, maxRows: 0},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			panel := renderHelpPanel(entries, tt.width, tt.maxRows)
-			rows := lipgloss.Height(panel)
-
-			if got := helpPanelHeight(entries, tt.width, tt.maxRows); got != rows {
-				t.Errorf("helpPanelHeight reports %d rows but the panel renders %d — the footer would be budgeted against the wrong number", got, rows)
-			}
-			if tt.maxRows > 0 && rows > tt.maxRows {
-				t.Errorf("panel is %d rows for a %d-row budget", rows, tt.maxRows)
-			}
-			if got := lipgloss.Width(panel); got > tt.width {
-				t.Errorf("panel is %d columns wide for a %d-column terminal", got, tt.width)
-			}
-			assertHelpPanelIntact(t, strings.Join(strings.Fields(ansiSGR.ReplaceAllString(panel, "")), " "), entries)
-		})
-	}
-}
-
-// helpHiddenMarkerRe reads the count the panel's marker names. It is read off
-// the painted frame rather than the layout, because a marker the terminal
-// clipped is not a marker the user was given.
-var helpHiddenMarkerRe = regexp.MustCompile(`\x{2026} (\d+) more keys`)
-
-func helpHiddenCount(frame string) int {
-	m := helpHiddenMarkerRe.FindStringSubmatch(frame)
-	if m == nil {
-		return 0
-	}
-	n, _ := strconv.Atoi(m[1])
-	return n
-}
-
-// assertHelpPanelAccountsForEveryKey fails when the panel is missing a
-// keybinding it does not own up to. Entries fill down then across, so a panel
-// the frame clipped loses the bottom of each column — ? and q among them — and
-// a count of what is missing is the difference between a panel that was narrowed
-// and one that was quietly cut short. A region with no room for a panel at all
-// draws none, which the reader can see; that is the one case with nothing to
-// account for.
-func assertHelpPanelAccountsForEveryKey(t *testing.T, frame string, entries []helpEntry) {
-	t.Helper()
-	var missing []string
-	for _, e := range entries {
-		if !strings.Contains(frame, helpEntryOnScreen(e)) {
-			missing = append(missing, e.Key)
-		}
-	}
-	if len(missing) == 0 || len(missing) == len(entries) {
-		return
-	}
-	if got := helpHiddenCount(frame); got != len(missing) {
-		t.Errorf("the panel dropped %d keybindings (%s) but says %d are missing:\n%s",
-			len(missing), strings.Join(missing, ", "), got, frame)
-	}
-}
-
-// The footer region is budgeted against each view's own floor — the fewest rows
-// it occupies however small a height it is handed. The list box floors at six
-// lines because lipgloss pads a short render out to the border's height rather
-// than truncating a tall one; the detail view's floor is its rendered header
-// plus a body border around one viewport row. Neither gives a row back to a
-// taller region, so a region budgeted against a shared constant instead runs off
-// the bottom of the frame, and the panel's last keybindings go with it.
-//
-// This sweeps the geometries that arithmetic turns on: heights short enough for
-// each floor to bind, and widths from the narrowest terminal the views claim to
-// draw into up to where the panel stops packing.
-func TestTheExpandedFooterRegionFitsTheTerminal(t *testing.T) {
-	for _, refused := range []bool{false, true} {
-		for _, height := range sweepHeights {
-			for _, width := range sweepWidths {
-				for _, view := range expandedHelpViews() {
-					name := fmt.Sprintf("%s/%dx%d", view.name, width, height)
-					if refused {
-						name += "/refused"
-					}
-					t.Run(name, func(t *testing.T) {
-						app := openExpandedHelp(t, view, width, height, refused)
-						content := app.View().Content
-
-						assertFrameFitsTerminal(t, content, width, height)
-
-						painted := frameText(content, width, height)
-						assertHelpPanelAccountsForEveryKey(t, painted, view.entries(app))
-
-						// A refusal drawn over is the defect the region exists
-						// to fix; the message wraps and may be cut, but its
-						// opening has to be on screen.
-						if refused && !strings.Contains(painted, "Status change failed") {
-							t.Errorf("the frame does not carry the refusal with the help panel open:\n%s", painted)
-						}
-					})
-				}
 			}
 		}
 	}
@@ -378,7 +190,7 @@ func TestTheExpandedFooterRegionFitsTheTerminal(t *testing.T) {
 // minSupportedHeight is the shortest terminal nibs undertakes to draw a usable
 // frame into. It is a decision rather than a measurement of what happens to
 // work, and the arithmetic behind it is the detail view at its most demanding:
-// the header's four rows, a status message wrapped onto two, and the help row
+// the header's four rows, a status message wrapped onto two, and the hint row
 // come to seven, so eight is the first height that carries all three and still
 // leaves a row for the content between them.
 //
@@ -438,27 +250,21 @@ func assertFrameFitsTerminal(t *testing.T, content string, width, height int) {
 	}
 }
 
-// The frame has to fit the terminal with the help panel closed too. The panel
-// is drawn out of the rows below the view, so a frame that overruns without it
-// is a defect of the view itself — a row too long for the box it is rendered
-// into wraps through the border and pushes the whole frame past the last row,
-// whatever height the box was handed.
-func TestTheFrameFitsTheTerminalWithHelpClosed(t *testing.T) {
+// A row too long for the box it is rendered into wraps through the border and
+// pushes the whole frame past the last row, whatever height the box was handed.
+func TestTheFrameFitsTheTerminal(t *testing.T) {
 	for _, refused := range []bool{false, true} {
 		for _, height := range sweepHeights {
 			for _, width := range sweepWidths {
-				for _, view := range expandedHelpViews() {
+				for _, view := range frameViews() {
 					name := fmt.Sprintf("%s/%dx%d", view.name, width, height)
 					if refused {
 						name += "/refused"
 					}
 					t.Run(name, func(t *testing.T) {
-						app := enterHelpView(t, view, width, height)
+						app := enterFrameView(t, view, width, height)
 						if refused {
 							refuseStatusChange(t, app, view)
-						}
-						if app.helpExpanded {
-							t.Fatal("premise failed: the help panel is open, so this is not the closed-panel geometry")
 						}
 						assertFrameFitsTerminal(t, app.View().Content, width, height)
 					})
@@ -484,7 +290,7 @@ func TestTheDetailBodyGivesItsRowsToTheRefusal(t *testing.T) {
 		for height := minSupportedHeight; height <= 16; height++ {
 			t.Run(fmt.Sprintf("%dx%d", width, height), func(t *testing.T) {
 				view := detailSweepView(t)
-				app := enterHelpView(t, view, width, height)
+				app := enterFrameView(t, view, width, height)
 				refuseStatusChange(t, app, view)
 				content := app.View().Content
 
@@ -494,28 +300,28 @@ func TestTheDetailBodyGivesItsRowsToTheRefusal(t *testing.T) {
 				if !strings.Contains(painted, "Status change failed") {
 					t.Errorf("the frame does not carry the refusal:\n%s", painted)
 				}
-				// The row's leading hint, not its trailing one: the row is a
-				// fixed set of key hints clipped to the terminal, so at thirty
-				// columns q is off the right edge whatever the height.
+				// An early hint, not a late one: the row is clipped to the
+				// terminal, so at thirty columns q is off the right edge
+				// whatever the height.
 				if !strings.Contains(painted, "e edit") {
-					t.Errorf("the frame does not carry the help row the refusal is acted on from:\n%s", painted)
+					t.Errorf("the frame does not carry the hint row the refusal is acted on from:\n%s", painted)
 				}
 			})
 		}
 	}
 }
 
-// detailSweepView returns the detail entry from expandedHelpViews, so this file
+// detailSweepView returns the detail entry from frameViews, so this file
 // has one definition of how the detail view is entered.
-func detailSweepView(t *testing.T) expandedHelpView {
+func detailSweepView(t *testing.T) frameView {
 	t.Helper()
-	for _, v := range expandedHelpViews() {
+	for _, v := range frameViews() {
 		if v.name == "detail" {
 			return v
 		}
 	}
-	t.Fatal("premise failed: expandedHelpViews no longer carries a detail view")
-	return expandedHelpView{}
+	t.Fatal("premise failed: frameViews no longer carries a detail view")
+	return frameView{}
 }
 
 // The box's top line is drawn by hand rather than left to the border style, so
@@ -673,50 +479,5 @@ func TestTheListBoxHoldsARowWiderThanItself(t *testing.T) {
 				assertFrameFitsTerminal(t, app.View().Content, width, height)
 			})
 		}
-	}
-}
-
-// A key measured in bytes narrows two decisions this layout leans on: how far
-// the panel may pack, and where descriptions are cut. Two list keys are
-// multi-byte, so the byte count overstates the column by three cells.
-func TestHelpKeyWidthCountsCellsNotBytes(t *testing.T) {
-	tests := []struct {
-		name    string
-		entries []helpEntry
-		want    int
-	}{
-		{name: "ascii", entries: []helpEntry{{"shift+tab", "collapse all"}}, want: 9},
-		{name: "arrows", entries: []helpEntry{{"\u2190/\u2192", "collapse/expand"}}, want: 3},
-		{name: "modifier and arrows", entries: []helpEntry{{"ctrl+\u2191/\u2193", "reorder"}}, want: 8},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := helpKeyWidth(tt.entries); got != tt.want {
-				t.Errorf("helpKeyWidth = %d, want %d cells", got, tt.want)
-			}
-		})
-	}
-
-	// And the consequence the width feeds: at 46 columns the key column decides
-	// whether the panel can pack at all.
-	entries := append(listHelpEntries(), helpEntry{"?", "less"}, helpEntry{"q", "quit"})
-	if got := helpPanelLayout(entries, 46, helpRowBudget(24, listBoxFloor, 0)).cols; got < 2 {
-		t.Errorf("the panel packs into %d column(s) at 46 columns; a key column of %d cells leaves room for 2", got, helpKeyWidth(entries))
-	}
-}
-
-// A description narrowed to fit says so. One that simply stops reads as the
-// whole of what the key does — the same reason a truncated status message
-// carries an ellipsis.
-func TestANarrowedHelpDescriptionIsMarked(t *testing.T) {
-	entries := append(listHelpEntries(), helpEntry{"?", "less"}, helpEntry{"q", "quit"})
-	panel := ansiSGR.ReplaceAllString(renderHelpPanel(entries, 80, helpRowBudget(24, listBoxFloor, 3)), "")
-
-	const longest = "reorder (block if multi-selected)"
-	if strings.Contains(panel, longest) {
-		t.Fatalf("premise failed: %q fits at 80 columns, so nothing is narrowed here", longest)
-	}
-	if !strings.Contains(panel, "\u2026") {
-		t.Errorf("a narrowed description carries no cut marker:\n%s", panel)
 	}
 }

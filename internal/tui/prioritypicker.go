@@ -213,6 +213,7 @@ func (m priorityPickerModel) View() string {
 	}
 
 	return renderPickerModal(pickerModalConfig{
+		Context:     ctxPriorityPicker,
 		Title:       "Select Priority",
 		NibTitle:    m.nibTitle,
 		NibID:       nibID,

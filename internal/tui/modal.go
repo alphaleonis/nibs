@@ -9,16 +9,15 @@ import (
 
 // pickerModalConfig configures renderPickerModal.
 type pickerModalConfig struct {
-	Title       string      // header when NibTitle is empty, e.g. "Select Status"
-	NibTitle    string      // the nib's title
-	NibID       string      // the nib's ID
-	ListContent string      // the rendered list
-	Description string      // optional description shown below list
-	ExtraHelp   []helpEntry // additional help entries shown before esc/cancel
-	NoFilter    bool        // the picker has no filter, so the help omits /
-	Width       int         // screen width
-	WidthPct    int         // modal width percentage (0 means 50)
-	MaxWidth    int         // max modal width (0 means 60)
+	Title       string     // header when NibTitle is empty, e.g. "Select Status"
+	NibTitle    string     // the nib's title
+	NibID       string     // the nib's ID
+	ListContent string     // the rendered list
+	Description string     // optional description shown below list
+	Context     keyContext // the picker's key context, whose hints the modal shows
+	Width       int        // screen width
+	WidthPct    int        // modal width percentage (0 means 50)
+	MaxWidth    int        // max modal width (0 means 60)
 }
 
 // pickerModalWidth returns the width inside a picker modal's border for a
@@ -88,14 +87,8 @@ func renderPickerModal(cfg pickerModalConfig) string {
 
 	subtitle := ui.Muted.Render(cfg.NibID)
 
-	help := helpKeyStyle.Render("enter") + " " + helpStyle.Render("select") + "  "
-	if !cfg.NoFilter {
-		help += helpKeyStyle.Render("/") + " " + helpStyle.Render("filter") + "  "
-	}
-	for _, e := range cfg.ExtraHelp {
-		help += helpKeyStyle.Render(e.Key) + " " + helpStyle.Render(e.Desc) + "  "
-	}
-	help += helpKeyStyle.Render("esc") + " " + helpStyle.Render("cancel")
+	// The padding leaves modalWidth-2 columns, and a hint row does not wrap.
+	help := hintRowWithin(actions, actionState{ctx: cfg.Context}, modalWidth-2)
 
 	// reservePickerDescription's width depends on this border and padding.
 	border := lipgloss.NewStyle().

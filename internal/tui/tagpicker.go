@@ -158,10 +158,7 @@ func (m tagPickerModel) View() string {
 
 	content := border.Render(m.list.View())
 
-	help := helpKeyStyle.Render("enter") + " " + helpStyle.Render("select") + "  " +
-		helpKeyStyle.Render("/") + " " + helpStyle.Render("filter") + "  " +
-		helpKeyStyle.Render("esc") + " " + helpStyle.Render("cancel") + "  " +
-		helpKeyStyle.Render("q") + " " + helpStyle.Render("quit")
+	help := hintRowWithin(actions, actionState{ctx: ctxTagPicker}, m.width)
 
 	return content + "\n" + help
 }

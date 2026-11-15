@@ -213,6 +213,7 @@ func (m estimatePickerModel) View() string {
 	}
 
 	return renderPickerModal(pickerModalConfig{
+		Context:     ctxEstimatePicker,
 		Title:       "Select Estimate",
 		NibTitle:    m.nibTitle,
 		NibID:       nibID,
