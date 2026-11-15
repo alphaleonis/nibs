@@ -190,7 +190,7 @@ func TestAppEstimatePickerWiring(t *testing.T) {
 		cfg := config.Default()
 		app.state = viewDetail
 		testNib := &nib.Nib{ID: "nib-1", Title: "Test", Status: "todo", Type: "task", Estimate: "m"}
-		app.detail = newDetailModel(testNib, stub, cfg, 80, 24)
+		app.detail = newDetailModel(testNib, stub, cfg, 80, 24, false)
 
 		cmd := app.runAction(findAction(defaultActions, actEstimate))
 		if cmd == nil {

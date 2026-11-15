@@ -13,24 +13,9 @@ import (
 )
 
 // keymap is the action table in effect: the defaults with the user config's
-// tui.keys applied, and the entries of tui.keys that were ignored.
+// tui.keys applied.
 type keymap struct {
 	actions []action
-	ignored []ignoredBinding
-	// source is the path of the file tui.keys came from, or "" for none.
-	source string
-}
-
-// ignoredBinding is an entry of tui.keys that was ignored, so its action kept
-// its default keys.
-type ignoredBinding struct {
-	entry  string // the entry as written, "name: key"
-	line   int    // the entry's line in the file, from 1
-	reason string
-}
-
-func defaultKeymap() keymap {
-	return keymap{actions: defaultActions}
 }
 
 // firstKey returns the first key bound to name, or "" when it has none.
@@ -50,21 +35,22 @@ type userBinding struct {
 	ignored string // why the entry was ignored, or "" while it is not
 }
 
-// buildKeymap applies the keys mapping of the user config's tui block to
-// defaults, which must have no key conflicts. An entry is ignored, and its
-// action keeps its defaults, when it names no action, a key is malformed, a key
-// would take typing from a text box, or a key collides with another action in a
-// context they share. Both sides of a collision between two entries are
-// ignored. A tui block or keys that is not a mapping is one ignored entry. A
-// nil or empty block gives the defaults. source is the file tui came from.
-func buildKeymap(defaults []action, tui *yaml.Node, source string) keymap {
-	km := keymap{actions: defaults, source: source}
-	node, bad := keysNode(tui)
+// buildKeymap applies keys, the keys setting of the user config's tui block, to
+// defaults, which must have no key conflicts. It returns the keymap and the
+// entries it ignored, whose actions keep their defaults. An entry is ignored
+// when it names no action, a key is malformed, a key would take typing from a
+// text box, or a key collides with another action in a context they share. Both
+// sides of a collision between two entries are ignored. A keys that is not a
+// mapping is one ignored entry, on keysLine. A nil or empty keys gives the
+// defaults.
+func buildKeymap(defaults []action, keys *yaml.Node, keysLine int) (keymap, []ignoredEntry) {
+	km := keymap{actions: defaults}
+	node, bad := keysNode(keys, keysLine)
 	if bad != nil {
-		km.ignored = append(km.ignored, *bad)
+		return km, []ignoredEntry{*bad}
 	}
 	if node == nil {
-		return km
+		return km, nil
 	}
 
 	var bound []*userBinding
@@ -91,45 +77,25 @@ func buildKeymap(defaults []action, tui *yaml.Node, source string) keymap {
 			break
 		}
 	}
+	var ignored []ignoredEntry
 	for _, b := range bound {
 		if b.ignored != "" {
-			km.ignored = append(km.ignored, ignoredBinding{entry: b.entry, line: b.line, reason: b.ignored})
+			ignored = append(ignored, ignoredEntry{entry: b.entry, line: b.line, reason: b.ignored})
 		}
 	}
-	return km
+	return km, ignored
 }
 
-// keysNode returns the keys mapping of the tui block, or nil when there is
-// none. It also returns nil, and the ignored entry, when the block cannot be
-// decoded or its keys is not a mapping. yaml.v3 decodes the block, so merge
-// keys and aliases apply and a repeated keys is an error.
-func keysNode(tui *yaml.Node) (*yaml.Node, *ignoredBinding) {
-	absent := func(n *yaml.Node) bool { return n == nil || n.Kind == 0 || n.Tag == "!!null" }
-	if absent(tui) {
-		return nil, nil
-	}
-	resolved := tui
-	if resolved.Kind == yaml.AliasNode {
-		resolved = resolved.Alias
-	}
-	if resolved.Kind != yaml.MappingNode {
-		return nil, &ignoredBinding{entry: safetext.StripBounded("tui: " + nodeText(resolved)), line: tui.Line, reason: "is not a map of TUI settings"}
-	}
-	var block struct {
-		Keys yaml.Node `yaml:"keys"`
-	}
-	if err := tui.Decode(&block); err != nil {
-		return nil, &ignoredBinding{entry: "tui", line: tui.Line, reason: safetext.StripBounded(decodeError(err))}
-	}
-	keys := &block.Keys
-	if keys.Kind == yaml.AliasNode {
-		keys = keys.Alias
-	}
+// keysNode returns keys, resolved when it is an alias, or nil when it is
+// absent. It also returns nil, and the ignored entry on line, when keys is not
+// a mapping.
+func keysNode(keys *yaml.Node, line int) (*yaml.Node, *ignoredEntry) {
+	keys = resolveAlias(keys)
 	switch {
-	case absent(keys):
+	case absentNode(keys):
 		return nil, nil
 	case keys.Kind != yaml.MappingNode:
-		return nil, &ignoredBinding{entry: safetext.StripBounded("tui.keys: " + nodeText(keys)), line: keys.Line, reason: "is not a map from action names to keys"}
+		return nil, &ignoredEntry{entry: safetext.StripBounded("tui.keys: " + nodeText(keys)), line: line, reason: "is not a map from action names to keys"}
 	}
 	return keys, nil
 }
@@ -234,7 +200,7 @@ func entryKeys(value *yaml.Node) ([]string, string) {
 	return nil, "is not a key or a list of keys"
 }
 
-// nodeText renders a tui.keys value the way the palette shows it.
+// nodeText renders the value of a tui setting the way the palette shows it.
 func nodeText(n *yaml.Node) string {
 	switch n.Kind {
 	case yaml.ScalarNode:

@@ -167,7 +167,7 @@ func TestRenderNibRow_IndicatorsRightAligned(t *testing.T) {
 
 func TestRenderNibRow_IndicatorsRightAligned_ASCII(t *testing.T) {
 	// Same alignment contract as the UTF-8 variant, but with ASCII fallbacks
-	// forced via the test hook. Each indicator slot is 2 cells wide:
+	// forced via ASCIIGlyphs. Each indicator slot is 2 cells wide:
 	//   no indicators:        "    |Title"
 	//   priority low only:    "  v |Title"
 	//   blocked only:         "  * |Title"
@@ -175,9 +175,8 @@ func TestRenderNibRow_IndicatorsRightAligned_ASCII(t *testing.T) {
 	//   blocking + priority:  "# v |Title"
 	//   blocked + crit:       "* !!|Title"   ("!!" fills slot 2)
 	//   blocked + high:       "* ! |Title"
-	withASCIIGlyphs(t, true)
-
 	baseCfg := NibRowConfig{
+		ASCIIGlyphs:   true,
 		MaxTitleWidth: 60,
 		StatusColor:   "green",
 		TypeColor:     "blue",

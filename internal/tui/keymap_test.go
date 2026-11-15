@@ -31,10 +31,10 @@ func writeUserConfig(t *testing.T, text string) (*config.UserConfig, string) {
 	return user, path
 }
 
-func loadKeymap(t *testing.T, text string) keymap {
+func loadUserSettings(t *testing.T, text string) settings {
 	t.Helper()
 	user, path := writeUserConfig(t, text)
-	return buildKeymap(defaultActions, &user.TUI, path)
+	return loadSettings(defaultActions, &user.TUI, path)
 }
 
 func keysOf(km keymap, name actionName) []string {
@@ -42,7 +42,7 @@ func keysOf(km keymap, name actionName) []string {
 }
 
 // ignoredNamed returns the ignored entry whose text starts with name.
-func ignoredNamed(t *testing.T, km keymap, name string) ignoredBinding {
+func ignoredNamed(t *testing.T, km settings, name string) ignoredEntry {
 	t.Helper()
 	for _, b := range km.ignored {
 		if strings.HasPrefix(b.entry, name+":") {
@@ -50,7 +50,7 @@ func ignoredNamed(t *testing.T, km keymap, name string) ignoredBinding {
 		}
 	}
 	t.Fatalf("no ignored entry for %s; ignored: %+v", name, km.ignored)
-	return ignoredBinding{}
+	return ignoredEntry{}
 }
 
 // decodeKey returns how Bubbletea's input decoder writes the key a terminal
@@ -154,14 +154,14 @@ func TestKeysCheckKeyRefusesKeysThatNeverArrive(t *testing.T) {
 }
 
 func TestKeysWithoutTUIKeysAreTheDefaults(t *testing.T) {
-	km := loadKeymap(t, "nibs:\n  id_length: 6\n")
-	if len(km.ignored) != 0 || keysOf(km, actStatus)[0] != "s" {
-		t.Errorf("ignored %v, nib.status keys %v; want none and the default", km.ignored, keysOf(km, actStatus))
+	km := loadUserSettings(t, "nibs:\n  id_length: 6\n")
+	if len(km.ignored) != 0 || keysOf(km.keys, actStatus)[0] != "s" {
+		t.Errorf("ignored %v, nib.status keys %v; want none and the default", km.ignored, keysOf(km.keys, actStatus))
 	}
 }
 
 func TestKeysBindingReplacesTheDefaults(t *testing.T) {
-	km := loadKeymap(t, `tui:
+	km := loadUserSettings(t, `tui:
   keys:
     nib.priority: P
     nib.status: [S, "ctrl+s", "x  y"]
@@ -170,13 +170,13 @@ func TestKeysBindingReplacesTheDefaults(t *testing.T) {
 	if len(km.ignored) != 0 {
 		t.Fatalf("ignored %+v, want none", km.ignored)
 	}
-	if got := keysOf(km, actPriority); !slices.Equal(got, []string{"P"}) {
+	if got := keysOf(km.keys, actPriority); !slices.Equal(got, []string{"P"}) {
 		t.Errorf("nib.priority keys = %v, want [P]", got)
 	}
-	if got := keysOf(km, actStatus); !slices.Equal(got, []string{"S", "ctrl+s", "x y"}) {
+	if got := keysOf(km.keys, actStatus); !slices.Equal(got, []string{"S", "ctrl+s", "x y"}) {
 		t.Errorf("nib.status keys = %v, want [S ctrl+s x y]", got)
 	}
-	if got := keysOf(km, actType); !slices.Equal(got, []string{"s"}) {
+	if got := keysOf(km.keys, actType); !slices.Equal(got, []string{"s"}) {
 		t.Errorf("nib.type keys = %v, want [s], the key nib.status gave up", got)
 	}
 	if got := keysOfTable(defaultActions, actStatus); !slices.Equal(got, []string{"s"}) {
@@ -187,12 +187,12 @@ func TestKeysBindingReplacesTheDefaults(t *testing.T) {
 func keysOfTable(table []action, name actionName) []string { return findAction(table, name).Keys }
 
 func TestKeysUnknownActionIsIgnoredWithItsLine(t *testing.T) {
-	km := loadKeymap(t, "tui:\n  keys:\n    nib.priority: P\n    nib.prority: Q\n")
+	km := loadUserSettings(t, "tui:\n  keys:\n    nib.priority: P\n    nib.prority: Q\n")
 	b := ignoredNamed(t, km, "nib.prority")
 	if b.line != 4 || !strings.Contains(b.reason, "no action") {
 		t.Errorf("ignored %+v, want line 4 and no action of that name", b)
 	}
-	if got := keysOf(km, actPriority); !slices.Equal(got, []string{"P"}) {
+	if got := keysOf(km.keys, actPriority); !slices.Equal(got, []string{"P"}) {
 		t.Errorf("the good entry beside it was lost: nib.priority keys = %v", got)
 	}
 }
@@ -209,43 +209,43 @@ func TestKeysMalformedEntriesFallBack(t *testing.T) {
 		{"[[e]]", "not a key"},
 	}
 	for _, tt := range tests {
-		km := loadKeymap(t, "tui:\n  keys:\n    nib.edit: "+tt.value+"\n")
+		km := loadUserSettings(t, "tui:\n  keys:\n    nib.edit: "+tt.value+"\n")
 		b := ignoredNamed(t, km, "nib.edit")
 		if !strings.Contains(b.reason, tt.why) || b.line != 3 {
 			t.Errorf("nib.edit: %s ignored as %+v, want line 3 and %q", tt.value, b, tt.why)
 		}
-		if got := keysOf(km, actEdit); !slices.Equal(got, []string{"e"}) {
+		if got := keysOf(km.keys, actEdit); !slices.Equal(got, []string{"e"}) {
 			t.Errorf("nib.edit: %s left keys %v, want the default [e]", tt.value, got)
 		}
 	}
 }
 
 func TestKeysCollisionBetweenTwoEntriesIgnoresBoth(t *testing.T) {
-	km := loadKeymap(t, "tui:\n  keys:\n    nib.status: x\n    nib.type: x\n")
+	km := loadUserSettings(t, "tui:\n  keys:\n    nib.status: x\n    nib.type: x\n")
 	if len(km.ignored) != 2 {
 		t.Fatalf("ignored %+v, want both entries", km.ignored)
 	}
 	if b := ignoredNamed(t, km, "nib.type"); !strings.Contains(b.reason, `"x" is also bound to nib.status in the list`) {
 		t.Errorf("nib.type ignored as %q", b.reason)
 	}
-	if !slices.Equal(keysOf(km, actStatus), []string{"s"}) || !slices.Equal(keysOf(km, actType), []string{"t"}) {
-		t.Errorf("keys = %v and %v, want the defaults s and t", keysOf(km, actStatus), keysOf(km, actType))
+	if !slices.Equal(keysOf(km.keys, actStatus), []string{"s"}) || !slices.Equal(keysOf(km.keys, actType), []string{"t"}) {
+		t.Errorf("keys = %v and %v, want the defaults s and t", keysOf(km.keys, actStatus), keysOf(km.keys, actType))
 	}
 }
 
 func TestKeysCollisionWithAnotherActionsDefaultIsIgnored(t *testing.T) {
-	km := loadKeymap(t, "tui:\n  keys:\n    nib.status: t\n")
+	km := loadUserSettings(t, "tui:\n  keys:\n    nib.status: t\n")
 	b := ignoredNamed(t, km, "nib.status")
 	if !strings.Contains(b.reason, "nib.type") {
 		t.Errorf("nib.status ignored as %q, want it to name nib.type", b.reason)
 	}
-	if !slices.Equal(keysOf(km, actStatus), []string{"s"}) {
-		t.Errorf("nib.status keys = %v, want the default", keysOf(km, actStatus))
+	if !slices.Equal(keysOf(km.keys, actStatus), []string{"s"}) {
+		t.Errorf("nib.status keys = %v, want the default", keysOf(km.keys, actStatus))
 	}
 }
 
 func TestKeysShadowedSequencesAreIgnored(t *testing.T) {
-	km := loadKeymap(t, "tui:\n  keys:\n    nib.priority: g\n    nib.estimate: y x\n")
+	km := loadUserSettings(t, "tui:\n  keys:\n    nib.priority: g\n    nib.estimate: y x\n")
 	if b := ignoredNamed(t, km, "nib.priority"); !strings.Contains(b.reason, `"g" starts move.top's "g g"`) {
 		t.Errorf("nib.priority ignored as %q", b.reason)
 	}
@@ -256,34 +256,34 @@ func TestKeysShadowedSequencesAreIgnored(t *testing.T) {
 
 // confirm.yes is active only in the confirm dialog, and move.down never is.
 func TestKeysSameKeyOnActionsThatShareNoContextIsAccepted(t *testing.T) {
-	km := loadKeymap(t, "tui:\n  keys:\n    confirm.yes: [y, j]\n")
-	if len(km.ignored) != 0 || !slices.Equal(keysOf(km, actConfirmYes), []string{"y", "j"}) {
-		t.Errorf("ignored %+v, confirm.yes keys %v; want none and [y j]", km.ignored, keysOf(km, actConfirmYes))
+	km := loadUserSettings(t, "tui:\n  keys:\n    confirm.yes: [y, j]\n")
+	if len(km.ignored) != 0 || !slices.Equal(keysOf(km.keys, actConfirmYes), []string{"y", "j"}) {
+		t.Errorf("ignored %+v, confirm.yes keys %v; want none and [y j]", km.ignored, keysOf(km.keys, actConfirmYes))
 	}
 }
 
 // Ignoring nib.type gives t back to it, which then collides with nib.status.
 func TestKeysAFallbackCanCollideWithALaterEntry(t *testing.T) {
-	km := loadKeymap(t, "tui:\n  keys:\n    nib.type: n\n    nib.status: t\n")
+	km := loadUserSettings(t, "tui:\n  keys:\n    nib.type: n\n    nib.status: t\n")
 	if len(km.ignored) != 2 {
 		t.Fatalf("ignored %+v, want both entries", km.ignored)
 	}
-	if !slices.Equal(keysOf(km, actStatus), []string{"s"}) || !slices.Equal(keysOf(km, actType), []string{"t"}) {
-		t.Errorf("keys = %v and %v, want the defaults", keysOf(km, actStatus), keysOf(km, actType))
+	if !slices.Equal(keysOf(km.keys, actStatus), []string{"s"}) || !slices.Equal(keysOf(km.keys, actType), []string{"t"}) {
+		t.Errorf("keys = %v and %v, want the defaults", keysOf(km.keys, actStatus), keysOf(km.keys, actType))
 	}
-	if errs := keyConflicts(km.actions); len(errs) > 0 {
+	if errs := keyConflicts(km.keys.actions); len(errs) > 0 {
 		t.Errorf("the keymap has conflicts:\n%s", conflictLines(errs))
 	}
 }
 
 func TestKeysATextBoxKeepsTheKeysThatType(t *testing.T) {
-	km := loadKeymap(t, "tui:\n  keys:\n    input.accept: x\n    palette.run: [enter, space]\n    input.cancel: ctrl+g\n")
+	km := loadUserSettings(t, "tui:\n  keys:\n    input.accept: x\n    palette.run: [enter, space]\n    input.cancel: ctrl+g\n")
 	if b := ignoredNamed(t, km, "input.accept"); !strings.Contains(b.reason, `"x" types text in the filter input`) {
 		t.Errorf("input.accept ignored as %q", b.reason)
 	}
 	ignoredNamed(t, km, "palette.run")
-	if !slices.Equal(keysOf(km, actInputCancel), []string{"ctrl+g"}) {
-		t.Errorf("input.cancel keys = %v, want [ctrl+g]", keysOf(km, actInputCancel))
+	if !slices.Equal(keysOf(km.keys, actInputCancel), []string{"ctrl+g"}) {
+		t.Errorf("input.cancel keys = %v, want [ctrl+g]", keysOf(km.keys, actInputCancel))
 	}
 }
 
@@ -302,10 +302,10 @@ func TestKeysOfTheWrongShapeAreOneIgnoredEntry(t *testing.T) {
 	for _, tt := range tests {
 		tui := tt.tui
 		app := setupTestAppWithUserConfig(t, listKeysNibs(), config.Default(), "nibs:\n  id_length: 4\n"+tui+"\n")
-		if len(app.keys.ignored) != 1 || app.keys.ignored[0].line != tt.line {
-			t.Errorf("%q: ignored %+v, want one entry on line %d", tui, app.keys.ignored, tt.line)
+		if len(app.ignored) != 1 || app.ignored[0].line != tt.line {
+			t.Errorf("%q: ignored %+v, want one entry on line %d", tui, app.ignored, tt.line)
 		}
-		if footer := footerLine(app); !strings.Contains(footer, "Ignored 1 key binding") {
+		if footer := footerLine(app); !strings.Contains(footer, "Ignored 1 TUI setting") {
 			t.Errorf("%q: footer = %q, want the warning", tui, footer)
 		}
 	}
@@ -313,7 +313,7 @@ func TestKeysOfTheWrongShapeAreOneIgnoredEntry(t *testing.T) {
 
 func TestKeysAnEmptyTUIBlockIsTheDefaults(t *testing.T) {
 	for _, tui := range []string{"tui:", "tui: {}", "tui:\n  keys:", "tui:\n  icons: nerd"} {
-		if km := loadKeymap(t, tui+"\n"); len(km.ignored) != 0 {
+		if km := loadUserSettings(t, tui+"\n"); len(km.ignored) != 0 {
 			t.Errorf("%q: ignored %+v, want none", tui, km.ignored)
 		}
 	}
@@ -440,7 +440,7 @@ func TestPickerAcceleratorsAvoidAReboundKey(t *testing.T) {
 func TestIgnoredBindingsWarnAndThePaletteListsThem(t *testing.T) {
 	app := setupTestAppWithUserConfig(t, listKeysNibs(), config.Default(), "nibs:\n  id_length: 4\ntui:\n  keys:\n    nib.prority: P\n")
 
-	want := "Ignored 1 key binding in the user config; ? lists it"
+	want := "Ignored 1 TUI setting in the user config; ? lists it"
 	if footer := footerLine(app); !strings.Contains(footer, want) {
 		t.Fatalf("footer = %q, want %q", footer, want)
 	}
@@ -453,7 +453,7 @@ func TestIgnoredBindingsWarnAndThePaletteListsThem(t *testing.T) {
 
 	pressKeys(app, "?")
 	view := stripAnsi(app.palette.View())
-	for _, part := range []string{"Ignored key bindings in /", "line 5", "nib.prority: P", "no action has this name"} {
+	for _, part := range []string{"Ignored TUI settings in /", "line 5", "nib.prority: P", "no action has this name"} {
 		if !strings.Contains(view, part) {
 			t.Errorf("the palette does not show %q:\n%s", part, view)
 		}
@@ -486,8 +486,8 @@ func TestAUserConfigThatDidNotLoadWarnsAndKeepsTheDefaultKeys(t *testing.T) {
 			t.Errorf("the view does not show %q:\n%s", part, view)
 		}
 	}
-	if len(app.keys.ignored) != 0 {
-		t.Errorf("ignored = %+v, want none: the whole file failed", app.keys.ignored)
+	if len(app.ignored) != 0 {
+		t.Errorf("ignored = %+v, want none: the whole file failed", app.ignored)
 	}
 	for _, a := range defaultActions {
 		if got := keysOf(app.keys, a.Name); !slices.Equal(got, a.Keys) {
@@ -496,7 +496,7 @@ func TestAUserConfigThatDidNotLoadWarnsAndKeepsTheDefaultKeys(t *testing.T) {
 	}
 
 	pressKeys(app, "?")
-	if view := stripAnsi(app.palette.View()); strings.Contains(view, "Ignored key bindings") {
+	if view := stripAnsi(app.palette.View()); strings.Contains(view, "Ignored TUI settings") {
 		t.Errorf("the palette lists ignored bindings for a file that did not load:\n%s", view)
 	}
 }
@@ -542,7 +542,7 @@ func TestKeysCheckKeyAcceptsEveryDefaultKey(t *testing.T) {
 
 func TestKeysASecondEntryForAnActionIsIgnored(t *testing.T) {
 	user, path := writeUserConfig(t, "tui:\n  keys:\n    nib.edit: E\n    nib.edit: x\n")
-	km := buildKeymap(defaultActions, &user.TUI, path)
+	km := loadSettings(defaultActions, &user.TUI, path)
 	if b := ignoredNamed(t, km, "nib.edit"); b.line != 4 {
 		t.Errorf("ignored %+v, want the entry on line 4", b)
 	}
@@ -599,17 +599,17 @@ func TestKeysTheTUIBlockFollowsMergesAliasesAndDuplicates(t *testing.T) {
 		{"alias", base + "tui: *b\n"},
 		{"aliased keys", "k: &k\n  nib.edit: E\ntui:\n  keys: *k\n"},
 	} {
-		km := loadKeymap(t, tt.text)
-		if len(km.ignored) != 0 || !slices.Equal(keysOf(km, actEdit), []string{"E"}) {
-			t.Errorf("%s: ignored %+v, nib.edit keys %v; want none and [E]", tt.name, km.ignored, keysOf(km, actEdit))
+		km := loadUserSettings(t, tt.text)
+		if len(km.ignored) != 0 || !slices.Equal(keysOf(km.keys, actEdit), []string{"E"}) {
+			t.Errorf("%s: ignored %+v, nib.edit keys %v; want none and [E]", tt.name, km.ignored, keysOf(km.keys, actEdit))
 		}
 	}
 
-	km := loadKeymap(t, "tui:\n  keys:\n    nib.edit: E\n  keys:\n    nib.edit: x\n")
+	km := loadUserSettings(t, "tui:\n  keys:\n    nib.edit: E\n  keys:\n    nib.edit: x\n")
 	if len(km.ignored) != 1 || km.ignored[0].line != 2 || !strings.Contains(km.ignored[0].reason, `"keys" already defined`) {
 		t.Errorf("duplicate keys: ignored %+v, want one entry on line 2 naming the duplicate", km.ignored)
 	}
-	if !slices.Equal(keysOf(km, actEdit), []string{"e"}) {
-		t.Errorf("duplicate keys: nib.edit keys %v, want the default", keysOf(km, actEdit))
+	if !slices.Equal(keysOf(km.keys, actEdit), []string{"e"}) {
+		t.Errorf("duplicate keys: nib.edit keys %v, want the default", keysOf(km.keys, actEdit))
 	}
 }

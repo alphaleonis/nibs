@@ -174,11 +174,6 @@ func buildNodes(nibs []*nib.Nib, children map[string][]*nib.Nib, matchedSet map[
 // treeIndent is the cell width of one tree connector.
 const treeIndent = 3
 
-func treeBranch() string     { return glyphTreeBranch() }
-func treeLastBranch() string { return glyphTreeLastBranch() }
-func treePipe() string       { return glyphTreePipe() }
-func treeSpace() string      { return glyphTreeSpace() }
-
 // FlatItem represents a flattened tree node with rendering context.
 // Used by TUI to render tree structure in a flat list.
 type FlatItem struct {
@@ -205,19 +200,20 @@ func MaxTreeDepth(items []FlatItem) int {
 // CollapseIndicatorLeaf pads a leaf to the width of the collapse indicators.
 const CollapseIndicatorLeaf = "  "
 
-func CollapseIndicatorCollapsed() string { return glyphCollapseCollapsed() }
-func CollapseIndicatorExpanded() string  { return glyphCollapseExpanded() }
+func CollapseIndicatorCollapsed(ascii bool) string { return glyphCollapseCollapsed(ascii) }
+func CollapseIndicatorExpanded(ascii bool) string  { return glyphCollapseExpanded(ascii) }
 
 // FlattenTreeFiltered converts a tree into a flat slice, skipping children of collapsed nodes.
-// collapsedIDs is the set of node IDs whose children should be hidden.
-func FlattenTreeFiltered(nodes []*TreeNode, collapsedIDs map[string]bool) []FlatItem {
+// collapsedIDs is the set of node IDs whose children should be hidden. ascii
+// draws the tree prefixes in ASCII.
+func FlattenTreeFiltered(nodes []*TreeNode, collapsedIDs map[string]bool, ascii bool) []FlatItem {
 	var items []FlatItem
-	flattenNodesFiltered(nodes, 0, nil, collapsedIDs, &items)
+	flattenNodesFiltered(nodes, 0, nil, collapsedIDs, ascii, &items)
 	return items
 }
 
 // flattenNodesFiltered recursively flattens tree nodes, skipping children of collapsed nodes.
-func flattenNodesFiltered(nodes []*TreeNode, depth int, ancestry []bool, collapsedIDs map[string]bool, items *[]FlatItem) {
+func flattenNodesFiltered(nodes []*TreeNode, depth int, ancestry []bool, collapsedIDs map[string]bool, ascii bool, items *[]FlatItem) {
 	for i, node := range nodes {
 		isLast := i == len(nodes)-1
 		hasChildren := len(node.Children) > 0
@@ -227,22 +223,22 @@ func flattenNodesFiltered(nodes []*TreeNode, depth int, ancestry []bool, collaps
 		if depth > 0 {
 			for _, wasLast := range ancestry {
 				if wasLast {
-					prefix += treeSpace()
+					prefix += glyphTreeSpace(ascii)
 				} else {
-					prefix += treePipe()
+					prefix += glyphTreePipe(ascii)
 				}
 			}
 			if isLast {
-				prefix += treeLastBranch()
+				prefix += glyphTreeLastBranch(ascii)
 			} else {
-				prefix += treeBranch()
+				prefix += glyphTreeBranch(ascii)
 			}
 		}
 
 		if isCollapsed {
-			prefix += CollapseIndicatorCollapsed()
+			prefix += CollapseIndicatorCollapsed(ascii)
 		} else if hasChildren {
-			prefix += CollapseIndicatorExpanded()
+			prefix += CollapseIndicatorExpanded(ascii)
 		} else {
 			prefix += CollapseIndicatorLeaf
 		}
@@ -262,7 +258,7 @@ func flattenNodesFiltered(nodes []*TreeNode, depth int, ancestry []bool, collaps
 			if depth > 0 {
 				newAncestry = append(ancestry, isLast)
 			}
-			flattenNodesFiltered(node.Children, depth+1, newAncestry, collapsedIDs, items)
+			flattenNodesFiltered(node.Children, depth+1, newAncestry, collapsedIDs, ascii, items)
 		}
 	}
 }

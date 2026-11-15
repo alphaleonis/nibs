@@ -22,6 +22,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/nibtypes"
 	"github.com/alphaleonis/nibs/internal/updatecheck"
 	"github.com/atotto/clipboard"
+	"gopkg.in/yaml.v3"
 )
 
 type viewState int
@@ -159,6 +160,11 @@ type App struct {
 	backend        Backend
 	config         *config.Config
 	keys           keymap
+	display        display
+	// ignored lists the entries of the user config's tui block that were
+	// ignored, and settingsSource the file they are in, or "" for none.
+	ignored        []ignoredEntry
+	settingsSource string
 	width          int
 	height         int
 	program        *tea.Program // receives watcher events; see Run
@@ -178,41 +184,54 @@ type App struct {
 
 // New creates the TUI application.
 //
-// Its keys are the defaults with the tui.keys of user applied. A user config
-// that did not load opens the TUI with a warning in the status line. version is
-// the running binary version, for the update-available indicator.
+// It applies the tui block of user over the default settings, as loadSettings
+// does. Icons are ascii when the terminal does not display UTF-8, whatever the
+// block sets. With ascii icons the list's rows and box, and the nib view's link
+// rows, are ASCII too. A user config that did not load, or a tui entry that was
+// ignored, opens the TUI with a warning in the status line.
+// version is the running binary version, for the update-available indicator.
 func New(backend Backend, cfg *config.Config, user config.UserLayer, version string) *App {
-	keys := defaultKeymap()
+	var tui *yaml.Node
 	if user.Config != nil {
-		keys = buildKeymap(defaultActions, &user.Config.TUI, user.Path)
+		tui = &user.Config.TUI
+	}
+	s := loadSettings(defaultActions, tui, user.Path)
+	s.display.prefix = cfg.Nibs.Prefix
+	if !terminalUTF8() {
+		s.display.icons = iconsASCII
 	}
 	a := &App{
-		state:   viewList,
-		backend: backend,
-		config:  cfg,
-		keys:    keys,
-		list:    newListModel(backend, cfg),
-		preview: newPreviewModel(nil, 0, 0),
-		version: version,
+		state:          viewList,
+		backend:        backend,
+		config:         cfg,
+		keys:           s.keys,
+		display:        s.display,
+		ignored:        s.ignored,
+		settingsSource: s.source,
+		list:           newListModel(backend, cfg),
+		preview:        newPreviewModel(nil, 0, 0),
+		version:        version,
 	}
+	a.list.setASCII(s.display.ascii())
 	if user.Failure != nil {
 		a.list.statusMessage = "Warning: " + user.Failure.Message()
 		a.list.statusKind = statusWarn
-	} else if n := len(keys.ignored); n > 0 {
-		a.list.statusMessage = ignoredBindingsWarning(n, keys.firstKey(actHelp))
+	} else if n := len(s.ignored); n > 0 {
+		a.list.statusMessage = ignoredSettingsWarning(n, s.keys.firstKey(actHelp))
 		a.list.statusKind = statusWarn
 	}
 	return a
 }
 
-// ignoredBindingsWarning is the status line's warning that n tui.keys entries
-// were ignored. help is the key that opens the palette, which lists them.
-func ignoredBindingsWarning(n int, help string) string {
-	noun, them := "bindings", "them"
+// ignoredSettingsWarning is the status line's warning that n entries of the
+// user config's tui block were ignored. help is the key that opens the
+// palette, which lists them.
+func ignoredSettingsWarning(n int, help string) string {
+	noun, them := "settings", "them"
 	if n == 1 {
-		noun, them = "binding", "it"
+		noun, them = "setting", "it"
 	}
-	return fmt.Sprintf("Ignored %d key %s in the user config; %s lists %s", n, noun, help, them)
+	return fmt.Sprintf("Ignored %d TUI %s in the user config; %s lists %s", n, noun, help, them)
 }
 
 // Init initializes the application
@@ -325,7 +344,7 @@ func (a *App) runAction(act *action) tea.Cmd {
 	case actQuit, actForceQuit:
 		return tea.Quit
 	case actHelp:
-		a.palette = newPaletteModel(a.keys, a.state, a.actionState(), a.width, a.height)
+		a.palette = newPaletteModel(a.keys, a.ignored, a.settingsSource, a.state, a.actionState(), a.width, a.height)
 		a.state = viewPalette
 		return a.palette.Init()
 	case actPaletteClose:
@@ -1025,7 +1044,7 @@ func (a *App) getBackgroundView() string {
 
 // initDetailModel creates a detail model with an empty footer.
 func (a *App) initDetailModel(n *nib.Nib) detailModel {
-	return newDetailModel(n, a.backend, a.config, a.width, a.height)
+	return newDetailModel(n, a.backend, a.config, a.width, a.height, a.display.ascii())
 }
 
 // reportMutationFailures reports a picker's failed mutations in the footer of

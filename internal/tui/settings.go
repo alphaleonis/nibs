@@ -1,0 +1,167 @@
+package tui
+
+import (
+	"cmp"
+	"slices"
+
+	"github.com/alphaleonis/nibs/internal/safetext"
+	"github.com/alphaleonis/nibs/internal/ui"
+	"gopkg.in/yaml.v3"
+)
+
+// terminalUTF8 reports whether the terminal displays UTF-8. Tests replace it.
+var terminalUTF8 = ui.TerminalUTF8
+
+// settings is the user config's tui block as the TUI applies it.
+type settings struct {
+	keys    keymap
+	display display
+	// ignored lists the entries of the block that the TUI ignored, by line.
+	ignored []ignoredEntry
+	// source is the path of the file the block came from, or "" for none.
+	source string
+}
+
+// ignoredEntry is an entry of the user config's tui block that the TUI
+// ignored, so its setting kept its default.
+type ignoredEntry struct {
+	entry  string // the entry as written, "name: value"
+	line   int    // the entry's line in the file, from 1
+	reason string
+}
+
+// display is how rows show a nib.
+type display struct {
+	icons    iconSet // the set rows draw with
+	shortIDs bool    // whether rows drop the store's own prefix from IDs
+	prefix   string  // the store's own ID prefix
+}
+
+// ascii reports whether the TUI draws in ASCII: its icons, the list's tree,
+// cursor, markers and box, and the nib view's link rows. The palette, modals
+// and other boxes stay UTF-8.
+func (d display) ascii() bool {
+	return d.icons == iconsASCII
+}
+
+// id returns id as rows show it: without the store's own prefix while short
+// IDs are on, and whole otherwise.
+func (d display) id(id string) string {
+	if !d.shortIDs {
+		return id
+	}
+	return shortID(id, d.prefix)
+}
+
+// tuiBlock is the user config's tui block. Each setting stays a node, so a
+// value that cannot be used costs only its own setting.
+type tuiBlock struct {
+	Keys     yaml.Node `yaml:"keys"`
+	Icons    yaml.Node `yaml:"icons"`
+	ShortIDs yaml.Node `yaml:"short_ids"`
+
+	keyLines map[string]int // the line of each key written in the block itself
+}
+
+// line returns the line of the setting name's key, or of value when the key
+// is not written in the block itself, as with one a merge key brings in.
+func (b *tuiBlock) line(name string, value *yaml.Node) int {
+	if l, ok := b.keyLines[name]; ok {
+		return l
+	}
+	return value.Line
+}
+
+// loadSettings applies tui, the user config's tui block, over the defaults:
+// the keys of defaults, which must have no key conflicts, unicode icons and
+// short IDs. A setting whose value cannot be used is ignored and keeps its
+// default. A block that is not a mapping or does not decode is one ignored
+// entry, and every setting keeps its default. A nil or empty block gives the
+// defaults. source is the file tui came from.
+//
+// The display it returns has no store prefix, and its icons are the configured
+// set whatever the terminal can show.
+func loadSettings(defaults []action, tui *yaml.Node, source string) settings {
+	s := settings{
+		keys:    keymap{actions: defaults},
+		display: display{icons: iconsUnicode, shortIDs: true},
+		source:  source,
+	}
+	block, bad := decodeTUIBlock(tui)
+	if bad != nil {
+		s.ignored = []ignoredEntry{*bad}
+		return s
+	}
+	if block == nil {
+		return s
+	}
+	keys, ignoredKeys := buildKeymap(defaults, &block.Keys, block.line("keys", &block.Keys))
+	s.keys = keys
+	s.ignored = append(ignoredKeys, s.applyDisplay(block)...)
+	slices.SortStableFunc(s.ignored, func(a, b ignoredEntry) int { return cmp.Compare(a.line, b.line) })
+	return s
+}
+
+// applyDisplay sets the display settings of block on s.display, and returns
+// the entries it ignored.
+func (s *settings) applyDisplay(block *tuiBlock) []ignoredEntry {
+	var ignored []ignoredEntry
+	ignore := func(name string, n *yaml.Node, reason string) {
+		ignored = append(ignored, ignoredEntry{entry: safetext.StripBounded(name + ": " + nodeText(resolveAlias(n))), line: block.line(name, n), reason: reason})
+	}
+
+	if n := resolveAlias(&block.Icons); !absentNode(n) {
+		if set := iconSet(n.Value); n.Kind == yaml.ScalarNode && slices.Contains(iconSets, set) {
+			s.display.icons = set
+		} else {
+			ignore("icons", &block.Icons, "is not unicode, nerd or ascii")
+		}
+	}
+
+	if n := resolveAlias(&block.ShortIDs); !absentNode(n) {
+		var on bool
+		if n.Kind == yaml.ScalarNode && n.Tag == "!!bool" && n.Decode(&on) == nil {
+			s.display.shortIDs = on
+		} else {
+			ignore("short_ids", &block.ShortIDs, "is not true or false")
+		}
+	}
+	return ignored
+}
+
+// decodeTUIBlock returns the tui block decoded, or nil when there is none. It
+// also returns nil, and the ignored entry, when the block is not a mapping or
+// does not decode. yaml.v3 decodes the block, so merge keys and aliases apply
+// and a repeated setting is an error.
+func decodeTUIBlock(tui *yaml.Node) (*tuiBlock, *ignoredEntry) {
+	if absentNode(tui) {
+		return nil, nil
+	}
+	resolved := resolveAlias(tui)
+	if resolved.Kind != yaml.MappingNode {
+		return nil, &ignoredEntry{entry: safetext.StripBounded("tui: " + nodeText(resolved)), line: tui.Line, reason: "is not a map of TUI settings"}
+	}
+	var block tuiBlock
+	if err := tui.Decode(&block); err != nil {
+		return nil, &ignoredEntry{entry: "tui", line: tui.Line, reason: safetext.StripBounded(decodeError(err))}
+	}
+	block.keyLines = map[string]int{}
+	for i := 0; i+1 < len(resolved.Content); i += 2 {
+		block.keyLines[resolved.Content[i].Value] = resolved.Content[i].Line
+	}
+	return &block, nil
+}
+
+// resolveAlias returns the node an alias names, or n itself when it is not an
+// alias.
+func resolveAlias(n *yaml.Node) *yaml.Node {
+	if n != nil && n.Kind == yaml.AliasNode {
+		return n.Alias
+	}
+	return n
+}
+
+// absentNode reports whether n holds no value: it is nil, empty, or null.
+func absentNode(n *yaml.Node) bool {
+	return n == nil || n.Kind == 0 || n.Tag == "!!null"
+}

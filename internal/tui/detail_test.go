@@ -101,7 +101,7 @@ func TestDetailPanesFillTheirAllottedWidth(t *testing.T) {
 		Type:   "task",
 		Body:   "## Description\n\nSome body text.\n",
 	}
-	m := newDetailModel(b, &StubBackend{Nibs: map[string]*nib.Nib{"nibs-test": b}}, config.Default(), 120, 40)
+	m := newDetailModel(b, &StubBackend{Nibs: map[string]*nib.Nib{"nibs-test": b}}, config.Default(), 120, 40, false)
 
 	// The detail panes are laid out with a one-column gutter on each side.
 	const want = 120 - 2
@@ -134,7 +134,7 @@ func TestRenderBodyKeepsFirstLineIndent(t *testing.T) {
 		ID: "nibs-test", Title: "Indent", Status: "todo", Type: "task",
 		Body: "## Description\n\nSome body text.\n",
 	}
-	m := newDetailModel(b, &StubBackend{Nibs: map[string]*nib.Nib{"nibs-test": b}}, config.Default(), 120, 40)
+	m := newDetailModel(b, &StubBackend{Nibs: map[string]*nib.Nib{"nibs-test": b}}, config.Default(), 120, 40, false)
 
 	out := m.renderBody(100)
 	lines := strings.Split(out, "\n")
@@ -155,7 +155,7 @@ func TestMarkdownBodyWrapsToThePaneWidth(t *testing.T) {
 
 	for _, width := range []int{50, 100, 160} {
 		t.Run(fmt.Sprintf("detail at %d", width), func(t *testing.T) {
-			m := newDetailModel(b, &StubBackend{Nibs: map[string]*nib.Nib{b.ID: b}}, config.Default(), width, 40)
+			m := newDetailModel(b, &StubBackend{Nibs: map[string]*nib.Nib{b.ID: b}}, config.Default(), width, 40, false)
 			vpWidth := width - 4
 			out := m.renderBody(vpWidth)
 			assertLinesFit(t, out, vpWidth)
@@ -300,7 +300,7 @@ func TestALinkRowTruncatesItsTitleInsteadOfBeingClipped(t *testing.T) {
 
 	for _, width := range []int{100, 160} {
 		t.Run(fmt.Sprintf("width %d", width), func(t *testing.T) {
-			m := newDetailModel(child, backend, config.Default(), width, 40)
+			m := newDetailModel(child, backend, config.Default(), width, 40, false)
 			var row string
 			for _, line := range strings.Split(stripAnsi(m.linksBox()), "\n") {
 				if strings.Contains(line, "p1") {

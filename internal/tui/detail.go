@@ -66,6 +66,7 @@ type linkDelegate struct {
 	cfg   *config.Config
 	width int
 	cols  ui.ResponsiveColumns
+	ascii bool // draw the row's glyphs in ASCII
 }
 
 func (d linkDelegate) Height() int                             { return 1 }
@@ -82,7 +83,7 @@ func (d linkDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 
 	cursor := "  "
 	if index == m.Index() {
-		cursor = ui.Primary.Render(ui.GlyphSectionCursor())
+		cursor = ui.Primary.Render(ui.GlyphSectionCursor(d.ascii))
 	}
 
 	labelCol := lipgloss.NewStyle().Width(12).Render(ui.Muted.Render(item.label + ":"))
@@ -119,6 +120,7 @@ func (d linkDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 			TagsColWidth:  d.cols.Tags,
 			MaxTags:       d.cols.MaxTags,
 			UseFullNames:  d.cols.UseFullTypeStatus,
+			ASCIIGlyphs:   d.ascii,
 		},
 	)
 
@@ -144,9 +146,10 @@ type detailModel struct {
 	statusMessage string
 	statusKind    statusKind
 	hints         string // the rendered hint row, set by App
+	ascii         bool   // draw link rows and the status message in ASCII
 }
 
-func newDetailModel(b *nib.Nib, backend Backend, cfg *config.Config, width, height int) detailModel {
+func newDetailModel(b *nib.Nib, backend Backend, cfg *config.Config, width, height int, ascii bool) detailModel {
 	m := detailModel{
 		nib:         b,
 		backend:     backend,
@@ -155,6 +158,7 @@ func newDetailModel(b *nib.Nib, backend Backend, cfg *config.Config, width, heig
 		height:      height,
 		ready:       true,
 		linksActive: false,
+		ascii:       ascii,
 	}
 
 	m.links = m.resolveAllLinks()
@@ -247,11 +251,7 @@ func (m detailModel) linksSection() string {
 }
 
 func (m detailModel) createLinkList() list.Model {
-	delegate := linkDelegate{
-		cfg:   m.config,
-		width: m.width,
-		cols:  m.cols,
-	}
+	delegate := m.newLinkDelegate()
 
 	items := make([]list.Item, len(m.links))
 	for i, link := range m.links {
@@ -452,12 +452,17 @@ func (m *detailModel) scrollBody(name actionName) bool {
 }
 
 func (m *detailModel) updateLinkListDelegate() {
-	delegate := linkDelegate{
+	m.linkList.SetDelegate(m.newLinkDelegate())
+}
+
+// newLinkDelegate returns the delegate that draws the link rows at m's size.
+func (m detailModel) newLinkDelegate() linkDelegate {
+	return linkDelegate{
 		cfg:   m.config,
 		width: m.width,
 		cols:  m.cols,
+		ascii: m.ascii,
 	}
-	m.linkList.SetDelegate(delegate)
 }
 
 func (m detailModel) View() string {
@@ -543,7 +548,7 @@ func (m detailModel) renderFooter(painted paintedFrame) string {
 
 	if m.statusMessage != "" {
 		// On its own lines above the hint row, so the keys stay on screen.
-		footer = renderStatusMessage(m.statusMessage, m.statusKind, m.width, maxStatusFooterLines(m.height)) + "\n" + footer
+		footer = renderStatusMessage(m.statusMessage, m.statusKind, m.width, maxStatusFooterLines(m.height), m.ascii) + "\n" + footer
 	}
 	// The hint row does not wrap, so clip it; the status message is already
 	// wrapped to width.

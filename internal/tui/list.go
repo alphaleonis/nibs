@@ -36,6 +36,7 @@ type itemDelegate struct {
 	cols         ui.ResponsiveColumns
 	idColWidth   int              // includes the tree prefix
 	selectedNibs *map[string]bool // IDs marked for multi-select
+	ascii        bool             // draw the row's glyphs in ASCII
 }
 
 func (d itemDelegate) Height() int                             { return 1 }
@@ -93,6 +94,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 			UseFullNames:  d.cols.UseFullTypeStatus,
 			IsBlocked:     item.isBlocked,
 			IsBlocking:    item.isBlocking,
+			ASCIIGlyphs:   d.ascii,
 		},
 	)
 
@@ -123,6 +125,8 @@ type listModel struct {
 
 	// Full type/status names, and no preview pane.
 	wideMode bool
+
+	ascii bool // draw rows and chrome in ASCII; set through setASCII
 
 	selectedNibs map[string]bool // IDs marked for multi-select
 
@@ -213,7 +217,7 @@ func (m listModel) loadNibs() tea.Msg {
 	}
 
 	tree := ui.BuildTree(filteredNibs, allNibs, sortFn)
-	items := ui.FlattenTreeFiltered(tree, m.collapsedIDs)
+	items := ui.FlattenTreeFiltered(tree, m.collapsedIDs, m.ascii)
 
 	maxIDLen := 0
 	for _, b := range allNibs {
@@ -662,8 +666,31 @@ func (m *listModel) updateDelegate() {
 		cols:         m.cols,
 		idColWidth:   m.idColWidth,
 		selectedNibs: &m.selectedNibs,
+		ascii:        m.ascii,
 	}
 	m.list.SetDelegate(delegate)
+}
+
+// setASCII makes the list draw its rows, box and page dots in ASCII, or in
+// UTF-8 when ascii is false. Call it before the first load, which draws the
+// tree prefixes.
+func (m *listModel) setASCII(ascii bool) {
+	m.ascii = ascii
+	active, inactive := "•", "•"
+	if ascii {
+		active, inactive = "*", "."
+	}
+	m.list.Paginator.ActiveDot = m.list.Styles.ActivePaginationDot.SetString(active).String()
+	m.list.Paginator.InactiveDot = m.list.Styles.InactivePaginationDot.SetString(inactive).String()
+	m.updateDelegate()
+}
+
+// boxBorder returns the border the list is drawn in.
+func (m listModel) boxBorder() lipgloss.Border {
+	if m.ascii {
+		return lipgloss.ASCIIBorder()
+	}
+	return lipgloss.RoundedBorder()
 }
 
 // applyWideMode forces full type/status column widths when wide mode is active
@@ -686,7 +713,7 @@ func (m *listModel) reflattenTree() tea.Cmd {
 		currentNibID = item.nib.ID
 	}
 
-	flatItems := ui.FlattenTreeFiltered(m.tree, m.collapsedIDs)
+	flatItems := ui.FlattenTreeFiltered(m.tree, m.collapsedIDs, m.ascii)
 
 	items := make([]list.Item, len(flatItems))
 	m.hasTags = false
@@ -797,7 +824,7 @@ func (m listModel) viewContent(innerHeight int) string {
 	m.list.SetSize(m.width-2, innerHeight)
 
 	border := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
+		Border(m.boxBorder()).
 		BorderForeground(ui.ColorMuted).
 		Width(withBorder(m.width - 2)).
 		Height(withBorder(innerHeight))
@@ -818,20 +845,21 @@ func (m listModel) viewContent(innerHeight int) string {
 // ─┤ and ├ around the text.
 func badgeWidth(text string) int { return 2 + lipgloss.Width(text) + 1 }
 
-// truncateBorderTitle fits title into budget cells, ending a cut with an
-// ellipsis. Spaces left before the ellipsis are dropped.
-func truncateBorderTitle(title string, budget int) string {
+// truncateBorderTitle fits title into budget cells, ending a cut with mark.
+// Spaces left before mark are dropped.
+func truncateBorderTitle(title string, budget int, mark string) string {
 	if budget <= 0 {
 		return ""
 	}
 	if lipgloss.Width(title) <= budget {
 		return title
 	}
-	if budget == 1 {
-		return "…"
+	room := budget - lipgloss.Width(mark)
+	if room <= 0 {
+		return lipgloss.NewStyle().MaxWidth(budget).Render(mark)
 	}
-	cut := strings.TrimRight(lipgloss.NewStyle().MaxWidth(budget-1).Render(title), " ")
-	return cut + "…"
+	cut := strings.TrimRight(lipgloss.NewStyle().MaxWidth(room).Render(title), " ")
+	return cut + mark
 }
 
 // buildBorderTopLine draws the top border with the title on the left and the
@@ -839,13 +867,14 @@ func truncateBorderTitle(title string, budget int) string {
 func (m listModel) buildBorderTopLine() string {
 	borderStyle := lipgloss.NewStyle().Foreground(ui.ColorMuted)
 	br := func(s string) string { return borderStyle.Render(s) }
+	border := m.boxBorder()
 
 	if m.width < 20 {
 		fill := m.width - 2 // ╭ and ╮
 		if fill < 0 {
 			fill = 0
 		}
-		return br("╭") + br(strings.Repeat("─", fill)) + br("╮")
+		return br(border.TopLeft) + br(strings.Repeat(border.Top, fill)) + br(border.TopRight)
 	}
 
 	type badge struct {
@@ -892,7 +921,7 @@ func (m listModel) buildBorderTopLine() string {
 			titleBudget = budget - first
 		}
 	}
-	title := truncateBorderTitle(m.borderTitle, titleBudget)
+	title := truncateBorderTitle(m.borderTitle, titleBudget, ellipsis(m.ascii))
 	titleWidth := 4 + lipgloss.Width(title) // ╭─ + title + space
 
 	// Pre-render the badges that fit, dropping from the right.
@@ -907,21 +936,21 @@ func (m listModel) buildBorderTopLine() string {
 			break
 		}
 		renderedBadges = append(renderedBadges, renderedBadge{
-			open:  br("─┤"),
+			open:  br(border.Top + border.MiddleRight),
 			text:  b.style.Render(b.text),
-			close: br("├"),
+			close: br(border.MiddleLeft),
 		})
 		badgesWidth += width
 	}
 
 	var buf strings.Builder
-	buf.WriteString(br("╭─ "))
+	buf.WriteString(br(border.TopLeft + border.Top + " "))
 	buf.WriteString(listTitleStyle.Render(title))
 	buf.WriteString(br(" "))
 
 	fill := m.width - titleWidth - badgesWidth - 1 // -1 for closing ╮
 	if fill > 0 {
-		buf.WriteString(br(strings.Repeat("─", fill)))
+		buf.WriteString(br(strings.Repeat(border.Top, fill)))
 	}
 
 	for _, rb := range renderedBadges {
@@ -930,7 +959,7 @@ func (m listModel) buildBorderTopLine() string {
 		buf.WriteString(rb.close)
 	}
 
-	buf.WriteString(br("╮"))
+	buf.WriteString(br(border.TopRight))
 	return buf.String()
 }
 
@@ -945,7 +974,7 @@ func (m listModel) Footer() string {
 
 	footer := selectionPrefix
 	if m.statusMessage != "" {
-		footer += renderStatusMessage(m.statusMessage, m.statusKind, m.width-lipgloss.Width(selectionPrefix), maxStatusFooterLines(m.height))
+		footer += renderStatusMessage(m.statusMessage, m.statusKind, m.width-lipgloss.Width(selectionPrefix), maxStatusFooterLines(m.height), m.ascii)
 	} else {
 		footer += m.hints
 	}
@@ -968,7 +997,11 @@ func (m listModel) updateIndicator() string {
 		return ""
 	}
 	style := lipgloss.NewStyle().Foreground(ui.ColorPrimary).Bold(true)
-	return "  " + style.Render(fmt.Sprintf("↑ nibs %s available — nibs upgrade", m.updateLatest))
+	text := fmt.Sprintf("↑ nibs %s available — nibs upgrade", m.updateLatest)
+	if m.ascii {
+		text = fmt.Sprintf("^ nibs %s available - nibs upgrade", m.updateLatest)
+	}
+	return "  " + style.Render(text)
 }
 
 // updateTitle sets the border title from the project name; buildBorderTopLine

@@ -246,7 +246,7 @@ func TestSuccessfulStatusChangeReportsNothing(t *testing.T) {
 // went through.
 func TestDetailFooterColorsARefusalAsAWarning(t *testing.T) {
 	n := &nib.Nib{ID: "nib-1", Title: "First", Type: "milestone", Status: "todo"}
-	m := newDetailModel(n, &StubBackend{}, config.Default(), 80, 24)
+	m := newDetailModel(n, &StubBackend{}, config.Default(), 80, 24, false)
 	m.statusMessage = "Status change failed: " + refusalReason
 
 	m.statusKind = statusOK
@@ -645,7 +645,7 @@ func TestWrappedStatusMessageIsNotPaddedOut(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			lines := strings.Split(renderStatusMessage(tt.msg, statusWarn, width, 0), "\n")
+			lines := strings.Split(renderStatusMessage(tt.msg, statusWarn, width, 0, false), "\n")
 			for i, line := range lines {
 				if got := lipgloss.Width(line); got > width {
 					t.Errorf("line %d is %d columns wide, want at most %d: %q", i, got, width, line)
@@ -1575,7 +1575,7 @@ func TestTheLaunchFailureKeepsItsRemedyInTheDetailFrame(t *testing.T) {
 				}
 
 				rows := maxStatusFooterLines(app.detail.height)
-				granted := frameText(renderStatusMessage(app.detail.statusMessage, app.detail.statusKind, width, rows), width, height)
+				granted := frameText(renderStatusMessage(app.detail.statusMessage, app.detail.statusKind, width, rows, false), width, height)
 				if strings.Contains(granted, remedy) {
 					if !strings.Contains(painted, remedy) {
 						t.Errorf("the status region granted %q at %d row(s) and the frame did not paint it — the composition lost what the message is for:\n%s",

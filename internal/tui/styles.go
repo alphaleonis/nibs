@@ -34,12 +34,12 @@ func clipToWidth(s string, width int) string {
 func maxStatusFooterLines(height int) int { return max(1, height/3) }
 
 // renderStatusMessage colors a footer status message by kind and wraps it to
-// width, cut off after maxLines with an ellipsis. It wraps so that a refusal
+// width, cut off after maxLines with an ellipsis, in ASCII when ascii is set. It wraps so that a refusal
 // wider than the terminal keeps its remedy, at the end, on screen.
 //
 // Lines are trimmed, not padded to width: the list footer appends its update
 // indicator to the last line.
-func renderStatusMessage(msg string, kind statusKind, width, maxLines int) string {
+func renderStatusMessage(msg string, kind statusKind, width, maxLines int, ascii bool) string {
 	wrapWidth := max(minStatusWrapWidth, width)
 	lines := strings.Split(lipgloss.NewStyle().Width(wrapWidth).Render(msg), "\n")
 	for i, line := range lines {
@@ -48,7 +48,8 @@ func renderStatusMessage(msg string, kind statusKind, width, maxLines int) strin
 	if maxLines > 0 && len(lines) > maxLines {
 		lines = lines[:maxLines]
 		last := len(lines) - 1
-		lines[last] = lipgloss.NewStyle().MaxWidth(wrapWidth-1).Render(lines[last]) + "…"
+		mark := ellipsis(ascii)
+		lines[last] = lipgloss.NewStyle().MaxWidth(wrapWidth-lipgloss.Width(mark)).Render(lines[last]) + mark
 	}
 
 	color := ui.ColorSuccess
@@ -60,6 +61,14 @@ func renderStatusMessage(msg string, kind statusKind, width, maxLines int) strin
 		lines[i] = style.Render(line)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// ellipsis returns the mark that ends cut text, in ASCII when ascii is set.
+func ellipsis(ascii bool) string {
+	if ascii {
+		return "..."
+	}
+	return "…"
 }
 
 // blockLines is lipgloss.Height, except that an absent block takes zero rows

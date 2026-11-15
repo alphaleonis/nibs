@@ -27,6 +27,8 @@ type paletteModel struct {
 	origin  viewState  // the view ? was pressed in
 	ctx     keyContext // origin's key context
 	keys    keymap
+	ignored []ignoredEntry // the user config's ignored tui entries
+	source  string         // the user config's path, or "" for none
 	entries []paletteEntry
 	query   textinput.Model
 	cursor  int // index into shown()
@@ -35,8 +37,8 @@ type paletteModel struct {
 }
 
 // newPaletteModel lists the actions of keys active in st.ctx, in actionsByGroup
-// order, and the bindings keys ignored.
-func newPaletteModel(keys keymap, origin viewState, st actionState, width, height int) paletteModel {
+// order, and the ignored entries of the user config at source.
+func newPaletteModel(keys keymap, ignored []ignoredEntry, source string, origin viewState, st actionState, width, height int) paletteModel {
 	var entries []paletteEntry
 	for _, a := range actionsByGroup(keys.actions, st.ctx) {
 		e := paletteEntry{act: a, keys: strings.Join(a.Keys, ", "), ready: true}
@@ -56,7 +58,7 @@ func newPaletteModel(keys keymap, origin viewState, st actionState, width, heigh
 	q.SetStyles(styles)
 	q.Focus()
 
-	return paletteModel{origin: origin, ctx: st.ctx, keys: keys, entries: entries, query: q, width: width, height: height}
+	return paletteModel{origin: origin, ctx: st.ctx, keys: keys, ignored: ignored, source: source, entries: entries, query: q, width: width, height: height}
 }
 
 func (m paletteModel) Init() tea.Cmd {
@@ -155,7 +157,7 @@ func (m paletteModel) View() string {
 		Render(content)
 }
 
-// bodyLines renders the ignored bindings that match the query, then the shown
+// bodyLines renders the ignored entries that match the query, then the shown
 // entries under their group headings. It renders at most room lines of width
 // cells, scrolled so the highlighted entry is on screen.
 func (m paletteModel) bodyLines(width, room int) []string {
@@ -198,13 +200,13 @@ func (m paletteModel) bodyLines(width, room int) []string {
 	return lines[start:min(len(lines), start+room)]
 }
 
-// ignoredLines renders the tui.keys entries the keymap ignored whose text or
-// reason contains the query, ignoring letter case, under a heading that names
-// the file. It returns nothing when no ignored entry matches.
+// ignoredLines renders the ignored tui entries whose text or reason contains
+// the query, ignoring letter case, under a heading that names the file. It
+// returns nothing when no ignored entry matches.
 func (m paletteModel) ignoredLines(width int) []string {
 	q := strings.ToLower(m.query.Value())
 	var lines []string
-	for _, b := range m.keys.ignored {
+	for _, b := range m.ignored {
 		if !strings.Contains(strings.ToLower(b.entry+"\n"+b.reason), q) {
 			continue
 		}
@@ -214,9 +216,9 @@ func (m paletteModel) ignoredLines(width int) []string {
 	if len(lines) == 0 {
 		return nil
 	}
-	heading := "Ignored key bindings"
-	if m.keys.source != "" {
-		heading += " in " + safetext.StripBounded(m.keys.source)
+	heading := "Ignored TUI settings"
+	if m.source != "" {
+		heading += " in " + safetext.StripBounded(m.source)
 	}
 	lines = slices.Insert(lines, 0, truncateTitle(paletteWarnStyle.Render(heading), width))
 	return append(lines, "")

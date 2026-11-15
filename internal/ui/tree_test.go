@@ -442,7 +442,7 @@ func TestFlattenTreeFiltered(t *testing.T) {
 	}
 
 	t.Run("no collapsed nodes returns all items", func(t *testing.T) {
-		items := FlattenTreeFiltered(tree, nil)
+		items := FlattenTreeFiltered(tree, nil, false)
 		expectedIDs := []string{"m1", "e1", "t1", "t2", "e2", "t3"}
 		if len(items) != len(expectedIDs) {
 			t.Fatalf("expected %d items, got %d", len(expectedIDs), len(items))
@@ -456,7 +456,7 @@ func TestFlattenTreeFiltered(t *testing.T) {
 
 	t.Run("collapse parent hides children", func(t *testing.T) {
 		collapsed := map[string]bool{"e1": true}
-		items := FlattenTreeFiltered(tree, collapsed)
+		items := FlattenTreeFiltered(tree, collapsed, false)
 		// e1 is collapsed, so t1 and t2 are hidden
 		expectedIDs := []string{"m1", "e1", "e2", "t3"}
 		if len(items) != len(expectedIDs) {
@@ -471,7 +471,7 @@ func TestFlattenTreeFiltered(t *testing.T) {
 
 	t.Run("collapse grandparent hides all descendants", func(t *testing.T) {
 		collapsed := map[string]bool{"m1": true}
-		items := FlattenTreeFiltered(tree, collapsed)
+		items := FlattenTreeFiltered(tree, collapsed, false)
 		// m1 is collapsed, so e1, t1, t2, e2 are all hidden
 		expectedIDs := []string{"m1", "t3"}
 		if len(items) != len(expectedIDs) {
@@ -486,7 +486,7 @@ func TestFlattenTreeFiltered(t *testing.T) {
 
 	t.Run("collapse leaf has no effect", func(t *testing.T) {
 		collapsed := map[string]bool{"t1": true}
-		items := FlattenTreeFiltered(tree, collapsed)
+		items := FlattenTreeFiltered(tree, collapsed, false)
 		// t1 has no children, so collapsing it changes nothing
 		expectedIDs := []string{"m1", "e1", "t1", "t2", "e2", "t3"}
 		if len(items) != len(expectedIDs) {
@@ -496,7 +496,7 @@ func TestFlattenTreeFiltered(t *testing.T) {
 
 	t.Run("HasChildren and Collapsed flags", func(t *testing.T) {
 		collapsed := map[string]bool{"e1": true}
-		items := FlattenTreeFiltered(tree, collapsed)
+		items := FlattenTreeFiltered(tree, collapsed, false)
 
 		// m1 has children, expanded
 		if !items[0].HasChildren {
@@ -527,15 +527,15 @@ func TestFlattenTreeFiltered(t *testing.T) {
 
 	t.Run("collapse indicators in prefix", func(t *testing.T) {
 		collapsed := map[string]bool{"e1": true}
-		items := FlattenTreeFiltered(tree, collapsed)
+		items := FlattenTreeFiltered(tree, collapsed, false)
 
 		// m1 (root, has children, expanded) - prefix should end with expanded indicator
-		if !strings.HasSuffix(items[0].TreePrefix, CollapseIndicatorExpanded()) {
+		if !strings.HasSuffix(items[0].TreePrefix, CollapseIndicatorExpanded(false)) {
 			t.Errorf("m1 prefix should end with expanded indicator, got %q", items[0].TreePrefix)
 		}
 
 		// e1 (nested, has children, collapsed) - prefix should end with collapsed indicator
-		if !strings.HasSuffix(items[1].TreePrefix, CollapseIndicatorCollapsed()) {
+		if !strings.HasSuffix(items[1].TreePrefix, CollapseIndicatorCollapsed(false)) {
 			t.Errorf("e1 prefix should end with collapsed indicator, got %q", items[1].TreePrefix)
 		}
 
@@ -553,7 +553,7 @@ func TestFlattenTreeFiltered(t *testing.T) {
 	t.Run("tree prefixes correct after collapse", func(t *testing.T) {
 		// Collapse e1, so only m1, e1(collapsed), e2, t3 are visible
 		collapsed := map[string]bool{"e1": true}
-		items := FlattenTreeFiltered(tree, collapsed)
+		items := FlattenTreeFiltered(tree, collapsed, false)
 
 		// e1 is first child (not last) under m1: should have ├─ connector
 		if !strings.Contains(items[1].TreePrefix, "├─") {
