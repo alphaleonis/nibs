@@ -158,7 +158,7 @@ type App struct {
 	height         int
 	program        *tea.Program // receives watcher events; see Run
 
-	// First key of a pending chord, e.g. "g" awaiting "t".
+	// The keys typed so far of a sequence such as "g g", or "" when none are.
 	pendingKey string
 
 	// The view drawn behind a modal, restored when it closes.
@@ -193,34 +193,122 @@ func (a *App) isTwoColumnMode() bool {
 	return a.width >= TwoColumnMinWidth && !a.list.wideMode
 }
 
-// activeListFiltering reports whether the active view's list is taking filter
-// input, in which case every printable key belongs to that filter.
-func (a *App) activeListFiltering() bool {
-	var l *list.Model
+// keyContext reports where a key goes now.
+func (a *App) keyContext() keyContext {
+	inList := func(l list.Model, ctx keyContext) keyContext {
+		if l.FilterState() == list.Filtering {
+			return ctxFilterInput
+		}
+		return ctx
+	}
 	switch a.state {
 	case viewList:
-		l = &a.list.list
+		return inList(a.list.list, ctxList)
 	case viewDetail:
-		if !a.detail.linksActive {
-			return false
+		if a.detail.linksActive {
+			return inList(a.detail.linkList, ctxNibLinks)
 		}
-		l = &a.detail.linkList
+		return ctxNibBody
 	case viewTagPicker:
-		l = &a.tagPicker.list
+		return inList(a.tagPicker.list, ctxTagPicker)
 	case viewParentPicker:
-		l = &a.parentPicker.list
+		return inList(a.parentPicker.list, ctxParentPicker)
 	case viewStatusPicker:
-		l = &a.statusPicker.list
+		return inList(a.statusPicker.list, ctxStatusPicker)
 	case viewPriorityPicker:
-		l = &a.priorityPicker.list
+		return inList(a.priorityPicker.list, ctxPriorityPicker)
 	case viewEstimatePicker:
-		l = &a.estimatePicker.list
+		return inList(a.estimatePicker.list, ctxEstimatePicker)
 	case viewBlockingPicker:
-		l = &a.blockingPicker.list
-	default:
-		return false
+		return inList(a.blockingPicker.list, ctxBlockingPicker)
+	case viewTypePicker, viewCreateTypePicker:
+		return ctxTypePicker
+	case viewCreateModal:
+		return ctxTextInput
+	case viewConfirmDialog:
+		return ctxConfirm
 	}
-	return l.FilterState() == list.Filtering
+	return ctxList
+}
+
+// actionState snapshots what the actions' Hint and Ready read.
+func (a *App) actionState() actionState {
+	st := actionState{
+		ctx:      a.keyContext(),
+		prefix:   a.pendingKey,
+		selected: len(a.list.selectedNibs),
+		filtered: a.list.hasActiveFilter() || a.list.list.IsFiltered(),
+	}
+	if a.state == viewDetail {
+		st.hasNib = a.detail.nib != nil
+	} else {
+		_, st.hasNib = a.list.list.SelectedItem().(nibItem)
+	}
+	return st
+}
+
+// handleKey runs the action the key completes, keeps a prefix pending, or hands
+// the key to a focused text box or a picker's row accelerators. Any other key
+// does nothing.
+func (a *App) handleKey(msg tea.KeyPressMsg) tea.Cmd {
+	ctx := a.keyContext()
+	pending := a.pendingKey
+	a.pendingKey = ""
+	key := msg.String()
+	act, next := resolveKey(actions, ctx, pending, key)
+	switch {
+	case act != nil:
+		return a.runAction(act)
+	case next != "":
+		a.pendingKey = next
+		return nil
+	case pending != "":
+		// The key ended a sequence nothing is bound to.
+		return nil
+	case ctx == ctxFilterInput, ctx == ctxTextInput:
+		return a.updateActiveView(msg)
+	case ctx == ctxTypePicker:
+		return a.updateActiveView(acceleratorMsg{key: key})
+	}
+	return nil
+}
+
+// runAction runs act in the active view, unless act is not ready.
+func (a *App) runAction(act *action) tea.Cmd {
+	if act.Ready != nil {
+		if ok, _ := act.Ready(a.actionState()); !ok {
+			return nil
+		}
+	}
+	switch act.Name {
+	case actQuit, actForceQuit:
+		return tea.Quit
+	case actHelp:
+		a.toggleHelp()
+		return nil
+	case actTagFilter:
+		return func() tea.Msg { return openTagPickerMsg{} }
+	}
+	return a.updateActiveView(actionMsg{name: act.Name})
+}
+
+// toggleHelp shows or hides the help panel below the list or the nib view.
+func (a *App) toggleHelp() {
+	a.helpExpanded = !a.helpExpanded
+	if a.state == viewList {
+		a.list.helpExpanded = a.helpExpanded
+		footerH := a.list.footerHeight()
+		if a.isTwoColumnMode() {
+			leftWidth, _ := calculatePaneWidths(a.width)
+			contentHeight := a.height - footerH
+			a.list.list.SetSize(leftWidth-2, contentHeight-2)
+		} else {
+			a.list.list.SetSize(a.width-2, a.height-3-footerH)
+		}
+		return
+	}
+	a.detail.helpExpanded = a.helpExpanded
+	a.detail, _ = a.detail.Update(tea.WindowSizeMsg{Width: a.width, Height: a.height})
 }
 
 // Update handles messages
@@ -259,63 +347,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.list.statusKind = statusOK
 		a.detail.statusMessage = ""
 		a.detail.statusKind = statusOK
-
-		// "g t" chord, unless the list filter is taking input (1 is list.Filtering).
-		if a.state == viewList && a.list.list.FilterState() != 1 {
-			if a.pendingKey == "g" {
-				a.pendingKey = ""
-				switch msg.String() {
-				case "t":
-					return a, func() tea.Msg { return openTagPickerMsg{} }
-				default:
-					// Invalid second key, ignore the chord
-				}
-				// Don't forward this key since it was part of a chord attempt
-				return a, nil
-			}
-
-			if msg.String() == "g" {
-				a.pendingKey = "g"
-				return a, nil
-			}
-		}
-
-		a.pendingKey = ""
-
-		switch msg.String() {
-		case "ctrl+c":
-			return a, tea.Quit
-		case "?":
-			// Toggle non-modal help panel (skip if user is typing in a filter)
-			if a.activeListFiltering() {
-				break // let the view's list take the keystroke
-			}
-			if a.state == viewList || a.state == viewDetail {
-				a.helpExpanded = !a.helpExpanded
-				if a.state == viewList {
-					a.list.helpExpanded = a.helpExpanded
-					footerH := a.list.footerHeight()
-					if a.isTwoColumnMode() {
-						leftWidth, _ := calculatePaneWidths(a.width)
-						contentHeight := a.height - footerH
-						a.list.list.SetSize(leftWidth-2, contentHeight-2)
-					} else {
-						a.list.list.SetSize(a.width-2, a.height-3-footerH)
-					}
-				} else { // viewDetail
-					a.detail.helpExpanded = a.helpExpanded
-					a.detail, _ = a.detail.Update(tea.WindowSizeMsg{Width: a.width, Height: a.height})
-				}
-				return a, nil
-			}
-		case "q":
-			if a.activeListFiltering() {
-				break
-			}
-			if a.state == viewList || a.state == viewDetail || a.state == viewTagPicker || a.state == viewParentPicker || a.state == viewStatusPicker || a.state == viewTypePicker || a.state == viewCreateTypePicker || a.state == viewBlockingPicker || a.state == viewPriorityPicker || a.state == viewEstimatePicker {
-				return a, tea.Quit
-			}
-		}
+		return a, a.handleKey(msg)
 
 	case cursorChangedMsg:
 		_, rightWidth := calculatePaneWidths(a.width)
@@ -789,6 +821,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Everything not handled above goes to the active view.
+	return a, a.updateActiveView(msg)
+}
+
+// updateActiveView hands msg to the view on screen.
+func (a *App) updateActiveView(msg tea.Msg) tea.Cmd {
+	var cmd tea.Cmd
 	switch a.state {
 	case viewList:
 		a.list, cmd = a.list.Update(msg)
@@ -813,8 +851,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case viewConfirmDialog:
 		a.confirmDialog, cmd = a.confirmDialog.Update(msg)
 	}
-
-	return a, cmd
+	return cmd
 }
 
 func (a *App) collectTagsWithCounts() []tagWithCount {

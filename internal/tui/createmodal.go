@@ -67,9 +67,9 @@ func (m createModalModel) Update(msg tea.Msg) (createModalModel, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-	case tea.KeyPressMsg:
-		switch msg.Code {
-		case tea.KeyEnter:
+	case actionMsg:
+		switch msg.name {
+		case actInputAccept:
 			title := m.textInput.Value()
 			if title != "" {
 				nibType := m.nibType
@@ -82,11 +82,12 @@ func (m createModalModel) Update(msg tea.Msg) (createModalModel, tea.Cmd) {
 				return closeCreateModalMsg{}
 			}
 
-		case tea.KeyEsc:
+		case actInputCancel:
 			return m, func() tea.Msg {
 				return closeCreateModalMsg{}
 			}
 		}
+		return m, nil
 	}
 
 	m.textInput, cmd = m.textInput.Update(msg)

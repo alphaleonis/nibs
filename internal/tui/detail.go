@@ -273,6 +273,7 @@ func (m detailModel) createLinkList() list.Model {
 	// painted box.
 	l.SetShowFilter(false)
 	l.SetFilteringEnabled(true)
+	l.KeyMap = listKeyMap()
 
 	l.Styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 0, 1) // Left padding to align with header title
 	applyFilterStyles(&l.Styles)
@@ -352,105 +353,14 @@ func (m detailModel) route(msg tea.Msg) (detailModel, tea.Cmd) {
 			m.viewport.SetContent(m.renderBody(vpWidth))
 		}
 
+	case actionMsg:
+		cmd := m.runAction(msg.name)
+		return m, cmd
+
 	case tea.KeyPressMsg:
-		// A filtering links list takes every key that reaches this view.
-		if m.linksActive && m.linkList.FilterState() == list.Filtering {
-			m.linkList, cmd = m.linkList.Update(msg)
-			return m, cmd
-		}
-
-		switch msg.String() {
-		case "esc", "backspace":
-			return m, func() tea.Msg {
-				return backToListMsg{}
-			}
-
-		case "tab":
-			if len(m.links) > 0 {
-				m.linksActive = !m.linksActive
-			}
+		// Only a links filter being typed takes keys; actions do everything else.
+		if !m.linksActive || m.linkList.FilterState() != list.Filtering {
 			return m, nil
-
-		case "enter":
-			if m.linksActive {
-				if item, ok := m.linkList.SelectedItem().(linkItem); ok {
-					targetNib := item.link.nib
-					return m, func() tea.Msg {
-						return selectNibMsg{nib: targetNib}
-					}
-				}
-			}
-
-		case "p":
-			return m, func() tea.Msg {
-				return openParentPickerMsg{
-					nibIDs:        []string{m.nib.ID},
-					nibTitle:      m.nib.Title,
-					nibTypes:      []string{m.nib.EffectiveType()},
-					currentParent: m.nib.Parent,
-				}
-			}
-
-		case "s":
-			return m, func() tea.Msg {
-				return openStatusPickerMsg{
-					nibIDs:        []string{m.nib.ID},
-					nibTitle:      m.nib.Title,
-					currentStatus: m.nib.Status,
-				}
-			}
-
-		case "t":
-			validTypes := validTypesForNib(m.nib, m.backend)
-			return m, func() tea.Msg {
-				return openTypePickerMsg{
-					nibIDs:      []string{m.nib.ID},
-					nibTitle:    m.nib.Title,
-					currentType: m.nib.EffectiveType(),
-					validTypes:  validTypes,
-				}
-			}
-
-		case "P":
-			return m, func() tea.Msg {
-				return openPriorityPickerMsg{
-					nibIDs:          []string{m.nib.ID},
-					nibTitle:        m.nib.Title,
-					currentPriority: m.nib.EffectivePriority(),
-				}
-			}
-
-		case "b":
-			currentBlocking := computeCurrentBlocking(m.backend, m.nib.ID)
-			return m, func() tea.Msg {
-				return openBlockingPickerMsg{
-					nibID:           m.nib.ID,
-					nibTitle:        m.nib.Title,
-					currentBlocking: currentBlocking,
-				}
-			}
-
-		case "E":
-			return m, func() tea.Msg {
-				return openEstimatePickerMsg{
-					nibIDs:          []string{m.nib.ID},
-					nibTitle:        m.nib.Title,
-					currentEstimate: m.nib.Estimate,
-				}
-			}
-
-		case "e":
-			return m, func() tea.Msg {
-				return openEditorMsg{
-					nibID:   m.nib.ID,
-					nibPath: m.nib.Path,
-				}
-			}
-
-		case "y":
-			return m, func() tea.Msg {
-				return copyNibIDMsg{ids: []string{m.nib.ID}}
-			}
 		}
 	}
 
@@ -463,6 +373,84 @@ func (m detailModel) route(msg tea.Msg) (detailModel, tea.Cmd) {
 	}
 
 	return m, tea.Batch(cmds...)
+}
+
+// runAction does what the named action does in the nib view.
+func (m *detailModel) runAction(name actionName) tea.Cmd {
+	if m.linksActive {
+		if cmd, ok := browseList(&m.linkList, name); ok {
+			return cmd
+		}
+	} else if m.scrollBody(name) {
+		return nil
+	}
+	n := m.nib
+	switch name {
+	case actLeave, actJumpBack:
+		return func() tea.Msg { return backToListMsg{} }
+	case actFocusNext, actFocusPrev:
+		if len(m.links) > 0 {
+			m.linksActive = !m.linksActive
+		}
+	case actOpen:
+		if item, ok := m.linkList.SelectedItem().(linkItem); ok && m.linksActive {
+			target := item.link.nib
+			return func() tea.Msg { return selectNibMsg{nib: target} }
+		}
+	case actParent:
+		return func() tea.Msg {
+			return openParentPickerMsg{nibIDs: []string{n.ID}, nibTitle: n.Title, nibTypes: []string{n.EffectiveType()}, currentParent: n.Parent}
+		}
+	case actStatus:
+		return func() tea.Msg {
+			return openStatusPickerMsg{nibIDs: []string{n.ID}, nibTitle: n.Title, currentStatus: n.Status}
+		}
+	case actType:
+		validTypes := validTypesForNib(n, m.backend)
+		return func() tea.Msg {
+			return openTypePickerMsg{nibIDs: []string{n.ID}, nibTitle: n.Title, currentType: n.EffectiveType(), validTypes: validTypes}
+		}
+	case actPriority:
+		return func() tea.Msg {
+			return openPriorityPickerMsg{nibIDs: []string{n.ID}, nibTitle: n.Title, currentPriority: n.EffectivePriority()}
+		}
+	case actEstimate:
+		return func() tea.Msg {
+			return openEstimatePickerMsg{nibIDs: []string{n.ID}, nibTitle: n.Title, currentEstimate: n.Estimate}
+		}
+	case actBlocking:
+		currentBlocking := computeCurrentBlocking(m.backend, n.ID)
+		return func() tea.Msg {
+			return openBlockingPickerMsg{nibID: n.ID, nibTitle: n.Title, currentBlocking: currentBlocking}
+		}
+	case actEdit:
+		return func() tea.Msg { return openEditorMsg{nibID: n.ID, nibPath: n.Path} }
+	case actCopyID:
+		return func() tea.Msg { return copyNibIDMsg{ids: []string{n.ID}} }
+	}
+	return nil
+}
+
+// scrollBody applies a move action to the body. It reports false for any other
+// action.
+func (m *detailModel) scrollBody(name actionName) bool {
+	switch name {
+	case actUp:
+		m.viewport.ScrollUp(1)
+	case actDown:
+		m.viewport.ScrollDown(1)
+	case actPageUp:
+		m.viewport.PageUp()
+	case actPageDown:
+		m.viewport.PageDown()
+	case actTop:
+		m.viewport.GotoTop()
+	case actBottom:
+		m.viewport.GotoBottom()
+	default:
+		return false
+	}
+	return true
 }
 
 func (m *detailModel) updateLinkListDelegate() {

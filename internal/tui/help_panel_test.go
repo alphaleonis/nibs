@@ -26,8 +26,8 @@ func TestAFilteringListTakesQAndQuestionMark(t *testing.T) {
 		{"list", func(*App) {}, viewList, func(a *App) list.Model { return a.list.list }},
 		{"parent picker", func(a *App) { sendKey(a, tea.KeyPressMsg{Code: 'p', Text: "p"}) }, viewParentPicker, func(a *App) list.Model { return a.parentPicker.list }},
 		{"status picker", func(a *App) { sendKey(a, tea.KeyPressMsg{Code: 's', Text: "s"}) }, viewStatusPicker, func(a *App) list.Model { return a.statusPicker.list }},
-		{"priority picker", func(a *App) { sendKey(a, tea.KeyPressMsg{Code: 'P', Text: "P"}) }, viewPriorityPicker, func(a *App) list.Model { return a.priorityPicker.list }},
-		{"estimate picker", func(a *App) { sendKey(a, tea.KeyPressMsg{Code: 'E', Text: "E"}) }, viewEstimatePicker, func(a *App) list.Model { return a.estimatePicker.list }},
+		{"priority picker", func(a *App) { processCmd(a, a.runAction(actionByName(actPriority))) }, viewPriorityPicker, func(a *App) list.Model { return a.priorityPicker.list }},
+		{"estimate picker", func(a *App) { processCmd(a, a.runAction(actionByName(actEstimate))) }, viewEstimatePicker, func(a *App) list.Model { return a.estimatePicker.list }},
 		{"blocking picker", func(a *App) { sendKey(a, tea.KeyPressMsg{Code: 'b', Text: "b"}) }, viewBlockingPicker, func(a *App) list.Model { return a.blockingPicker.list }},
 		{"tag picker", func(a *App) { a.Update(openTagPickerMsg{}) }, viewTagPicker, func(a *App) list.Model { return a.tagPicker.list }},
 	}

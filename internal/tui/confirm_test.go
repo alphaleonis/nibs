@@ -73,8 +73,8 @@ func TestAKeyArchivesNibAfterConfirmation(t *testing.T) {
 	}
 	app, stub := setupTestApp(t, testNibs)
 
-	// Press A key on the selected nib
-	sendKey(app, tea.KeyPressMsg{Code: 'A', Text: "A"})
+	// Press a key on the selected nib
+	sendKey(app, tea.KeyPressMsg{Code: 'a', Text: "a"})
 
 	// Should be in confirm dialog state
 	if app.state != viewConfirmDialog {
@@ -150,8 +150,8 @@ func TestAKeyOnNibWithChildrenArchivesAll(t *testing.T) {
 	}
 	app, stub := setupTestApp(t, testNibs)
 
-	// Press A on the parent nib (cursor should be on first item)
-	sendKey(app, tea.KeyPressMsg{Code: 'A', Text: "A"})
+	// Press a on the parent nib (cursor should be on first item)
+	sendKey(app, tea.KeyPressMsg{Code: 'a', Text: "a"})
 
 	// Should be in confirm dialog state
 	if app.state != viewConfirmDialog {
@@ -247,7 +247,7 @@ func TestSelectionMovesAfterArchive(t *testing.T) {
 		}
 
 		// Archive nib-2
-		sendKey(app, tea.KeyPressMsg{Code: 'A', Text: "A"})
+		sendKey(app, tea.KeyPressMsg{Code: 'a', Text: "a"})
 		sendKey(app, tea.KeyPressMsg{Code: 'y', Text: "y"})
 
 		if len(stub.ArchiveCalls) != 1 || stub.ArchiveCalls[0] != "nib-2" {
@@ -284,7 +284,7 @@ func TestSelectionMovesAfterArchive(t *testing.T) {
 		}
 
 		// Archive nib-2
-		sendKey(app, tea.KeyPressMsg{Code: 'A', Text: "A"})
+		sendKey(app, tea.KeyPressMsg{Code: 'a', Text: "a"})
 		sendKey(app, tea.KeyPressMsg{Code: 'y', Text: "y"})
 
 		if len(stub.ArchiveCalls) != 1 || stub.ArchiveCalls[0] != "nib-2" {
@@ -313,8 +313,8 @@ func TestCancelArchiveConfirmationDoesNothing(t *testing.T) {
 			}
 			app, stub := setupTestApp(t, testNibs)
 
-			// Press A to open archive confirm dialog
-			sendKey(app, tea.KeyPressMsg{Code: 'A', Text: "A"})
+			// Press a to open archive confirm dialog
+			sendKey(app, tea.KeyPressMsg{Code: 'a', Text: "a"})
 
 			if app.state != viewConfirmDialog {
 				t.Fatalf("expected viewConfirmDialog state, got %d", app.state)

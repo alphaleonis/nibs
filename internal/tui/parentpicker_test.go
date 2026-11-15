@@ -128,16 +128,16 @@ func TestParentPicker_ToggleKeepsAnAppliedFilter(t *testing.T) {
 	)
 	m.list.SetFilterText("Alpha")
 	if got := len(m.list.VisibleItems()); got != 1 {
-		t.Fatalf("before H: %d visible items, want 1", got)
+		t.Fatalf("before z h: %d visible items, want 1", got)
 	}
 
-	m, cmd := m.Update(tea.KeyPressMsg{Code: 'H', Text: "H"})
+	m, cmd := m.Update(actionMsg{name: actHideClosed})
 	if cmd != nil {
 		m, _ = m.Update(cmd())
 	}
 
 	if got := len(m.list.VisibleItems()); got != 2 {
-		t.Errorf("after H with filter %q applied: %d visible items, want 2", m.list.FilterValue(), got)
+		t.Errorf("after z h with filter %q applied: %d visible items, want 2", m.list.FilterValue(), got)
 	}
 }
 

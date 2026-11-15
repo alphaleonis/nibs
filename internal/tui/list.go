@@ -149,6 +149,7 @@ func newListModel(backend Backend, cfg *config.Config) listModel {
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
 	l.SetShowHelp(false)
+	l.KeyMap = listKeyMap()
 	applyFilterStyles(&l.Styles)
 
 	m := listModel{
@@ -252,7 +253,6 @@ func (m *listModel) hasActiveFilter() bool {
 
 func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 	var cmd tea.Cmd
-	var cmds []tea.Cmd
 
 	prevIndex := m.list.Index()
 
@@ -320,359 +320,326 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 		m.err = msg.err
 		return m, nil
 
+	case actionMsg:
+		cmd = m.runAction(msg.name)
+		return m, tea.Batch(cmd, m.cursorChangedCmd(prevIndex))
+
 	case tea.KeyPressMsg:
+		// Only a filter being typed takes keys; actions do everything else.
 		if m.list.FilterState() != list.Filtering {
-			switch msg.String() {
-			case "space":
-				if item, ok := m.list.SelectedItem().(nibItem); ok {
-					if m.selectedNibs[item.nib.ID] {
-						delete(m.selectedNibs, item.nib.ID)
-					} else {
-						m.selectedNibs[item.nib.ID] = true
-					}
-					m.list.CursorDown()
-				}
-				return m, nil
-			case "enter":
-				if item, ok := m.list.SelectedItem().(nibItem); ok {
-					return m, func() tea.Msg {
-						return selectNibMsg{nib: item.nib}
-					}
-				}
-			case "p":
-				if len(m.selectedNibs) > 0 {
-					ids := make([]string, 0, len(m.selectedNibs))
-					types := make([]string, 0, len(m.selectedNibs))
-					for id := range m.selectedNibs {
-						ids = append(ids, id)
-						for _, item := range m.list.Items() {
-							if bi, ok := item.(nibItem); ok && bi.nib.ID == id {
-								types = append(types, bi.nib.EffectiveType())
-								break
-							}
-						}
-					}
-					return m, func() tea.Msg {
-						return openParentPickerMsg{
-							nibIDs:   ids,
-							nibTitle: fmt.Sprintf("%d selected nibs", len(ids)),
-							nibTypes: types,
-						}
-					}
-				} else if item, ok := m.list.SelectedItem().(nibItem); ok {
-					return m, func() tea.Msg {
-						return openParentPickerMsg{
-							nibIDs:        []string{item.nib.ID},
-							nibTitle:      item.nib.Title,
-							nibTypes:      []string{item.nib.EffectiveType()},
-							currentParent: item.nib.Parent,
-						}
-					}
-				}
-			case "s":
-				if len(m.selectedNibs) > 0 {
-					ids := make([]string, 0, len(m.selectedNibs))
-					for id := range m.selectedNibs {
-						ids = append(ids, id)
-					}
-					return m, func() tea.Msg {
-						return openStatusPickerMsg{
-							nibIDs:   ids,
-							nibTitle: fmt.Sprintf("%d selected nibs", len(ids)),
-						}
-					}
-				} else if item, ok := m.list.SelectedItem().(nibItem); ok {
-					return m, func() tea.Msg {
-						return openStatusPickerMsg{
-							nibIDs:        []string{item.nib.ID},
-							nibTitle:      item.nib.Title,
-							currentStatus: item.nib.Status,
-						}
-					}
-				}
-			case "t":
-				if len(m.selectedNibs) > 0 {
-					ids := make([]string, 0, len(m.selectedNibs))
-					var validTypes []string
-					first := true
-					for id := range m.selectedNibs {
-						ids = append(ids, id)
-						if n, err := m.backend.GetNib(context.Background(), id); err == nil && n != nil {
-							nibValid := validTypesForNib(n, m.backend)
-							if first {
-								validTypes = nibValid
-								first = false
-							} else {
-								validTypes = intersectStrings(validTypes, nibValid)
-							}
-						}
-					}
-					return m, func() tea.Msg {
-						return openTypePickerMsg{
-							nibIDs:     ids,
-							nibTitle:   fmt.Sprintf("%d selected nibs", len(ids)),
-							validTypes: validTypes,
-						}
-					}
-				} else if item, ok := m.list.SelectedItem().(nibItem); ok {
-					validTypes := validTypesForNib(item.nib, m.backend)
-					return m, func() tea.Msg {
-						return openTypePickerMsg{
-							nibIDs:      []string{item.nib.ID},
-							nibTitle:    item.nib.Title,
-							currentType: item.nib.EffectiveType(),
-							validTypes:  validTypes,
-						}
-					}
-				}
-			case "P":
-				if len(m.selectedNibs) > 0 {
-					ids := make([]string, 0, len(m.selectedNibs))
-					for id := range m.selectedNibs {
-						ids = append(ids, id)
-					}
-					return m, func() tea.Msg {
-						return openPriorityPickerMsg{
-							nibIDs:   ids,
-							nibTitle: fmt.Sprintf("%d selected nibs", len(ids)),
-						}
-					}
-				} else if item, ok := m.list.SelectedItem().(nibItem); ok {
-					return m, func() tea.Msg {
-						return openPriorityPickerMsg{
-							nibIDs:          []string{item.nib.ID},
-							nibTitle:        item.nib.Title,
-							currentPriority: item.nib.EffectivePriority(),
-						}
-					}
-				}
-			case "E":
-				if len(m.selectedNibs) > 0 {
-					ids := make([]string, 0, len(m.selectedNibs))
-					for id := range m.selectedNibs {
-						ids = append(ids, id)
-					}
-					return m, func() tea.Msg {
-						return openEstimatePickerMsg{
-							nibIDs:   ids,
-							nibTitle: fmt.Sprintf("%d selected nibs", len(ids)),
-						}
-					}
-				} else if item, ok := m.list.SelectedItem().(nibItem); ok {
-					return m, func() tea.Msg {
-						return openEstimatePickerMsg{
-							nibIDs:          []string{item.nib.ID},
-							nibTitle:        item.nib.Title,
-							currentEstimate: item.nib.Estimate,
-						}
-					}
-				}
-			case "b":
-				if item, ok := m.list.SelectedItem().(nibItem); ok {
-					currentBlocking := computeCurrentBlocking(m.backend, item.nib.ID)
-					return m, func() tea.Msg {
-						return openBlockingPickerMsg{
-							nibID:           item.nib.ID,
-							nibTitle:        item.nib.Title,
-							currentBlocking: currentBlocking,
-						}
-					}
-				}
-			case "c":
-				selectedType := ""
-				if item, ok := m.list.SelectedItem().(nibItem); ok {
-					selectedType = item.nib.EffectiveType()
-				}
-				smartDefault := defaultTypeForContext(selectedType)
-				return m, func() tea.Msg {
-					return openCreateTypePickerMsg{defaultType: smartDefault}
-				}
-			case "e":
-				if item, ok := m.list.SelectedItem().(nibItem); ok {
-					return m, func() tea.Msg {
-						return openEditorMsg{
-							nibID:   item.nib.ID,
-							nibPath: item.nib.Path,
-						}
-					}
-				}
-			case "H":
-				m.toggleHideCompleted()
-				return m, m.loadNibs
-			case "W":
-				m.wideMode = !m.wideMode
-				m.cols = ui.CalculateResponsiveColumns(m.width, m.hasTags)
-				m.applyWideMode()
-				m.updateDelegate()
-				return m, nil
-			case "tab":
-				if item, ok := m.list.SelectedItem().(nibItem); ok && item.hasChildren {
-					if m.collapsedIDs[item.nib.ID] {
-						delete(m.collapsedIDs, item.nib.ID)
-					} else {
-						m.collapsedIDs[item.nib.ID] = true
-					}
-					cmd = m.reflattenTree()
-				}
-				return m, cmd
-			case "left":
-				// Collapse an expanded node; otherwise select its parent.
-				if item, ok := m.list.SelectedItem().(nibItem); ok {
-					if item.hasChildren && !item.collapsed {
-						m.collapsedIDs[item.nib.ID] = true
-						cmd = m.reflattenTree()
-					} else {
-						parentMap := make(map[string]string)
-						buildParentMap(m.tree, parentMap)
-						if parentID, ok := parentMap[item.nib.ID]; ok && parentID != "" {
-							for i, li := range m.list.Items() {
-								if bi, ok := li.(nibItem); ok && bi.nib.ID == parentID {
-									m.list.Select(i)
-									break
-								}
-							}
-						}
-					}
-				}
-				return m, cmd
-			case "right":
-				if item, ok := m.list.SelectedItem().(nibItem); ok && item.hasChildren && item.collapsed {
-					delete(m.collapsedIDs, item.nib.ID)
-					cmd = m.reflattenTree()
-				}
-				return m, cmd
-			case "ctrl+left":
-				// Collapse every descendant, not the node itself.
-				if item, ok := m.list.SelectedItem().(nibItem); ok && item.hasChildren {
-					if node := ui.FindNode(m.tree, item.nib.ID); node != nil {
-						ui.CollectParentIDs(node.Children, m.collapsedIDs)
-						cmd = m.reflattenTree()
-					}
-				}
-				return m, cmd
-			case "ctrl+right":
-				if item, ok := m.list.SelectedItem().(nibItem); ok && item.hasChildren {
-					if node := ui.FindNode(m.tree, item.nib.ID); node != nil {
-						var removeCollapsed func([]*ui.TreeNode)
-						removeCollapsed = func(nodes []*ui.TreeNode) {
-							for _, child := range nodes {
-								delete(m.collapsedIDs, child.Nib.ID)
-								removeCollapsed(child.Children)
-							}
-						}
-						removeCollapsed(node.Children)
-						cmd = m.reflattenTree()
-					}
-				}
-				return m, cmd
-			case "ctrl+up":
-				return m, m.dispatchBlockMove(true)
-			case "ctrl+down":
-				return m, m.dispatchBlockMove(false)
-			case "shift+tab":
-				if m.tree != nil {
-					ui.CollectParentIDs(m.tree, m.collapsedIDs)
-					cmd = m.reflattenTree()
-				}
-				return m, cmd
-			case "]":
-				clear(m.collapsedIDs)
-				cmd = m.reflattenTree()
-				return m, cmd
-			case "y":
-				if len(m.selectedNibs) > 0 {
-					ids := make([]string, 0, len(m.selectedNibs))
-					for id := range m.selectedNibs {
-						ids = append(ids, id)
-					}
-					return m, func() tea.Msg {
-						return copyNibIDMsg{ids: ids}
-					}
-				} else if item, ok := m.list.SelectedItem().(nibItem); ok {
-					return m, func() tea.Msg {
-						return copyNibIDMsg{ids: []string{item.nib.ID}}
-					}
-				}
-			case "A":
-				if item, ok := m.list.SelectedItem().(nibItem); ok {
-					ids := gatherNibAndDescendants(m.backend, item.nib.ID)
-					descendantCount := len(ids) - 1
-					dialog := buildConfirmDialog("archive", item.nib.Title, ids, descendantCount)
-					return m, func() tea.Msg {
-						return openConfirmMsg{dialog: dialog}
-					}
-				}
-			case "delete":
-				if item, ok := m.list.SelectedItem().(nibItem); ok {
-					ids := gatherNibAndDescendants(m.backend, item.nib.ID)
-					descendantCount := len(ids) - 1
-					dialog := buildConfirmDialog("delete", item.nib.Title, ids, descendantCount)
-					return m, func() tea.Msg {
-						return openConfirmMsg{dialog: dialog}
-					}
-				}
-			case "esc", "backspace":
-				// Clear the selection first, then the tag filter.
-				if len(m.selectedNibs) > 0 {
-					clear(m.selectedNibs)
-					return m, nil
-				}
-				if m.hasActiveFilter() {
-					return m, func() tea.Msg {
-						return clearFilterMsg{}
-					}
-				}
-			}
-
-			// PgUp snaps to the page's first row before it pages. Match msg.Code:
-			// bubbles disables PrevPage/NextPage on a single-page list, so
-			// key.Matches fails there.
-			if msg.Code == tea.KeyPgUp && m.list.Cursor() > 0 {
-				firstOnPage := m.list.Paginator.Page * m.list.Paginator.PerPage
-				m.list.Select(firstOnPage)
-				if m.list.Index() != prevIndex {
-					if item, ok := m.list.SelectedItem().(nibItem); ok {
-						cmds = append(cmds, func() tea.Msg {
-							return cursorChangedMsg{nibID: item.nib.ID}
-						})
-					}
-				}
-				return m, tea.Batch(cmds...)
-			}
-
-			// PgDn snaps to the page's last row before it pages.
-			if msg.Code == tea.KeyPgDown {
-				itemsOnPage := m.list.Paginator.ItemsOnPage(len(m.list.VisibleItems()))
-				if m.list.Cursor() < itemsOnPage-1 {
-					lastOnPage := m.list.Paginator.Page*m.list.Paginator.PerPage + itemsOnPage - 1
-					m.list.Select(lastOnPage)
-					if m.list.Index() != prevIndex {
-						if item, ok := m.list.SelectedItem().(nibItem); ok {
-							cmds = append(cmds, func() tea.Msg {
-								return cursorChangedMsg{nibID: item.nib.ID}
-							})
-						}
-					}
-					return m, tea.Batch(cmds...)
-				}
-			}
+			return m, nil
 		}
 	}
 
 	m.list, cmd = m.list.Update(msg)
-	if cmd != nil {
-		cmds = append(cmds, cmd)
-	}
+	return m, tea.Batch(cmd, m.cursorChangedCmd(prevIndex))
+}
 
-	if m.list.Index() != prevIndex {
-		if item, ok := m.list.SelectedItem().(nibItem); ok {
-			cmds = append(cmds, func() tea.Msg {
-				return cursorChangedMsg{nibID: item.nib.ID}
-			})
+// cursorChangedCmd reports the nib under the cursor when the cursor has left
+// prevIndex, or returns nil.
+func (m listModel) cursorChangedCmd(prevIndex int) tea.Cmd {
+	if m.list.Index() == prevIndex {
+		return nil
+	}
+	item, ok := m.list.SelectedItem().(nibItem)
+	if !ok {
+		return nil
+	}
+	return func() tea.Msg { return cursorChangedMsg{nibID: item.nib.ID} }
+}
+
+// targets returns the marked nibs' IDs, or the ID of the nib under the cursor
+// when none are marked, or nil when neither is. title names the nib, or counts
+// the marked ones.
+func (m listModel) targets() (ids []string, title string, focused *nib.Nib) {
+	focused = m.focusedNib()
+	if len(m.selectedNibs) > 0 {
+		ids = make([]string, 0, len(m.selectedNibs))
+		for id := range m.selectedNibs {
+			ids = append(ids, id)
+		}
+		return ids, fmt.Sprintf("%d selected nibs", len(ids)), focused
+	}
+	if focused == nil {
+		return nil, "", nil
+	}
+	return []string{focused.ID}, focused.Title, focused
+}
+
+// focusedNib returns the nib under the cursor, or nil when the list is empty.
+func (m listModel) focusedNib() *nib.Nib {
+	if item, ok := m.list.SelectedItem().(nibItem); ok {
+		return item.nib
+	}
+	return nil
+}
+
+// focusedItem returns the row under the cursor; ok is false when the list is
+// empty.
+func (m listModel) focusedItem() (item nibItem, ok bool) {
+	item, ok = m.list.SelectedItem().(nibItem)
+	return item, ok
+}
+
+// runAction does what the named action does in the list.
+func (m *listModel) runAction(name actionName) tea.Cmd {
+	switch name {
+	case actUp:
+		m.list.CursorUp()
+	case actDown:
+		m.list.CursorDown()
+	case actPageUp:
+		m.pageUp()
+	case actPageDown:
+		m.pageDown()
+	case actTop:
+		m.list.GoToStart()
+	case actBottom:
+		m.list.GoToEnd()
+	case actFilter, actFilterApply, actInputAccept, actInputCancel:
+		cmd, _ := browseList(&m.list, name)
+		return cmd
+	case actFoldRow:
+		return m.foldRow()
+	case actUnfoldRow:
+		if item, ok := m.focusedItem(); ok && item.hasChildren && item.collapsed {
+			delete(m.collapsedIDs, item.nib.ID)
+			return m.reflattenTree()
+		}
+	case actFoldSubtree:
+		// Collapse every descendant, not the node itself.
+		if item, ok := m.focusedItem(); ok && item.hasChildren {
+			if node := ui.FindNode(m.tree, item.nib.ID); node != nil {
+				ui.CollectParentIDs(node.Children, m.collapsedIDs)
+				return m.reflattenTree()
+			}
+		}
+	case actUnfoldSubtree:
+		if item, ok := m.focusedItem(); ok && item.hasChildren {
+			if node := ui.FindNode(m.tree, item.nib.ID); node != nil {
+				var removeCollapsed func([]*ui.TreeNode)
+				removeCollapsed = func(nodes []*ui.TreeNode) {
+					for _, child := range nodes {
+						delete(m.collapsedIDs, child.Nib.ID)
+						removeCollapsed(child.Children)
+					}
+				}
+				removeCollapsed(node.Children)
+				return m.reflattenTree()
+			}
+		}
+	case actFoldAll:
+		if m.tree != nil {
+			ui.CollectParentIDs(m.tree, m.collapsedIDs)
+			return m.reflattenTree()
+		}
+	case actUnfoldAll:
+		clear(m.collapsedIDs)
+		return m.reflattenTree()
+	case actOpen:
+		if n := m.focusedNib(); n != nil {
+			return func() tea.Msg { return selectNibMsg{nib: n} }
+		}
+	case actLeave:
+		return m.leave()
+	case actSelect:
+		if n := m.focusedNib(); n != nil {
+			if m.selectedNibs[n.ID] {
+				delete(m.selectedNibs, n.ID)
+			} else {
+				m.selectedNibs[n.ID] = true
+			}
+			m.list.CursorDown()
+		}
+	case actCreate:
+		selectedType := ""
+		if n := m.focusedNib(); n != nil {
+			selectedType = n.EffectiveType()
+		}
+		smartDefault := defaultTypeForContext(selectedType)
+		return func() tea.Msg { return openCreateTypePickerMsg{defaultType: smartDefault} }
+	case actEdit:
+		if n := m.focusedNib(); n != nil {
+			return func() tea.Msg { return openEditorMsg{nibID: n.ID, nibPath: n.Path} }
+		}
+	case actStatus:
+		ids, title, focused := m.targets()
+		if ids == nil {
+			return nil
+		}
+		msg := openStatusPickerMsg{nibIDs: ids, nibTitle: title}
+		if len(m.selectedNibs) == 0 {
+			msg.currentStatus = focused.Status
+		}
+		return func() tea.Msg { return msg }
+	case actType:
+		return m.openTypePicker()
+	case actParent:
+		return m.openParentPicker()
+	case actPriority:
+		ids, title, focused := m.targets()
+		if ids == nil {
+			return nil
+		}
+		msg := openPriorityPickerMsg{nibIDs: ids, nibTitle: title}
+		if len(m.selectedNibs) == 0 {
+			msg.currentPriority = focused.EffectivePriority()
+		}
+		return func() tea.Msg { return msg }
+	case actEstimate:
+		ids, title, focused := m.targets()
+		if ids == nil {
+			return nil
+		}
+		msg := openEstimatePickerMsg{nibIDs: ids, nibTitle: title}
+		if len(m.selectedNibs) == 0 {
+			msg.currentEstimate = focused.Estimate
+		}
+		return func() tea.Msg { return msg }
+	case actBlocking:
+		if n := m.focusedNib(); n != nil {
+			currentBlocking := computeCurrentBlocking(m.backend, n.ID)
+			return func() tea.Msg {
+				return openBlockingPickerMsg{nibID: n.ID, nibTitle: n.Title, currentBlocking: currentBlocking}
+			}
+		}
+	case actMoveUp:
+		return m.dispatchBlockMove(true)
+	case actMoveDown:
+		return m.dispatchBlockMove(false)
+	case actArchive:
+		return m.confirm("archive")
+	case actDelete:
+		return m.confirm("delete")
+	case actCopyID:
+		if ids, _, _ := m.targets(); ids != nil {
+			return func() tea.Msg { return copyNibIDMsg{ids: ids} }
+		}
+	case actHideClosed:
+		m.toggleHideCompleted()
+		return m.loadNibs
+	case actWideMode:
+		m.wideMode = !m.wideMode
+		m.cols = ui.CalculateResponsiveColumns(m.width, m.hasTags)
+		m.applyWideMode()
+		m.updateDelegate()
+	}
+	return nil
+}
+
+// foldRow collapses an expanded row, or else selects its parent.
+func (m *listModel) foldRow() tea.Cmd {
+	item, ok := m.focusedItem()
+	if !ok {
+		return nil
+	}
+	if item.hasChildren && !item.collapsed {
+		m.collapsedIDs[item.nib.ID] = true
+		return m.reflattenTree()
+	}
+	parentMap := make(map[string]string)
+	buildParentMap(m.tree, parentMap)
+	if parentID, ok := parentMap[item.nib.ID]; ok && parentID != "" {
+		for i, li := range m.list.Items() {
+			if bi, ok := li.(nibItem); ok && bi.nib.ID == parentID {
+				m.list.Select(i)
+				break
+			}
 		}
 	}
+	return nil
+}
 
-	return m, tea.Batch(cmds...)
+// leave clears the selection, else the tag filter, else the text filter.
+func (m *listModel) leave() tea.Cmd {
+	switch {
+	case len(m.selectedNibs) > 0:
+		clear(m.selectedNibs)
+	case m.hasActiveFilter():
+		return func() tea.Msg { return clearFilterMsg{} }
+	case m.list.IsFiltered():
+		m.list.ResetFilter()
+	}
+	return nil
+}
+
+// pageUp moves to the page's first row, or to the previous page from there.
+func (m *listModel) pageUp() {
+	if m.list.Cursor() > 0 {
+		m.list.Select(m.list.Paginator.Page * m.list.Paginator.PerPage)
+		return
+	}
+	m.list.PrevPage()
+}
+
+// pageDown moves to the page's last row, or to the next page from there.
+func (m *listModel) pageDown() {
+	itemsOnPage := m.list.Paginator.ItemsOnPage(len(m.list.VisibleItems()))
+	if m.list.Cursor() < itemsOnPage-1 {
+		m.list.Select(m.list.Paginator.Page*m.list.Paginator.PerPage + itemsOnPage - 1)
+		return
+	}
+	m.list.NextPage()
+}
+
+// confirm asks before archiving or deleting the nib under the cursor and its
+// descendants.
+func (m *listModel) confirm(verb string) tea.Cmd {
+	n := m.focusedNib()
+	if n == nil {
+		return nil
+	}
+	ids := gatherNibAndDescendants(m.backend, n.ID)
+	dialog := buildConfirmDialog(verb, n.Title, ids, len(ids)-1)
+	return func() tea.Msg { return openConfirmMsg{dialog: dialog} }
+}
+
+func (m *listModel) openTypePicker() tea.Cmd {
+	ids, title, focused := m.targets()
+	if ids == nil {
+		return nil
+	}
+	if len(m.selectedNibs) == 0 {
+		msg := openTypePickerMsg{nibIDs: ids, nibTitle: title, currentType: focused.EffectiveType(), validTypes: validTypesForNib(focused, m.backend)}
+		return func() tea.Msg { return msg }
+	}
+	var validTypes []string
+	first := true
+	for _, id := range ids {
+		if n, err := m.backend.GetNib(context.Background(), id); err == nil && n != nil {
+			nibValid := validTypesForNib(n, m.backend)
+			if first {
+				validTypes = nibValid
+				first = false
+			} else {
+				validTypes = intersectStrings(validTypes, nibValid)
+			}
+		}
+	}
+	msg := openTypePickerMsg{nibIDs: ids, nibTitle: title, validTypes: validTypes}
+	return func() tea.Msg { return msg }
+}
+
+func (m *listModel) openParentPicker() tea.Cmd {
+	ids, title, focused := m.targets()
+	if ids == nil {
+		return nil
+	}
+	if len(m.selectedNibs) == 0 {
+		msg := openParentPickerMsg{nibIDs: ids, nibTitle: title, nibTypes: []string{focused.EffectiveType()}, currentParent: focused.Parent}
+		return func() tea.Msg { return msg }
+	}
+	types := make([]string, 0, len(ids))
+	for _, id := range ids {
+		for _, item := range m.list.Items() {
+			if bi, ok := item.(nibItem); ok && bi.nib.ID == id {
+				types = append(types, bi.nib.EffectiveType())
+				break
+			}
+		}
+	}
+	msg := openParentPickerMsg{nibIDs: ids, nibTitle: title, nibTypes: types}
+	return func() tea.Msg { return msg }
 }
 
 func (m *listModel) updateDelegate() {
@@ -987,20 +954,20 @@ func (m listModel) Footer() string {
 	if len(m.selectedNibs) > 0 {
 		help = renderHelpKey("space", "toggle") + "  " +
 			renderHelpKey("s", "status") + "  " +
-			renderHelpKey("P", "priority") + "  " +
+			renderHelpKey("t", "type") + "  " +
 			renderHelpKey("esc", "clear") + "  " +
 			renderHelpKey("?", helpLabel) + "  " +
 			renderHelpKey("q", "quit")
 	} else if m.hasActiveFilter() {
 		help = renderHelpKey("enter", "view") + "  " +
-			renderHelpKey("c", "create") + "  " +
+			renderHelpKey("n", "create") + "  " +
 			renderHelpKey("e", "edit") + "  " +
 			renderHelpKey("esc", "clear filter") + "  " +
 			renderHelpKey("?", helpLabel) + "  " +
 			renderHelpKey("q", "quit")
 	} else {
 		help = renderHelpKey("enter", "view") + "  " +
-			renderHelpKey("c", "create") + "  " +
+			renderHelpKey("n", "create") + "  " +
 			renderHelpKey("e", "edit") + "  " +
 			renderHelpKey("/", "filter") + "  " +
 			renderHelpKey("?", helpLabel) + "  " +

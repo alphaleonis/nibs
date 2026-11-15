@@ -3,8 +3,6 @@ package tui
 import (
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
-
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 )
@@ -53,12 +51,12 @@ func TestBlockingPicker_SpaceTogglesPendingTarget(t *testing.T) {
 		t.Fatal("tgt-a should not start pending")
 	}
 
-	m, _ = m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
+	m, _ = m.Update(actionMsg{name: actSelect})
 	if !m.pendingBlocking["tgt-a"] {
 		t.Error("space did not add tgt-a to the pending set")
 	}
 
-	m, _ = m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
+	m, _ = m.Update(actionMsg{name: actSelect})
 	if m.pendingBlocking["tgt-a"] {
 		t.Error("second space did not remove tgt-a from the pending set")
 	}
@@ -70,11 +68,11 @@ func TestBlockingPicker_SpaceThenEnterReportsTheDiff(t *testing.T) {
 	m := newTestBlockingPicker(t, []string{"tgt-b"})
 	m = selectItem(t, m, "tgt-a")
 
-	m, _ = m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
+	m, _ = m.Update(actionMsg{name: actSelect})
 	m = selectItem(t, m, "tgt-b")
-	m, _ = m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
+	m, _ = m.Update(actionMsg{name: actSelect})
 
-	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	_, cmd := m.Update(actionMsg{name: actOpen})
 	if cmd == nil {
 		t.Fatal("enter produced no command")
 	}

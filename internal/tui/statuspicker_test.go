@@ -4,7 +4,6 @@ import (
 	"slices"
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/alphaleonis/nibs/internal/config"
@@ -156,7 +155,7 @@ func TestStatusPickerModel(t *testing.T) {
 		)
 
 		// Pre-selected item is "deferred"; press enter.
-		_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		_, cmd := m.Update(actionMsg{name: actOpen})
 		if cmd == nil {
 			t.Fatal("expected a command from enter key")
 		}

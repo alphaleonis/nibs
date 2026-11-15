@@ -121,37 +121,34 @@ func (m typePickerModel) Update(msg tea.Msg) (typePickerModel, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-			}
-		case "down", "j":
-			if m.cursor < len(m.items)-1 {
-				m.cursor++
-			}
-		case "enter":
-			if m.cursor < len(m.items) {
-				item := m.items[m.cursor]
+	case actionMsg:
+		switch msg.name {
+		case actUp:
+			m.cursor = max(0, m.cursor-1)
+		case actDown:
+			m.cursor = max(0, min(len(m.items)-1, m.cursor+1))
+		case actTop, actPageUp:
+			m.cursor = 0
+		case actBottom, actPageDown:
+			m.cursor = max(0, len(m.items)-1)
+		case actOpen:
+			if item, ok := m.SelectedItem(); ok {
 				return m, func() tea.Msg {
 					return typeSelectedMsg{nibIDs: m.nibIDs, nibType: item.name}
 				}
 			}
-		case "esc", "backspace":
-			return m, func() tea.Msg {
-				return closeTypePickerMsg{}
-			}
-		default:
-			// Single-key shortcut: first letter of type name selects it
-			key := msg.String()
-			if len(key) == 1 {
-				for _, item := range m.items {
-					if strings.HasPrefix(item.name, key) {
-						nibType := item.name
-						return m, func() tea.Msg {
-							return typeSelectedMsg{nibIDs: m.nibIDs, nibType: nibType}
-						}
+		case actLeave:
+			return m, func() tea.Msg { return closeTypePickerMsg{} }
+		}
+
+	case acceleratorMsg:
+		// A letter chooses the first type it starts.
+		if len(msg.key) == 1 {
+			for _, item := range m.items {
+				if strings.HasPrefix(item.name, msg.key) {
+					nibType := item.name
+					return m, func() tea.Msg {
+						return typeSelectedMsg{nibIDs: m.nibIDs, nibType: nibType}
 					}
 				}
 			}

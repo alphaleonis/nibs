@@ -77,23 +77,18 @@ func TestList_CollapseKeysKeepAnAppliedFilter(t *testing.T) {
 	//   n-4 Beta task
 	// n-5 Gamma root
 	tests := []struct {
-		name      string
-		key       tea.KeyPressMsg
+		name      actionName
 		collapsed []string // collapsed before the filter is applied
 	}{
-		{name: "tab", key: tea.KeyPressMsg{Code: tea.KeyTab}},
-		{name: "left", key: tea.KeyPressMsg{Code: tea.KeyLeft}},
-		{name: "right", key: tea.KeyPressMsg{Code: tea.KeyRight}, collapsed: []string{"n-1"}},
-		{name: "ctrl+left", key: tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModCtrl}},
-		{name: "ctrl+right", key: tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModCtrl}, collapsed: []string{"n-2"}},
-		{name: "shift+tab", key: tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}},
-		{name: "]", key: tea.KeyPressMsg{Code: ']', Text: "]"}, collapsed: []string{"n-1"}},
+		{name: actFoldRow},
+		{name: actUnfoldRow, collapsed: []string{"n-1"}},
+		{name: actFoldSubtree},
+		{name: actUnfoldSubtree, collapsed: []string{"n-2"}},
+		{name: actFoldAll},
+		{name: actUnfoldAll, collapsed: []string{"n-1"}},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.key.String(); got != tt.name {
-				t.Fatalf("key reads as %q, want %q", got, tt.name)
-			}
+		t.Run(string(tt.name), func(t *testing.T) {
 			backend := &StubBackend{AllNibs: []*nib.Nib{
 				makeNib("n-1", "Alpha epic", "epic", "todo", ""),
 				makeNib("n-2", "Alpha feature", "feature", "todo", "n-1"),
@@ -120,7 +115,7 @@ func TestList_CollapseKeysKeepAnAppliedFilter(t *testing.T) {
 			}
 			before := len(m.list.Items())
 
-			m, cmd := m.Update(tt.key)
+			m, cmd := m.Update(actionMsg{name: tt.name})
 			m = runListCmd(t, m, cmd, 0)
 
 			if len(m.list.Items()) == before {

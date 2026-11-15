@@ -81,6 +81,7 @@ func newTagPickerModel(tags []tagWithCount, width, height int) tagPickerModel {
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
 	l.SetShowHelp(false)
+	l.KeyMap = listKeyMap()
 	l.Styles.Title = listTitleStyle
 	l.Styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 1, 1)
 	applyFilterStyles(&l.Styles)
@@ -106,20 +107,24 @@ func (m tagPickerModel) Update(msg tea.Msg) (tagPickerModel, tea.Cmd) {
 		m.height = msg.Height
 		m.list.SetSize(msg.Width-4, msg.Height-6)
 
-	case tea.KeyPressMsg:
-		if m.list.FilterState() != list.Filtering {
-			switch msg.String() {
-			case "enter":
-				if item, ok := m.list.SelectedItem().(tagItem); ok {
-					return m, func() tea.Msg {
-						return tagSelectedMsg{tag: item.tag}
-					}
-				}
-			case "esc", "backspace":
-				return m, func() tea.Msg {
-					return backToListMsg{}
-				}
+	case actionMsg:
+		if cmd, ok := browseList(&m.list, msg.name); ok {
+			return m, cmd
+		}
+		switch msg.name {
+		case actOpen:
+			if item, ok := m.list.SelectedItem().(tagItem); ok {
+				return m, func() tea.Msg { return tagSelectedMsg{tag: item.tag} }
 			}
+		case actLeave:
+			return m, func() tea.Msg { return backToListMsg{} }
+		}
+		return m, nil
+
+	case tea.KeyPressMsg:
+		// Only a filter being typed takes keys; actions do everything else.
+		if m.list.FilterState() != list.Filtering {
+			return m, nil
 		}
 	}
 

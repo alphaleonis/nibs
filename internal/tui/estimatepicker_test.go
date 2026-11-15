@@ -3,7 +3,6 @@ package tui
 import (
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/alphaleonis/nibs/internal/config"
@@ -89,7 +88,7 @@ func TestEstimatePickerModel(t *testing.T) {
 		)
 
 		// Press enter on the pre-selected item ("m")
-		_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		_, cmd := m.Update(actionMsg{name: actOpen})
 		if cmd == nil {
 			t.Fatal("expected a command from enter key")
 		}
@@ -113,7 +112,7 @@ func TestEstimatePickerModel(t *testing.T) {
 			80, 24,
 		)
 
-		_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+		_, cmd := m.Update(actionMsg{name: actLeave})
 		if cmd == nil {
 			t.Fatal("expected a command from esc key")
 		}
@@ -181,16 +180,16 @@ func TestAppEstimatePickerWiring(t *testing.T) {
 		}
 	})
 
-	t.Run("detail view E key triggers openEstimatePickerMsg", func(t *testing.T) {
+	t.Run("detail view estimate action triggers openEstimatePickerMsg", func(t *testing.T) {
 		app, stub := newTestApp()
 		cfg := config.Default()
 		app.state = viewDetail
 		testNib := &nib.Nib{ID: "nib-1", Title: "Test", Status: "todo", Type: "task", Estimate: "m"}
 		app.detail = newDetailModel(testNib, stub, cfg, 80, 24)
 
-		_, cmd := app.Update(tea.KeyPressMsg{Code: 'E', Text: "E"})
+		cmd := app.runAction(actionByName(actEstimate))
 		if cmd == nil {
-			t.Fatal("expected a command from E key in detail view")
+			t.Fatal("expected a command from the estimate action in the detail view")
 		}
 
 		msg := cmd()

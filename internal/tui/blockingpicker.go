@@ -166,6 +166,7 @@ func newBlockingPickerModel(nibID, nibTitle string, currentBlocking []string, ba
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
 	l.SetShowHelp(false)
+	l.KeyMap = listKeyMap()
 	l.SetShowPagination(false)
 	l.Styles.Title = listTitleStyle
 	l.Styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 0, 0)
@@ -200,49 +201,45 @@ func (m blockingPickerModel) Update(msg tea.Msg) (blockingPickerModel, tea.Cmd) 
 		listHeight := modalHeight - 9
 		m.list.SetSize(listWidth, listHeight)
 
-	case tea.KeyPressMsg:
-		if m.list.FilterState() != list.Filtering {
-			switch msg.String() {
-			case "space":
-				// The delegate reads pendingBlocking directly; the items need no update.
-				if item, ok := m.list.SelectedItem().(blockingItem); ok {
-					targetID := item.nib.ID
-					if m.pendingBlocking[targetID] {
-						delete(m.pendingBlocking, targetID)
-					} else {
-						m.pendingBlocking[targetID] = true
-					}
-				}
-				return m, nil
-
-			case "enter":
-				var toAdd, toRemove []string
-
-				for id := range m.pendingBlocking {
-					if !m.originalBlocking[id] {
-						toAdd = append(toAdd, id)
-					}
-				}
-
-				for id := range m.originalBlocking {
-					if !m.pendingBlocking[id] {
-						toRemove = append(toRemove, id)
-					}
-				}
-
-				return m, func() tea.Msg {
-					return blockingConfirmedMsg{
-						nibID:    m.nibID,
-						toAdd:    toAdd,
-						toRemove: toRemove,
-					}
-				}
-
-			case "esc", "backspace":
-				return m, func() tea.Msg {
-					return closeBlockingPickerMsg{}
+	case actionMsg:
+		if cmd, ok := browseList(&m.list, msg.name); ok {
+			return m, cmd
+		}
+		switch msg.name {
+		case actSelect:
+			// The delegate reads pendingBlocking directly; the items need no update.
+			if item, ok := m.list.SelectedItem().(blockingItem); ok {
+				targetID := item.nib.ID
+				if m.pendingBlocking[targetID] {
+					delete(m.pendingBlocking, targetID)
+				} else {
+					m.pendingBlocking[targetID] = true
 				}
 			}
+		case actOpen:
+			var toAdd, toRemove []string
+			for id := range m.pendingBlocking {
+				if !m.originalBlocking[id] {
+					toAdd = append(toAdd, id)
+				}
+			}
+			for id := range m.originalBlocking {
+				if !m.pendingBlocking[id] {
+					toRemove = append(toRemove, id)
+				}
+			}
+			return m, func() tea.Msg {
+				return blockingConfirmedMsg{nibID: m.nibID, toAdd: toAdd, toRemove: toRemove}
+			}
+		case actLeave:
+			return m, func() tea.Msg { return closeBlockingPickerMsg{} }
+		}
+		return m, nil
+
+	case tea.KeyPressMsg:
+		// Only a filter being typed takes keys; actions do everything else.
+		if m.list.FilterState() != list.Filtering {
+			return m, nil
 		}
 	}
 

@@ -34,13 +34,13 @@ type cancelConfirmMsg struct{}
 
 func (d confirmDialog) Update(msg tea.Msg) (confirmDialog, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "y", "Y":
+	case actionMsg:
+		switch msg.name {
+		case actConfirmYes:
 			return d, func() tea.Msg {
 				return confirmActionMsg{nibIDs: d.nibIDs, action: d.action}
 			}
-		case "n", "N", "esc":
+		case actConfirmNo, actLeave:
 			return d, func() tea.Msg {
 				return cancelConfirmMsg{}
 			}

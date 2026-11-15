@@ -165,6 +165,7 @@ func newParentPickerModel(nibIDs []string, nibTitle string, nibTypes []string, c
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
 	l.SetShowHelp(false)
+	l.KeyMap = listKeyMap()
 	l.SetShowPagination(false)
 	l.Styles.Title = listTitleStyle
 	l.Styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 0, 0)
@@ -293,27 +294,34 @@ func (m parentPickerModel) Update(msg tea.Msg) (parentPickerModel, tea.Cmd) {
 		listHeight := modalHeight - 7
 		m.list.SetSize(listWidth, listHeight)
 
-	case tea.KeyPressMsg:
-		if m.list.FilterState() != list.Filtering {
-			switch msg.String() {
-			case "enter":
-				switch item := m.list.SelectedItem().(type) {
-				case clearParentItem:
-					return m, func() tea.Msg {
-						return parentSelectedMsg{nibIDs: m.nibIDs, parentID: ""}
-					}
-				case parentItem:
-					return m, func() tea.Msg {
-						return parentSelectedMsg{nibIDs: m.nibIDs, parentID: item.nib.ID}
-					}
-				}
-			case "H":
-				return m, m.toggleHideCompleted()
-			case "esc", "backspace":
+	case actionMsg:
+		if cmd, ok := browseList(&m.list, msg.name); ok {
+			return m, cmd
+		}
+		switch msg.name {
+		case actOpen:
+			switch item := m.list.SelectedItem().(type) {
+			case clearParentItem:
 				return m, func() tea.Msg {
-					return closeParentPickerMsg{}
+					return parentSelectedMsg{nibIDs: m.nibIDs, parentID: ""}
+				}
+			case parentItem:
+				return m, func() tea.Msg {
+					return parentSelectedMsg{nibIDs: m.nibIDs, parentID: item.nib.ID}
 				}
 			}
+		case actHideClosed:
+			cmd := m.toggleHideCompleted()
+			return m, cmd
+		case actLeave:
+			return m, func() tea.Msg { return closeParentPickerMsg{} }
+		}
+		return m, nil
+
+	case tea.KeyPressMsg:
+		// Only a filter being typed takes keys; actions do everything else.
+		if m.list.FilterState() != list.Filtering {
+			return m, nil
 		}
 	}
 
@@ -335,7 +343,7 @@ func (m parentPickerModel) View() string {
 		NibTitle:    m.nibTitle,
 		NibID:       nibID,
 		ListContent: m.list.View(),
-		ExtraHelp:   []helpEntry{{"H", hideCompletedHelpText(m.hideCompleted)}},
+		ExtraHelp:   []helpEntry{{"z h", hideCompletedHelpText(m.hideCompleted)}},
 		Width:       m.width,
 		WidthPct:    60,
 		MaxWidth:    80,

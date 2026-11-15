@@ -112,6 +112,7 @@ func newStatusPickerModel(nibIDs []string, nibTitle, currentStatus string, cfg *
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
 	l.SetShowHelp(false)
+	l.KeyMap = listKeyMap()
 	l.SetShowPagination(false)
 	l.Styles.Title = listTitleStyle
 	l.Styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 0, 0)
@@ -148,20 +149,26 @@ func (m statusPickerModel) Update(msg tea.Msg) (statusPickerModel, tea.Cmd) {
 		listHeight := modalHeight - 7
 		m.list.SetSize(listWidth, listHeight)
 
-	case tea.KeyPressMsg:
-		if m.list.FilterState() != list.Filtering {
-			switch msg.String() {
-			case "enter":
-				if item, ok := m.list.SelectedItem().(statusItem); ok {
-					return m, func() tea.Msg {
-						return statusSelectedMsg{nibIDs: m.nibIDs, status: item.name}
-					}
-				}
-			case "esc", "backspace":
+	case actionMsg:
+		if cmd, ok := browseList(&m.list, msg.name); ok {
+			return m, cmd
+		}
+		switch msg.name {
+		case actOpen:
+			if item, ok := m.list.SelectedItem().(statusItem); ok {
 				return m, func() tea.Msg {
-					return closeStatusPickerMsg{}
+					return statusSelectedMsg{nibIDs: m.nibIDs, status: item.name}
 				}
 			}
+		case actLeave:
+			return m, func() tea.Msg { return closeStatusPickerMsg{} }
+		}
+		return m, nil
+
+	case tea.KeyPressMsg:
+		// Only a filter being typed takes keys; actions do everything else.
+		if m.list.FilterState() != list.Filtering {
+			return m, nil
 		}
 	}
 
