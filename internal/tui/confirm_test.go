@@ -24,7 +24,7 @@ func setupTestApp(t *testing.T, nibs []*nib.Nib) (*App, *StubBackend) {
 	}
 
 	cfg := config.Default()
-	app := New(stub, cfg, "dev")
+	app := New(stub, cfg, nil, "", "dev")
 
 	// Initialize and set a reasonable window size
 	initCmd := app.Init()

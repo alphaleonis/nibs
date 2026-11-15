@@ -127,8 +127,8 @@ type actionState struct {
 	linksShown bool   // the nib view draws its links box
 }
 
-// action is one named thing a key can do. Dispatch reads the actions table, and
-// nothing else maps keys.
+// action is one named thing a key can do. Dispatch reads the keymap's
+// actions, and nothing else maps keys.
 type action struct {
 	Name     actionName
 	Group    string // Move, Edit, View, Go, Find or App
@@ -261,9 +261,9 @@ func readyToJumpBack(st actionState) (bool, string) {
 	return true, ""
 }
 
-// actions is the keymap. Two actions may share a key only when no context has
-// both active; keymapConflicts checks this.
-var actions = []action{
+// defaultActions is the default keymap. Two actions may share a key only when
+// no context has both active; keyConflicts checks this.
+var defaultActions = []action{
 	{Name: actUp, Group: "Move", Desc: "move up", Contexts: browsing, Keys: []string{"up", "k"}},
 	{Name: actDown, Group: "Move", Desc: "move down", Contexts: browsing, Keys: []string{"down", "j"}},
 	{Name: actPageUp, Group: "Move", Desc: "page up", Contexts: browsing, Keys: []string{"pgup"}},
@@ -337,11 +337,11 @@ var actions = []action{
 // edit keys.
 var actionGroups = []string{"Move", "Edit", "Go", "View", "Find", "App"}
 
-// actionByName returns the action named name, or nil when the table has none.
-func actionByName(name actionName) *action {
-	for i := range actions {
-		if actions[i].Name == name {
-			return &actions[i]
+// findAction returns the action in table named name, or nil when it has none.
+func findAction(table []action, name actionName) *action {
+	for i := range table {
+		if table[i].Name == name {
+			return &table[i]
 		}
 	}
 	return nil
@@ -377,11 +377,45 @@ func resolveKey(table []action, ctx keyContext, pending, key string) (*action, s
 	return nil, ""
 }
 
-// keymapConflicts describes every key two actions share in one context, and
-// every key that starts a longer sequence bound in the same context, which
-// leaves the longer one unreachable.
-func keymapConflicts(table []action) []string {
-	var conflicts []string
+// keyConflict is a key two actions share in one context, or a key that starts
+// a longer sequence bound in that context, which leaves the longer one
+// unreachable.
+type keyConflict struct {
+	ctx    keyContext
+	key    string // holder's binding
+	holder actionName
+	// otherKey is other's binding: key itself, or the longer sequence key starts.
+	otherKey string
+	other    actionName
+}
+
+func (c keyConflict) String() string {
+	if c.key == c.otherKey {
+		return fmt.Sprintf("%s: %q is bound to both %s and %s", c.ctx, c.key, c.holder, c.other)
+	}
+	return fmt.Sprintf("%s: %q (%s) starts %q (%s)", c.ctx, c.key, c.holder, c.otherKey, c.other)
+}
+
+// reasonForHolder says why holder's binding is ignored.
+func (c keyConflict) reasonForHolder() string {
+	if c.key == c.otherKey {
+		return fmt.Sprintf("%q is also bound to %s in the %s", c.key, c.other, c.ctx)
+	}
+	return fmt.Sprintf("%q starts %s's %q in the %s", c.key, c.other, c.otherKey, c.ctx)
+}
+
+// reasonForOther says why other's binding is ignored.
+func (c keyConflict) reasonForOther() string {
+	if c.key == c.otherKey {
+		return fmt.Sprintf("%q is also bound to %s in the %s", c.key, c.holder, c.ctx)
+	}
+	return fmt.Sprintf("%s's %q starts %q in the %s", c.holder, c.key, c.otherKey, c.ctx)
+}
+
+// keyConflicts returns every key two actions in table share in one context, and
+// every key that starts a longer sequence bound in the same context.
+func keyConflicts(table []action) []keyConflict {
+	var conflicts []keyConflict
 	for ctx := range numKeyContexts {
 		owner := map[string]actionName{}
 		var bindings []string
@@ -391,7 +425,7 @@ func keymapConflicts(table []action) []string {
 			}
 			for _, binding := range a.Keys {
 				if other, taken := owner[binding]; taken {
-					conflicts = append(conflicts, fmt.Sprintf("%s: %q is bound to both %s and %s", ctx, binding, other, a.Name))
+					conflicts = append(conflicts, keyConflict{ctx: ctx, key: binding, holder: other, otherKey: binding, other: a.Name})
 					continue
 				}
 				owner[binding] = a.Name
@@ -401,7 +435,7 @@ func keymapConflicts(table []action) []string {
 		for _, short := range bindings {
 			for _, long := range bindings {
 				if strings.HasPrefix(long, short+" ") {
-					conflicts = append(conflicts, fmt.Sprintf("%s: %q (%s) starts %q (%s)", ctx, short, owner[short], long, owner[long]))
+					conflicts = append(conflicts, keyConflict{ctx: ctx, key: short, holder: owner[short], otherKey: long, other: owner[long]})
 				}
 			}
 		}

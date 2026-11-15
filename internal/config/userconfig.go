@@ -13,6 +13,10 @@ import (
 // project's <store>/config.yml wins over the one here.
 type UserConfig struct {
 	Nibs UserNibsConfig `yaml:"nibs"`
+	// TUI holds the TUI's settings, which only the user config carries. It
+	// stays a node, whatever its shape, so a malformed block costs only the TUI
+	// settings and the TUI can name the line of each entry it ignores.
+	TUI yaml.Node `yaml:"tui"`
 }
 
 type UserNibsConfig struct {

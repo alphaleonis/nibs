@@ -23,7 +23,7 @@ func newTestBlockingPicker(t *testing.T, currentBlocking []string) blockingPicke
 	}
 	stub := &StubBackend{Nibs: nibMap, AllNibs: nibs}
 
-	return newBlockingPickerModel("src", "Source", currentBlocking, stub, config.Default(), 120, 40)
+	return newBlockingPickerModel(defaultActions, "src", "Source", currentBlocking, stub, config.Default(), 120, 40)
 }
 
 // selectItem moves the cursor onto the item with the given nib ID.

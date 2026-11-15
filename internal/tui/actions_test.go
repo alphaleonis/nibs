@@ -52,7 +52,7 @@ func pressKeys(app *App, keys string) {
 }
 
 func TestKeyPressWritesKeysTheWayTheTableDoes(t *testing.T) {
-	for _, a := range actions {
+	for _, a := range defaultActions {
 		for _, binding := range a.Keys {
 			for _, k := range strings.Fields(binding) {
 				if got := keyPress(k).String(); got != k {
@@ -66,12 +66,12 @@ func TestKeyPressWritesKeysTheWayTheTableDoes(t *testing.T) {
 // Two actions active in one context cannot share a key, and no key in a
 // context can start another, longer sequence there, or one of them never runs.
 func TestNoTwoActionsShareAKeyInAContext(t *testing.T) {
-	if errs := keymapConflicts(actions); len(errs) > 0 {
-		t.Errorf("the action table has %d conflict(s):\n%s", len(errs), strings.Join(errs, "\n"))
+	if errs := keyConflicts(defaultActions); len(errs) > 0 {
+		t.Errorf("the action table has %d conflict(s):\n%s", len(errs), conflictLines(errs))
 	}
 }
 
-func TestKeymapConflictsFindsACollisionAndAShadowedPrefix(t *testing.T) {
+func TestKeyConflictsFindsACollisionAndAShadowedPrefix(t *testing.T) {
 	table := []action{
 		{Name: "a.one", Contexts: []keyContext{ctxList}, Keys: []string{"x"}},
 		{Name: "a.two", Contexts: []keyContext{ctxList, ctxNibBody}, Keys: []string{"x"}},
@@ -79,15 +79,23 @@ func TestKeymapConflictsFindsACollisionAndAShadowedPrefix(t *testing.T) {
 		{Name: "a.four", Contexts: []keyContext{ctxNibBody}, Keys: []string{"z z"}},
 		{Name: "a.five", Contexts: []keyContext{ctxConfirm}, Keys: []string{"x"}},
 	}
-	errs := keymapConflicts(table)
+	errs := keyConflicts(table)
 	if len(errs) != 2 {
-		t.Fatalf("got %d conflicts, want 2 (x in the list, z before z z):\n%s", len(errs), strings.Join(errs, "\n"))
+		t.Fatalf("got %d conflicts, want 2 (x in the list, z before z z):\n%s", len(errs), conflictLines(errs))
 	}
+}
+
+func conflictLines(conflicts []keyConflict) string {
+	lines := make([]string, len(conflicts))
+	for i, c := range conflicts {
+		lines[i] = c.String()
+	}
+	return strings.Join(lines, "\n")
 }
 
 func TestEveryActionIsReachable(t *testing.T) {
 	seen := map[actionName]bool{}
-	for _, a := range actions {
+	for _, a := range defaultActions {
 		if seen[a.Name] {
 			t.Errorf("%s is in the table twice", a.Name)
 		}
@@ -271,7 +279,7 @@ func TestATextBoxTakesKeysTheTableBinds(t *testing.T) {
 
 func TestArchiveIsNotReadyOnAnEmptyList(t *testing.T) {
 	app, _ := setupTestApp(t, nil)
-	if ok, why := actionByName(actArchive).Ready(app.actionState()); ok || why == "" {
+	if ok, why := findAction(defaultActions, actArchive).Ready(app.actionState()); ok || why == "" {
 		t.Errorf("archive on an empty list: ready = %v, reason %q; want not ready, with a reason", ok, why)
 	}
 }
@@ -280,7 +288,7 @@ func TestArchiveIsNotReadyOnAnEmptyList(t *testing.T) {
 // gate keeps it closed here.
 func TestAnActionThatIsNotReadyDoesNothing(t *testing.T) {
 	app, _ := setupTestApp(t, listKeysNibs())
-	create := *actionByName(actCreate)
+	create := *findAction(defaultActions, actCreate)
 	create.Ready = func(actionState) (bool, string) { return false, "not now" }
 
 	processCmdNonBlocking(app, app.runAction(&create))

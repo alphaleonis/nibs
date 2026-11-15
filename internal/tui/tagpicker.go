@@ -59,6 +59,7 @@ func (d tagItemDelegate) Render(w io.Writer, m list.Model, index int, listItem l
 
 // tagPickerModel is the model for the tag picker view
 type tagPickerModel struct {
+	table    []action // the keymap in effect
 	list     list.Model
 	tags     []tagWithCount
 	pageKeys []string // the accelerators of the rows on a page, in order
@@ -66,7 +67,7 @@ type tagPickerModel struct {
 	height   int
 }
 
-func newTagPickerModel(tags []tagWithCount, width, height int) tagPickerModel {
+func newTagPickerModel(table []action, tags []tagWithCount, width, height int) tagPickerModel {
 	sort.Slice(tags, func(i, j int) bool {
 		if tags[i].count != tags[j].count {
 			return tags[i].count > tags[j].count
@@ -74,7 +75,7 @@ func newTagPickerModel(tags []tagWithCount, width, height int) tagPickerModel {
 		return tags[i].tag < tags[j].tag
 	})
 
-	pageKeys := freeAccelerators(ctxTagPicker)
+	pageKeys := freeAccelerators(table, ctxTagPicker)
 	delegate := tagItemDelegate{pageKeys: pageKeys}
 
 	items := make([]list.Item, len(tags))
@@ -93,6 +94,7 @@ func newTagPickerModel(tags []tagWithCount, width, height int) tagPickerModel {
 	applyFilterStyles(&l.Styles)
 
 	return tagPickerModel{
+		table:    table,
 		list:     l,
 		tags:     tags,
 		pageKeys: pageKeys,
@@ -158,7 +160,7 @@ func (m tagPickerModel) View() string {
 
 	content := border.Render(m.list.View())
 
-	help := hintRowWithin(actions, actionState{ctx: ctxTagPicker}, m.width)
+	help := hintRowWithin(m.table, actionState{ctx: ctxTagPicker}, m.width)
 
 	return content + "\n" + help
 }

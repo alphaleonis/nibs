@@ -83,6 +83,7 @@ func (d parentItemDelegate) Render(w io.Writer, m list.Model, index int, listIte
 
 // parentPickerModel is the model for the parent picker view
 type parentPickerModel struct {
+	table         []action // the keymap in effect
 	list          list.Model
 	nibIDs        []string   // the nibs we're setting the parent for
 	nibTitle      string     // display title (single title or "N selected nibs")
@@ -96,7 +97,7 @@ type parentPickerModel struct {
 	cfg           *config.Config
 }
 
-func newParentPickerModel(nibIDs []string, nibTitle string, nibTypes []string, currentParent string, backend Backend, cfg *config.Config, width, height int) parentPickerModel {
+func newParentPickerModel(table []action, nibIDs []string, nibTitle string, nibTypes []string, currentParent string, backend Backend, cfg *config.Config, width, height int) parentPickerModel {
 	// The parent types valid for every selected nib.
 	var validParentTypes []string
 	for i, nibType := range nibTypes {
@@ -159,7 +160,7 @@ func newParentPickerModel(nibIDs []string, nibTitle string, nibTypes []string, c
 	})
 
 	// rebuildList populates the items.
-	pageKeys := freeAccelerators(ctxParentPicker)
+	pageKeys := freeAccelerators(table, ctxParentPicker)
 	delegate := parentItemDelegate{cfg: cfg, pageKeys: pageKeys}
 	modalWidth := pickerModalWidth(width, 60, 80)
 	modalHeight := pickerModalHeight(height, 60, 20)
@@ -177,6 +178,7 @@ func newParentPickerModel(nibIDs []string, nibTitle string, nibTypes []string, c
 	applyFilterStyles(&l.Styles)
 
 	m := parentPickerModel{
+		table:         table,
 		list:          l,
 		nibIDs:        nibIDs,
 		nibTitle:      nibTitle,
@@ -345,6 +347,7 @@ func (m parentPickerModel) View() string {
 	}
 
 	return renderPickerModal(pickerModalConfig{
+		Keys:        m.table,
 		Context:     ctxParentPicker,
 		NibTitle:    m.nibTitle,
 		NibID:       nibID,

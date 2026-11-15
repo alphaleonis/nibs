@@ -12,6 +12,7 @@ import (
 
 // confirmDialog holds the state for an archive/delete confirmation modal.
 type confirmDialog struct {
+	table   []action // the keymap in effect, which App sets when it opens the dialog
 	title   string   // e.g., "Archive nib?" or "Permanently delete nib?"
 	message string   // descriptive message shown in the dialog
 	action  string   // "archive" or "delete"
@@ -54,7 +55,7 @@ func (d confirmDialog) View(width, height int) string {
 
 	header := lipgloss.NewStyle().Bold(true).Render(d.title)
 
-	help := hintRowWithin(actions, actionState{ctx: ctxConfirm}, modalWidth-2)
+	help := hintRowWithin(d.table, actionState{ctx: ctxConfirm}, modalWidth-2)
 
 	borderColor := ui.ColorPrimary
 	if d.action == "delete" {

@@ -108,6 +108,7 @@ func (d blockingItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 
 // blockingPickerModel is the model for the blocking picker view
 type blockingPickerModel struct {
+	table            []action // the keymap in effect
 	list             list.Model
 	nibID            string          // the nib we're setting blocking for
 	nibTitle         string          // the nib's title
@@ -119,7 +120,7 @@ type blockingPickerModel struct {
 	height           int
 }
 
-func newBlockingPickerModel(nibID, nibTitle string, currentBlocking []string, backend Backend, cfg *config.Config, width, height int) blockingPickerModel {
+func newBlockingPickerModel(table []action, nibID, nibTitle string, currentBlocking []string, backend Backend, cfg *config.Config, width, height int) blockingPickerModel {
 	allNibs, _ := backend.ListNibs(context.Background(), nil)
 
 	originalBlocking := make(map[string]bool)
@@ -163,7 +164,7 @@ func newBlockingPickerModel(nibID, nibTitle string, currentBlocking []string, ba
 	// header(1) + subtitle(1) + blank(1) + blank(1) + description(1) + blank(1) + help(1) + border(2) = 9
 	listHeight := modalHeight - 9
 
-	pageKeys := freeAccelerators(ctxBlockingPicker)
+	pageKeys := freeAccelerators(table, ctxBlockingPicker)
 	delegate := blockingItemDelegate{cfg: cfg, pendingBlocking: &pendingBlocking, pageKeys: pageKeys}
 
 	l := list.New(items, delegate, listWidth, listHeight)
@@ -178,6 +179,7 @@ func newBlockingPickerModel(nibID, nibTitle string, currentBlocking []string, ba
 	applyFilterStyles(&l.Styles)
 
 	return blockingPickerModel{
+		table:            table,
 		list:             l,
 		nibID:            nibID,
 		nibTitle:         nibTitle,
@@ -266,12 +268,12 @@ func (m blockingPickerModel) View() string {
 	}
 
 	return renderPickerModal(pickerModalConfig{
+		Keys:        m.table,
 		Context:     ctxBlockingPicker,
 		Title:       "Manage Blocking",
 		NibTitle:    m.nibTitle,
 		NibID:       m.nibID,
 		ListContent: m.list.View(),
-		Description: "space toggle, enter confirm, esc cancel",
 		Width:       m.width,
 		WidthPct:    60,
 		MaxWidth:    80,

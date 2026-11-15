@@ -20,6 +20,7 @@ type closeCreateModalMsg struct{}
 
 // createModalModel is the model for the create nib modal
 type createModalModel struct {
+	table     []action // the keymap in effect
 	textInput textinput.Model
 	nibType   string // chosen type from create flow type picker
 	typeColor string // color for the type from config
@@ -27,7 +28,7 @@ type createModalModel struct {
 	height    int
 }
 
-func newCreateModalModel(nibType string, cfg *config.Config, width, height int) createModalModel {
+func newCreateModalModel(table []action, nibType string, cfg *config.Config, width, height int) createModalModel {
 	ti := textinput.New()
 	ti.Placeholder = "Enter nib title..."
 	ti.CharLimit = 200
@@ -47,6 +48,7 @@ func newCreateModalModel(nibType string, cfg *config.Config, width, height int) 
 	}
 
 	return createModalModel{
+		table:     table,
 		textInput: ti,
 		nibType:   nibType,
 		typeColor: typeColor,
@@ -110,7 +112,7 @@ func (m createModalModel) View() string {
 		Width(withBorder(modalWidth - 6)).
 		Render(m.textInput.View())
 
-	help := hintRowWithin(actions, actionState{ctx: ctxTextInput}, modalWidth-4)
+	help := hintRowWithin(m.table, actionState{ctx: ctxTextInput}, modalWidth-4)
 
 	content := header + "\n\n" + inputBox + "\n\n" + help
 

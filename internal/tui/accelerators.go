@@ -11,11 +11,11 @@ import (
 // them when their hint offers none.
 var acceleratorPool = strings.Split("1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ", "")
 
-// freeAccelerators returns acceleratorPool without the keys an action in ctx
-// takes, either as a whole binding or as the first key of a sequence.
-func freeAccelerators(ctx keyContext) []string {
+// freeAccelerators returns acceleratorPool without the keys an action of table
+// in ctx takes, either as a whole binding or as the first key of a sequence.
+func freeAccelerators(table []action, ctx keyContext) []string {
 	taken := map[string]bool{}
-	for _, a := range actions {
+	for _, a := range table {
 		if !slices.Contains(a.Contexts, ctx) {
 			continue
 		}
@@ -32,11 +32,11 @@ func freeAccelerators(ctx keyContext) []string {
 	return free
 }
 
-// assignAccelerators gives each row a distinct free key in ctx: the first free
-// letter of its hint, else the first free key left in the pool. A row gets ""
-// once the free keys run out.
-func assignAccelerators(ctx keyContext, hints []string) []string {
-	free := freeAccelerators(ctx)
+// assignAccelerators gives each row a distinct key free in ctx under table: the
+// first free letter of its hint, else the first free key left in the pool. A
+// row gets "" once the free keys run out.
+func assignAccelerators(table []action, ctx keyContext, hints []string) []string {
+	free := freeAccelerators(table, ctx)
 	used := map[string]bool{}
 	keys := make([]string, len(hints))
 	for i, hint := range hints {

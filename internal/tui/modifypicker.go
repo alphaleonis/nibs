@@ -80,6 +80,7 @@ type modifyItem struct {
 
 // modifyPickerModel lists the modifyRows with the targets' current values.
 type modifyPickerModel struct {
+	table   []action // the keymap in effect
 	items   []modifyItem
 	cursor  int
 	targets modifyTargets
@@ -87,17 +88,17 @@ type modifyPickerModel struct {
 	height  int
 }
 
-func newModifyPickerModel(targets modifyTargets, width, height int) modifyPickerModel {
+func newModifyPickerModel(table []action, targets modifyTargets, width, height int) modifyPickerModel {
 	hints := make([]string, len(modifyRows))
 	for i, row := range modifyRows {
 		hints[i] = row.label
 	}
-	keys := assignAccelerators(ctxModifyPicker, hints)
+	keys := assignAccelerators(table, ctxModifyPicker, hints)
 	items := make([]modifyItem, len(modifyRows))
 	for i, row := range modifyRows {
 		items[i] = modifyItem{row: row, value: sharedValue(targets.nibs, row.value), key: keys[i]}
 	}
-	return modifyPickerModel{items: items, targets: targets, width: width, height: height}
+	return modifyPickerModel{table: table, items: items, targets: targets, width: width, height: height}
 }
 
 // sharedValue returns the value every nib has, "mixed" when they differ, or
@@ -176,6 +177,7 @@ func (m modifyPickerModel) View() string {
 		nibID = m.targets.nibs[0].ID
 	}
 	return renderPickerModal(pickerModalConfig{
+		Keys:        m.table,
 		Context:     ctxModifyPicker,
 		NibTitle:    m.targets.title,
 		NibID:       nibID,

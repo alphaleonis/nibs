@@ -8,6 +8,7 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/store"
 	"github.com/alphaleonis/nibs/internal/yamlfile"
+	"gopkg.in/yaml.v3"
 )
 
 // storeDirFor creates the store directory under projectDir and returns it.
@@ -522,5 +523,63 @@ func TestLoadUserConfigFromIsBounded(t *testing.T) {
 	}
 	if missing.Nibs.IDLength != 0 {
 		t.Errorf("absent config = %+v, want the zero value", missing.Nibs)
+	}
+}
+
+func TestLoadUserConfigKeepsTheTUINode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nibs.yml")
+	body := "nibs:\n  id_length: 6\ntui:\n  keys:\n    nib.priority: P\n"
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadUserConfigFrom(path)
+	if err != nil {
+		t.Fatalf("LoadUserConfigFrom() error = %v", err)
+	}
+	if cfg.TUI.Kind != yaml.MappingNode || cfg.TUI.Line != 4 {
+		t.Errorf("tui = kind %v on line %d, want a mapping on line 4", cfg.TUI.Kind, cfg.TUI.Line)
+	}
+	if cfg.Nibs.IDLength != 6 {
+		t.Errorf("IDLength = %d, want 6", cfg.Nibs.IDLength)
+	}
+}
+
+// A malformed tui block is the TUI's to report, so it must not cost the rest of
+// the user config.
+func TestLoadUserConfigAcceptsAnyTUIShape(t *testing.T) {
+	for _, tui := range []string{"tui: keys", "tui: [1]", "tui: {keys: 3}", "tui:\n  keys: [not, a, map]"} {
+		path := filepath.Join(t.TempDir(), "nibs.yml")
+		body := "nibs:\n  id_length: 6\n" + tui + "\n"
+		if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		cfg, err := LoadUserConfigFrom(path)
+		if err != nil {
+			t.Errorf("%q: LoadUserConfigFrom() error = %v", tui, err)
+			continue
+		}
+		if cfg.Nibs.IDLength != 6 {
+			t.Errorf("%q: IDLength = %d, want 6", tui, cfg.Nibs.IDLength)
+		}
+	}
+}
+
+// The tui block belongs to the user config. A project config that carries one
+// still loads, and Config has nowhere to hold it.
+func TestProjectConfigWithATUIBlockLoads(t *testing.T) {
+	storeDir := storeDirFor(t, t.TempDir())
+	body := "nibs:\n  prefix: proj\ntui:\n  keys:\n    nib.priority: P\n"
+	if err := os.WriteFile(filepath.Join(storeDir, store.ConfigFileName), []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadFromStore(storeDir)
+	if err != nil {
+		t.Fatalf("LoadFromStore() error = %v", err)
+	}
+	if cfg.Nibs.Prefix != "proj" {
+		t.Errorf("prefix = %q, want proj", cfg.Nibs.Prefix)
 	}
 }

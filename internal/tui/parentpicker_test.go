@@ -35,6 +35,7 @@ func TestParentPicker_HidesCompletedByDefault(t *testing.T) {
 	cfg := makeTestConfig()
 
 	m := newParentPickerModel(
+		defaultActions,
 		[]string{"nib-child"}, "Child Task", []string{"task"}, "",
 		backend, cfg, 80, 24,
 	)
@@ -84,6 +85,7 @@ func TestParentPicker_ToggleShowsCompleted(t *testing.T) {
 	cfg := makeTestConfig()
 
 	m := newParentPickerModel(
+		defaultActions,
 		[]string{"nib-child"}, "Child Task", []string{"task"}, "",
 		backend, cfg, 80, 24,
 	)
@@ -123,6 +125,7 @@ func TestParentPicker_ToggleKeepsAnAppliedFilter(t *testing.T) {
 		},
 	}
 	m := newParentPickerModel(
+		defaultActions,
 		[]string{"nib-child"}, "Child Task", []string{"task"}, "",
 		backend, makeTestConfig(), 80, 24,
 	)
@@ -150,6 +153,7 @@ func TestParentPicker_ClearParentAlwaysPresent(t *testing.T) {
 	cfg := makeTestConfig()
 
 	m := newParentPickerModel(
+		defaultActions,
 		[]string{"nib-child"}, "Child Task", []string{"task"}, "",
 		backend, cfg, 80, 24,
 	)

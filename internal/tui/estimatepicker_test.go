@@ -12,6 +12,7 @@ import (
 func TestEstimatePickerModel(t *testing.T) {
 	t.Run("pre-selects current estimate", func(t *testing.T) {
 		m := newEstimatePickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "l",
 			80, 24,
 		)
@@ -30,6 +31,7 @@ func TestEstimatePickerModel(t *testing.T) {
 
 	t.Run("shows all estimate options", func(t *testing.T) {
 		m := newEstimatePickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "",
 			80, 24,
 		)
@@ -63,6 +65,7 @@ func TestEstimatePickerModel(t *testing.T) {
 		heightByEstimate := make(map[string]int, len(config.DefaultEstimates))
 		for _, e := range config.DefaultEstimates {
 			m := newEstimatePickerModel(
+				defaultActions,
 				[]string{"nib-1"}, "Test Nib", e.Name,
 				w, h,
 			)
@@ -83,6 +86,7 @@ func TestEstimatePickerModel(t *testing.T) {
 
 	t.Run("enter sends estimateSelectedMsg", func(t *testing.T) {
 		m := newEstimatePickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "m",
 			80, 24,
 		)
@@ -108,6 +112,7 @@ func TestEstimatePickerModel(t *testing.T) {
 
 	t.Run("esc sends closeEstimatePickerMsg", func(t *testing.T) {
 		m := newEstimatePickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "",
 			80, 24,
 		)
@@ -134,7 +139,7 @@ func TestAppEstimatePickerWiring(t *testing.T) {
 				{ID: "nib-1", Title: "Test", Status: "todo", Type: "task", Estimate: "m"},
 			},
 		}
-		return New(stub, config.Default(), "dev"), stub
+		return New(stub, config.Default(), nil, "", "dev"), stub
 	}
 
 	t.Run("openEstimatePickerMsg transitions to picker state", func(t *testing.T) {
@@ -187,7 +192,7 @@ func TestAppEstimatePickerWiring(t *testing.T) {
 		testNib := &nib.Nib{ID: "nib-1", Title: "Test", Status: "todo", Type: "task", Estimate: "m"}
 		app.detail = newDetailModel(testNib, stub, cfg, 80, 24)
 
-		cmd := app.runAction(actionByName(actEstimate))
+		cmd := app.runAction(findAction(defaultActions, actEstimate))
 		if cmd == nil {
 			t.Fatal("expected a command from the estimate action in the detail view")
 		}

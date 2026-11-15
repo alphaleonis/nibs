@@ -20,6 +20,7 @@ func TestStatusPickerModel(t *testing.T) {
 	// that helper returned.
 	t.Run("lists statuses in transition order", func(t *testing.T) {
 		m := newStatusPickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "todo",
 			cfg, 80, 24,
 		)
@@ -38,6 +39,7 @@ func TestStatusPickerModel(t *testing.T) {
 
 	t.Run("shows all config statuses", func(t *testing.T) {
 		m := newStatusPickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "todo",
 			cfg, 80, 24,
 		)
@@ -66,6 +68,7 @@ func TestStatusPickerModel(t *testing.T) {
 
 	t.Run("offers deferred as a selectable option", func(t *testing.T) {
 		m := newStatusPickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "todo",
 			cfg, 80, 24,
 		)
@@ -95,6 +98,7 @@ func TestStatusPickerModel(t *testing.T) {
 
 	t.Run("pre-selects current status when deferred", func(t *testing.T) {
 		m := newStatusPickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "deferred",
 			cfg, 80, 24,
 		)
@@ -124,6 +128,7 @@ func TestStatusPickerModel(t *testing.T) {
 		heightByStatus := make(map[string]int, len(config.DefaultStatuses))
 		for _, s := range config.DefaultStatuses {
 			m := newStatusPickerModel(
+				defaultActions,
 				[]string{"nib-1"}, "Test Nib", s.Name,
 				cfg, w, h,
 			)
@@ -150,6 +155,7 @@ func TestStatusPickerModel(t *testing.T) {
 
 	t.Run("enter sends statusSelectedMsg for deferred", func(t *testing.T) {
 		m := newStatusPickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "deferred",
 			cfg, 80, 24,
 		)

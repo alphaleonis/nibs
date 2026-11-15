@@ -158,6 +158,7 @@ type App struct {
 	history        []detailModel // stack of previous detail views for back navigation
 	backend        Backend
 	config         *config.Config
+	keys           keymap
 	width          int
 	height         int
 	program        *tea.Program // receives watcher events; see Run
@@ -175,17 +176,40 @@ type App struct {
 	version string // running binary version, for the update check
 }
 
-// New creates the TUI application. version is the running binary version, for
-// the update-available indicator.
-func New(backend Backend, cfg *config.Config, version string) *App {
-	return &App{
+// New creates the TUI application.
+//
+// Its keys are the defaults with the tui.keys of user applied. user is the user
+// config read from userConfigPath, and may be nil. version is the running
+// binary version, for the update-available indicator.
+func New(backend Backend, cfg *config.Config, user *config.UserConfig, userConfigPath, version string) *App {
+	keys := defaultKeymap()
+	if user != nil {
+		keys = buildKeymap(defaultActions, &user.TUI, userConfigPath)
+	}
+	a := &App{
 		state:   viewList,
 		backend: backend,
 		config:  cfg,
+		keys:    keys,
 		list:    newListModel(backend, cfg),
 		preview: newPreviewModel(nil, 0, 0),
 		version: version,
 	}
+	if n := len(keys.ignored); n > 0 {
+		a.list.statusMessage = ignoredBindingsWarning(n, keys.firstKey(actHelp))
+		a.list.statusKind = statusWarn
+	}
+	return a
+}
+
+// ignoredBindingsWarning is the status line's warning that n tui.keys entries
+// were ignored. help is the key that opens the palette, which lists them.
+func ignoredBindingsWarning(n int, help string) string {
+	noun, them := "bindings", "them"
+	if n == 1 {
+		noun, them = "binding", "it"
+	}
+	return fmt.Sprintf("Ignored %d key %s in the user config; %s lists %s", n, noun, help, them)
 }
 
 // Init initializes the application
@@ -264,7 +288,7 @@ func (a *App) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	pending := a.pendingKey
 	a.pendingKey = ""
 	key := msg.String()
-	act, next := resolveKey(actions, ctx, pending, key)
+	act, next := resolveKey(a.keys.actions, ctx, pending, key)
 	switch {
 	case act != nil:
 		return a.runAction(act)
@@ -273,6 +297,11 @@ func (a *App) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	case pending != "":
 		// The key ended a sequence nothing is bound to.
+		return nil
+	case ctx == ctxFilterInput && (key == driveFilterAccept.String() || key == driveFilterCancel.String()):
+		// listKeyMap binds these keys so the filter actions can drive a list. A
+		// raw one would leave the filter even with input.accept or input.cancel
+		// bound to another key.
 		return nil
 	case ctx == ctxFilterInput, ctx == ctxTextInput, ctx == ctxPalette:
 		return a.updateActiveView(msg)
@@ -293,7 +322,7 @@ func (a *App) runAction(act *action) tea.Cmd {
 	case actQuit, actForceQuit:
 		return tea.Quit
 	case actHelp:
-		a.palette = newPaletteModel(a.state, a.actionState(), a.width, a.height)
+		a.palette = newPaletteModel(a.keys, a.state, a.actionState(), a.width, a.height)
 		a.state = viewPalette
 		return a.palette.Init()
 	case actPaletteClose:
@@ -401,7 +430,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(tags) == 0 {
 			return a, nil
 		}
-		a.tagPicker = newTagPickerModel(tags, a.width, a.height)
+		a.tagPicker = newTagPickerModel(a.keys.actions, tags, a.width, a.height)
 		a.state = viewTagPicker
 		return a, a.tagPicker.Init()
 
@@ -418,7 +447,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		a.previousState = a.state
-		a.parentPicker = newParentPickerModel(msg.nibIDs, msg.nibTitle, msg.nibTypes, msg.currentParent, a.backend, a.config, a.width, a.height)
+		a.parentPicker = newParentPickerModel(a.keys.actions, msg.nibIDs, msg.nibTitle, msg.nibTypes, msg.currentParent, a.backend, a.config, a.width, a.height)
 		a.state = viewParentPicker
 		return a, a.parentPicker.Init()
 
@@ -429,7 +458,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case openStatusPickerMsg:
 		a.previousState = a.state
-		a.statusPicker = newStatusPickerModel(msg.nibIDs, msg.nibTitle, msg.currentStatus, a.config, a.width, a.height)
+		a.statusPicker = newStatusPickerModel(a.keys.actions, msg.nibIDs, msg.nibTitle, msg.currentStatus, a.config, a.width, a.height)
 		a.state = viewStatusPicker
 		return a, a.statusPicker.Init()
 
@@ -462,13 +491,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case openCreateTypePickerMsg:
 		a.previousState = a.state
 		// For creation: no nibIDs, and every type is valid.
-		a.typePicker = newTypePickerModel(nil, "", msg.defaultType, nil, a.width, a.height)
+		a.typePicker = newTypePickerModel(a.keys.actions, nil, "", msg.defaultType, nil, a.width, a.height)
 		a.state = viewCreateTypePicker
 		return a, a.typePicker.Init()
 
 	case openTypePickerMsg:
 		a.previousState = a.state
-		a.typePicker = newTypePickerModel(msg.nibIDs, msg.nibTitle, msg.currentType, msg.validTypes, a.width, a.height)
+		a.typePicker = newTypePickerModel(a.keys.actions, msg.nibIDs, msg.nibTitle, msg.currentType, msg.validTypes, a.width, a.height)
 		a.state = viewTypePicker
 		return a, a.typePicker.Init()
 
@@ -504,13 +533,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.list.loadNibs
 
 	case createTypeSelectedMsg:
-		a.createModal = newCreateModalModel(msg.nibType, a.config, a.width, a.height)
+		a.createModal = newCreateModalModel(a.keys.actions, msg.nibType, a.config, a.width, a.height)
 		a.state = viewCreateModal
 		return a, a.createModal.Init()
 
 	case openPriorityPickerMsg:
 		a.previousState = a.state
-		a.priorityPicker = newPriorityPickerModel(msg.nibIDs, msg.nibTitle, msg.currentPriority, a.width, a.height)
+		a.priorityPicker = newPriorityPickerModel(a.keys.actions, msg.nibIDs, msg.nibTitle, msg.currentPriority, a.width, a.height)
 		a.state = viewPriorityPicker
 		return a, a.priorityPicker.Init()
 
@@ -542,7 +571,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case openModifyPickerMsg:
 		a.previousState = a.state
-		a.modifyPicker = newModifyPickerModel(msg.targets, a.width, a.height)
+		a.modifyPicker = newModifyPickerModel(a.keys.actions, msg.targets, a.width, a.height)
 		a.state = viewModifyPicker
 		return a, nil
 
@@ -557,7 +586,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case openEstimatePickerMsg:
 		a.previousState = a.state
-		a.estimatePicker = newEstimatePickerModel(msg.nibIDs, msg.nibTitle, msg.currentEstimate, a.width, a.height)
+		a.estimatePicker = newEstimatePickerModel(a.keys.actions, msg.nibIDs, msg.nibTitle, msg.currentEstimate, a.width, a.height)
 		a.state = viewEstimatePicker
 		return a, a.estimatePicker.Init()
 
@@ -588,7 +617,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case openBlockingPickerMsg:
 		a.previousState = a.state
-		a.blockingPicker = newBlockingPickerModel(msg.nibID, msg.nibTitle, msg.currentBlocking, a.backend, a.config, a.width, a.height)
+		a.blockingPicker = newBlockingPickerModel(a.keys.actions, msg.nibID, msg.nibTitle, msg.currentBlocking, a.backend, a.config, a.width, a.height)
 		a.state = viewBlockingPicker
 		return a, a.blockingPicker.Init()
 
@@ -655,6 +684,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case openConfirmMsg:
 		a.previousState = a.state
 		a.confirmDialog = msg.dialog
+		a.confirmDialog.table = a.keys.actions
 		a.state = viewConfirmDialog
 		return a, nil
 
@@ -918,7 +948,7 @@ func (a *App) View() tea.View {
 
 // render produces the screen content for the active state.
 func (a *App) render() string {
-	hints := hintRow(actions, a.actionState())
+	hints := hintRow(a.keys.actions, a.actionState())
 	a.list.hints = hints
 	a.detail.hints = hints
 	return a.renderState(a.state)
@@ -1113,10 +1143,10 @@ func getEditor() string {
 	return "nano"
 }
 
-// Run starts the TUI and forwards store changes to it until it exits. version is
-// as for New.
-func Run(backend Backend, cfg *config.Config, version string) error {
-	app := New(backend, cfg, version)
+// Run starts the TUI and forwards store changes to it until it exits. The
+// parameters are as for New.
+func Run(backend Backend, cfg *config.Config, user *config.UserConfig, userConfigPath, version string) error {
+	app := New(backend, cfg, user, userConfigPath, version)
 	p := tea.NewProgram(app)
 
 	app.program = p

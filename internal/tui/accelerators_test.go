@@ -170,8 +170,8 @@ func TestEveryPickerShowsAnAcceleratorOnEachRowThatNoActionTakes(t *testing.T) {
 				}
 				shown = append(shown, action{Name: actionName("row " + row), Contexts: []keyContext{tc.ctx}, Keys: []string{key}})
 			}
-			if errs := keymapConflicts(append(shown, actions...)); len(errs) > 0 {
-				t.Errorf("%d accelerator conflict(s):\n%s", len(errs), strings.Join(errs, "\n"))
+			if errs := keyConflicts(append(shown, defaultActions...)); len(errs) > 0 {
+				t.Errorf("%d accelerator conflict(s):\n%s", len(errs), conflictLines(errs))
 			}
 		})
 	}

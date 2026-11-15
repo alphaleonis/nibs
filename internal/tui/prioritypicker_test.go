@@ -11,6 +11,7 @@ import (
 func TestPriorityPickerModel(t *testing.T) {
 	t.Run("pre-selects current priority", func(t *testing.T) {
 		m := newPriorityPickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "high",
 			80, 24,
 		)
@@ -29,6 +30,7 @@ func TestPriorityPickerModel(t *testing.T) {
 
 	t.Run("shows all priority options", func(t *testing.T) {
 		m := newPriorityPickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "",
 			80, 24,
 		)
@@ -63,6 +65,7 @@ func TestPriorityPickerModel(t *testing.T) {
 		heightByPriority := make(map[string]int, len(config.DefaultPriorities))
 		for _, p := range config.DefaultPriorities {
 			m := newPriorityPickerModel(
+				defaultActions,
 				[]string{"nib-1"}, "Test Nib", p.Name,
 				w, h,
 			)
@@ -83,6 +86,7 @@ func TestPriorityPickerModel(t *testing.T) {
 
 	t.Run("enter sends prioritySelectedMsg", func(t *testing.T) {
 		m := newPriorityPickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "high",
 			80, 24,
 		)
@@ -108,6 +112,7 @@ func TestPriorityPickerModel(t *testing.T) {
 
 	t.Run("esc sends closePriorityPickerMsg", func(t *testing.T) {
 		m := newPriorityPickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "",
 			80, 24,
 		)

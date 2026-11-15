@@ -61,6 +61,7 @@ type typeItem struct {
 
 // typePickerModel is the model for the type picker view: a cursor over items.
 type typePickerModel struct {
+	table       []action // the keymap in effect
 	items       []typeItem
 	cursor      int
 	nibIDs      []string
@@ -70,7 +71,7 @@ type typePickerModel struct {
 	height      int
 }
 
-func newTypePickerModel(nibIDs []string, nibTitle, currentType string, validTypes []string, width, height int) typePickerModel {
+func newTypePickerModel(table []action, nibIDs []string, nibTitle, currentType string, validTypes []string, width, height int) typePickerModel {
 	types := config.DefaultTypes
 
 	var validSet map[string]bool
@@ -101,11 +102,12 @@ func newTypePickerModel(nibIDs []string, nibTitle, currentType string, validType
 		})
 		hints = append(hints, t.Name)
 	}
-	for i, key := range assignAccelerators(ctxTypePicker, hints) {
+	for i, key := range assignAccelerators(table, ctxTypePicker, hints) {
 		items[i].key = key
 	}
 
 	return typePickerModel{
+		table:       table,
 		items:       items,
 		cursor:      cursor,
 		nibIDs:      nibIDs,
@@ -209,6 +211,7 @@ func (m typePickerModel) View() string {
 	}
 
 	return renderPickerModal(pickerModalConfig{
+		Keys:        m.table,
 		Context:     ctxTypePicker,
 		Title:       "Select Type",
 		NibTitle:    m.nibTitle,

@@ -74,6 +74,7 @@ func (d estimateItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 
 // estimatePickerModel is the model for the estimate picker view
 type estimatePickerModel struct {
+	table           []action // the keymap in effect
 	list            list.Model
 	nibIDs          []string
 	nibTitle        string
@@ -82,7 +83,7 @@ type estimatePickerModel struct {
 	height          int
 }
 
-func newEstimatePickerModel(nibIDs []string, nibTitle, currentEstimate string, width, height int) estimatePickerModel {
+func newEstimatePickerModel(table []action, nibIDs []string, nibTitle, currentEstimate string, width, height int) estimatePickerModel {
 	estimates := config.DefaultEstimates
 
 	delegate := estimateItemDelegate{}
@@ -91,7 +92,7 @@ func newEstimatePickerModel(nibIDs []string, nibTitle, currentEstimate string, w
 	for i, e := range estimates {
 		hints[i] = e.Name
 	}
-	keys := assignAccelerators(ctxEstimatePicker, hints)
+	keys := assignAccelerators(table, ctxEstimatePicker, hints)
 
 	items := make([]list.Item, 0, len(estimates))
 	selectedIndex := 0
@@ -131,6 +132,7 @@ func newEstimatePickerModel(nibIDs []string, nibTitle, currentEstimate string, w
 	}
 
 	return estimatePickerModel{
+		table:           table,
 		list:            l,
 		nibIDs:          nibIDs,
 		nibTitle:        nibTitle,
@@ -213,6 +215,7 @@ func (m estimatePickerModel) View() string {
 	}
 
 	return renderPickerModal(pickerModalConfig{
+		Keys:        m.table,
 		Context:     ctxEstimatePicker,
 		Title:       "Select Estimate",
 		NibTitle:    m.nibTitle,

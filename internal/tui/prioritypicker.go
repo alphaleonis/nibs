@@ -74,6 +74,7 @@ func (d priorityItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 
 // priorityPickerModel is the model for the priority picker view
 type priorityPickerModel struct {
+	table           []action // the keymap in effect
 	list            list.Model
 	nibIDs          []string
 	nibTitle        string
@@ -82,7 +83,7 @@ type priorityPickerModel struct {
 	height          int
 }
 
-func newPriorityPickerModel(nibIDs []string, nibTitle, currentPriority string, width, height int) priorityPickerModel {
+func newPriorityPickerModel(table []action, nibIDs []string, nibTitle, currentPriority string, width, height int) priorityPickerModel {
 	priorities := config.DefaultPriorities
 
 	delegate := priorityItemDelegate{}
@@ -91,7 +92,7 @@ func newPriorityPickerModel(nibIDs []string, nibTitle, currentPriority string, w
 	for i, p := range priorities {
 		hints[i] = p.Name
 	}
-	keys := assignAccelerators(ctxPriorityPicker, hints)
+	keys := assignAccelerators(table, ctxPriorityPicker, hints)
 
 	items := make([]list.Item, 0, len(priorities))
 	selectedIndex := 0
@@ -131,6 +132,7 @@ func newPriorityPickerModel(nibIDs []string, nibTitle, currentPriority string, w
 	}
 
 	return priorityPickerModel{
+		table:           table,
 		list:            l,
 		nibIDs:          nibIDs,
 		nibTitle:        nibTitle,
@@ -213,6 +215,7 @@ func (m priorityPickerModel) View() string {
 	}
 
 	return renderPickerModal(pickerModalConfig{
+		Keys:        m.table,
 		Context:     ctxPriorityPicker,
 		Title:       "Select Priority",
 		NibTitle:    m.nibTitle,

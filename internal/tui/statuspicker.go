@@ -74,6 +74,7 @@ func (d statusItemDelegate) Render(w io.Writer, m list.Model, index int, listIte
 
 // statusPickerModel is the model for the status picker view
 type statusPickerModel struct {
+	table         []action // the keymap in effect
 	list          list.Model
 	nibIDs        []string
 	nibTitle      string
@@ -82,7 +83,7 @@ type statusPickerModel struct {
 	height        int
 }
 
-func newStatusPickerModel(nibIDs []string, nibTitle, currentStatus string, cfg *config.Config, width, height int) statusPickerModel {
+func newStatusPickerModel(table []action, nibIDs []string, nibTitle, currentStatus string, cfg *config.Config, width, height int) statusPickerModel {
 	statuses := cfg.WorkflowStatuses()
 
 	delegate := statusItemDelegate{}
@@ -91,7 +92,7 @@ func newStatusPickerModel(nibIDs []string, nibTitle, currentStatus string, cfg *
 	for i, s := range statuses {
 		hints[i] = s.Name
 	}
-	keys := assignAccelerators(ctxStatusPicker, hints)
+	keys := assignAccelerators(table, ctxStatusPicker, hints)
 
 	items := make([]list.Item, 0, len(statuses))
 	selectedIndex := 0
@@ -132,6 +133,7 @@ func newStatusPickerModel(nibIDs []string, nibTitle, currentStatus string, cfg *
 	}
 
 	return statusPickerModel{
+		table:         table,
 		list:          l,
 		nibIDs:        nibIDs,
 		nibTitle:      nibTitle,
@@ -214,6 +216,7 @@ func (m statusPickerModel) View() string {
 	}
 
 	return renderPickerModal(pickerModalConfig{
+		Keys:        m.table,
 		Context:     ctxStatusPicker,
 		Title:       "Select Status",
 		NibTitle:    m.nibTitle,

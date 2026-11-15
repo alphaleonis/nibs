@@ -11,6 +11,7 @@ import (
 func TestTypePickerModel(t *testing.T) {
 	t.Run("pre-selects current type", func(t *testing.T) {
 		m := newTypePickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "bug", nil,
 			80, 24,
 		)
@@ -29,6 +30,7 @@ func TestTypePickerModel(t *testing.T) {
 
 	t.Run("shows all type options", func(t *testing.T) {
 		m := newTypePickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "", nil,
 			80, 24,
 		)
@@ -59,6 +61,7 @@ func TestTypePickerModel(t *testing.T) {
 		heightByType := make(map[string]int, len(config.DefaultTypes))
 		for _, ty := range config.DefaultTypes {
 			m := newTypePickerModel(
+				defaultActions,
 				[]string{"nib-1"}, "Test Nib", ty.Name, nil,
 				w, h,
 			)
@@ -79,6 +82,7 @@ func TestTypePickerModel(t *testing.T) {
 
 	t.Run("enter sends typeSelectedMsg", func(t *testing.T) {
 		m := newTypePickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "bug", nil,
 			80, 24,
 		)
@@ -104,6 +108,7 @@ func TestTypePickerModel(t *testing.T) {
 
 	t.Run("esc sends closeTypePickerMsg", func(t *testing.T) {
 		m := newTypePickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "", nil,
 			80, 24,
 		)

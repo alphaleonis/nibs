@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/tui"
 	"github.com/spf13/cobra"
@@ -18,7 +19,8 @@ var tuiCmd = &cobra.Command{
 		app := getApp(cmd)
 		return runTUISession(app, func() error {
 			backend := tui.NewRealBackend(app.Core, app.newResolver())
-			return tui.Run(backend, app.Config(), version)
+			user, userPath := loadTUIUserConfig()
+			return tui.Run(backend, app.Config(), user, userPath, version)
 		})
 	},
 }
@@ -52,6 +54,22 @@ func runTUISession(app *App, run func() error) error {
 	// kill is covered by the kernel closing the descriptor.
 	defer func() { _ = holding.Release() }()
 	return run()
+}
+
+// loadTUIUserConfig returns the user config and its path. The TUI reads its keys
+// from this config alone, never from the project config. It returns a nil
+// config when the file cannot be read or parsed, and the TUI then uses the
+// default keys.
+func loadTUIUserConfig() (*config.UserConfig, string) {
+	path, err := config.UserConfigPath()
+	if err != nil {
+		return nil, ""
+	}
+	user, err := config.LoadUserConfigFrom(path)
+	if err != nil {
+		return nil, path
+	}
+	return user, path
 }
 
 func init() {

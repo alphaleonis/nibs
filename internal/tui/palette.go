@@ -2,11 +2,13 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/alphaleonis/nibs/internal/safetext"
 	"github.com/alphaleonis/nibs/internal/ui"
 )
 
@@ -24,6 +26,7 @@ type paletteEntry struct {
 type paletteModel struct {
 	origin  viewState  // the view ? was pressed in
 	ctx     keyContext // origin's key context
+	keys    keymap
 	entries []paletteEntry
 	query   textinput.Model
 	cursor  int // index into shown()
@@ -31,10 +34,11 @@ type paletteModel struct {
 	height  int
 }
 
-// newPaletteModel lists the actions active in st.ctx, in actionsByGroup order.
-func newPaletteModel(origin viewState, st actionState, width, height int) paletteModel {
+// newPaletteModel lists the actions of keys active in st.ctx, in actionsByGroup
+// order, and the bindings keys ignored.
+func newPaletteModel(keys keymap, origin viewState, st actionState, width, height int) paletteModel {
 	var entries []paletteEntry
-	for _, a := range actionsByGroup(actions, st.ctx) {
+	for _, a := range actionsByGroup(keys.actions, st.ctx) {
 		e := paletteEntry{act: a, keys: strings.Join(a.Keys, ", "), ready: true}
 		if a.Ready != nil {
 			e.ready, e.why = a.Ready(st)
@@ -52,7 +56,7 @@ func newPaletteModel(origin viewState, st actionState, width, height int) palett
 	q.SetStyles(styles)
 	q.Focus()
 
-	return paletteModel{origin: origin, ctx: st.ctx, entries: entries, query: q, width: width, height: height}
+	return paletteModel{origin: origin, ctx: st.ctx, keys: keys, entries: entries, query: q, width: width, height: height}
 }
 
 func (m paletteModel) Init() tea.Cmd {
@@ -118,7 +122,8 @@ var (
 	paletteCursorStyle = lipgloss.NewStyle().Foreground(ui.ColorPrimary).Bold(true)
 	paletteNameStyle   = lipgloss.NewStyle().Foreground(ui.ColorMuted)
 	// paletteDimStyle paints an action that cannot run now.
-	paletteDimStyle = lipgloss.NewStyle().Foreground(ui.ColorGrayDim)
+	paletteDimStyle  = lipgloss.NewStyle().Foreground(ui.ColorGrayDim)
+	paletteWarnStyle = lipgloss.NewStyle().Foreground(ui.ColorWarning).Bold(true)
 )
 
 // paletteChromeRows is the rows the modal spends outside its action lines: the
@@ -139,7 +144,7 @@ func (m paletteModel) View() string {
 	room := max(1, m.height-paletteChromeRows-4)
 	body := strings.Join(m.bodyLines(inner, room), "\n")
 
-	hints := hintRowWithin(actions, actionState{ctx: ctxPalette}, inner)
+	hints := hintRowWithin(m.keys.actions, actionState{ctx: ctxPalette}, inner)
 	content := strings.Join([]string{clipToWidth(title, inner), m.query.View(), "", body, "", hints}, "\n")
 
 	return lipgloss.NewStyle().
@@ -150,12 +155,14 @@ func (m paletteModel) View() string {
 		Render(content)
 }
 
-// bodyLines renders the shown entries under their group headings, at most room
-// lines of width cells, scrolled so the highlighted entry is on screen.
+// bodyLines renders the ignored bindings that match the query, then the shown
+// entries under their group headings. It renders at most room lines of width
+// cells, scrolled so the highlighted entry is on screen.
 func (m paletteModel) bodyLines(width, room int) []string {
+	lines := m.ignoredLines(width)
 	shown := m.shown()
 	if len(shown) == 0 {
-		return []string{ui.Muted.Render("no action matches")}
+		return append(lines, ui.Muted.Render("no action matches"))
 	}
 
 	keyWidth, nameWidth := 0, 0
@@ -171,7 +178,6 @@ func (m paletteModel) bodyLines(width, room int) []string {
 		descWidth = width - 2 - keyWidth - 2
 	}
 
-	var lines []string
 	cursorLine := 0
 	group := ""
 	for i, e := range shown {
@@ -190,6 +196,30 @@ func (m paletteModel) bodyLines(width, room int) []string {
 		start = cursorLine - room + 1
 	}
 	return lines[start:min(len(lines), start+room)]
+}
+
+// ignoredLines renders the tui.keys entries the keymap ignored whose text or
+// reason contains the query, ignoring letter case, under a heading that names
+// the file. It returns nothing when no ignored entry matches.
+func (m paletteModel) ignoredLines(width int) []string {
+	q := strings.ToLower(m.query.Value())
+	var lines []string
+	for _, b := range m.keys.ignored {
+		if !strings.Contains(strings.ToLower(b.entry+"\n"+b.reason), q) {
+			continue
+		}
+		line := fmt.Sprintf("  line %d  %s  %s", b.line, b.entry, ui.Muted.Render(b.reason))
+		lines = append(lines, truncateTitle(line, width))
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+	heading := "Ignored key bindings"
+	if m.keys.source != "" {
+		heading += " in " + safetext.StripBounded(m.keys.source)
+	}
+	lines = slices.Insert(lines, 0, truncateTitle(paletteWarnStyle.Render(heading), width))
+	return append(lines, "")
 }
 
 // entryLine renders one action: key, description and config name, or dimmed
