@@ -30,37 +30,6 @@ function freshNonce(): string {
 // A private DOMPurify instance, so the hook below applies to this module only.
 const purify = DOMPurify(window);
 
-// --- mention scan markers ---------------------------------------------------
-//
-// The mention walk reads DOM text, where the source's backslashes and block
-// boundaries are gone. These empty spans carry them, so the walk finds the
-// mentions the server's scanner (internal/nib/references.go) finds:
-//   * `split` stands where a backslash escape was. The element splits the text
-//     node there, so `[\[x]]` does not read as `[[x]]` while `\[[x]]` still does.
-//   * `off` and `on` enclose a raw HTML block, whose text the server skips.
-// Markers carry the render nonce, so raw HTML in a body cannot forge one. They
-// are emitted only when a resolver will run the walk, which removes them.
-// `renderMarkdown` checks what it can of how they read back (see there).
-type ScanMarker = "split" | "off" | "on";
-const SCAN_ATTR = "data-mention-scan";
-const SCAN_NONCE_ATTR = "data-mention-nonce";
-let emitScanMarkers = false;
-// Markers emitted in the current render; reset before every parse.
-let emittedScanMarkers = 0;
-
-function scanMarker(kind: ScanMarker): string {
-  emittedScanMarkers++;
-  return `<span ${SCAN_ATTR}="${kind}" ${SCAN_NONCE_ATTR}="${renderNonce}"></span>`;
-}
-
-const HTML_ESCAPES: Record<string, string> = {
-  "&": "&amp;",
-  "<": "&lt;",
-  ">": "&gt;",
-  '"': "&quot;",
-  "'": "&#39;",
-};
-
 // Mentions are rewritten by the post-sanitize DOM walk, not a marked extension.
 const sharedMarked = new Marked();
 sharedMarked.use({
@@ -70,16 +39,6 @@ sharedMarked.use({
       // ENABLED so it is clickable; the checked state comes from re-rendering
       // after the source flips.
       return `<input type="checkbox" data-task-ordinal="${ordinal}" data-task-nonce="${renderNonce}"${checked ? " checked" : ""}> `;
-    },
-    // marked renders an escape token through `text`. An image's alt text uses a
-    // separate text renderer, so no marker lands in an attribute.
-    text(token: Tokens.Text | Tokens.Escape): string | false {
-      if (!emitScanMarkers || token.type !== "escape") return false;
-      return scanMarker("split") + token.text.replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]);
-    },
-    html(token: Tokens.HTML | Tokens.Tag): string | false {
-      if (!emitScanMarkers || !token.block) return false;
-      return scanMarker("off") + token.text + scanMarker("on");
     },
   },
 });
@@ -123,12 +82,6 @@ export function taskSourceLines(body: string): number[] {
   const childrenOf = (t: Token): Token[] | undefined =>
     t.type === "list" ? (t as Tokens.List).items : (t as { tokens?: Token[] }).tokens;
 
-  const countNewlines = (s: string): number => {
-    let n = 0;
-    for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) === 10) n++;
-    return n;
-  };
-
   const lines: number[] = [];
 
   // `siblings[0]` starts on source line `startLine`.
@@ -171,34 +124,12 @@ export function toggleTaskLine(body: string, ordinal: number): string {
   return parts.join("");
 }
 
-/** Sanitized HTML for a body, and the scan state its first node starts in. */
-interface SanitizedRender {
-  html: string;
-  /** The render nonce when the HTML carries scan markers, or null. */
-  nonce: string | null;
-  /** How many scan markers the HTML held before it was sanitized. */
-  markerCount: number;
-  startsInRawBlock: boolean;
-}
-
-function renderSanitized(body: string, withMarkers: boolean): SanitizedRender {
+function renderSanitized(body: string): string {
   taskOrdinalCounter = 0;
   renderNonce = freshNonce();
-  emitScanMarkers = withMarkers;
-  emittedScanMarkers = 0;
-  let html = sharedMarked.parse(body, { async: false });
-  // A leading marker would open <body> before a leading raw HTML block, so a
-  // body that starts with a <style> would parse differently.
-  let markerCount = emittedScanMarkers;
-  const leadingOff = scanMarker("off");
-  const startsInRawBlock = withMarkers && html.startsWith(leadingOff);
-  if (startsInRawBlock) {
-    html = html.slice(leadingOff.length);
-    markerCount--;
-  }
+  const html = sharedMarked.parse(body, { async: false });
   // data-* passes by default; listed because click delegation depends on both.
-  const safe = purify.sanitize(html, { ADD_ATTR: ["data-nib-id", "data-task-ordinal"] });
-  return { html: safe, nonce: withMarkers ? renderNonce : null, markerCount, startsInRawBlock };
+  return purify.sanitize(html, { ADD_ATTR: ["data-nib-id", "data-task-ordinal"] });
 }
 
 function toTemplate(html: string): HTMLTemplateElement {
@@ -207,127 +138,774 @@ function toTemplate(html: string): HTMLTemplateElement {
   return tpl;
 }
 
+// --- mentions ---------------------------------------------------------------
+//
+// The server's scanner (internal/nib/references.go) decides which text is a
+// mention, because the mention index and prefix rewrites use its answer. The web
+// takes that answer from marked's tokens, then links it where the rendered DOM
+// shows the same text. How the browser parses raw HTML decides only where a
+// mention can be linked, never which text is one.
+
+// The server's id grammar (MentionIDPattern).
+const MENTION_ID = "[a-z0-9](?:[a-z0-9-]*[a-z0-9])?";
+const LEADING_ID = new RegExp(`^${MENTION_ID}`);
+
 /**
- * Parses the marked render of `body` and removes its scan markers.
- *
- * @returns The parsed render and the text nodes inside raw HTML blocks, or null
- *   when the render without markers does not serialize the same as `plain`, a
- *   marker was lost, or block starts and ends do not alternate.
+ * A run of text that looks like a mention: `#` with the longest id after it, or
+ * `[[<id>]]`. Its key is that text, so the token side and the DOM side compare.
  */
-function readScanMarkers(
-  body: string,
-  plain: string,
-): { tpl: HTMLTemplateElement; rawText: Set<Node> } | null {
-  const render = renderSanitized(body, true);
-  const tpl = toTemplate(render.html);
-  const rawText = new Set<Node>();
-  const markers: Element[] = [];
-  let inRawBlock = render.startsInRawBlock;
-  const walker = document.createTreeWalker(tpl.content, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
-  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+interface Candidate {
+  key: string;
+  index: number;
+}
+
+function findCandidates(text: string): Candidate[] {
+  // Group 1 is a hash id, group 2 a bracketed one. A fresh regex per call keeps
+  // `/g` state local.
+  const pattern = new RegExp(`#(${MENTION_ID})|\\[\\[(${MENTION_ID})\\]\\]`, "g");
+  const out: Candidate[] = [];
+  for (let m = pattern.exec(text); m !== null; m = pattern.exec(text)) {
+    out.push({ key: m[0], index: m.index });
+  }
+  return out;
+}
+
+/**
+ * Where an expected candidate's text comes from. Markdown `text` is where the
+ * DOM shows it. `raw` HTML holds no mentions. `skipped` is markdown text inside
+ * an inline element the DOM walk skips, which the browser may still close first.
+ */
+type CandidateSource = "text" | "raw" | "skipped";
+
+/** A candidate the rendered text shows, and the id it mentions, or null when it is not a mention. */
+interface ExpectedCandidate {
+  key: string;
+  mention: string | null;
+  source: CandidateSource;
+}
+
+// The DOM walk skips these elements: code, existing links, and the elements whose
+// content the browser reads as text. The serializer writes a link in one of the
+// latter as markup that re-parses as text.
+const RAW_TEXT_TAGS = new Set(["iframe", "noembed", "noframes", "plaintext", "script", "style", "textarea", "title", "xmp"]);
+const SKIPPED_TAGS = new Set(["code", "pre", "a", "noscript", ...RAW_TEXT_TAGS]);
+
+/** Returns the text nodes under `root` that the mention walk reads, in document order. */
+function visibleTextNodes(root: Node): Text[] {
+  const out: Text[] = [];
+  const walk = (node: Node): void => {
     if (node.nodeType === Node.TEXT_NODE) {
-      if (inRawBlock) rawText.add(node);
+      out.push(node as Text);
+      return;
+    }
+    if (node.nodeType === Node.ELEMENT_NODE && SKIPPED_TAGS.has((node as Element).localName)) return;
+    // jsdom rebuilds a read `childNodes` list on each insert, so linking many mentions would be O(n²).
+    for (let child = node.firstChild; child; child = child.nextSibling) walk(child);
+  };
+  walk(root);
+  return out;
+}
+
+/**
+ * Returns the candidates in `body` in document order, each with the mention the
+ * server finds there.
+ *
+ * The text of code, links, images and link definitions is skipped, as the
+ * server skips it. Raw HTML holds no mentions, but the candidates in the text it
+ * shows are kept, so the DOM text pairs with them and links nothing.
+ */
+function expectedMentions(body: string): ExpectedCandidate[] {
+  const tokens = sharedMarked.lexer(body);
+  const out: ExpectedCandidate[] = [];
+  const opaqueLines = serverOpaqueLines(body);
+  const places = mentionPlaces(body, opaqueLines);
+  collectExpected(tokens, { out, leading: tokens[0], references: new Map(), opaqueLines, places }, [], 0);
+  return out;
+}
+
+interface CollectContext {
+  out: ExpectedCandidate[];
+  /** The body's first token, which the sanitizer may parse into the document head. */
+  leading: Token | undefined;
+  /** The text each character reference in the body shows, by the reference. */
+  references: Map<string, string>;
+  /** Whether each source line, by its 0-based number, is opaque, as `serverOpaqueLines` defines it. */
+  opaqueLines: Uint8Array;
+  places: MentionPlaces;
+}
+
+function countNewlines(s: string): number {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) === 10) n++;
+  return n;
+}
+
+/**
+ * `openInline` holds the skipped elements an inline tag opened in the current
+ * block. It ends with the block, though the browser keeps a raw-text element,
+ * an `a` or a `code` open into later blocks. `tokens[0]` starts on source line
+ * `startLine`.
+ */
+function collectExpected(tokens: Token[], ctx: CollectContext, openInline: string[], startLine: number): void {
+  // Adjacent text and escape tokens render as one DOM text node.
+  let text = "";
+  let breaks: number[] = [];
+  let decoded = new Set<number>();
+  // The source lines the buffered text starts and ends on.
+  let firstLine = -1;
+  let lastLine = -1;
+  const flush = (): void => {
+    const source: CandidateSource = openInline.length === 0 ? "text" : "skipped";
+    let line = firstLine;
+    let from = 0;
+    for (const c of text === "" ? [] : segmentMentions(text, breaks, decoded)) {
+      // A newline that a character reference shows is not a line break in the source.
+      for (; from < c.index; from++) if (text.charCodeAt(from) === 10 && !decoded.has(from)) line++;
+      const counted = ctx.opaqueLines[Math.min(line, lastLine)] === 1;
+      const needle = c.key.startsWith("[[") ? c.key : `#${c.mention}`;
+      const opaque = c.mention !== null && onOpaqueLine(ctx.places, needle, counted);
+      ctx.out.push({ key: c.key, mention: opaque ? null : c.mention, source });
+    }
+    text = "";
+    breaks = [];
+    decoded = new Set();
+    firstLine = -1;
+  };
+  let line = startLine;
+  for (const token of tokens) {
+    const tokenLine = line;
+    line += countNewlines(token.raw);
+    if ((token.type === "text" && !(token as Tokens.Text).tokens) || token.type === "escape") {
+      if (firstLine < 0) firstLine = tokenLine;
+      lastLine = line;
+    }
+    if (token.type === "text" && !(token as Tokens.Text).tokens) {
+      const shown = shownText(token as Tokens.Text, ctx.references);
+      for (const i of shown.decoded) {
+        breaks.push(text.length + i);
+        decoded.add(text.length + i);
+      }
+      text += shown.text;
       continue;
     }
-    const el = node as Element;
-    const isMarker =
-      el.tagName === "SPAN" &&
-      el.attributes.length === 2 &&
-      !el.hasChildNodes() &&
-      el.getAttribute(SCAN_NONCE_ATTR) === render.nonce;
-    if (!isMarker) continue;
-    markers.push(el);
-    // Raw HTML blocks do not nest, so `off` and `on` alternate unless one was lost.
-    const kind = el.getAttribute(SCAN_ATTR);
-    if (kind === "off" || kind === "on") {
-      if (inRawBlock === (kind === "off")) return null;
-      inRawBlock = kind === "off";
+    if (token.type === "escape") {
+      breaks.push(text.length);
+      text += token.text;
+      continue;
+    }
+    flush();
+    switch (token.type) {
+      case "code":
+      case "codespan":
+      case "link":
+      case "image":
+      case "def":
+        break;
+      case "html":
+        if ((token as Tokens.HTML | Tokens.Tag).block) {
+          for (const c of htmlCandidates(token.text, token === ctx.leading)) ctx.out.push(c);
+        } else {
+          trackInlineTag(token.text, openInline);
+        }
+        break;
+      case "list":
+        collectExpected((token as Tokens.List).items, ctx, [], tokenLine);
+        break;
+      case "table": {
+        // A table's rows follow its header and delimiter lines, one row a line.
+        const table = token as Tokens.Table;
+        for (const cell of table.header) collectExpected(cell.tokens, ctx, [], tokenLine);
+        table.rows.forEach((row, r) => {
+          for (const cell of row) collectExpected(cell.tokens, ctx, [], tokenLine + 2 + r);
+        });
+        break;
+      }
+      case "em":
+      case "strong":
+      case "del":
+        collectExpected((token as Tokens.Em).tokens, ctx, openInline, tokenLine);
+        break;
+      default: {
+        const kids = (token as { tokens?: Token[] }).tokens;
+        if (kids) collectExpected(kids, ctx, [], tokenLine);
+      }
     }
   }
-  if (inRawBlock || markers.length !== render.markerCount) return null;
-  for (const marker of markers) marker.remove();
-  // Text-node splits do not serialize, so any difference is one the markers
-  // caused in the parse or the sanitize.
-  if (tpl.innerHTML !== toTemplate(plain).innerHTML) return null;
-  return { tpl, rawText };
+  flush();
 }
 
 /**
- * Whether renderMarkdown reads the mentions of `body` with the scan markers.
- * False means it reads them from the unmarked render. Exported for tests.
+ * Returns the candidates in the text that raw `html` shows once sanitized, none
+ * of them a mention. The sanitizer parses a body's leading HTML into the head,
+ * so other HTML is parsed as body content, as it is in the whole render.
  */
-export function readsWithScanMarkers(body: string): boolean {
-  return readScanMarkers(body, renderSanitized(body, false).html) !== null;
+function htmlCandidates(html: string, leading: boolean): ExpectedCandidate[] {
+  // A candidate needs a `#` or `[[`, written out or as a character reference.
+  if (!html.includes("#") && !html.includes("[[") && !html.includes("&")) return [];
+  const out: ExpectedCandidate[] = [];
+  const tpl = toTemplate(purify.sanitize(html, { FORCE_BODY: !leading }));
+  for (const node of visibleTextNodes(tpl.content)) {
+    for (const c of findCandidates(node.nodeValue ?? "")) out.push({ key: c.key, mention: null, source: "raw" });
+  }
+  return out;
+}
+
+/** Updates `open`, the skipped elements open in a block, with one inline tag. */
+function trackInlineTag(tag: string, open: string[]): void {
+  const m = /^<(\/?)([A-Za-z][A-Za-z0-9-]*)/.exec(tag);
+  const name = m?.[2].toLowerCase();
+  // Sanitizing removes a noscript element but can keep its content as text.
+  if (m === null || name === undefined || name === "noscript" || !SKIPPED_TAGS.has(name)) return;
+  const top = open.at(-1);
+  // Only its own end tag ends an element whose content is text.
+  if (top !== undefined && RAW_TEXT_TAGS.has(top) && !(m[1] === "/" && name === top)) return;
+  if (m[1] === "") open.push(name);
+  else if (open.includes(name)) open.length = open.lastIndexOf(name);
 }
 
 /**
- * Rewrite `#<id>` and `[[<id>]]` tokens in the text nodes of `tpl` into mention
- * links. A bracketed link shows the bare id.
- * Not a marked extension, because block-level raw HTML bypasses the inline lexer.
- * Skips `<code>`, `<pre>`, existing `<a>` and the text nodes in `rawText`.
+ * The mention-shaped text on the body's source lines, split by whether the line
+ * is opaque. Each entry is a `#` with every id character after it, or a
+ * bracketed id, and each array is sorted.
  */
-function linkMentions(tpl: HTMLTemplateElement, resolve: MentionResolver, rawText: Set<Node>): string {
-  const SKIP = new Set(["CODE", "PRE", "A"]);
+interface MentionPlaces {
+  opaque: string[];
+  text: string[];
+}
 
-  function walk(node: Node): void {
-    if (node.nodeType === Node.ELEMENT_NODE) {
-      const el = node as Element;
-      if (SKIP.has(el.tagName)) return;
-      // iterate over a snapshot; replaceChild mutates childNodes
-      const children = Array.from(node.childNodes);
-      for (const child of children) walk(child);
-      return;
-    }
-    if (node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
-      const children = Array.from(node.childNodes);
-      for (const child of children) walk(child);
-      return;
-    }
-    if (node.nodeType !== Node.TEXT_NODE || rawText.has(node)) return;
-    const text = node.nodeValue ?? "";
-    if (!text.includes("#") && !text.includes("[[")) return;
+const MENTION_PLACE = new RegExp(`#[a-z0-9-]+|\\[\\[${MENTION_ID}\\]\\]`, "g");
 
-    // Local regex — avoids sharing `/g` lastIndex across recursive walk calls.
-    // Group 1 is a hash id, group 2 a bracketed one, both in the server's id
-    // grammar (MentionIDPattern). The hash boundary is a lookbehind, so a `]]`
-    // closing the previous match still counts as one.
-    const pattern =
-      /(?<![A-Za-z0-9_])#([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)|\[\[([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\]\]/g;
-    let lastIndex = 0;
+function mentionPlaces(body: string, opaqueLines: Uint8Array): MentionPlaces {
+  const places: MentionPlaces = { opaque: [], text: [] };
+  // With no opaque line every lookup misses, and the count then finds no opaque line either.
+  if (!opaqueLines.includes(1)) return places;
+  body.split(/\r\n|\r|\n/).forEach((line, i) => {
+    for (const m of line.matchAll(MENTION_PLACE)) {
+      (opaqueLines[i] === 1 ? places.opaque : places.text).push(m[0]);
+    }
+  });
+  places.opaque.sort();
+  places.text.sort();
+  return places;
+}
+
+/** Returns whether a sorted `entries` holds a string that starts with `prefix`. */
+function hasPrefix(entries: string[], prefix: string): boolean {
+  let lo = 0;
+  let hi = entries.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (entries[mid] < prefix) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo < entries.length && entries[lo].startsWith(prefix);
+}
+
+/**
+ * Returns whether the source line that holds a mention is opaque. `needle` is
+ * the mention as the source writes it, and `counted` is the answer for the line
+ * that marked's newlines give.
+ *
+ * The source line always holds the needle, while marked's newlines can drift from
+ * the source's in lazy and over-indented lines. So the count decides only when
+ * both an opaque line and a text line hold the needle, or neither does.
+ */
+function onOpaqueLine(places: MentionPlaces, needle: string, counted: boolean): boolean {
+  const opaque = hasPrefix(places.opaque, needle);
+  return opaque === hasPrefix(places.text, needle) ? counted : opaque;
+}
+
+// The server's markdown parser is goldmark, whose HTML block start and end conditions differ from marked's:
+// https://github.com/yuin/goldmark/blob/v1.8.5/parser/html_block.go#L13-L214
+const SERVER_BLOCK_TAGS = new Set(
+  (
+    "address article aside base basefont blockquote body caption center col colgroup dd details dialog dir div dl dt " +
+    "fieldset figcaption figure footer form frame frameset h1 h2 h3 h4 h5 h6 head header hr html iframe legend li " +
+    "link main menu menuitem meta nav noframes ol optgroup option p param search section summary table tbody td " +
+    "tfoot th thead title tr track ul"
+  ).split(" "),
+);
+// The `u` flag folds case as Go's `(?i)` does, so `ſ` matches `s`.
+const SERVER_HTML_TYPE1_OPEN = /^ {0,3}<(?:script|pre|style|textarea)(?:[\t\f\r ][^\n]*|\/?>[^\n]*|)$/iu;
+const SERVER_HTML_TYPE1_CLOSE = /<\/(?:script|pre|style|textarea)>/iu;
+// Types 2 to 5: a comment, a processing instruction, a declaration and CDATA, each with the text that ends it.
+const SERVER_HTML_DELIMITED: [RegExp, string][] = [
+  [/^ {0,3}<!--/, "-->"],
+  [/^ {0,3}<\?/, "?>"],
+  [/^ {0,3}<![A-Z]/, ">"],
+  [/^ {0,3}<!\[CDATA\[/, "]]>"],
+];
+const SERVER_ATTRIBUTE = `(?:[\\r\\n \\t]+[a-zA-Z_:][a-zA-Z0-9:._-]*(?:[\\r\\n \\t]*=[\\r\\n \\t]*(?:[^"'=<>\`\\x00-\\x20]+|'[^']*'|"[^"]*"))?)`;
+// goldmark's `[a-zA-Z]+[a-zA-Z0-9\-]*` matches the same tags, but backtracks quadratically in JavaScript.
+const SERVER_HTML_TYPE7 = new RegExp(`^ {0,3}<(/ *)?([a-zA-Z][a-zA-Z0-9-]*)(${SERVER_ATTRIBUTE}*) *\\/?> *$`);
+const SERVER_HTML_TYPE6 = /^ {0,3}<(?:\/ *)?([a-zA-Z][a-zA-Z0-9-]*)(?: [^\n]*|\/?>[^\n]*|)$/;
+const SERVER_FENCE = /^ {0,3}(`{3,}(?=[^`]*$)|~{3,})/;
+const SERVER_FENCE_CLOSE = /^ {0,3}(`+|~+)[ \t]*$/;
+// A list marker, then the spaces before the item's content, or none when the item is empty or its content is indented code.
+const SERVER_LIST_ITEM = /^(?<marker> {0,3}(?:[-+*]|(?<number>\d{1,9})[.)]))(?:(?<empty>[ \t]*$)|(?<gap> {1,4})(?=[^ ])|(?= {5}))/;
+const SERVER_NOT_PARAGRAPH = /^ {0,3}(?:#{1,6}(?:[ \t]|$)|(?:-[ \t]*){3,}$|(?:\*[ \t]*){3,}$|(?:_[ \t]*){3,}$)/;
+
+/** The groups of a `SERVER_LIST_ITEM` match. */
+interface ListItem {
+  marker: string;
+  number?: string;
+  gap?: string;
+  empty?: string;
+}
+
+/**
+ * Returns how the server's HTML block that starts on `line` ends, or null when
+ * none starts there. It is "blank" for a block that ends before the next blank
+ * line, or else a test that accepts the block's last line. `paragraph` is
+ * whether the line before is paragraph text.
+ */
+function serverHtmlBlockStart(line: string, paragraph: boolean): "blank" | ((line: string) => boolean) | null {
+  if (SERVER_HTML_TYPE1_OPEN.test(line)) return (l) => SERVER_HTML_TYPE1_CLOSE.test(l);
+  for (const [open, close] of SERVER_HTML_DELIMITED) if (open.test(line)) return (l) => l.includes(close);
+  const m = SERVER_HTML_TYPE7.exec(line);
+  if (m !== null) {
+    const tag = m[2].toLowerCase();
+    if (SERVER_BLOCK_TAGS.has(tag)) return "blank";
+    // goldmark lets a textarea tag start a type 7 block, and reads an end tag as one only when no space follows its slash.
+    const closeWithAttributes = m[1] === "/" && m[3] !== "";
+    if (!paragraph && tag !== "script" && tag !== "style" && tag !== "pre" && !closeWithAttributes) return "blank";
+  }
+  const m6 = SERVER_HTML_TYPE6.exec(line);
+  return m6 !== null && SERVER_BLOCK_TAGS.has(m6[1].toLowerCase()) ? "blank" : null;
+}
+
+/**
+ * Returns whether `content`, a line without the list markers before it, is
+ * paragraph text that a later line can continue. Text in a blockquote is, and
+ * a blockquote's heading, fence or HTML block is not. `htmlContent` is the same
+ * text as `htmlBlockText` returns it.
+ */
+function serverParagraphText(content: string, htmlContent = content): boolean {
+  const inner = content.replace(/^(?: {0,3}> ?)+/, "");
+  return (
+    !/^[ \t]*$/.test(inner) &&
+    !SERVER_NOT_PARAGRAPH.test(inner) &&
+    serverHtmlBlockStart(htmlContent.replace(/^(?: {0,3}> ?)+/, ""), false) === null &&
+    !SERVER_FENCE.test(inner)
+  );
+}
+
+/** Returns the list marker that starts `line`, or null when none does. */
+function listItemAt(line: string): ListItem | null {
+  return SERVER_NOT_PARAGRAPH.test(line) ? null : ((SERVER_LIST_ITEM.exec(line)?.groups ?? null) as ListItem | null);
+}
+
+/**
+ * Returns `line` with each tab in its indentation and container markers replaced
+ * by the spaces to the next multiple of 4 columns, which is how goldmark measures them:
+ * https://github.com/yuin/goldmark/blob/v1.8.5/util/util.go#L142-L144
+ */
+function expandStructureTabs(line: string): string {
+  const prefix = /^[ \t>*+\-0-9.)]*/.exec(line)?.[0] ?? "";
+  if (!prefix.includes("\t")) return line;
+  let out = "";
+  for (const ch of prefix) out += ch === "\t" ? " ".repeat(4 - (out.length % 4)) : ch;
+  return out + line.slice(prefix.length);
+}
+
+/**
+ * Returns the text of `line` from `column` on, as goldmark's HTML block patterns
+ * read it once the list items take their columns. A tab that `column` splits
+ * leaves its other columns as spaces, and a tab after `column` stays a tab:
+ * https://github.com/yuin/goldmark/blob/v1.8.5/parser/list_item.go#L74-L75
+ * Those patterns take only spaces as indentation:
+ * https://github.com/yuin/goldmark/blob/v1.8.5/parser/html_block.go#L94
+ */
+function htmlBlockText(line: string, column: number): string {
+  let col = 0;
+  for (let i = 0; i < line.length; i++) {
+    if (col >= column) return line.slice(i);
+    const end = line[i] === "\t" ? col + 4 - (col % 4) : col + 1;
+    if (end > column) return " ".repeat(end - column) + line.slice(i + 1);
+    col = end;
+  }
+  return "";
+}
+
+/**
+ * Returns whether each line of `body`, by the 0-based number marked gives it, is
+ * opaque. An opaque line is one the server reads as part of an HTML block or a
+ * code block, so it finds no mention there.
+ *
+ * It follows list items by their content columns, and ends a block or a fence
+ * where its list item ends. It reads a blockquote line as paragraph text.
+ */
+function serverOpaqueLines(body: string): Uint8Array {
+  // goldmark ends a line only at `\n`.
+  const source = body.split("\n").map((l) => (l.endsWith("\r") ? l.slice(0, -1) : l));
+  const lines = source.map(expandStructureTabs);
+  const opaque = new Uint8Array(lines.length);
+  let open: ReturnType<typeof serverHtmlBlockStart> = null;
+  let fence = "";
+  // The content column of the list item the open block or fence is in, or 0 outside a list.
+  let openItem = 0;
+  let paragraph = false;
+  // The content columns of the open list items, outermost first.
+  const items: number[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const blank = /^[ \t\r]*$/.test(line);
+    const indent = /^ */.exec(line)?.[0].length ?? 0;
+    // A block or a fence takes no lazy line, so a line indented less than its list item's content ends both.
+    const inItem = blank || indent >= openItem;
+    if (open !== null) {
+      if (inItem && !(open === "blank" && blank)) {
+        opaque[i] = 1;
+        if (open !== "blank" && open(line)) open = null;
+        continue;
+      }
+      open = null;
+    }
+    if (fence !== "") {
+      if (inItem) {
+        const close = SERVER_FENCE_CLOSE.exec(line.slice(openItem));
+        if (close !== null && close[1][0] === fence[0] && close[1].length >= fence.length) fence = "";
+        opaque[i] = 1;
+        continue;
+      }
+      fence = "";
+    }
+    if (blank) {
+      paragraph = false;
+      continue;
+    }
+    // The line belongs to the deepest list item whose content column it reaches, unless it continues a paragraph.
+    let depth = items.length;
+    while (depth > 0 && items[depth - 1] > indent) depth--;
+    const column = depth > 0 ? items[depth - 1] : 0;
+    const rest = line.slice(column);
+    const htmlRest = htmlBlockText(source[i], column);
+    const item = listItemAt(rest);
+    // A new list cannot interrupt a paragraph with an empty item, or with a numbered one that does not start at 1.
+    const newList = items.length === depth;
+    const interrupts: boolean = !paragraph || !newList || (item?.empty === undefined && Number(item?.number ?? 1) === 1);
+    const marker: ListItem | null = interrupts ? item : null;
+    const start: ReturnType<typeof serverHtmlBlockStart> = marker === null ? serverHtmlBlockStart(htmlRest, paragraph) : null;
+    const opened: RegExpExecArray | null = marker === null && start === null ? SERVER_FENCE.exec(rest) : null;
+    // A blockquote line ends the list items it is not indented into, though it reads as paragraph text here.
+    const quote = /^ {0,3}>/.test(rest);
+    const lazy: boolean = paragraph && marker === null && start === null && opened === null && !quote && !SERVER_NOT_PARAGRAPH.test(rest);
+    if (!lazy) items.length = depth;
+    if (marker !== null) {
+      let content = column;
+      let first = rest;
+      let code = false;
+      // The text after a marker can open another list item, a block, or be indented code, which is not paragraph text.
+      for (let m: ListItem | null = marker; m !== null; m = listItemAt(first)) {
+        content += m.marker.length + (m.gap?.length ?? 1);
+        items.push(content);
+        code = m.gap === undefined && m.empty === undefined;
+        first = m.gap === undefined ? "" : first.slice(m.marker.length + m.gap.length);
+      }
+      if (code) opaque[i] = 1;
+      const inner = first === "" ? null : serverHtmlBlockStart(first, false);
+      const innerFence = first === "" || inner !== null ? null : SERVER_FENCE.exec(first);
+      if (inner !== null) {
+        opaque[i] = 1;
+        open = inner !== "blank" && inner(first) ? null : inner;
+        openItem = content;
+      } else if (innerFence !== null) {
+        opaque[i] = 1;
+        fence = innerFence[1];
+        openItem = content;
+      }
+      paragraph = inner === null && innerFence === null && serverParagraphText(first);
+    } else if (start !== null) {
+      opaque[i] = 1;
+      // A block of types 1 to 5 can end on its first line.
+      open = start !== "blank" && start(line) ? null : start;
+      openItem = column;
+      paragraph = false;
+    } else if (opened !== null) {
+      opaque[i] = 1;
+      fence = opened[1];
+      openItem = column;
+      paragraph = false;
+    } else {
+      // A line 4 columns past its container is indented code, which a paragraph would take as text.
+      const code: boolean = !lazy && /^ {4}/.test(rest);
+      if (code) opaque[i] = 1;
+      paragraph = lazy || (!code && serverParagraphText(rest, htmlRest));
+    }
+  }
+  if (!body.includes("\r")) return opaque;
+  // marked also ends a line at a lone `\r`, so one server line can hold several of marked's.
+  const out: number[] = [];
+  lines.forEach((l, i) => {
+    for (let n = l.split("\r").length; n > 0; n--) out.push(opaque[i]);
+  });
+  return Uint8Array.from(out);
+}
+
+// The character references marked's renderer keeps for the browser to decode.
+const CHARACTER_REFERENCE = /&(?:#\d{1,7}|#[Xx][a-fA-F0-9]{1,6}|\w+);/g;
+
+// A C1 control that no character reference shows, because the browser remaps that number:
+// https://html.spec.whatwg.org/multipage/parsing.html#numeric-character-reference-end-state
+const MARKER = "\u0080";
+const MARKED = new RegExp(`${CHARACTER_REFERENCE.source}|${MARKER}`, "g");
+const MARKED_OR_ESCAPED = new RegExp(`${CHARACTER_REFERENCE.source}|[${MARKER}<&]`, "g");
+const MARKER_INDEX = new RegExp(`${MARKER}(\\d+)${MARKER}`, "g");
+
+/**
+ * The text the DOM shows for a text token, and the offset in that text of each
+ * character that a character reference shows.
+ *
+ * The token decodes in one pass, so raw HTML in it parses in context, with a
+ * marker in place of each reference. A reference that an unclosed tag swallows
+ * vanishes with its marker. `references` caches the text each reference shows.
+ */
+function shownText(token: Tokens.Text, references: Map<string, string>): { text: string; decoded: number[] } {
+  // The marker character itself is marked too, so every marker in the decoded text is one of these.
+  const marked: string[] = [];
+  // marked's renderer escapes text the same way, except for quotes and `>`.
+  const html = token.text.replace(token.escaped ? MARKED : MARKED_OR_ESCAPED, (s) => {
+    if (s === "<") return "&lt;";
+    if (s === "&") return "&amp;";
+    marked.push(s);
+    return `${MARKER}${marked.length - 1}${MARKER}`;
+  });
+  const shown = decodeHtml(html);
+  if (marked.length === 0) return { text: shown, decoded: [] };
+  // A complete reference decodes the same in any context, so the new ones share one parse.
+  const fresh = [...new Set(marked)].filter((s) => s !== MARKER && !references.has(s));
+  if (fresh.length > 0) decodeHtml(fresh.join(MARKER)).split(MARKER).forEach((v, i) => references.set(fresh[i], v));
+
+  let text = "";
+  const decoded: number[] = [];
+  let last = 0;
+  for (const m of shown.matchAll(MARKER_INDEX)) {
+    text += shown.slice(last, m.index);
+    last = m.index + m[0].length;
+    const s = marked[Number(m[1])];
+    if (s === MARKER) {
+      text += s;
+      continue;
+    }
+    const value = references.get(s) ?? "";
+    for (let i = 0; i < value.length; i++) decoded.push(text.length + i);
+    text += value;
+  }
+  return { text: text + shown.slice(last), decoded };
+}
+
+function decodeHtml(html: string): string {
+  if (!html.includes("&") && !html.includes("<")) return html;
+  return toTemplate(html).content.textContent ?? "";
+}
+
+/**
+ * Returns the candidates in `text` with the mention the server finds at each.
+ * `breaks` holds, in ascending order, the offset of each character a backslash
+ * escaped and of each character in `decoded`, the ones a character reference
+ * shows.
+ *
+ * The server reads the source, where a backslash stands before an escaped
+ * character and a decoded character is still its reference. So a candidate that
+ * spans a break holds no mention, except that an escaped character may start one,
+ * and a hash id ends before a break. Before a `#`, a decoded character reads as
+ * the `;` that ends its reference.
+ */
+function segmentMentions(text: string, breaks: number[], decoded: Set<number>): (Candidate & { mention: string | null })[] {
+  // Candidates come in ascending order, so breaks[b] is the first break after each.
+  let b = 0;
+  return findCandidates(text).map(({ key, index }) => {
+    if (decoded.has(index)) return { key, index, mention: null };
+    while (b < breaks.length && breaks[b] <= index) b++;
+    const nextBreak = breaks[b] ?? text.length;
+    if (key.startsWith("[[")) {
+      return { key, index, mention: nextBreak >= index + key.length ? key.slice(2, -2) : null };
+    }
+    const escaped = b > 0 && breaks[b - 1] === index;
+    const wordBefore = index > 0 && !decoded.has(index - 1) && /[A-Za-z0-9_]/.test(text[index - 1]);
+    if (wordBefore && !escaped) return { key, index, mention: null };
+    return { key, index, mention: LEADING_ID.exec(text.slice(index + 1, nextBreak))?.[0] ?? null };
+  });
+}
+
+// The most edits diffPairs searches for. Its trace holds about MAX_EDITS² numbers.
+const MAX_EDITS = 1000;
+
+/**
+ * Returns the index pairs of equal keys that a shortest edit script from `a` to
+ * `b` keeps, in order, or null when every such script takes more than
+ * MAX_EDITS edits. It is Myers' O((N+M)D) diff.
+ */
+function diffPairs(a: string[], b: string[]): [number, number][] | null {
+  const n = a.length;
+  const m = b.length;
+  const max = Math.min(n + m, MAX_EDITS);
+  // v[k + max + 1] is the furthest x reached on diagonal k = x - y.
+  const off = max + 1;
+  const v = new Int32Array(2 * max + 3);
+  const trace: Int32Array[] = [];
+  for (let d = 0; d <= max; d++) {
+    trace.push(v.slice(off - d - 1, off + d + 2));
+    for (let k = -d; k <= d; k += 2) {
+      let x = k === -d || (k !== d && v[off + k - 1] < v[off + k + 1]) ? v[off + k + 1] : v[off + k - 1] + 1;
+      let y = x - k;
+      while (x < n && y < m && a[x] === b[y]) {
+        x++;
+        y++;
+      }
+      v[off + k] = x;
+      if (x >= n && y >= m) return backtrack(a, b, trace, d, n, m);
+    }
+  }
+  return null;
+}
+
+/** Walks the trace `diffPairs` recorded back from (n, m) and returns the pairs it passes. */
+function backtrack(a: string[], b: string[], trace: Int32Array[], dEnd: number, n: number, m: number): [number, number][] {
+  const pairs: [number, number][] = [];
+  let x = n;
+  let y = m;
+  for (let d = dEnd; d > 0; d--) {
+    // trace[d] holds v before step d, for diagonals -d - 1 through d + 1.
+    const prev = (k: number): number => trace[d][k + d + 1];
+    const k = x - y;
+    const down = k === -d || (k !== d && prev(k - 1) < prev(k + 1));
+    const prevK = down ? k + 1 : k - 1;
+    const prevX = prev(prevK);
+    const prevY = prevX - prevK;
+    const startX = down ? prevX : prevX + 1;
+    while (x > startX) pairs.push([--x, --y]);
+    x = prevX;
+    y = prevY;
+  }
+  while (x > 0 && y > 0 && a[x - 1] === b[y - 1]) pairs.push([--x, --y]);
+  return pairs.reverse();
+}
+
+/**
+ * Returns the pairs `diffPairs(a, b)` finds, each with whether a diff of the
+ * reversed lists pairs the same two indexes, or null when `diffPairs` finds none.
+ *
+ * Where a key repeats, more than one shortest edit script can pair it, and the
+ * two directions can pick different ones. A pair is settled when both directions
+ * find it.
+ */
+function settledPairs(a: string[], b: string[]): { pairs: [number, number][]; settled: boolean[] } | null {
+  const pairs = diffPairs(a, b);
+  if (pairs === null) return null;
+  // Both directions take the same number of edits, so the reversed diff stays under MAX_EDITS too.
+  const reversed = diffPairs([...a].reverse(), [...b].reverse()) ?? [];
+  const partner = new Int32Array(a.length).fill(-1);
+  for (const [i, k] of reversed) partner[a.length - 1 - i] = b.length - 1 - k;
+  return { pairs, settled: pairs.map(([i, k]) => partner[i] === k) };
+}
+
+/**
+ * Returns the index pairs of `found` and `expected` candidates with equal keys,
+ * in order, or none when the two lists differ in more than MAX_EDITS places.
+ *
+ * Text and raw candidates pair first. Each `skipped` candidate can then pair
+ * only with a found candidate left between the same two pairs. A pair that the
+ * keys do not settle, as `settledPairs` decides, is left out, though it still
+ * bounds the skipped candidates.
+ */
+function alignCandidates(found: string[], expected: ExpectedCandidate[]): [number, number][] {
+  const firm: number[] = [];
+  const skipped: number[] = [];
+  expected.forEach((c, j) => (c.source === "skipped" ? skipped : firm).push(j));
+  const firstPass = settledPairs(
+    found,
+    firm.map((j) => expected[j].key),
+  );
+  if (firstPass === null) return [];
+  const pairs: [number, number][] = firstPass.pairs.map(([i, k]) => [i, firm[k]]);
+  if (skipped.length === 0) return pairs.filter((_, p) => firstPass.settled[p]);
+
+  const out: [number, number][] = [];
+  let s = 0;
+  let fromFound = 0;
+  for (let p = 0; p <= pairs.length; p++) {
+    const pair: [number, number] = p < pairs.length ? pairs[p] : [found.length, expected.length];
+    const gapSkipped: number[] = [];
+    while (s < skipped.length && skipped[s] < pair[1]) gapSkipped.push(skipped[s++]);
+    if (gapSkipped.length > 0 && pair[0] > fromFound) {
+      const gapFound = found.slice(fromFound, pair[0]);
+      const gap = settledPairs(
+        gapFound,
+        gapSkipped.map((j) => expected[j].key),
+      );
+      gap?.pairs.forEach(([i, k], g) => {
+        if (gap.settled[g]) out.push([fromFound + i, gapSkipped[k]]);
+      });
+    }
+    if (p < pairs.length && firstPass.settled[p]) out.push(pair);
+    fromFound = pair[0] + 1;
+  }
+  return out;
+}
+
+/** One mention to link: `node`'s text from `index` on is `text`. */
+interface MentionLink {
+  index: number;
+  text: string;
+  fullId: string;
+}
+
+/**
+ * Rewrites the mentions in sanitized `html` into mention links, and returns
+ * `html` itself when it links none. A bracketed link shows the bare id.
+ *
+ * A candidate in the DOM's text links only when `alignCandidates` pairs it with
+ * an expected mention. The walk reads the text `visibleTextNodes` returns.
+ */
+function linkMentions(html: string, expected: ExpectedCandidate[], resolve: MentionResolver): string {
+  const tpl = toTemplate(html);
+  const found: (Candidate & { node: Text })[] = [];
+  for (const node of visibleTextNodes(tpl.content)) {
+    for (const c of findCandidates(node.nodeValue ?? "")) found.push({ ...c, node });
+  }
+
+  const links = new Map<Text, MentionLink[]>();
+  const pairs = alignCandidates(
+    found.map((c) => c.key),
+    expected,
+  );
+  for (const [i, j] of pairs) {
+    const token = expected[j].mention;
+    if (token === null) continue;
+    let fullId: string | null;
+    try {
+      fullId = resolve(token);
+    } catch {
+      // A throwing resolver leaves the token unresolved.
+      fullId = null;
+    }
+    if (!fullId) continue;
+    const { node, index, key } = found[i];
+    const text = key.startsWith("[[") ? key : `#${token}`;
+    const list = links.get(node) ?? [];
+    list.push({ index, text, fullId });
+    links.set(node, list);
+  }
+  if (links.size === 0) return html;
+
+  for (const [node, list] of links) {
+    const value = node.nodeValue ?? "";
     const frag = document.createDocumentFragment();
-    let anyMatch = false;
-    let m: RegExpExecArray | null;
-    while ((m = pattern.exec(text)) !== null) {
-      const bracketed = m[2] !== undefined;
-      const token = bracketed ? m[2] : m[1];
-      let fullId: string | null;
-      try {
-        fullId = resolve(token);
-      } catch {
-        // A throwing resolver leaves the token unresolved.
-        fullId = null;
-      }
-      if (!fullId) continue;
-      anyMatch = true;
-      if (m.index > lastIndex) {
-        frag.appendChild(document.createTextNode(text.slice(lastIndex, m.index)));
-      }
+    let last = 0;
+    for (const { index, text, fullId } of list) {
+      if (index > last) frag.appendChild(document.createTextNode(value.slice(last, index)));
       const a = document.createElement("a");
       a.setAttribute("data-nib-id", fullId);
       a.setAttribute("href", `#${fullId}`);
       a.setAttribute("class", "mention-link text-link");
-      a.textContent = bracketed ? token : `#${token}`;
+      a.textContent = text.startsWith("[[") ? text.slice(2, -2) : text;
       frag.appendChild(a);
-      lastIndex = m.index + m[0].length;
+      last = index + text.length;
     }
-    if (!anyMatch) return;
-    if (lastIndex < text.length) {
-      frag.appendChild(document.createTextNode(text.slice(lastIndex)));
-    }
+    if (last < value.length) frag.appendChild(document.createTextNode(value.slice(last)));
     node.parentNode?.replaceChild(frag, node);
   }
-
-  walk(tpl.content);
   return tpl.innerHTML;
 }
 
@@ -338,13 +916,6 @@ function linkMentions(tpl: HTMLTemplateElement, resolve: MentionResolver, rawTex
  * nothing on their own. A caller must wire a handler that calls `toggleTaskLine`
  * (as ActiveNibView.handleProseClick does) or disable them.
  *
- * With a resolver, the body renders twice: once with scan markers and once
- * without. The marked render is used only when every marker it emitted reads
- * back, block starts and ends alternate, and its sanitized HTML without the
- * markers is identical to the unmarked render. Otherwise the mentions are read
- * from the unmarked render, where escapes and raw HTML blocks link as plain text
- * does.
- *
  * @param resolveMention Called with each mention token; returns the full nib ID,
  *   or null to leave it as text. Return only a trusted nib ID: it lands in
  *   `href` and `data-nib-id`. A throw counts as unresolved. Mentions inside
@@ -352,11 +923,9 @@ function linkMentions(tpl: HTMLTemplateElement, resolve: MentionResolver, rawTex
  */
 export function renderMarkdown(body: string, resolveMention?: MentionResolver): string {
   if (!body) return "";
-  const plain = renderSanitized(body, false).html;
-  if (!resolveMention || typeof document === "undefined") return plain;
-  const marked = readScanMarkers(body, plain);
-  if (marked !== null) return linkMentions(marked.tpl, resolveMention, marked.rawText);
-  return linkMentions(toTemplate(plain), resolveMention, new Set());
+  const html = renderSanitized(body);
+  if (!resolveMention || typeof document === "undefined") return html;
+  return linkMentions(html, expectedMentions(body), resolveMention);
 }
 
 export const TAG_REGEX = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;

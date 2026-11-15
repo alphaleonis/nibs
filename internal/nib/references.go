@@ -4,9 +4,10 @@ import (
 	"bytes"
 	"regexp"
 	"slices"
+	"sort"
 
-	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/text"
 	"github.com/yuin/goldmark/util"
 )
@@ -25,6 +26,14 @@ var leadingIDPattern = regexp.MustCompile(`^` + MentionIDPattern)
 // in the mention parse. goldmark rescans the rest of a line for each marker it
 // opens, so an unbounded prefix makes the parse quadratic in the line's length.
 const maxContainerDepth = 32
+
+// maxDefinitionParagraphLines is the most lines a paragraph may have for the
+// mention parse to read link reference definitions at its start. goldmark's
+// definition parser reads labels and titles through its own block reader, whose
+// cost spanReader describes, so a long paragraph of definitions parses in
+// quadratic time:
+// https://github.com/yuin/goldmark/blob/v1.8.5/parser/link_ref.go#L18
+const maxDefinitionParagraphLines = 1024
 
 // linkScanBudgetFactor times a body's length is the most bytes the mention
 // parse lets goldmark scan for inline link destinations. Every `](` is charged,
@@ -74,8 +83,7 @@ func ExtractMentionSpans(body string) []MentionSpan {
 	source := []byte(body)
 	boundContainerDepth(source)
 	boundLinkScans(source)
-	parser := goldmark.DefaultParser()
-	doc := parser.Parse(text.NewReader(source))
+	doc := newMentionParser().Parse(text.NewReader(source))
 
 	var out []MentionSpan
 
@@ -112,6 +120,230 @@ func ExtractMentionSpans(body string) []MentionSpan {
 	return out
 }
 
+// newMentionParser returns goldmark's default parser with each inline parser
+// reading through a spanReader, the link parser wrapped in a labelParser, and link
+// reference definitions read only in paragraphs of at most
+// maxDefinitionParagraphLines lines.
+func newMentionParser() parser.Parser {
+	inline := parser.DefaultInlineParsers()
+	for i := range inline {
+		p := inline[i].Value.(parser.InlineParser)
+		if p == parser.NewLinkParser() {
+			p = labelParser{p}
+		}
+		inline[i].Value = spanValueParser{p}
+	}
+	transformers := parser.DefaultParagraphTransformers()
+	for i := range transformers {
+		transformers[i].Value = shortParagraphTransformer{transformers[i].Value.(parser.ParagraphTransformer)}
+	}
+	return parser.NewParser(
+		parser.WithBlockParsers(parser.DefaultBlockParsers()...),
+		parser.WithInlineParsers(inline...),
+		parser.WithParagraphTransformers(transformers...),
+	)
+}
+
+// spanValueParser is an inline parser that reads its block through a spanReader.
+type spanValueParser struct {
+	parser.InlineParser
+}
+
+// Parse relies on goldmark resetting the block reader to parent's lines before
+// it runs the inline parsers on parent:
+// https://github.com/yuin/goldmark/blob/v1.8.5/parser/parser.go#L1165
+func (p spanValueParser) Parse(parent ast.Node, block text.Reader, pc parser.Context) ast.Node {
+	return p.InlineParser.Parse(parent, spanReader{block, parent.Lines()}, pc)
+}
+
+// CloseBlock forwards to the wrapped parser, because goldmark finds close
+// blockers by asserting on the registered parser:
+// https://github.com/yuin/goldmark/blob/v1.8.5/parser/parser.go#L809
+func (p spanValueParser) CloseBlock(parent ast.Node, block text.Reader, pc parser.Context) {
+	if cb, ok := p.InlineParser.(parser.CloseBlocker); ok {
+		cb.CloseBlock(parent, block, pc)
+	}
+}
+
+// labelParser is goldmark's link parser with a constant-time check for a link in
+// a link label. goldmark's check walks every node after the label on each `]`, so
+// many open labels closed after a long run of nodes parse in quadratic time:
+// https://github.com/yuin/goldmark/blob/v1.8.5/parser/link.go#L159-L163
+//
+// While goldmark closes a label, labelParser moves the label to the end of the
+// paragraph, so the walk finds only a sentinel link placed when the answer is yes.
+// It then puts back what goldmark left, as goldmark places it: the label's text, or
+// the nodes after the label inside the new link:
+// https://github.com/yuin/goldmark/blob/v1.8.5/parser/link.go#L244-L253
+type labelParser struct {
+	parser.InlineParser
+}
+
+// labelStateKey holds the current block's *labelState in the parser context.
+var labelStateKey = parser.NewContextKey()
+
+// labelState mirrors goldmark's list of open labels in the block being
+// parsed, which goldmark pushes on each `[` or `![` and pops on each `]`.
+type labelState struct {
+	open []openLabel
+	// lastLink is the greatest start of a label that goldmark closed as a link, or
+	// -1 before any. A label holds a link exactly when such a label starts after it.
+	lastLink int
+}
+
+type openLabel struct {
+	node  ast.Node
+	start int
+}
+
+func (p labelParser) Parse(parent ast.Node, block text.Reader, pc parser.Context) ast.Node {
+	st, _ := pc.Get(labelStateKey).(*labelState)
+	if st == nil {
+		st = &labelState{lastLink: -1}
+		pc.Set(labelStateKey, st)
+	}
+	line, seg := block.PeekLine()
+	if line[0] != ']' {
+		n := p.InlineParser.Parse(parent, block, pc)
+		if n != nil {
+			st.open = append(st.open, openLabel{n, seg.Start})
+		}
+		return n
+	}
+	if len(st.open) == 0 {
+		return p.InlineParser.Parse(parent, block, pc)
+	}
+	last := st.open[len(st.open)-1]
+	st.open = st.open[:len(st.open)-1]
+	isImage := block.Source()[last.start] == '!'
+	labelStart := last.start + 1
+	if isImage {
+		labelStart++
+	}
+	block = labelReader{block, text.NewSegment(labelStart, seg.Start)}
+	next := last.node.NextSibling()
+	// goldmark checks an image label, or one with nothing after it, without a walk.
+	// The move below needs the label to be a child of parent.
+	if next == nil || isImage || last.node.Parent() != parent {
+		return st.closed(p.InlineParser.Parse(parent, block, pc), last.start)
+	}
+
+	prev := last.node.PreviousSibling()
+	parent.RemoveChild(parent, last.node)
+	parent.AppendChild(parent, last.node)
+	var sentinel ast.Node
+	if st.lastLink > last.start {
+		sentinel = ast.NewLink()
+		parent.AppendChild(parent, sentinel)
+	}
+	n := p.InlineParser.Parse(parent, block, pc)
+	if sentinel != nil {
+		parent.RemoveChild(parent, sentinel)
+	}
+
+	if n == nil {
+		labelText, ok := parent.LastChild().(*ast.Text)
+		if !ok {
+			return nil
+		}
+		parent.RemoveChild(parent, labelText)
+		if t, ok := prev.(*ast.Text); ok && t.Segment.Stop == labelText.Segment.Start && !t.SoftLineBreak() {
+			t.Segment = t.Segment.WithStop(labelText.Segment.Stop)
+		} else {
+			parent.InsertBefore(parent, next, labelText)
+		}
+		return nil
+	}
+
+	c := parent.FirstChild()
+	if prev != nil {
+		c = prev.NextSibling()
+	}
+	for c != nil {
+		following := c.NextSibling()
+		n.AppendChild(n, c)
+		c = following
+	}
+	return st.closed(n, last.start)
+}
+
+// closed records n, the node goldmark returned for the `]` of the label at start.
+func (st *labelState) closed(n ast.Node, start int) ast.Node {
+	if _, ok := n.(*ast.Link); ok {
+		st.lastLink = max(st.lastLink, start)
+	}
+	return n
+}
+
+func (p labelParser) CloseBlock(parent ast.Node, block text.Reader, pc parser.Context) {
+	pc.Set(labelStateKey, nil)
+	p.InlineParser.(parser.CloseBlocker).CloseBlock(parent, block, pc)
+}
+
+// maxLinkLabelLen is the most bytes goldmark reads as a link label's text.
+const maxLinkLabelLen = 999
+
+// labelReader is a block reader whose Value, for the label segment, stops once it
+// has read more than maxLinkLabelLen bytes. goldmark reads a label's Value only to
+// look up a reference, and rejects one longer than that first:
+// https://github.com/yuin/goldmark/blob/v1.8.5/parser/link.go#L184-L192
+// https://github.com/yuin/goldmark/blob/v1.8.5/parser/link.go#L281-L290
+type labelReader struct {
+	text.Reader
+	label text.Segment
+}
+
+func (r labelReader) Value(seg text.Segment) []byte {
+	if seg != r.label {
+		return r.Reader.Value(seg)
+	}
+	// A segment's prefix has a prefix of its Value:
+	// https://github.com/yuin/goldmark/blob/v1.8.5/text/reader.go#L361-L385
+	for n := 2 * maxLinkLabelLen; ; n *= 2 {
+		stop := min(seg.Start+n, seg.Stop)
+		v := r.Reader.Value(text.NewSegment(seg.Start, stop))
+		if len(v) > maxLinkLabelLen || stop == seg.Stop {
+			return v
+		}
+	}
+}
+
+// spanReader is a block reader whose Value reads only the lines that the segment
+// spans, and returns what goldmark's Value returns. goldmark's Value walks back
+// from the block's last line on each call, and the link parser calls it for each
+// label and title line, so a long paragraph of links parses in quadratic time:
+// https://github.com/yuin/goldmark/blob/v1.8.5/text/reader.go#L361-L385
+type spanReader struct {
+	text.Reader
+	lines *text.Segments
+}
+
+func (r spanReader) Value(seg text.Segment) []byte {
+	// goldmark's Value reads from the last line that starts at or before seg.Start
+	// to the first line that ends after seg.Stop, or to the block's last line.
+	n := r.lines.Len()
+	first := sort.Search(n, func(i int) bool { return r.lines.At(i).Start > seg.Start }) - 1
+	if first < 0 {
+		return r.Reader.Value(seg)
+	}
+	last := first + sort.Search(n-first, func(i int) bool { return r.lines.At(first+i).Stop > seg.Stop })
+	spanned := text.NewSegments()
+	spanned.AppendAll(r.lines.Sliced(first, min(last, n-1)+1))
+	return text.NewBlockReader(r.Source(), spanned).Value(seg)
+}
+
+// shortParagraphTransformer is a paragraph transformer that skips paragraphs of
+// more than maxDefinitionParagraphLines lines.
+type shortParagraphTransformer struct {
+	parser.ParagraphTransformer
+}
+
+func (t shortParagraphTransformer) Transform(node *ast.Paragraph, reader text.Reader, pc parser.Context) {
+	if node.Lines().Len() <= maxDefinitionParagraphLines {
+		t.ParagraphTransformer.Transform(node, reader, pc)
+	}
+}
+
 // ExtractMentionTokens returns the distinct ids that body mentions as `#<id>` or
 // `[[<id>]]`, in order of first appearance. Only CommonMark text is scanned: code
 // spans and blocks, links, autolinks, images, HTML blocks, raw inline HTML tags
@@ -121,7 +353,10 @@ func ExtractMentionSpans(body string) []MentionSpan {
 // opens more than maxContainerDepth list or blockquote markers is read as paragraph
 // text past that depth. Once the body's link destinations would scan more than
 // linkScanBudgetFactor times its length, that `](` and every later one are read as
-// text. Tokens are not checked against existing nibs.
+// text. A paragraph of more than maxDefinitionParagraphLines lines is read as text
+// even where it starts with link reference definitions. Character references are
+// not decoded, and the `#` in a numeric one such as `&#35;` is not a mention.
+// Tokens are not checked against existing nibs.
 func ExtractMentionTokens(body string) []string {
 	spans := ExtractMentionSpans(body)
 	if len(spans) == 0 {
@@ -154,6 +389,9 @@ func scanMentions(source []byte, segStart, segStop int, out []MentionSpan) []Men
 				continue
 			}
 		}
+		if inNumericReference(source, absSigil) {
+			continue
+		}
 		out = append(out, MentionSpan{
 			Token: string(chunk[match[2]:match[3]]),
 			Start: absSigil,
@@ -161,6 +399,26 @@ func scanMentions(source []byte, segStart, segStop int, out []MentionSpan) []Men
 		})
 	}
 	return out
+}
+
+// numericReference matches a numeric character reference after its `&`, in the
+// forms goldmark's renderer decodes:
+// https://github.com/yuin/goldmark/blob/v1.8.5/renderer/html/html.go#L873-L903
+var numericReference = regexp.MustCompile(`^#(?:[0-9]{1,7}|[xX][0-9a-fA-F]{1,6});`)
+
+// inNumericReference reports whether the `#` at source[sigil] belongs to a
+// numeric character reference. A backslash escapes the `&` only when it is not
+// itself escaped.
+func inNumericReference(source []byte, sigil int) bool {
+	amp := sigil - 1
+	if amp < 0 || source[amp] != '&' {
+		return false
+	}
+	backslashes := 0
+	for i := amp - 1; i >= 0 && source[i] == '\\'; i-- {
+		backslashes++
+	}
+	return backslashes%2 == 0 && numericReference.Match(source[sigil:])
 }
 
 // scanBracketMentions appends the `[[<id>]]` mentions whose id starts in

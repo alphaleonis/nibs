@@ -114,9 +114,11 @@ body section conventions, GraphQL examples).`,
 			// pre-layout project and answers from an ancestor store, so the
 			// prompt was emitted for a project the reader is not standing in
 			// while every command it teaches refused in that directory.
-			marker, err := store.FindNearestMarker(cwd)
+			marker, err := findNearestMarkerFn(cwd)
 			if err != nil {
-				return nil // Silently exit on error
+				// A git timeout refuses, because silence would read as "no nibs
+				// project here"; any other error stays silent.
+				return gitTimeoutRefusal(cwd, err)
 			}
 			switch marker.Kind {
 			case store.MarkerStore:

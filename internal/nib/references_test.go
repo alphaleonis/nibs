@@ -1,6 +1,7 @@
 package nib
 
 import (
+	"fmt"
 	"reflect"
 	"regexp"
 	"strings"
@@ -869,9 +870,69 @@ func TestExtractMentionTokensMatchesSpans(t *testing.T) {
 	}
 }
 
+// commentedList returns a list of n hash mentions between two comments that
+// hold other mentions; listTokens returns the ids it mentions.
+func commentedList(n int) string {
+	var b strings.Builder
+	b.WriteString("<!-- #zz -->\n\n")
+	for i := range n {
+		fmt.Fprintf(&b, "- #m%d\n", i)
+	}
+	b.WriteString("\n<!-- #yy -->")
+	return b.String()
+}
+
+// domOnlyThenLists returns brackets that only the DOM joins, n hash mentions, the
+// bracketed id, then n more; domOnlyThenListsTokens returns the ids it mentions.
+func domOnlyThenLists(n int) string {
+	var b strings.Builder
+	b.WriteString("[<foo></foo>[x]]\n\n")
+	for i := range n {
+		fmt.Fprintf(&b, "- #m%d\n", i)
+	}
+	b.WriteString("\nsee [[x]]\n\n")
+	for i := range n {
+		fmt.Fprintf(&b, "- #n%d\n", i)
+	}
+	b.WriteString("\n[<foo></foo>[y]]")
+	return b.String()
+}
+
+func domOnlyThenListsTokens(n int) []string {
+	out := make([]string, 0, 2*n+1)
+	for i := range n {
+		out = append(out, fmt.Sprintf("m%d", i))
+	}
+	out = append(out, "x")
+	for i := range n {
+		out = append(out, fmt.Sprintf("n%d", i))
+	}
+	return out
+}
+
+func listTokens(n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = fmt.Sprintf("m%d", i)
+	}
+	return out
+}
+
+// anchorThenMentions returns a raw anchor, a markdown link, then n hash
+// mentions in one paragraph; listTokens returns their ids.
+func anchorThenMentions(n int) string {
+	var b strings.Builder
+	b.WriteString("x <a name=t> see [d](u)")
+	for i := range n {
+		fmt.Fprintf(&b, " #m%d", i)
+	}
+	return b.String()
+}
+
 // TestExtractMentionTokensWebParity pins the shapes where the web renderer once
 // linked differently from this scanner. web/src/lib/markdown.test.ts holds the
-// same cases under the same names, and both sides must give the same answer.
+// same cases under the same names, and both sides must give the same answer,
+// except where the web test states why it cannot.
 func TestExtractMentionTokensWebParity(t *testing.T) {
 	tests := []struct {
 		name string
@@ -886,17 +947,154 @@ func TestExtractMentionTokensWebParity(t *testing.T) {
 		{"escaped brackets: an escape inside the id", `[[a\-b]]`, nil},
 		{"escapes: an escape ends a hash id", `#a\-b`, []string{"a"}},
 		{"escapes: an escaped hash after a word character", `a\#x`, []string{"x"}},
+		{"character references: decimal brackets", `&#91;&#91;x]]`, nil},
+		{"character references: a decimal hash", `&#35;x`, nil},
+		{"character references: a hex hash", `&#x23;x`, nil},
+		{"character references: an uppercase hex hash", `&#X23;x`, nil},
+		{"character references: a named hash", `&num;x`, nil},
+		{"character references: named brackets", `&lsqb;&lsqb;x]]`, nil},
+		{"character references: a decoded closing bracket", `[[x&#93;]`, nil},
+		{"character references: a decoded id character in brackets", `[[a&#45;b]]`, nil},
+		{"character references: a decimal hash without a semicolon", `&#35`, []string{"35"}},
+		{"character references: a letter in a decimal reference", `&#9a;`, []string{"9a"}},
+		{"character references: too many decimal digits", `&#00000035;`, []string{"00000035"}},
+		{"character references: too many hex digits", `&#x0000023;`, []string{"x0000023"}},
+		{"character references: an encoded ampersand before a hash", `&amp;#x`, []string{"x"}},
+		{"character references: an encoded ampersand before a decimal hash", `&amp;#35;`, []string{"35"}},
+		{"character references: an escaped ampersand", `\&#35;x`, []string{"35"}},
+		{"character references: an escaped backslash before the ampersand", `\\&#35;x`, nil},
+		{"character references: a decoded hash before a mention", `&#35;#x`, []string{"x"}},
+		{"character references: a decoded hash after a mention", `#x&#35;y`, []string{"x"}},
+		{"character references: a decoded id character ends a hash id", `#a&#98;c`, []string{"a"}},
+		{"character references: a decoded letter before a hash", `&#97;#x`, []string{"x"}},
+		{"character references: two decoded letters before a hash", `&fjlig;#x`, []string{"x"}},
+		{"character references: an unclosed tag before a reference in raw-block text", "<kbd><span &#35;y</kbd> #y", []string{"y"}},
+		{"character references: an unclosed tag after a reference in raw-block text", "<kbd>&#35;x <span #y</kbd> #y", []string{"y"}},
+		{"character references: a reference in an attribute value in raw-block text", "<kbd><span &a=\"&#35;y\">t</kbd> #y", []string{"y"}},
+		{"character references: a C1 control beside a reference", "\u0080&#35;x #y", []string{"y"}},
+		{"character references: C1 controls beside references in raw-block text", "<kbd>\u0080\u0082&#35;x</kbd> #y", []string{"y"}},
+		{"character references: a marker-shaped run of C1 controls", "#y\u00800\u0080 &#97;", []string{"y"}},
+		{"character references: a space and a letter after a hash id", `#a&#32;&#98;c`, []string{"a"}},
 		{"html blocks: a details block without blank lines", "<details>\n[[old-x]] #old-y\n</details>", nil},
 		{"html blocks: a details block with blank lines", "<details>\n\n[[old-x]] #old-y\n\n</details>", []string{"old-x", "old-y"}},
 		{"html blocks: a div block", "<div>[[x]] #y</div>", nil},
 		{"html blocks: text between inline tags", "a <span>[[x]] #y</span> b", []string{"x", "y"}},
+		{"html blocks: brackets split by a tag the sanitizer removes", "[<foo></foo>[x]]", nil},
 		{"html blocks: a block that leaves a link open", "<a href=\"u\">\n\n</a> [[y]]", []string{"y"}},
 		{"html blocks: a block that ends inside a start tag", "intro #a\n\n<div>\n<details\n\nhello [[x]] world\n\nmore #y text", []string{"a", "x", "y"}},
 		{"html blocks: a list item block that ends inside a start tag", "- <div>\n  <details\n\n  [[x]] item\n- after #y", []string{"x", "y"}},
 		{"html blocks: a body that ends inside a start tag", "[[a]]\n\n<div>\n<details", []string{"a"}},
 		{"html blocks: a leading noscript block", "<noscript>\n\n[[x]] visible?\n\n</noscript>", []string{"x"}},
 		{"html blocks: a leading style block", "<style>p{color:red}</style>\n\nlater #y", []string{"y"}},
+		{"html blocks: a textarea end tag line", "</textarea>\n#x", nil},
+		{"html blocks: an indented end tag that interrupts a paragraph", "x\n </noframes> #a", nil},
+		{"html blocks: a space after the slash of an end tag", "</ div>\n#x", nil},
+		{"html blocks: an end tag line in a list item", "- x\n  </div> #a\n- #b", []string{"b"}},
+		{"html blocks: a pre left open in a list item", "- x\n  <pre>\n- #b", []string{"b"}},
+		{"html blocks: a pre at an outer list item's column", "- a\n  - b\n  <pre>\n- #c1\n\nlater #d1", []string{"c1", "d1"}},
+		{"html blocks: an end tag at an outer list item's column", "- a\n  - b\n  </div>\n#c1\n\nok #c2", []string{"c1", "c2"}},
+		{"html blocks: an html block at an outer list item's column after a blank line", "- a\n  - b\n\n  <div>\n#c1", []string{"c1"}},
+		{"html blocks: an html block between two list item columns", "- a\n  - b\n   <div>\n#c", []string{"c"}},
+		{"html blocks: an html block at a nested list item's column", "- a\n  - b\n    <div>\n  #c\n#d", []string{"c", "d"}},
+		{"html blocks: an html block in a third-level list item", "- a\n  - b\n    - c\n    <div>\n  #d\n#e", []string{"d", "e"}},
+		{"html blocks: an html block one column short of a list item", "- a\n <div>\n#b", nil},
+		{"html blocks: an html block in an ordered list item", "1. a\n   <div>\n#b", []string{"b"}},
+		{"html blocks: an html block after a lazy line in a list item", "- a\nlazy\n  <div>\n- #b", []string{"b"}},
+		{"html blocks: a numbered line that cannot interrupt a paragraph", "x\n2. y\n   <div>\n#b", nil},
+		{"html blocks: an indented code line in a list item", "- a\n\n      <div>\n  #b\n\n#c", []string{"b", "c"}},
+		{"html blocks: an html block after an indented code line", "    </div> #a1\n<custom-el>\n<pre>\n\n</pre> #a3", []string{"a3"}},
+		{"html blocks: a lone carriage return", "x #a1\r <div> #a2", []string{"a1", "a2"}},
+		{"html blocks: an end tag after a lone carriage return", "x\r#a\n</ div>\n#b", []string{"a"}},
+		{"list items: a heading on the marker line", "- # h\nx\n    <div>\n  #a1", []string{"a1"}},
+		{"list items: a numbered heading on the marker line", "1. # Title\nSome text\n      <div>\n   and #a1", []string{"a1"}},
+		{"list items: indented code on the marker line", "-     code\nx\n    <div>\n  #a1\n\nok #a2", []string{"a1", "a2"}},
+		{"list items: a heading on a nested marker line", "- a\n  - # h\n  x\n      <div>\n    #a1", []string{"a1"}},
+		{"list items: a marker and five spaces", "-     \nx\n    <div>\n  #a1", []string{"a1"}},
+		{"list items: a marker, a space and a tab", "- \t\nx\n    <div>\n  #a1", []string{"a1"}},
+		{"list items: an html block on the marker line", "- </ div>\nx\n    </ div> #a1", []string{"a1"}},
+		{"list items: a fence on the marker line", "- ```\nx\n    <div>\n  #a1", []string{"a1"}},
+		{"list items: a thematic break on the marker line", "- ***\nx\n    <div>\n  #a1", []string{"a1"}},
+		{"list items: an end tag the server reads as html on the marker line", "- </ div>\n  #a1\n- #b", []string{"b"}},
+		{"list items: a numbered sibling with a wider gap", "1. a\n2.  b\n    <div>\n   #c", []string{"c"}},
+		{"list items: an empty item cannot interrupt a paragraph", "x\n*\n  </ div>\n#b", nil},
+		{"list items: a fence that its list item ends", "- a\n  ```\n</ div>\n#b", nil},
+		{"list items: a fence closed in a nested list item", "- a\n  - b\n    ```\n    ```\n    </ div>\n    #c", nil},
+		{"list items: an empty item before an end tag", "- a\n-\n</ x-y>\n#b", nil},
+		{"list items: an html block one column into an empty item", "-\n </ div>\n#x", nil},
+		{"list items: a whitespace-only item cannot interrupt a paragraph", "x\n* \t\n  </ div>\n#b", nil},
+		{"list items: an html end tag in a fence on the marker line", "- ```\n  </ div>\n  ```\n  #a", []string{"a"}},
+		{"list items: an html block in a blockquote on the marker line", "- > <div>\n</pre> #a1\n    <![CDATA[\n x #b", []string{"a1", "b"}},
+		{"list items: an html block in a blockquote in a list item", "- a\n  > <div>\n</pre> #a1\n    <![CDATA[\n x #b", []string{"a1", "b"}},
+		{"list items: two list markers on one line", "- -\n    <pre\n  2) #a", []string{"a"}},
+		{"line counts: an over-indented line in a list item", "- a\n      b\n  x #a1\n  <div>", []string{"a1"}},
+		{"line counts: an over-indented line in an ordered list item", "1. a\n       b\n   x #a1\n   <div>", []string{"a1"}},
+		{"line counts: a lazy line after an html block in a blockquote", "> </div> #a2\n<?x ?>\nx #b3", []string{"b3"}},
+		{"tabs: a tab that indents a line into a list item", "2.\n\t2\n   <p\n#a", []string{"a"}},
+		{"tabs: a tab after a list marker", "0. \t```\n1\n2. <div #a", []string{"a"}},
+		{"tabs: a tab after a list item's content column", "- a\n  \t</div> #a2", []string{"a2"}},
+		{"code: an indented code line after a list", "  1. a\n\n \t#a", nil},
+		{"code: a fenced line that holds a lone carriage return", "- a\n  ```\r#a\n  ```", nil},
+		{"code: indented code on a marker line that holds a lone carriage return", "-     code\r#a", nil},
+		{"html blocks: a line that is only carriage returns", "<div>\n\r\r\n#a", []string{"a"}},
+		{"html blocks: a blockquote line that ends a list item", "- #a1\n> #b2\n    </div> #a5", []string{"a1", "b2", "a5"}},
+		{"html blocks: a blockquote inside a list item", "- a\n  > q\n  </div>\n#b", []string{"b"}},
 		{"lost markers: an inline xmp in a div", "<div>\nfoo <xmp>\n\nx </xmp> #y\n\n<div>z</div>\n\nend #w", []string{"y", "w"}},
+		{"malformed html: a paragraph fostered out of a table", "<table>\n\n#y\n\n<tr><td>#secret</td></tr>", []string{"y"}},
+		{"malformed html: a table cell left open across blocks", "intro\n\n<table><tr><td> #a\n\n</td></tr>\n\nx </table> #z\n\n<div>d</div>", []string{"z"}},
+		{"malformed html: an inline iframe", "a <iframe>\n\n</iframe>\n#z\n\nafter #w", []string{"w"}},
+		{"malformed html: an inline noembed", "x <noembed>\n\n<div>\n</noembed>\n#c\n</div>\n\nafter", nil},
+		{"malformed html: an inline select", `x <select>[\[y]] #q`, []string{"q"}},
+		{"raw html text: a comment before a mention of the same id", "<!-- see #x -->\n\nSee #x", []string{"x"}},
+		{"raw html text: a comment after a mention of the same id", "<!-- #q -->\n\n#x\n\n<!-- see #x -->", []string{"x"}},
+		{"raw html text: a comment with no visible twin", "<!-- #x -->\n\nsee #y", []string{"y"}},
+		{"raw html text: a comment before two mentions of the same id", "<!-- #x -->\n\n#x and #x", []string{"x"}},
+		{"raw html text: a bracketed id in a comment", "<!-- [[x]] -->\nText [[x]]", []string{"x"}},
+		{"raw html text: a link target before a mention of the same id", `<a href="#x">jump</a> and #x`, []string{"x"}},
+		{"raw html text: image alt text before a mention of the same id", `<img alt="#x" src="a.png"> then #x`, []string{"x"}},
+		{"raw html text: a style block before a mention of the same id", "<style>#x{color:red}</style>\n\n#x", []string{"x"}},
+		{"raw html text: inline code before an html block with the same id", "x <code>#a</code>\n\n<div>#a</div>\n\nsee #a", []string{"a"}},
+		{"raw html text: an inline textarea before an html block with the same id", "x <textarea>#a</textarea>\n\n<div>#a</div>\n\n#a", []string{"a"}},
+		{"raw html text: an inline noembed closed inside an html block", "x <noembed>\n\n<div>\n</noembed>\n#c\n</div>\n\nsee #c", []string{"c"}},
+		{"raw html text: a noscript block before a mention of the same id", "intro\n\n<noscript>\n#x\n</noscript>\n\nsee #x", []string{"x"}},
+		{"raw html text: a noscript block after a mention of the same id", "[<foo></foo>[z]]\n\n#x\n\n<noscript>\n#x\n</noscript>", []string{"x"}},
+		{"raw html text: comments around a long list", commentedList(1100), listTokens(1100)},
+		{"implicit closes: a raw anchor before a markdown link", "<a name=\"top\">\n\nIntro\n\nSee [docs](u) and #x\n\nMore #w", []string{"x", "w"}},
+		{"implicit closes: a nested anchor", `x <a>y <a>z</a> and #x`, []string{"x"}},
+		{"implicit closes: inline code in a table cell", "| a | b |\n|---|---|\n| <code>x | #y |\n\n# Next\n\nsee #z and [[q]]", []string{"y", "z", "q"}},
+		{"implicit closes: a pre in a heading", "# Title <pre>\n\nsee #y", []string{"y"}},
+		{"implicit closes: a pre in a list item", "- x <pre>\n- #y\n\nafter #z", []string{"y", "z"}},
+		{"implicit closes: code in a select", "x <select><code>y</select> and #q\n\nlater #r", []string{"q", "r"}},
+		{"implicit closes: an anchor tag in a quoted attribute", `x <span title="p>q<a>">hi</span> and #x`, []string{"x"}},
+		{"implicit closes: a code tag in a quoted attribute", `x <i title="> <code>">t</i> #x`, []string{"x"}},
+		{"alignment: brackets only the DOM joins, then a long list", domOnlyThenLists(600), domOnlyThenListsTokens(600)},
+		{"implicit closes: a raw anchor before a markdown link in one paragraph", `x <a name=t> see [d](u) #x`, []string{"x"}},
+		{"implicit closes: code left open in a table cell", "<table><tr><td><code>#a</td><td>#b</td></tr></table>\n\n#c", []string{"c"}},
+		{"implicit closes: a pre left open in a list item", "- <pre>a\n- #b\n\nafter #c", []string{"b", "c"}},
+		{"implicit closes: a quoted > before a code tag", `x <b title="1>2 <code>">#y</b> #y`, []string{"y"}},
+		{"alignment: an id many times after an html block that holds it", "<div>#x</div>\n\n#x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x", []string{"x"}},
+		{"alignment: html blocks and paragraphs that alternate one id", "<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x", []string{"x"}},
+		{"unclosed elements: an inline iframe left open into an html block", "x <iframe>\n\n<div>#x</iframe></div>\n\n#x", []string{"x"}},
+		{"unclosed elements: an inline link left open into the next paragraph", "<a href=\"x\">foo\n\nx#1 hid </a> #1 vis", []string{"1"}},
+		{"malformed html: a paragraph fostered out of a table between rows", "<table>\n<tr><td>see #a1</td><td>#a2</td></tr>\n\nNote: blocked by #m and [[n]].\n\n<tr><td>c</td></tr>\n</table>\n\nAfter #z", []string{"m", "n", "z"}},
+		{"unclosed elements: an inline link left open in a table cell", "| <a name=t> |\n|---|\n| c |\n\nafter #z\n\n<div>#z</div>", []string{"z"}},
+		{"unclosed elements: an html block that closes an inline link", "x <a name=t>\n\n<div></a></div>\n\n#z\n\n<div>#z</div>", []string{"z"}},
+		{"unclosed elements: a second inline link closes the first", "x <a name=t> y <a href=u>z</a>\n\n#q\n\n<div>#q</div>", []string{"q"}},
+		{"tables: a mention in a cell before an html block with the same id", "| a |\n|---|\n| #y |\n\n<div>#y</div>", []string{"y"}},
+		{"foreign content: a self-closed style in an svg", "Icon <svg><style/></svg>\n\n<div>#a</div>\n\nSee #a", []string{"a"}},
+		{"foreign content: a self-closed anchor in an svg", "Icon <svg viewBox=\"0 0 1 1\"><a href=\"#top\"/></svg>\n\nRelated to x#a, see [docs](u) and #a.", []string{"a"}},
+		{"foreign content: a self-closed anchor in an svg in one paragraph", `Icon <svg><a href="#top"/></svg> x#a [docs](u) #a`, []string{"a"}},
+		{"malformed html: an anchor swallowed by an end tag", `Press <kbd>Ctrl or </b <a href=u> x#a [d](u) #a`, []string{"a"}},
+		{"hidden mention: more than three open code elements, then an anchor reopened in code", "x <code><code><code><code> y\n\n</code></code></code> see x#a\n\n</code> z <code><a name=t>y</code> #a", []string{"a"}},
+		{"hidden mention: more than three open code elements, then a code end tag in an html block", "<code><code><code><code>\n\n</code></code></code> x#a\n\n<code><code>\n\n<div></code></div>\n\n#a", []string{"a"}},
+		{"hidden mention: prose about code tags, then a code end tag in an object", "Wrap it in <code>, <code>, <code> and <code>.\n\nClose with </code></code></code> as in issue x#a.\n\nThen </code> <code> <object></code></object> see #a.", []string{"a"}},
+		{"hidden mention: a raw-text end tag in link text, then an anchor reopened in code", "x <iframe> [</iframe>](u)\n\n<div>#a</div>\n\n</iframe>\n\nz <code><a name=t>y</code> #a", []string{"a"}},
+		{"hidden mention: a decoded hash after more than three code elements", "<code><code><code><code>\n\n</code></code></code> &#35;a </code> <code> <marquee></code></marquee> #a", []string{"a"}},
+		{"hidden mention: an anchor in an object, then an anchor reopened in code", "<object data=\"d.pdf\"><a href=\"d.pdf\">Download the PDF\n\n</object>\n\nThe build broke in x#a; see <code><a name=n>note</code> #a", []string{"a"}},
+		{"hidden mention: a decoded hash, then a hash after an ampersand", "<code><code><code><code>\n\n</code></code></code> &#35;a </code> <code> <marquee></code></marquee> &#a", []string{"a"}},
+		{"hidden mention: a hash after an ampersand, then a decoded hash", "<marquee><a name=t>y</object>\n&#a [d ](u) &#35;a", []string{"a"}},
+		{"hidden mention: a table cell inside an anchor left open", "x <a name=t>\n\n| a |\n|---|\n| [d](u) #y |\n\n</a> x#y", []string{"y"}},
+		{"hidden mention: an indented end tag in a table row", "| a | b |\n|---|---|\n| <noframes> #a |  #a-\n </noframes> |\n | x &#35;a \\#a |   |", []string{"a"}},
+		{"alignment: a raw anchor before a markdown link, then a long run of mentions", anchorThenMentions(1100), listTokens(1100)},
 		{"one-character hash ids: #x", "see #x", []string{"x"}},
 		{"one-character hash ids: a trailing hyphen", "ref #abc-", []string{"abc"}},
 	}

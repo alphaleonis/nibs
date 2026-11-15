@@ -2,7 +2,6 @@ import { describe, it, expect, vi } from "vitest";
 import DOMPurify from "dompurify";
 import {
   renderMarkdown,
-  readsWithScanMarkers,
   toggleTaskLine,
   taskSourceLines,
   TAG_REGEX,
@@ -273,6 +272,25 @@ describe("renderMarkdown mention parity with the server scanner", () => {
     return [...new Set(ids)];
   }
 
+  /** A list of n hash mentions between two comments that hold other mentions. */
+  function commentedList(n: number): string {
+    return `<!-- #zz -->\n\n${Array.from({ length: n }, (_, i) => `- #m${i}\n`).join("")}\n<!-- #yy -->`;
+  }
+  const listTokens = (n: number): string[] => Array.from({ length: n }, (_, i) => `m${i}`);
+  /** A raw anchor, a markdown link, then n hash mentions in one paragraph. */
+  const anchorThenMentions = (n: number): string =>
+    `x <a name=t> see [d](u)${Array.from({ length: n }, (_, i) => ` #m${i}`).join("")}`;
+  const items = (prefix: string, n: number): string =>
+    Array.from({ length: n }, (_, i) => `- #${prefix}${i}\n`).join("");
+  /** Brackets that only the DOM joins, n hash mentions, the bracketed id, then n more. */
+  const domOnlyThenLists = (n: number): string =>
+    `[<foo></foo>[x]]\n\n${items("m", n)}\nsee [[x]]\n\n${items("n", n)}\n[<foo></foo>[y]]`;
+  const domOnlyThenListsTokens = (n: number): string[] => [
+    ...listTokens(n),
+    "x",
+    ...Array.from({ length: n }, (_, i) => `n${i}`),
+  ];
+
   const parityCases: [string, string, string[]][] = [
     ["escaped brackets: a backslash before the second opening bracket", "[\\[x]]", []],
     ["escaped brackets: a backslash before the second closing bracket", "[[x]\\]", []],
@@ -282,6 +300,34 @@ describe("renderMarkdown mention parity with the server scanner", () => {
     ["escaped brackets: an escape inside the id", "[[a\\-b]]", []],
     ["escapes: an escape ends a hash id", "#a\\-b", ["a"]],
     ["escapes: an escaped hash after a word character", "a\\#x", ["x"]],
+    ["character references: decimal brackets", "&#91;&#91;x]]", []],
+    ["character references: a decimal hash", "&#35;x", []],
+    ["character references: a hex hash", "&#x23;x", []],
+    ["character references: an uppercase hex hash", "&#X23;x", []],
+    ["character references: a named hash", "&num;x", []],
+    ["character references: named brackets", "&lsqb;&lsqb;x]]", []],
+    ["character references: a decoded closing bracket", "[[x&#93;]", []],
+    ["character references: a decoded id character in brackets", "[[a&#45;b]]", []],
+    ["character references: a decimal hash without a semicolon", "&#35", ["35"]],
+    ["character references: a letter in a decimal reference", "&#9a;", ["9a"]],
+    ["character references: too many decimal digits", "&#00000035;", ["00000035"]],
+    ["character references: too many hex digits", "&#x0000023;", ["x0000023"]],
+    ["character references: an encoded ampersand before a hash", "&amp;#x", ["x"]],
+    ["character references: an encoded ampersand before a decimal hash", "&amp;#35;", ["35"]],
+    ["character references: an escaped ampersand", "\\&#35;x", ["35"]],
+    ["character references: an escaped backslash before the ampersand", "\\\\&#35;x", []],
+    ["character references: a decoded hash before a mention", "&#35;#x", ["x"]],
+    ["character references: a decoded hash after a mention", "#x&#35;y", ["x"]],
+    ["character references: a decoded id character ends a hash id", "#a&#98;c", ["a"]],
+    ["character references: a decoded letter before a hash", "&#97;#x", ["x"]],
+    ["character references: two decoded letters before a hash", "&fjlig;#x", ["x"]],
+    ["character references: an unclosed tag before a reference in raw-block text", "<kbd><span &#35;y</kbd> #y", ["y"]],
+    ["character references: an unclosed tag after a reference in raw-block text", "<kbd>&#35;x <span #y</kbd> #y", ["y"]],
+    ["character references: a reference in an attribute value in raw-block text", "<kbd><span &a=\"&#35;y\">t</kbd> #y", ["y"]],
+    ["character references: a C1 control beside a reference", "\u0080&#35;x #y", ["y"]],
+    ["character references: C1 controls beside references in raw-block text", "<kbd>\u0080\u0082&#35;x</kbd> #y", ["y"]],
+    ["character references: a marker-shaped run of C1 controls", "#y\u00800\u0080 &#97;", ["y"]],
+    ["character references: a space and a letter after a hash id", "#a&#32;&#98;c", ["a"]],
     ["html blocks: a details block without blank lines", "<details>\n[[old-x]] #old-y\n</details>", []],
     [
       "html blocks: a details block with blank lines",
@@ -290,6 +336,7 @@ describe("renderMarkdown mention parity with the server scanner", () => {
     ],
     ["html blocks: a div block", "<div>[[x]] #y</div>", []],
     ["html blocks: text between inline tags", "a <span>[[x]] #y</span> b", ["x", "y"]],
+    ["html blocks: brackets split by a tag the sanitizer removes", "[<foo></foo>[x]]", []],
     ["html blocks: a block that leaves a link open", '<a href="u">\n\n</a> [[y]]', ["y"]],
     [
       "html blocks: a block that ends inside a start tag",
@@ -304,11 +351,124 @@ describe("renderMarkdown mention parity with the server scanner", () => {
     ["html blocks: a body that ends inside a start tag", "[[a]]\n\n<div>\n<details", ["a"]],
     ["html blocks: a leading noscript block", "<noscript>\n\n[[x]] visible?\n\n</noscript>", ["x"]],
     ["html blocks: a leading style block", "<style>p{color:red}</style>\n\nlater #y", ["y"]],
+    ["html blocks: a textarea end tag line", "</textarea>\n#x", []],
+    ["html blocks: an indented end tag that interrupts a paragraph", "x\n </noframes> #a", []],
+    ["html blocks: a space after the slash of an end tag", "</ div>\n#x", []],
+    ["html blocks: an end tag line in a list item", "- x\n  </div> #a\n- #b", ["b"]],
+    ["html blocks: a pre left open in a list item", "- x\n  <pre>\n- #b", ["b"]],
+    ["html blocks: a pre at an outer list item's column", "- a\n  - b\n  <pre>\n- #c1\n\nlater #d1", ["c1", "d1"]],
+    ["html blocks: an end tag at an outer list item's column", "- a\n  - b\n  </div>\n#c1\n\nok #c2", ["c1", "c2"]],
+    ["html blocks: an html block at an outer list item's column after a blank line", "- a\n  - b\n\n  <div>\n#c1", ["c1"]],
+    ["html blocks: an html block between two list item columns", "- a\n  - b\n   <div>\n#c", ["c"]],
+    ["html blocks: an html block at a nested list item's column", "- a\n  - b\n    <div>\n  #c\n#d", ["c", "d"]],
+    ["html blocks: an html block in a third-level list item", "- a\n  - b\n    - c\n    <div>\n  #d\n#e", ["d", "e"]],
+    ["html blocks: an html block one column short of a list item", "- a\n <div>\n#b", []],
+    ["html blocks: an html block in an ordered list item", "1. a\n   <div>\n#b", ["b"]],
+    ["html blocks: an html block after a lazy line in a list item", "- a\nlazy\n  <div>\n- #b", ["b"]],
+    ["html blocks: a numbered line that cannot interrupt a paragraph", "x\n2. y\n   <div>\n#b", []],
+    ["html blocks: an indented code line in a list item", "- a\n\n      <div>\n  #b\n\n#c", ["b", "c"]],
+    ["html blocks: an html block after an indented code line", "    </div> #a1\n<custom-el>\n<pre>\n\n</pre> #a3", ["a3"]],
+    ["html blocks: a lone carriage return", "x #a1\r <div> #a2", ["a1", "a2"]],
+    ["html blocks: an end tag after a lone carriage return", "x\r#a\n</ div>\n#b", ["a"]],
+    ["list items: a heading on the marker line", "- # h\nx\n    <div>\n  #a1", ["a1"]],
+    ["list items: a numbered heading on the marker line", "1. # Title\nSome text\n      <div>\n   and #a1", ["a1"]],
+    ["list items: indented code on the marker line", "-     code\nx\n    <div>\n  #a1\n\nok #a2", ["a1", "a2"]],
+    ["list items: a heading on a nested marker line", "- a\n  - # h\n  x\n      <div>\n    #a1", ["a1"]],
+    ["list items: a marker and five spaces", "-     \nx\n    <div>\n  #a1", ["a1"]],
+    ["list items: a marker, a space and a tab", "- \t\nx\n    <div>\n  #a1", ["a1"]],
+    ["list items: an html block on the marker line", "- </ div>\nx\n    </ div> #a1", ["a1"]],
+    ["list items: a fence on the marker line", "- ```\nx\n    <div>\n  #a1", ["a1"]],
+    ["list items: a thematic break on the marker line", "- ***\nx\n    <div>\n  #a1", ["a1"]],
+    ["list items: an end tag the server reads as html on the marker line", "- </ div>\n  #a1\n- #b", ["b"]],
+    ["list items: a numbered sibling with a wider gap", "1. a\n2.  b\n    <div>\n   #c", ["c"]],
+    ["list items: an empty item cannot interrupt a paragraph", "x\n*\n  </ div>\n#b", []],
+    ["list items: a fence that its list item ends", "- a\n  ```\n</ div>\n#b", []],
+    ["list items: a fence closed in a nested list item", "- a\n  - b\n    ```\n    ```\n    </ div>\n    #c", []],
+    ["list items: an empty item before an end tag", "- a\n-\n</ x-y>\n#b", []],
+    ["list items: an html block one column into an empty item", "-\n </ div>\n#x", []],
+    ["list items: a whitespace-only item cannot interrupt a paragraph", "x\n* \t\n  </ div>\n#b", []],
+    ["list items: an html end tag in a fence on the marker line", "- ```\n  </ div>\n  ```\n  #a", ["a"]],
+    ["list items: an html block in a blockquote on the marker line", "- > <div>\n</pre> #a1\n    <![CDATA[\n x #b", ["a1", "b"]],
+    ["list items: an html block in a blockquote in a list item", "- a\n  > <div>\n</pre> #a1\n    <![CDATA[\n x #b", ["a1", "b"]],
+    ["list items: two list markers on one line", "- -\n    <pre\n  2) #a", ["a"]],
+    ["line counts: an over-indented line in a list item", "- a\n      b\n  x #a1\n  <div>", ["a1"]],
+    ["line counts: an over-indented line in an ordered list item", "1. a\n       b\n   x #a1\n   <div>", ["a1"]],
+    ["line counts: a lazy line after an html block in a blockquote", "> </div> #a2\n<?x ?>\nx #b3", ["b3"]],
+    ["tabs: a tab that indents a line into a list item", "2.\n\t2\n   <p\n#a", ["a"]],
+    ["tabs: a tab after a list marker", "0. \t```\n1\n2. <div #a", ["a"]],
+    ["tabs: a tab after a list item's content column", "- a\n  \t</div> #a2", ["a2"]],
+    ["code: an indented code line after a list", "  1. a\n\n \t#a", []],
+    ["code: a fenced line that holds a lone carriage return", "- a\n  ```\r#a\n  ```", []],
+    ["code: indented code on a marker line that holds a lone carriage return", "-     code\r#a", []],
+    ["html blocks: a line that is only carriage returns", "<div>\n\r\r\n#a", ["a"]],
+    ["html blocks: a blockquote line that ends a list item", "- #a1\n> #b2\n    </div> #a5", ["a1", "b2", "a5"]],
+    ["html blocks: a blockquote inside a list item", "- a\n  > q\n  </div>\n#b", ["b"]],
     [
       "lost markers: an inline xmp in a div",
       "<div>\nfoo <xmp>\n\nx </xmp> #y\n\n<div>z</div>\n\nend #w",
       ["y", "w"],
     ],
+    ["malformed html: a paragraph fostered out of a table", "<table>\n\n#y\n\n<tr><td>#secret</td></tr>", ["y"]],
+    [
+      "malformed html: a table cell left open across blocks",
+      "intro\n\n<table><tr><td> #a\n\n</td></tr>\n\nx </table> #z\n\n<div>d</div>",
+      ["z"],
+    ],
+    ["malformed html: an inline iframe", "a <iframe>\n\n</iframe>\n#z\n\nafter #w", ["w"]],
+    ["malformed html: an inline noembed", "x <noembed>\n\n<div>\n</noembed>\n#c\n</div>\n\nafter", []],
+    ["raw html text: a comment before a mention of the same id", "<!-- see #x -->\n\nSee #x", ["x"]],
+    ["raw html text: a comment after a mention of the same id", "<!-- #q -->\n\n#x\n\n<!-- see #x -->", ["x"]],
+    ["raw html text: a comment with no visible twin", "<!-- #x -->\n\nsee #y", ["y"]],
+    ["raw html text: a comment before two mentions of the same id", "<!-- #x -->\n\n#x and #x", ["x"]],
+    ["raw html text: a bracketed id in a comment", "<!-- [[x]] -->\nText [[x]]", ["x"]],
+    ["raw html text: a link target before a mention of the same id", '<a href="#x">jump</a> and #x', ["x"]],
+    ["raw html text: image alt text before a mention of the same id", '<img alt="#x" src="a.png"> then #x', ["x"]],
+    ["raw html text: a style block before a mention of the same id", "<style>#x{color:red}</style>\n\n#x", ["x"]],
+    [
+      "raw html text: inline code before an html block with the same id",
+      "x <code>#a</code>\n\n<div>#a</div>\n\nsee #a",
+      ["a"],
+    ],
+    [
+      "raw html text: an inline textarea before an html block with the same id",
+      "x <textarea>#a</textarea>\n\n<div>#a</div>\n\n#a",
+      ["a"],
+    ],
+    [
+      "raw html text: an inline noembed closed inside an html block",
+      "x <noembed>\n\n<div>\n</noembed>\n#c\n</div>\n\nsee #c",
+      ["c"],
+    ],
+    ["raw html text: a noscript block before a mention of the same id", "intro\n\n<noscript>\n#x\n</noscript>\n\nsee #x", ["x"]],
+    [
+      "raw html text: a noscript block after a mention of the same id",
+      "[<foo></foo>[z]]\n\n#x\n\n<noscript>\n#x\n</noscript>",
+      ["x"],
+    ],
+    ["raw html text: comments around a long list", commentedList(1100), listTokens(1100)],
+    ["implicit closes: a raw anchor before a markdown link", "<a name=\"top\">\n\nIntro\n\nSee [docs](u) and #x\n\nMore #w", ["x", "w"]],
+    ["implicit closes: a nested anchor", "x <a>y <a>z</a> and #x", ["x"]],
+    ["implicit closes: inline code in a table cell", "| a | b |\n|---|---|\n| <code>x | #y |\n\n# Next\n\nsee #z and [[q]]", ["y", "z", "q"]],
+    ["implicit closes: a pre in a heading", "# Title <pre>\n\nsee #y", ["y"]],
+    ["implicit closes: a pre in a list item", "- x <pre>\n- #y\n\nafter #z", ["y", "z"]],
+    ["implicit closes: code in a select", "x <select><code>y</select> and #q\n\nlater #r", ["q", "r"]],
+    ["implicit closes: an anchor tag in a quoted attribute", "x <span title=\"p>q<a>\">hi</span> and #x", ["x"]],
+    ["implicit closes: a code tag in a quoted attribute", "x <i title=\"> <code>\">t</i> #x", ["x"]],
+    ["alignment: brackets only the DOM joins, then a long list", domOnlyThenLists(600), domOnlyThenListsTokens(600)],
+    ["implicit closes: a raw anchor before a markdown link in one paragraph", "x <a name=t> see [d](u) #x", ["x"]],
+    ["implicit closes: code left open in a table cell", "<table><tr><td><code>#a</td><td>#b</td></tr></table>\n\n#c", ["c"]],
+    ["implicit closes: a pre left open in a list item", "- <pre>a\n- #b\n\nafter #c", ["b", "c"]],
+    ["implicit closes: a quoted > before a code tag", "x <b title=\"1>2 <code>\">#y</b> #y", ["y"]],
+    ["alignment: an id many times after an html block that holds it", "<div>#x</div>\n\n#x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x #x", ["x"]],
+    ["alignment: html blocks and paragraphs that alternate one id", "<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x\n\n<div>#x</div>\n\n#x", ["x"]],
+    ["unclosed elements: an inline link left open in a table cell", "| <a name=t> |\n|---|\n| c |\n\nafter #z\n\n<div>#z</div>", ["z"]],
+    ["unclosed elements: an html block that closes an inline link", "x <a name=t>\n\n<div></a></div>\n\n#z\n\n<div>#z</div>", ["z"]],
+    ["unclosed elements: a second inline link closes the first", "x <a name=t> y <a href=u>z</a>\n\n#q\n\n<div>#q</div>", ["q"]],
+    ["tables: a mention in a cell before an html block with the same id", "| a |\n|---|\n| #y |\n\n<div>#y</div>", ["y"]],
+    ["foreign content: a self-closed style in an svg", "Icon <svg><style/></svg>\n\n<div>#a</div>\n\nSee #a", ["a"]],
+    ["foreign content: a self-closed anchor in an svg", 'Icon <svg viewBox="0 0 1 1"><a href="#top"/></svg>\n\nRelated to x#a, see [docs](u) and #a.', ["a"]],
+    ["foreign content: a self-closed anchor in an svg in one paragraph", 'Icon <svg><a href="#top"/></svg> x#a [docs](u) #a', ["a"]],
+    ["malformed html: an anchor swallowed by an end tag", "Press <kbd>Ctrl or </b <a href=u> x#a [d](u) #a", ["a"]],
     ["one-character hash ids: #x", "see #x", ["x"]],
     ["one-character hash ids: a trailing hyphen", "ref #abc-", ["abc"]],
   ];
@@ -317,22 +477,12 @@ describe("renderMarkdown mention parity with the server scanner", () => {
     expect(linkedTokens(body)).toEqual(want);
   });
 
-  // A block that ends inside a start tag makes the marked render parse
-  // differently, and an inline xmp drops a marker, so those bodies take the
-  // unmarked fallback.
-  const fallbackCases = new Set([
-    "html blocks: a block that ends inside a start tag",
-    "html blocks: a list item block that ends inside a start tag",
-    "html blocks: a body that ends inside a start tag",
-    "lost markers: an inline xmp in a div",
-  ]);
-
-  it.each(parityCases.map(([name, body]) => [name, !fallbackCases.has(name), body] as const))(
-    "%s reads with the scan markers: %s",
-    (_name, marked, body) => {
-      expect(readsWithScanMarkers(body)).toBe(marked);
-    },
-  );
+  // Mirrors the Go row of the same name. The HTML parser drops an <a> inside a
+  // <select>, so linkedTokens cannot read the link and this reads the HTML string.
+  it("malformed html: an inline select", () => {
+    const html = renderMarkdown("x <select>[\\[y]] #q", (t) => `nibs-${t}`);
+    expect([...html.matchAll(/data-nib-id="nibs-([^"]+)"/g)].map((m) => m[1])).toEqual(["q"]);
+  });
 
   it("keeps the escaped text and the html block text visible", () => {
     const html = renderMarkdown("[\\[x]] <i>i</i>\n\n<details>\n[[y]]\n</details>", (t) => `nibs-${t}`);
@@ -343,27 +493,12 @@ describe("renderMarkdown mention parity with the server scanner", () => {
     expect(tpl.content.querySelector("details")).not.toBeNull();
   });
 
-  it("does not let raw html in a body forge the end of an html block", () => {
+  it("does not link in an html block whose own markup comes first", () => {
     const html = renderMarkdown(
       '<div>\n<span data-mention-scan="on" data-mention-nonce="forged"></span>[[x]]\n</div>',
       (t) => `nibs-${t}`,
     );
     expect(html).not.toContain("data-nib-id");
-  });
-
-  // Bodies where content both renders drop takes a scan marker with it.
-  const lostMarkerBodies = [
-    "a <iframe>\n\n</iframe>\n#z\n\nafter #w",
-    "x <noembed>\n\n<div>\n</noembed>\n#c\n</div>\n\nafter",
-    "<div>\nfoo <xmp>\n\nx </xmp> #y\n\n<div>z</div>\n\nend #w",
-    "<div>\n<noembed>\n\n#a\n\nx </noembed> #b\n\n<div>z</div>",
-    "x <select>[\\[y]] #q",
-    "<div>\n<!-- start\n\nhidden [[x]]\n\nok <!-- z --> after #y\n\n<div>\nblock2\n</div>\n\nlast #w",
-    "intro\n\n<table><tr><td> #a\n\n</td></tr>\n\nx </table> #z\n\n<div>d</div>",
-  ];
-
-  it.each(lostMarkerBodies)("reads %j without the scan markers", (body) => {
-    expect(readsWithScanMarkers(body)).toBe(false);
   });
 
   // The server also finds #a and [[x]], which sit in content no render shows.
@@ -377,8 +512,193 @@ describe("renderMarkdown mention parity with the server scanner", () => {
     expect(linkedTokens(body)).toEqual(want);
   });
 
-  // Shapes where a scan marker lands in an unusual parse context.
-  const markerContexts: [string, string][] = [
+  /** Where in the rendered HTML each mention link sits: its parent's tag and its text. */
+  function linkPlaces(body: string): [string, string][] {
+    const tpl = document.createElement("template");
+    tpl.innerHTML = renderMarkdown(body, (t) => `nibs-${t}`);
+    return Array.from(tpl.content.querySelectorAll("a.mention-link")).map((a) => [
+      a.parentElement?.tagName ?? "",
+      a.textContent ?? "",
+    ]);
+  }
+
+  /** Each mention link's parent tag, and its text after the word it ends. */
+  function linkWords(body: string): [string, string][] {
+    const tpl = document.createElement("template");
+    tpl.innerHTML = renderMarkdown(body, (t) => `nibs-${t}`);
+    return Array.from(tpl.content.querySelectorAll("a.mention-link")).map((a) => [
+      a.parentElement?.tagName ?? "",
+      (a.previousSibling?.textContent ?? "").split(/\s/).at(-1) + (a.textContent ?? ""),
+    ]);
+  }
+
+  // The stack cannot follow these tags: inside svg or math they are foreign
+  // elements, an end tag left unescaped swallows the <a> after it, and the browser
+  // moves the last paragraph ahead of the raw table.
+  it.each([
+    ["Icon <svg><style/></svg>\n\n<div>#a</div>\n\nSee #a", [["P", "#a"]]],
+    ['Icon <svg viewBox="0 0 1 1"><a href="#top"/></svg>\n\nRelated to x#a, see [docs](u) and #a.', [["P", "#a"]]],
+    ['Icon <svg><a href="#top"/></svg> x#a [docs](u) #a', [["P", "#a"]]],
+    ["Icon <svg><title/></svg>\n\n<!-- todo --><b>#a</b>\n\nSee #a", [["P", "#a"]]],
+    ["x <svg> <style>\n\n<div>#a</div>\n\n#a", [["P", "#a"]]],
+    ["Icon <math><style/></math>\n\n<div>#a</div>\n\nSee #a", [["P", "#a"]]],
+    ["Press <kbd>Ctrl or </b <a href=u> x#a [d](u) #a", [["KBD", "#a"]]],
+    [
+      "- #a <pre> #a <tr> #a\n  - </ifr &#35;a <A href=u>\n\n&#35;a x#b #b #a",
+      [
+        ["LI", "#a"],
+        ["P", "#b"],
+        ["P", "#a"],
+      ],
+    ],
+    ["[d](u) <title> |\n - &#35;a </title> </script>\n<table>\n<tr><td>\\#a</td></tr>\n\n\\#a", []],
+    ["</textarea>\n#x", []],
+    ["x\n </noframes> #a", []],
+    ["</ div>\n#x", []],
+  ])("links only the mentions the server counts in %j", (body, want) => {
+    expect(linkWords(body)).toEqual(want);
+  });
+
+  // The server counts only mentions that the browser hides. The visible text with
+  // the same key is not a mention.
+  it.each([
+    ["hidden mention: more than three open code elements, then an anchor reopened in code", "x <code><code><code><code> y\n\n</code></code></code> see x#a\n\n</code> z <code><a name=t>y</code> #a"],
+    ["hidden mention: more than three open code elements, then a code end tag in an html block", "<code><code><code><code>\n\n</code></code></code> x#a\n\n<code><code>\n\n<div></code></div>\n\n#a"],
+    ["hidden mention: prose about code tags, then a code end tag in an object", "Wrap it in <code>, <code>, <code> and <code>.\n\nClose with </code></code></code> as in issue x#a.\n\nThen </code> <code> <object></code></object> see #a."],
+    ["hidden mention: a raw-text end tag in link text, then an anchor reopened in code", "x <iframe> [</iframe>](u)\n\n<div>#a</div>\n\n</iframe>\n\nz <code><a name=t>y</code> #a"],
+    ["hidden mention: a decoded hash after more than three code elements", "<code><code><code><code>\n\n</code></code></code> &#35;a </code> <code> <marquee></code></marquee> #a"],
+    ["hidden mention: an anchor in an object, then an anchor reopened in code", "<object data=\"d.pdf\"><a href=\"d.pdf\">Download the PDF\n\n</object>\n\nThe build broke in x#a; see <code><a name=n>note</code> #a"],
+    ["hidden mention: a decoded hash, then a hash after an ampersand", "<code><code><code><code>\n\n</code></code></code> &#35;a </code> <code> <marquee></code></marquee> &#a"],
+    ["hidden mention: a hash after an ampersand, then a decoded hash", "<marquee><a name=t>y</object>\n&#a [d ](u) &#35;a"],
+    ["hidden mention: a table cell inside an anchor left open", "x <a name=t>\n\n| a |\n|---|\n| [d](u) #y |\n\n</a> x#y"],
+    ["hidden mention: an indented end tag in a table row", "| a | b |\n|---|---|\n| <noframes> #a |  #a-\n </noframes> |\n | x &#35;a \\#a |   |"],
+  ])("links nothing where %s", (_name, body) => {
+    expect(linkWords(body)).toEqual([]);
+  });
+
+  it.each([
+    ["the mention after an html block that holds the same text", "<div>#x</div>\n\n#x", [["P", "#x"]]],
+    ["the mention before an html block that holds the same text", "#x\n\n<div>#x</div>", [["P", "#x"]]],
+    ["the mention after a comment that holds the same text", "<!-- see #x -->\n\nSee #x", [["P", "#x"]]],
+    ["the mention after code in an html block", "<div><code>#x</code></div>\n\n#x", [["P", "#x"]]],
+    ["the mention after a character reference in an html block", "<div>&#35;a</div>\n\n#a", [["P", "#a"]]],
+    ["the mention after named references in an html block", "<div>&lbrack;&lbrack;a]]</div>\n\n[[a]]", [["P", "a"]]],
+    ["the mention after a leading noscript block whose text the parser moves", "<noscript>\n#x\n</noscript>\n\n#x", [["P", "#x"]]],
+    [
+      "the mention after an end tag inside an inline textarea",
+      "x <code><textarea></code>#a</textarea> #b</code>\n\n<div>#a</div>\n\nsee #a",
+      [["P", "#a"]],
+    ],
+    ["nothing in an html block before a link label that leaves code open", "<div>#x</div>\n\n[<code>](u) #x", []],
+    ["nothing in an html block before a template", "<div>#x</div>\n\nsee <template>#x</template> end", []],
+    ["the mention between a comment and an html block that hold the same text", "<!-- #x -->\n\n#x\n\n<div>#x</div>", [["P", "#x"]]],
+    [
+      "the mention between a noscript block and an html block that hold the same text",
+      "intro\n\n<noscript>\n#x\n</noscript>\n\n#x\n\n<div>#x</div>",
+      [["P", "#x"]],
+    ],
+    ["the mention after an inline textarea and an html block", "x <textarea>#a</textarea>\n\n<div>#a</div>\n\n#a", [["P", "#a"]]],
+    ["both mentions after a comment that holds the same text", "<!-- #x -->\n\n#x and #x", [["P", "#x"], ["P", "#x"]]],
+    ["the mention after inline code and an html block", "x <code>#a</code>\n\n<div>#a</div>\n\nsee #a", [["P", "#a"]]],
+    ["the mention after an inline link and an html block", '<a href="u">#a</a>\n\n<div>#a</div>\n\nsee #a', [["P", "#a"]]],
+    ["the mention after a word-joined hash of the same id", "foo#x and #x", [["P", "#x"]]],
+    ["the mention after escaped brackets around the same id", "[\\[x]] and [[x]]", [["P", "x"]]],
+    ["the mention after a longer id in an html block", "<div>#ab</div>\n\n#a", [["P", "#a"]]],
+    [
+      "the mention after one that malformed html hides",
+      '<div title="t\n\n#a\n\n<p title="u">\n\n#b [<foo></foo>[x]]',
+      [["P", "#b"]],
+    ],
+  ])("links %s", (_name, body, want) => {
+    expect(linkPlaces(body)).toEqual(want);
+  });
+
+  it("links the mention after an html block that closes an inline noembed, not the block's text", () => {
+    const html = renderMarkdown("x <noembed>\n\n<div>\n</noembed>\n#c\n</div>\n\nsee #c", (t) => `nibs-${t}`);
+    expect(html).toContain('<p>see <a data-nib-id="nibs-c"');
+    expect(html.match(/mention-link/g)).toHaveLength(1);
+  });
+
+  // The comment holds the first id, and the DOM alone joins the brackets around <foo>.
+  it("links every mention in a list over the alignment cap after a comment", () => {
+    const items = Array.from({ length: 1100 }, (_, i) => `- #m${i}\n`).join("");
+    expect(linkedTokens(`<!-- #m0 -->\n\n${items}\n[<foo></foo>[x]]`)).toEqual(listTokens(1100));
+  });
+
+  // The server finds #x, but the DOM fosters it ahead of the table's #y, and the
+  // keys alone cannot tell which of the two pairs with the table's text.
+  it("links nothing in a paragraph fostered ahead of a table's text", () => {
+    expect(linkedTokens("<table><tr><td>#y</td></tr>\n\n#x")).toEqual([]);
+  });
+
+  // The server also finds #m and [[n]], but the DOM fosters their paragraph ahead
+  // of the table's text, an order the keys cannot settle.
+  it("malformed html: a paragraph fostered out of a table between rows", () => {
+    const body =
+      "<table>\n<tr><td>see #a1</td><td>#a2</td></tr>\n\nNote: blocked by #m and [[n]].\n\n<tr><td>c</td></tr>\n</table>\n\nAfter #z";
+    expect(linkedTokens(body)).toEqual(["z"]);
+  });
+
+  // The server finds the mentions these mirrored rows name, but the collector resets
+  // its open elements at each block, which the browser does not.
+  it.each([
+    // The browser keeps the iframe open and hides the html block's #x, whose candidate takes the visible #x.
+    ["unclosed elements: an inline iframe left open into an html block", "x <iframe>\n\n<div>#x</iframe></div>\n\n#x", []],
+    // The browser reopens the anchor in the next paragraph and hides x#1, whose candidate takes the visible #1.
+    ["unclosed elements: an inline link left open into the next paragraph", '<a href="x">foo\n\nx#1 hid </a> #1 vis', []],
+    // The markdown link closes the raw anchor, but the collector keeps it open, so 1100 mentions exceed MAX_EDITS.
+    ["alignment: a raw anchor before a markdown link, then a long run of mentions", anchorThenMentions(1100), []],
+  ])("%s", (_name, body, want) => {
+    expect(linkedTokens(body)).toEqual(want);
+  });
+
+  // Each `[<foo></foo>[x]]` is a candidate only the DOM shows, so each one is an edit.
+  it.each([
+    [1000, ["y"]],
+    [1001, []],
+  ])("with %i edits between the DOM and the tokens, links %j", (n, want) => {
+    expect(linkedTokens(`${"[<foo></foo>[x]] ".repeat(n)}\n\n#y`)).toEqual(want);
+  });
+
+  // An xmp from an html block shows the rest of the body as text, so the DOM stays
+  // small while the body opens many <code> elements.
+  it.each([
+    ["table cells", `<xmp>\n\nx ${"<code>".repeat(20000)}\n\n| h |\n|---|\n${"| #a |\n".repeat(20000)}`],
+    ["paragraphs", `<xmp>\n\n${"x <code>\n\n".repeat(80000)}#a`],
+  ])("renders many open elements before %s in linear time", (_name, body) => {
+    const start = performance.now();
+    renderMarkdown(body, (t) => `nibs-${t}`);
+    expect(performance.now() - start).toBeLessThan(1500);
+  });
+
+  it("links many mentions in one paragraph in linear time", () => {
+    const start = performance.now();
+    const html = renderMarkdown("#a #b ".repeat(8000), (t) => `nibs-${t}`);
+    const elapsed = performance.now() - start;
+    const tpl = document.createElement("template");
+    tpl.innerHTML = html;
+    expect(tpl.content.querySelectorAll("a.mention-link")).toHaveLength(16000);
+    expect(elapsed).toBeLessThan(5000);
+  });
+
+  it("renders many unterminated start tags in linear time", () => {
+    const body = "<div\n" + "<a ".repeat(80000);
+    const start = performance.now();
+    renderMarkdown(body, (t) => `nibs-${t}`);
+    expect(performance.now() - start).toBeLessThan(1500);
+  });
+
+  // The quoted attribute hides #h, and the DOM alone joins the brackets around <foo>,
+  // so neither end pairs. 1000 items align in under 2^20 cells, and 1100 do not.
+  it.each([1000, 1100])("links every mention in a list of %i after a hidden one", (n) => {
+    const items = Array.from({ length: n }, (_, i) => `- #m${i}\n`).join("");
+    const body = `<div title="t\n\n#h\n\n<p title="u">\n\n${items}\n[<foo></foo>[x]]`;
+    expect(linkedTokens(body)).toEqual(listTokens(n));
+  });
+
+  // Shapes of raw HTML that the browser parses into a different tree than the
+  // markdown structure suggests.
+  const htmlShapes: [string, string][] = [
     ["escapes in text and a link", "[\\[x]] [a\\[b](u)\n\n<div>[[y]]</div>"],
     ["a leading style block", "<style>p{color:red}</style>\n\nlater #y"],
     ["a leading noscript block", "<noscript>\n\n[[x]] visible?\n\n</noscript>"],
@@ -386,11 +706,6 @@ describe("renderMarkdown mention parity with the server scanner", () => {
     ["a leading title block", "<title>\n\n[[x]]\n\n</title>\n\nlater #y"],
     ["a leading div block", "<div>[[x]]</div>\n\nlater #y"],
     ["a leading comment", "<!-- c -->\n\nlater #y"],
-    ["a style block, then a noscript block", "<style>p{}</style>\n\n<noscript>\n\n[[x]] visible?\n\n</noscript>"],
-    ["a comment, then a noscript block", "<!-- c -->\n\n<noscript>\n\n[[x]] visible?\n\n</noscript>"],
-    ["a comment, then a style block", "<!-- c -->\n\n<style>q{color:blue}</style>\n\nlater #y"],
-    ["two leading style blocks", "<style>a{}</style>\n\n<style>q{color:blue}</style>\n\nlater #y"],
-    ["two style blocks a line apart", "<style>a{}</style>\n<style>q{color:blue}</style>\n\nlater #y"],
     ["a template block", "intro\n\n<template>\n\n[[x]]\n\n</template>\n\nlater #y"],
     ["a title block", "intro\n\n<title>\n\n[[x]]\n\n</title>\n\nlater #y"],
     ["an unclosed textarea", "#a\n\n<textarea>\n[[x]]"],
@@ -403,34 +718,41 @@ describe("renderMarkdown mention parity with the server scanner", () => {
     ["an escape in math content", "<math>\\["],
     ["a span left open in a block", "<div>\n<span\n\n[[x]]"],
     ["a block that ends inside a start tag", "intro #a\n\n<details\n\nhello [[x]] world\n\nmore #y text"],
-    ["a block that ends inside a start tag in a div", "intro #a\n\n<div>\n<details\n\nhello [[x]] world\n\nmore #y text"],
-    ["a block that ends inside a start tag at the end", "[[a]]\n\n<div>\n<details"],
     ["a list item block that ends inside a start tag", "- <div\n\n  [[x]] item\n- after #y"],
     ["an image tag left open", '<div>\n<img src="x.png"\n\nafter #y'],
-    ["an empty span of the body's own", "<div>[[x]]</div>\n\n<span></span> #y"],
-    ...lostMarkerBodies.map((body): [string, string] => [`a lost marker in ${JSON.stringify(body)}`, body]),
+    ["an inline xmp in a div", "<div>\nfoo <xmp>\n\nx </xmp> #y\n\n<div>z</div>\n\nend #w"],
+    ["an inline noembed in a div", "<div>\n<noembed>\n\n#a\n\nx </noembed> #b\n\n<div>z</div>"],
+    ["a comment left open in a div", "<div>\n<!-- start\n\nhidden [[x]]\n\nok <!-- z --> after #y\n\n<div>\nblock2\n</div>\n\nlast #w"],
+    ...parityCases.map(([name, body]): [string, string] => [name, body]),
   ];
 
-  it.each(markerContexts)("leaves no scan markers in the output for %s", (_name, body) => {
-    expect(renderMarkdown(body, (t) => `nibs-${t}`)).not.toContain("data-mention");
-    expect(renderMarkdown(body)).not.toContain("data-mention");
+  // Mention linking only replaces text with links: with every link turned back
+  // into the text it replaced, the HTML is the render without a resolver.
+  it.each(htmlShapes)("changes only the mention text in %s", (_name, body) => {
+    const tpl = document.createElement("template");
+    tpl.innerHTML = renderMarkdown(body, (t) => `nibs-${t}`);
+    for (const a of Array.from(tpl.content.querySelectorAll("a.mention-link"))) {
+      const text = a.textContent ?? "";
+      a.replaceWith(text.startsWith("#") ? text : `[[${text}]]`);
+    }
+    tpl.content.normalize();
+    const plain = document.createElement("template");
+    plain.innerHTML = renderMarkdown(body);
+    expect(tpl.innerHTML).toBe(plain.innerHTML);
   });
 
-  // renderMarkdown falls back to the unmarked render when the marked one parses
-  // differently, so a resolver that links nothing leaves the sanitized HTML as it is.
-  it.each(markerContexts)("renders %s the same with a resolver that links nothing", (_name, body) => {
+  it.each(htmlShapes)("renders %s the same with a resolver that links nothing", (_name, body) => {
     expect(renderMarkdown(body, () => null)).toBe(renderMarkdown(body));
   });
 
-  it.each([
-    "<!-- c -->\n\nlater #y",
-    "<style>p{color:red}</style>\n\nlater #y",
-    "<div>[[x]]</div>\n\nlater #y",
-    "[\\[x]] [a\\[b](u) ![a\\[b](x.png)",
-    "- item \\[[x]] and [[y]\\]\n\n> quote #z\\-q",
-  ])("reads %j with the scan markers", (body) => {
-    expect(readsWithScanMarkers(body)).toBe(true);
+  // The server also finds #a, but a link in a textarea would show as markup.
+  it("leaves the text of an inline textarea as written", () => {
+    const tpl = document.createElement("template");
+    tpl.innerHTML = renderMarkdown("x <textarea>#a</textarea> #b", (t) => `nibs-${t}`);
+    expect(tpl.content.querySelector("textarea")?.textContent).toBe("#a");
+    expect(tpl.content.querySelector("a.mention-link")?.textContent).toBe("#b");
   });
+
   it("keeps an empty span of the body's own", () => {
     expect(renderMarkdown("<span></span> #y", (t) => `nibs-${t}`)).toContain("<span></span>");
   });
