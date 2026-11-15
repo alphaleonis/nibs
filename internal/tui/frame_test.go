@@ -9,6 +9,7 @@ import (
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
@@ -119,13 +120,12 @@ func frameViews() []frameView {
 			},
 		},
 		{
-			// W leaves wide mode, which is what puts the list beside the
-			// preview pane — a different composition, with its own footer
-			// arithmetic.
+			// z p puts the nib view beside the list — a different
+			// composition, with its own footer arithmetic.
 			name: "two-column",
 			enter: func(t *testing.T, app *App, width int) {
-				sendKey(app, tea.KeyPressMsg{Code: 'W', Text: "W"})
-				if want := width >= TwoColumnMinWidth; app.isTwoColumnMode() != want {
+				pressKeys(app, "z p")
+				if want := width >= previewMinWidth; app.isTwoColumnMode() != want {
 					t.Fatalf("premise failed: two-column mode = %v at width %d, want %v", app.isTwoColumnMode(), width, want)
 				}
 			},
@@ -218,8 +218,8 @@ func heightSweep(dense int, sparse ...int) []int {
 
 // The geometries the frame arithmetic turns on. Widths start at 30 because that
 // is where the narrow-terminal defects live: a row too long for its column, a
-// footer built from a fixed set of key/label pairs, and a border title line
-// whose badges are appended whether or not the width can hold them.
+// footer built from a fixed set of key/label pairs, and a rule or header whose
+// parts are drawn whether or not the width can hold them.
 var (
 	sweepWidths  = []int{30, 34, 38, 40, 46, 48, 80, 100, 120, 160, 200}
 	sweepHeights = heightSweep(16, 20, 24, 30)
@@ -324,140 +324,64 @@ func detailSweepView(t *testing.T) frameView {
 	return frameView{}
 }
 
-// The box's top line is drawn by hand rather than left to the border style, so
-// nothing downstream keeps it inside the terminal. Both of the things it
-// carries are open-ended: the project name comes from the config, and each
-// badge appears whenever its state is on.
-func TestTheBorderTopLineFillsTheTerminalExactly(t *testing.T) {
+// The rules are drawn by hand, so nothing downstream keeps them inside the
+// pane. The top rule carries the project name, which comes from the config and
+// has no bound.
+func TestTheRulesFillThePaneExactly(t *testing.T) {
 	titles := map[string]string{
 		"short": "Nibs - Nibs",
 		"long":  "Nibs - " + strings.Repeat("a-long-project-name/", 4),
 	}
 	for name, title := range titles {
-		for _, width := range []int{20, 24, 30, 34, 38, 46, 80, 200} {
+		for _, width := range []int{1, 4, 5, 6, 20, 24, 30, 34, 38, 46, 80, 200} {
 			t.Run(fmt.Sprintf("%s/%d", name, width), func(t *testing.T) {
-				// Every badge on, which is the widest the line gets.
-				m := listModel{
-					width:         width,
-					borderTitle:   title,
-					tagFilter:     "needs-triage",
-					hideCompleted: true,
-					wideMode:      true,
-				}
-				line := m.buildBorderTopLine()
-				if got := lipgloss.Width(line); got != width {
-					t.Errorf("top line is %d cells for a %d-column terminal: %q",
-						got, width, ansiSGR.ReplaceAllString(line, ""))
+				m := listModel{width: width, title: title}
+				for rule, line := range map[string]string{"top": m.topRule(width), "bottom": m.bottomRule(width)} {
+					if got := lipgloss.Width(line); got != width {
+						t.Errorf("the %s rule is %d cells in a %d-cell pane: %q", rule, got, width, ansiSGR.ReplaceAllString(line, ""))
+					}
 				}
 			})
 		}
 	}
 }
 
-// The tag filter names a state that hides nibs from the list: press g t on a
-// tag nothing carries and the box goes empty, with the badge as the only thing
-// on screen saying why. Badges are dropped from the right, so it is the leftmost
-// and the last to go — but the title was charged against the budget first, so an
-// ordinary project name consumed it and every badge went at once.
-//
-// Twenty and twenty-four columns are left out: the badge alone is twenty cells
-// and the budget there is fifteen and nineteen, so no ordering saves it.
-func TestTheTagFilterBadgeOutlivesTheTitle(t *testing.T) {
-	titles := map[string]string{
-		"short":  "Nibs - Nibs",
-		"medium": "Nibs - sample-project",
-		"long":   "Nibs - " + strings.Repeat("a-long-project-name/", 4),
-	}
-	for name, title := range titles {
-		for _, width := range []int{30, 34, 38, 46, 80, 200} {
-			t.Run(fmt.Sprintf("%s/%d", name, width), func(t *testing.T) {
-				m := listModel{
-					width:         width,
-					borderTitle:   title,
-					tagFilter:     "needs-triage",
-					hideCompleted: true,
-					wideMode:      true,
-				}
-				line := ansiSGR.ReplaceAllString(m.buildBorderTopLine(), "")
-				if !strings.Contains(line, "tag: needs-triage") {
-					t.Errorf("the tag filter badge is absent at %d columns, so a filtered list has nothing on screen saying it is filtered: %q",
-						width, line)
-				}
-				if got := lipgloss.Width(line); got != width {
-					t.Errorf("top line is %d cells for a %d-column terminal: %q", got, width, line)
-				}
-			})
-		}
-	}
-}
-
-// The reservation that keeps the tag-filter badge on screen buys it with cells
-// taken from the project name, and only the tag filter is worth that price: it
-// names a state the reader turned on that can empty the box for no visible
-// reason. `No completed` is the DEFAULT — config.HideCompleted is true unless a
-// store says otherwise — so charging the title for it shortened the project name
-// on an ordinary launch, and `Nibs - sample-` names a different project than
-// `Nibs - sample-project`. `Wide` hides nothing at all.
-func TestTheDefaultBadgesNeverCostTheProjectName(t *testing.T) {
-	const title = "Nibs - sample-project"
-	for _, width := range []int{30, 34, 38, 40, 46, 80, 200} {
-		for _, wide := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%d/wide=%v", width, wide), func(t *testing.T) {
-				m := listModel{width: width, borderTitle: title, hideCompleted: true, wideMode: wide}
-				line := ansiSGR.ReplaceAllString(m.buildBorderTopLine(), "")
-				if !strings.Contains(line, title) {
-					t.Errorf("the project name is cut at %d columns to make room for a badge naming the default state: %q",
-						width, line)
-				}
-				if got := lipgloss.Width(line); got != width {
-					t.Errorf("top line is %d cells for a %d-column terminal: %q", got, width, line)
-				}
-			})
-		}
-	}
-}
-
-// A title the border cannot hold is cut, and the cut has to be visible: a
-// silently shortened project name reads as a whole one, and the reader has no
-// way to tell `Nibs - sample-` from a project actually called that.
-func TestATruncatedBorderTitleSaysItWasTruncated(t *testing.T) {
-	tests := []struct {
-		name      string
-		model     listModel
-		wantWhole string
-	}{
-		{
-			name:      "no badge reserves anything, the title alone outruns the width",
-			model:     listModel{width: 30, borderTitle: "Nibs - " + strings.Repeat("long-name/", 4)},
-			wantWhole: "Nibs - long-name/long-name/long-name/long-name/",
-		},
-		{
-			name:      "the tag filter badge is paid for out of the title",
-			model:     listModel{width: 34, borderTitle: "Nibs - sample-project", tagFilter: "needs-triage"},
-			wantWhole: "Nibs - sample-project",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			line := ansiSGR.ReplaceAllString(tt.model.buildBorderTopLine(), "")
-			if strings.Contains(line, tt.wantWhole) {
-				t.Fatalf("premise failed: the whole title fits at %d columns, so nothing is truncated: %q",
-					tt.model.width, line)
+// A tag filter can empty the list, and the header's token is then the only
+// thing on screen that says why. It comes before the default -status:closed
+// and the count, which give way to it in a narrow header.
+func TestTheTagFilterTokenOutlivesTheRestOfTheHeader(t *testing.T) {
+	for _, width := range []int{30, 34, 38, 46, 80, 200} {
+		t.Run(fmt.Sprint(width), func(t *testing.T) {
+			m := newListModel(&StubBackend{}, config.Default())
+			m.width, m.tagFilter = width, "needs-triage"
+			line := ansiSGR.ReplaceAllString(m.header(width), "")
+			if !strings.Contains(line, "tags:needs-triage") {
+				t.Errorf("the tag filter token is absent at %d columns: %q", width, line)
 			}
-			if !strings.Contains(line, "…") {
-				t.Errorf("the title was cut with nothing on screen to say so, so the shortened name reads as the whole one: %q", line)
-			}
-			if got := lipgloss.Width(line); got != tt.model.width {
-				t.Errorf("top line is %d cells for a %d-column terminal: %q", got, tt.model.width, line)
+			if got := lipgloss.Width(line); got > width {
+				t.Errorf("the header is %d cells for a %d-column terminal: %q", got, width, line)
 			}
 		})
 	}
 }
 
-// widestVocabularyNibs is the vocabulary at its widest: the longest status name
-// beside the longest type name. Wide mode pads both columns to twelve cells
-// whatever the terminal is, so rows carrying these values outrun a narrow box
-// with no title in them at all.
+// A title the rule cannot hold is cut, and the cut has to be visible: a
+// silently shortened project name reads as a whole one, and the reader has no
+// way to tell `Nibs - sample-` from a project actually called that.
+func TestATruncatedTitleSaysItWasTruncated(t *testing.T) {
+	const title = "Nibs - long-name/long-name/long-name/long-name/"
+	m := listModel{width: 30, title: title}
+	line := ansiSGR.ReplaceAllString(m.topRule(30), "")
+	if strings.Contains(line, title) {
+		t.Fatalf("premise failed: the whole title fits at 30 columns: %q", line)
+	}
+	if !strings.Contains(line, "…") {
+		t.Errorf("the title was cut with nothing on screen to say so: %q", line)
+	}
+}
+
+// widestVocabularyNibs is a milestone and a task queued on it, both
+// in-progress, for checking that the list pane fits the terminal at every size.
 func widestVocabularyNibs() []*nib.Nib {
 	return []*nib.Nib{
 		{ID: "ms1", Title: "Wave one", Type: "milestone", Status: "in-progress"},
@@ -465,12 +389,10 @@ func widestVocabularyNibs() []*nib.Nib {
 	}
 }
 
-// A title budget is not the whole of what makes a row fit. The columns ahead of
+// A title budget is not the whole of what makes a row fit. The columns around
 // it are fixed-width and independent of the terminal, so a row can be wider than
-// the box with its title already cut to nothing — and the box wraps that surplus
-// through its own border rather than dropping it, rendering taller than the
-// height it was handed.
-func TestTheListBoxHoldsARowWiderThanItself(t *testing.T) {
+// the pane with its title already cut to nothing.
+func TestTheListPaneHoldsARowWiderThanItself(t *testing.T) {
 	for _, height := range sweepHeights {
 		for _, width := range sweepWidths {
 			t.Run(fmt.Sprintf("%dx%d", width, height), func(t *testing.T) {

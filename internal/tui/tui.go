@@ -45,7 +45,10 @@ const (
 )
 
 const (
-	TwoColumnMinWidth = 120
+	// previewMinWidth is the narrowest terminal the nib view is drawn beside
+	// the list in: calculatePaneWidths then leaves the list 39 cells and the
+	// view 40.
+	previewMinWidth   = 80
 	RightPaneMaxWidth = 80 // the 80-column text convention
 )
 
@@ -175,6 +178,10 @@ type App struct {
 	// The view drawn behind a modal, restored when it closes.
 	previousState viewState
 
+	// Whether the nib view is shown beside the list. It is drawn only while the
+	// terminal is at least previewMinWidth wide.
+	nibViewShown bool
+
 	// The $EDITOR session in progress: the nib, and its file's mtime at launch.
 	editingNibID      string
 	editingNibModTime time.Time
@@ -186,9 +193,9 @@ type App struct {
 //
 // It applies the tui block of user over the default settings, as loadSettings
 // does. Icons are ascii when the terminal does not display UTF-8, whatever the
-// block sets. With ascii icons the list's rows and box, and the nib view's link
-// rows, are ASCII too. A user config that did not load, or a tui entry that was
-// ignored, opens the TUI with a warning in the status line.
+// block sets. With ascii icons the list's rows and rules, and the nib view's
+// link rows, are ASCII too. A user config that did not load, or a tui entry
+// that was ignored, opens the TUI with a warning in the status line.
 // version is the running binary version, for the update-available indicator.
 func New(backend Backend, cfg *config.Config, user config.UserLayer, version string) *App {
 	var tui *yaml.Node
@@ -212,7 +219,7 @@ func New(backend Backend, cfg *config.Config, user config.UserLayer, version str
 		preview:        newPreviewModel(nil, 0, 0),
 		version:        version,
 	}
-	a.list.setASCII(s.display.ascii())
+	a.list.setDisplay(s.display)
 	if user.Failure != nil {
 		a.list.statusMessage = "Warning: " + user.Failure.Message()
 		a.list.statusKind = statusWarn
@@ -239,8 +246,28 @@ func (a *App) Init() tea.Cmd {
 	return tea.Batch(a.list.Init(), checkForUpdateCmd(a.version))
 }
 
+// isTwoColumnMode reports whether the nib view is drawn beside the list.
 func (a *App) isTwoColumnMode() bool {
-	return a.width >= TwoColumnMinWidth && !a.list.wideMode
+	return a.nibViewShown && a.width >= previewMinWidth
+}
+
+// toggleNibView shows or hides the nib view beside the list. Shown in a
+// terminal too narrow to draw it, it says so in the footer.
+func (a *App) toggleNibView() {
+	a.nibViewShown = !a.nibViewShown
+	a.syncListPane()
+	if a.nibViewShown && !a.isTwoColumnMode() {
+		a.list.statusMessage = fmt.Sprintf("The nib view needs %d columns", previewMinWidth)
+		a.list.statusKind = statusWarn
+	}
+}
+
+// syncListPane tells the list the width its pane is drawn at.
+func (a *App) syncListPane() {
+	a.list.paneWidth = 0
+	if a.isTwoColumnMode() {
+		a.list.paneWidth, _ = calculatePaneWidths(a.width)
+	}
 }
 
 // keyContext reports where a key goes now.
@@ -354,6 +381,9 @@ func (a *App) runAction(act *action) tea.Cmd {
 		return a.runPaletteEntry()
 	case actTagFilter:
 		return func() tea.Msg { return openTagPickerMsg{} }
+	case actNibView:
+		a.toggleNibView()
+		return nil
 	}
 	return a.updateActiveView(actionMsg{name: act.Name})
 }
@@ -378,6 +408,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
+		a.syncListPane()
 
 		// The view under the palette is drawn too, so it takes the new size.
 		if a.state == viewPalette {
@@ -950,7 +981,7 @@ func (a *App) renderTwoColumnView() string {
 	footer := a.list.Footer()
 	contentHeight := a.height - max(1, lipgloss.Height(footer))
 
-	leftPane := a.list.ViewConstrained(leftWidth, contentHeight)
+	leftPane := a.list.pane(leftWidth, contentHeight)
 
 	a.preview.width = rightWidth
 	a.preview.height = contentHeight
@@ -1044,7 +1075,7 @@ func (a *App) getBackgroundView() string {
 
 // initDetailModel creates a detail model with an empty footer.
 func (a *App) initDetailModel(n *nib.Nib) detailModel {
-	return newDetailModel(n, a.backend, a.config, a.width, a.height, a.display.ascii())
+	return newDetailModel(n, a.backend, a.config, a.width, a.height, a.display.icons)
 }
 
 // reportMutationFailures reports a picker's failed mutations in the footer of

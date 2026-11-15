@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"io"
 	"strings"
 
 	"charm.land/bubbles/v2/list"
@@ -30,80 +29,6 @@ func (i nibItem) Title() string       { return i.nib.Title }
 func (i nibItem) Description() string { return i.nib.ID + " · " + i.nib.Status }
 func (i nibItem) FilterValue() string { return i.nib.Title + " " + i.nib.ID }
 
-// itemDelegate renders a nibItem as one list row.
-type itemDelegate struct {
-	cfg          *config.Config
-	cols         ui.ResponsiveColumns
-	idColWidth   int              // includes the tree prefix
-	selectedNibs *map[string]bool // IDs marked for multi-select
-	ascii        bool             // draw the row's glyphs in ASCII
-}
-
-func (d itemDelegate) Height() int                             { return 1 }
-func (d itemDelegate) Spacing() int                            { return 0 }
-func (d itemDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
-
-func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list.Item) {
-	item, ok := listItem.(nibItem)
-	if !ok {
-		return
-	}
-
-	// Raw Priority is safe: "" and "normal" both render no priority symbol, so
-	// their differing colors never show.
-	colors := d.cfg.GetNibColors(item.nib.Status, item.nib.EffectiveType(), item.nib.Priority)
-
-	idWidth := d.cols.ID
-	if d.idColWidth > 0 {
-		idWidth = d.idColWidth
-	}
-	baseWidth := idWidth + d.cols.Status + d.cols.Type + 4 // 4 for cursor + padding
-	if d.cols.ShowTags {
-		baseWidth += d.cols.Tags
-	}
-	// Floored at one: zero is RenderNibRow's "no limit" sentinel.
-	maxTitleWidth := max(1, m.Width()-baseWidth)
-
-	var isMarked bool
-	if d.selectedNibs != nil {
-		isMarked = (*d.selectedNibs)[item.nib.ID]
-	}
-
-	str := ui.RenderNibRow(
-		item.nib.ID,
-		item.nib.Status,
-		item.nib.EffectiveType(),
-		item.nib.Title,
-		ui.NibRowConfig{
-			StatusColor:   colors.StatusColor,
-			TypeColor:     colors.TypeColor,
-			PriorityColor: colors.PriorityColor,
-			Priority:      item.nib.Priority,
-			IsClosed:      colors.IsClosed,
-			MaxTitleWidth: maxTitleWidth,
-			ShowCursor:    true,
-			IsSelected:    index == m.Index(),
-			IsMarked:      isMarked,
-			Tags:          item.nib.Tags,
-			ShowTags:      d.cols.ShowTags,
-			TagsColWidth:  d.cols.Tags,
-			MaxTags:       d.cols.MaxTags,
-			TreePrefix:    item.treePrefix,
-			Dimmed:        !item.matched,
-			IDColWidth:    d.idColWidth,
-			UseFullNames:  d.cols.UseFullTypeStatus,
-			IsBlocked:     item.isBlocked,
-			IsBlocking:    item.isBlocking,
-			ASCIIGlyphs:   d.ascii,
-		},
-	)
-
-	// Clip to the list width. The fixed columns can be wider than a narrow
-	// terminal, and a longer row wraps inside the bordered box, growing it past
-	// its height.
-	_, _ = fmt.Fprint(w, lipgloss.NewStyle().MaxWidth(m.Width()).Render(str))
-}
-
 // listModel is the model for the nib list view
 type listModel struct {
 	list    list.Model
@@ -113,9 +38,11 @@ type listModel struct {
 	height  int
 	err     error
 
-	hasTags    bool // whether any listed nib has tags
-	cols       ui.ResponsiveColumns
-	idColWidth int // includes tree indentation
+	idWidth int // the widest ID as rows show it, over every nib in the store
+
+	// paneWidth is the width the list pane is drawn at, or 0 for the whole
+	// terminal. The App sets it while the nib view takes part of the width.
+	paneWidth int
 
 	tagFilter     string
 	hideCompleted bool // hides every closed status, not only completed
@@ -123,14 +50,11 @@ type listModel struct {
 	collapsedIDs map[string]bool
 	tree         []*ui.TreeNode // from the last load, for re-flattening
 
-	// Full type/status names, and no preview pane.
-	wideMode bool
-
-	ascii bool // draw rows and chrome in ASCII; set through setASCII
+	display display // how rows show a nib; set through setDisplay
 
 	selectedNibs map[string]bool // IDs marked for multi-select
 
-	borderTitle string
+	title string // the project's name, drawn in the top rule
 
 	statusMessage string
 	statusKind    statusKind
@@ -149,11 +73,17 @@ func newListModel(backend Backend, cfg *config.Config) listModel {
 	selectedNibs := make(map[string]bool)
 	delegate := itemDelegate{cfg: cfg, selectedNibs: &selectedNibs}
 
+	// The list draws only its rows. The header carries the filter input, and
+	// the bottom rule the row position.
 	l := list.New([]list.Item{}, delegate, 0, 0)
 	l.SetShowTitle(false)
 	l.SetShowStatusBar(false)
+	l.SetShowFilter(false)
+	l.SetShowPagination(false)
 	l.SetFilteringEnabled(true)
 	l.SetShowHelp(false)
+	l.SetStatusBarItemName("nib", "nibs")
+	l.FilterInput.Prompt = "/"
 	l.KeyMap = listKeyMap()
 	applyFilterStyles(&l.Styles)
 
@@ -162,18 +92,17 @@ func newListModel(backend Backend, cfg *config.Config) listModel {
 		backend:       backend,
 		config:        cfg,
 		hideCompleted: cfg.HideCompleted(),
-		wideMode:      cfg.WideMode(),
 		selectedNibs:  selectedNibs,
 		collapsedIDs:  make(map[string]bool),
+		title:         fmt.Sprintf("Nibs - %s", cfg.GetProjectName()),
 	}
-	m.updateTitle()
 	return m
 }
 
 type nibsLoadedMsg struct {
-	items      []ui.FlatItem
-	idColWidth int
-	tree       []*ui.TreeNode
+	items   []ui.FlatItem
+	idWidth int
+	tree    []*ui.TreeNode
 }
 
 type errMsg struct {
@@ -217,24 +146,14 @@ func (m listModel) loadNibs() tea.Msg {
 	}
 
 	tree := ui.BuildTree(filteredNibs, allNibs, sortFn)
-	items := ui.FlattenTreeFiltered(tree, m.collapsedIDs, m.ascii)
+	items := ui.FlattenTreeFiltered(tree, m.collapsedIDs, m.display.ascii())
 
-	maxIDLen := 0
+	idWidth := 0
 	for _, b := range allNibs {
-		if len(b.ID) > maxIDLen {
-			maxIDLen = len(b.ID)
-		}
-	}
-	maxDepth := ui.MaxTreeDepth(items)
-	idColWidth := maxIDLen + 2
-	if maxDepth > 0 {
-		idColWidth += maxDepth * 3 // one tree connector per level
-	}
-	if ui.HasAnyChildren(tree) {
-		idColWidth += 2 // collapse indicator
+		idWidth = max(idWidth, lipgloss.Width(m.display.id(b.ID)))
 	}
 
-	return nibsLoadedMsg{items: items, idColWidth: idColWidth, tree: tree}
+	return nibsLoadedMsg{items: items, idWidth: idWidth, tree: tree}
 }
 
 func (m *listModel) setTagFilter(tag string) {
@@ -265,11 +184,8 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		// Reserve space for border, "\n", and footer
-		m.list.SetSize(msg.Width-2, msg.Height-3-m.footerHeight())
-		m.cols = ui.CalculateResponsiveColumns(msg.Width, m.hasTags)
-		m.applyWideMode()
-		m.updateDelegate()
+		m.list.SetSize(msg.Width, m.rowsHeight(msg.Height-m.footerHeight()))
+		m.updateDelegate(msg.Width)
 
 	case nibsLoadedMsg:
 		m.tree = msg.tree
@@ -285,26 +201,11 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 			}
 		}
 
-		items := make([]list.Item, len(msg.items))
-		m.hasTags = false
-		for i, flatItem := range msg.items {
-			items[i] = nibItem{
-				nib:         flatItem.Nib,
-				treePrefix:  flatItem.TreePrefix,
-				matched:     flatItem.Matched,
-				hasChildren: flatItem.HasChildren,
-				collapsed:   flatItem.Collapsed,
-				isBlocked:   m.backend.IsBlocked(flatItem.Nib.ID),
-				isBlocking:  m.backend.IsBlocking(flatItem.Nib.ID),
-			}
-			if len(flatItem.Nib.Tags) > 0 {
-				m.hasTags = true
-			}
-		}
+		items := m.listItems(msg.items)
 		// Under an applied filter SetItems clears the visible set and returns
 		// the command that re-matches it.
 		cmd = m.list.SetItems(items)
-		m.idColWidth = msg.idColWidth
+		m.idWidth = msg.idWidth
 
 		if m.selectByID != "" {
 			for i, item := range items {
@@ -316,9 +217,7 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 			m.selectByID = ""
 		}
 
-		m.cols = ui.CalculateResponsiveColumns(m.width, m.hasTags)
-		m.applyWideMode()
-		m.updateDelegate()
+		m.updateDelegate(m.width)
 		return m, cmd
 
 	case errMsg:
@@ -336,6 +235,8 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 		}
 	}
 
+	// The input scrolls its query by the width it has when a key arrives.
+	m.sizeFilterInput(m.drawnWidth())
 	m.list, cmd = m.list.Update(msg)
 	return m, tea.Batch(cmd, m.cursorChangedCmd(prevIndex))
 }
@@ -536,11 +437,6 @@ func (m *listModel) runAction(name actionName) tea.Cmd {
 	case actHideClosed:
 		m.toggleHideCompleted()
 		return m.loadNibs
-	case actWideMode:
-		m.wideMode = !m.wideMode
-		m.cols = ui.CalculateResponsiveColumns(m.width, m.hasTags)
-		m.applyWideMode()
-		m.updateDelegate()
 	}
 	return nil
 }
@@ -660,44 +556,38 @@ func (m *listModel) openParentPicker() tea.Cmd {
 	return func() tea.Msg { return msg }
 }
 
-func (m *listModel) updateDelegate() {
-	delegate := itemDelegate{
+// updateDelegate lays the rows out for a list width cells wide.
+func (m *listModel) updateDelegate(width int) {
+	m.list.SetDelegate(itemDelegate{
 		cfg:          m.config,
-		cols:         m.cols,
-		idColWidth:   m.idColWidth,
+		display:      m.display,
+		layout:       newRowLayout(width, m.idWidth),
 		selectedNibs: &m.selectedNibs,
-		ascii:        m.ascii,
-	}
-	m.list.SetDelegate(delegate)
+	})
 }
 
-// setASCII makes the list draw its rows, box and page dots in ASCII, or in
-// UTF-8 when ascii is false. Call it before the first load, which draws the
-// tree prefixes.
-func (m *listModel) setASCII(ascii bool) {
-	m.ascii = ascii
-	active, inactive := "•", "•"
-	if ascii {
-		active, inactive = "*", "."
-	}
-	m.list.Paginator.ActiveDot = m.list.Styles.ActivePaginationDot.SetString(active).String()
-	m.list.Paginator.InactiveDot = m.list.Styles.InactivePaginationDot.SetString(inactive).String()
-	m.updateDelegate()
+// setDisplay sets how rows show a nib. Call it before the first load, which
+// draws the tree prefixes and measures the IDs.
+func (m *listModel) setDisplay(d display) {
+	m.display = d
+	m.updateDelegate(m.width)
 }
 
-// boxBorder returns the border the list is drawn in.
-func (m listModel) boxBorder() lipgloss.Border {
-	if m.ascii {
-		return lipgloss.ASCIIBorder()
+// listItems wraps flattened tree nodes as list rows.
+func (m *listModel) listItems(flat []ui.FlatItem) []list.Item {
+	items := make([]list.Item, len(flat))
+	for i, fi := range flat {
+		items[i] = nibItem{
+			nib:         fi.Nib,
+			treePrefix:  fi.TreePrefix,
+			matched:     fi.Matched,
+			hasChildren: fi.HasChildren,
+			collapsed:   fi.Collapsed,
+			isBlocked:   m.backend.IsBlocked(fi.Nib.ID),
+			isBlocking:  m.backend.IsBlocking(fi.Nib.ID),
+		}
 	}
-	return lipgloss.RoundedBorder()
-}
-
-// applyWideMode forces full type/status column widths when wide mode is active
-func (m *listModel) applyWideMode() {
-	if m.wideMode {
-		m.cols = m.cols.WithFullNames()
-	}
+	return items
 }
 
 // reflattenTree rebuilds the items from the cached tree after a collapse
@@ -713,48 +603,12 @@ func (m *listModel) reflattenTree() tea.Cmd {
 		currentNibID = item.nib.ID
 	}
 
-	flatItems := ui.FlattenTreeFiltered(m.tree, m.collapsedIDs, m.ascii)
-
-	items := make([]list.Item, len(flatItems))
-	m.hasTags = false
-	for i, flatItem := range flatItems {
-		items[i] = nibItem{
-			nib:         flatItem.Nib,
-			treePrefix:  flatItem.TreePrefix,
-			matched:     flatItem.Matched,
-			hasChildren: flatItem.HasChildren,
-			collapsed:   flatItem.Collapsed,
-			isBlocked:   m.backend.IsBlocked(flatItem.Nib.ID),
-			isBlocking:  m.backend.IsBlocking(flatItem.Nib.ID),
-		}
-		if len(flatItem.Nib.Tags) > 0 {
-			m.hasTags = true
-		}
-	}
+	items := m.listItems(ui.FlattenTreeFiltered(m.tree, m.collapsedIDs, m.display.ascii()))
 	cmd := m.list.SetItems(items)
 
 	if currentNibID != "" {
 		m.restoreCursor(currentNibID, items)
 	}
-
-	maxIDLen := 0
-	for _, fi := range flatItems {
-		if len(fi.Nib.ID) > maxIDLen {
-			maxIDLen = len(fi.Nib.ID)
-		}
-	}
-	maxDepth := ui.MaxTreeDepth(flatItems)
-	m.idColWidth = maxIDLen + 2
-	if maxDepth > 0 {
-		m.idColWidth += maxDepth * 3
-	}
-	if ui.HasAnyChildren(m.tree) {
-		m.idColWidth += 2
-	}
-
-	m.cols = ui.CalculateResponsiveColumns(m.width, m.hasTags)
-	m.applyWideMode()
-	m.updateDelegate()
 	return cmd
 }
 
@@ -812,155 +666,228 @@ func (m listModel) View() string {
 		return "Loading..."
 	}
 
-	// Inner height: total - border(2) - "\n"(1) - footer height
 	footer := m.Footer()
-	innerHeight := m.height - 3 - max(1, lipgloss.Height(footer))
-	return m.viewContent(innerHeight) + "\n" + footer
+	return m.pane(m.width, m.height-max(1, lipgloss.Height(footer))) + "\n" + footer
 }
 
-// viewContent renders the bordered list; innerHeight excludes the border rows.
-func (m listModel) viewContent(innerHeight int) string {
-	// Size the list to this box: the footer may have grown since the last resize.
-	m.list.SetSize(m.width-2, innerHeight)
+// paneChromeLines is the lines the list pane draws around its rows: the top
+// rule, the header and the bottom rule.
+const paneChromeLines = 3
 
-	border := lipgloss.NewStyle().
-		Border(m.boxBorder()).
-		BorderForeground(ui.ColorMuted).
-		Width(withBorder(m.width - 2)).
-		Height(withBorder(innerHeight))
+// rowsHeight is the rows a list pane height lines tall shows, at least one.
+func (m listModel) rowsHeight(height int) int { return max(1, height-paneChromeLines) }
 
-	rendered := border.Render(m.list.View())
+// pane renders the list without its footer, width cells wide: the top rule,
+// the header, the rows and the bottom rule. It is height lines tall when that
+// leaves room for a row.
+func (m listModel) pane(width, height int) string {
+	// Size the list to this pane: the footer may have grown since the last
+	// resize, and the nib view takes part of the width.
+	m.list.SetSize(width, m.rowsHeight(height))
+	m.sizeFilterInput(width)
+	m.updateDelegate(width)
+	return strings.Join([]string{m.topRule(width), m.header(width), m.list.View(), m.bottomRule(width)}, "\n")
+}
 
-	// Replace the top border line with the title and badges.
-	lines := strings.SplitN(rendered, "\n", 2)
-	if len(lines) < 2 {
-		return rendered
+// ruleGlyph returns the character horizontal rules are drawn with.
+func ruleGlyph(ascii bool) string {
+	if ascii {
+		return "-"
 	}
-
-	topLine := m.buildBorderTopLine()
-	return topLine + "\n" + lines[1]
+	return "─"
 }
 
-// badgeWidth is the cells one badge costs on the border's top line: its own
-// ─┤ and ├ around the text.
-func badgeWidth(text string) int { return 2 + lipgloss.Width(text) + 1 }
+var (
+	ruleStyle        = lipgloss.NewStyle().Foreground(ui.ColorMuted)
+	viewNameStyle    = lipgloss.NewStyle().Bold(true)
+	filterTokenStyle = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
+)
 
-// truncateBorderTitle fits title into budget cells, ending a cut with mark.
-// Spaces left before mark are dropped.
-func truncateBorderTitle(title string, budget int, mark string) string {
+// fitText fits s into budget cells, ending a cut with mark. Spaces left before
+// mark are dropped.
+func fitText(s string, budget int, mark string) string {
 	if budget <= 0 {
 		return ""
 	}
-	if lipgloss.Width(title) <= budget {
-		return title
+	if lipgloss.Width(s) <= budget {
+		return s
 	}
 	room := budget - lipgloss.Width(mark)
 	if room <= 0 {
 		return lipgloss.NewStyle().MaxWidth(budget).Render(mark)
 	}
-	cut := strings.TrimRight(lipgloss.NewStyle().MaxWidth(room).Render(title), " ")
+	cut := strings.TrimRight(lipgloss.NewStyle().MaxWidth(room).Render(s), " ")
 	return cut + mark
 }
 
-// buildBorderTopLine draws the top border with the title on the left and the
-// badges on the right: ╭─ Title ─────┤Badge├─┤Badge├╮
-func (m listModel) buildBorderTopLine() string {
-	borderStyle := lipgloss.NewStyle().Foreground(ui.ColorMuted)
-	br := func(s string) string { return borderStyle.Render(s) }
-	border := m.boxBorder()
+// topRule draws the rule above the list, width cells wide, with the title in
+// it: ── Nibs - project ─────
+func (m listModel) topRule(width int) string {
+	r := ruleGlyph(m.display.ascii())
+	// Two rule cells and a space lead the title. A space and one rule cell at
+	// least follow it.
+	title := fitText(m.title, width-5, ellipsis(m.display.ascii()))
+	if title == "" {
+		return ruleStyle.Render(strings.Repeat(r, max(0, width)))
+	}
+	fill := width - 4 - lipgloss.Width(title)
+	return ruleStyle.Render(r+r+" ") + listTitleStyle.Render(title) + ruleStyle.Render(" "+strings.Repeat(r, fill))
+}
 
-	if m.width < 20 {
-		fill := m.width - 2 // ╭ and ╮
-		if fill < 0 {
-			fill = 0
+// bottomRule draws the rule under the rows, width cells wide, with the row
+// position near its right end: ───── 7 / 23 ─
+func (m listModel) bottomRule(width int) string {
+	r := ruleGlyph(m.display.ascii())
+	pos := m.position()
+	// A space on each side of the position and one rule cell after it.
+	fill := width - lipgloss.Width(pos) - 3
+	if fill < 1 {
+		return ruleStyle.Render(strings.Repeat(r, max(0, width)))
+	}
+	return ruleStyle.Render(strings.Repeat(r, fill)+" ") + helpStyle.Render(pos) + ruleStyle.Render(" "+r)
+}
+
+// position is the row under the cursor and the count of rows, as "7 / 23", or
+// "0 / 0" for an empty list.
+func (m listModel) position() string {
+	total := len(m.list.VisibleItems())
+	if total == 0 {
+		return "0 / 0"
+	}
+	return fmt.Sprintf("%d / %d", m.list.Index()+1, total)
+}
+
+// filterInputMinWidth is the fewest cells of query the header keeps for the
+// filter input while a filter is typed.
+const filterInputMinWidth = 10
+
+// headerParts is what the header of a pane draws: whether it shows the tokens
+// and the count, and the cells of query the filter input gets while a filter
+// is typed, or 0 while none is.
+type headerParts struct {
+	tokens, count bool
+	input         int
+}
+
+// headerParts lays out the header of a pane width cells wide. While a filter
+// is typed and the input would get fewer than filterInputMinWidth cells, the
+// header drops the count, then the tokens.
+func (m listModel) headerParts(width int) headerParts {
+	if m.list.FilterState() != list.Filtering {
+		return headerParts{tokens: true, count: true}
+	}
+	tokens := lipgloss.Width(strings.Join(m.filterTokens(), " "))
+	// The count is reserved at its widest, so the input keeps one width while
+	// the query narrows the list: the unfiltered count, or "0 nibs" when that
+	// is "1 nib".
+	count := max(lipgloss.Width(nibCount(len(m.matchedFilterValues()))), lipgloss.Width(nibCount(0)))
+	// The view's name, the gap before the input, its prompt and its cursor.
+	fixed := lipgloss.Width("Tree") + 2 + lipgloss.Width(m.list.FilterInput.Prompt) + 1
+	for _, p := range []headerParts{{tokens: true, count: true}, {tokens: true}} {
+		used := fixed
+		if p.tokens && tokens > 0 {
+			used += 2 + tokens
 		}
-		return br(border.TopLeft) + br(strings.Repeat(border.Top, fill)) + br(border.TopRight)
+		if p.count {
+			used += 2 + count
+		}
+		if p.input = width - used; p.input >= filterInputMinWidth {
+			return p
+		}
 	}
+	return headerParts{input: max(1, width-fixed)}
+}
 
-	type badge struct {
-		text  string
-		style lipgloss.Style
-		// outranksTitle reserves the badge's cells ahead of the title. Only a
-		// state the user turned on that can empty the list qualifies.
-		outranksTitle bool
+// sizeFilterInput fits the filter input to the header of a pane width cells
+// wide.
+func (m *listModel) sizeFilterInput(width int) {
+	m.list.FilterInput.SetWidth(m.headerParts(width).input)
+}
+
+// drawnWidth is the width the list pane is drawn at.
+func (m listModel) drawnWidth() int {
+	if m.paneWidth > 0 {
+		return m.paneWidth
 	}
-	var badges []badge
+	return m.width
+}
 
+// header draws the line under the top rule, width cells wide: the view's name
+// and the active filter as tokens on the left, and the count of nibs that
+// match on the right. While a filter is typed, its input follows the tokens.
+// A narrow header drops the count first, and while a query is typed the
+// tokens next. What still does not fit is cut at the right edge.
+func (m listModel) header(width int) string {
+	parts := m.headerParts(width)
+	left := viewNameStyle.Render("Tree")
+	if tokens := m.filterTokens(); parts.tokens && len(tokens) > 0 {
+		left += "  " + filterTokenStyle.Render(strings.Join(tokens, " "))
+	}
+	if m.list.FilterState() == list.Filtering {
+		left += "  " + m.list.FilterInput.View()
+	}
+	if !parts.count {
+		return clipToWidth(left, width)
+	}
+	count := nibCount(m.matchCount())
+	gap := width - lipgloss.Width(left) - lipgloss.Width(count)
+	if gap < 2 {
+		return clipToWidth(left, width)
+	}
+	return left + strings.Repeat(" ", gap) + helpStyle.Render(count)
+}
+
+// nibCount is n as the header shows it: "1 nib" or "n nibs".
+func nibCount(n int) string {
+	if n == 1 {
+		return "1 nib"
+	}
+	return fmt.Sprintf("%d nibs", n)
+}
+
+// filterTokens returns the active filter: the tag and closed statuses it
+// hides, in the web's token language, with an applied text filter as the
+// TUI's own "/text" between them. The default -status:closed comes last, so a
+// narrow header cuts it before the filters the user set.
+func (m listModel) filterTokens() []string {
+	var tokens []string
 	if m.tagFilter != "" {
-		badges = append(badges, badge{
-			text:          fmt.Sprintf("tag: %s", m.tagFilter),
-			style:         lipgloss.NewStyle().Foreground(ui.ColorPrimary),
-			outranksTitle: true,
-		})
+		tokens = append(tokens, "tags:"+m.tagFilter)
 	}
-
-	badgeStyle := lipgloss.NewStyle().Foreground(ui.ColorSubtle)
+	if m.list.FilterState() == list.FilterApplied {
+		tokens = append(tokens, "/"+m.list.FilterValue())
+	}
 	if m.hideCompleted {
-		badges = append(badges, badge{
-			text:  "No completed",
-			style: badgeStyle,
-		})
+		tokens = append(tokens, "-status:closed")
 	}
+	return tokens
+}
 
-	if m.wideMode {
-		badges = append(badges, badge{
-			text:  "Wide",
-			style: badgeStyle,
-		})
+// matchCount is the nibs that match the filter, in folded subtrees too,
+// leaving out ancestors shown only as context.
+func (m listModel) matchCount() int {
+	values := m.matchedFilterValues()
+	if term := m.list.FilterValue(); m.list.FilterState() != list.Unfiltered && term != "" {
+		return len(m.list.Filter(term, values))
 	}
+	return len(values)
+}
 
-	// Cells for the title and badges; whatever does not fit is dropped, or the
-	// line runs past the terminal's right edge.
-	budget := m.width - 5 // ╭─ + space around the title + ╮
-
-	// Badges are dropped from the right, so only the leftmost can be reserved
-	// ahead of the title.
-	titleBudget := budget
-	if len(badges) > 0 && badges[0].outranksTitle {
-		if first := badgeWidth(badges[0].text); first < budget {
-			titleBudget = budget - first
+// matchedFilterValues returns what the text filter matches against for each
+// nib in the tree that is not shown only as context.
+func (m listModel) matchedFilterValues() []string {
+	var values []string
+	var walk func([]*ui.TreeNode)
+	walk = func(nodes []*ui.TreeNode) {
+		for _, n := range nodes {
+			if n.Matched {
+				values = append(values, nibItem{nib: n.Nib}.FilterValue())
+			}
+			walk(n.Children)
 		}
 	}
-	title := truncateBorderTitle(m.borderTitle, titleBudget, ellipsis(m.ascii))
-	titleWidth := 4 + lipgloss.Width(title) // ╭─ + title + space
-
-	// Pre-render the badges that fit, dropping from the right.
-	type renderedBadge struct {
-		open, text, close string
-	}
-	var renderedBadges []renderedBadge
-	badgesWidth := 0
-	for _, b := range badges {
-		width := badgeWidth(b.text)
-		if lipgloss.Width(title)+badgesWidth+width > budget {
-			break
-		}
-		renderedBadges = append(renderedBadges, renderedBadge{
-			open:  br(border.Top + border.MiddleRight),
-			text:  b.style.Render(b.text),
-			close: br(border.MiddleLeft),
-		})
-		badgesWidth += width
-	}
-
-	var buf strings.Builder
-	buf.WriteString(br(border.TopLeft + border.Top + " "))
-	buf.WriteString(listTitleStyle.Render(title))
-	buf.WriteString(br(" "))
-
-	fill := m.width - titleWidth - badgesWidth - 1 // -1 for closing ╮
-	if fill > 0 {
-		buf.WriteString(br(strings.Repeat(border.Top, fill)))
-	}
-
-	for _, rb := range renderedBadges {
-		buf.WriteString(rb.open)
-		buf.WriteString(rb.text)
-		buf.WriteString(rb.close)
-	}
-
-	buf.WriteString(br(border.TopRight))
-	return buf.String()
+	walk(m.tree)
+	return values
 }
 
 // Footer renders the list footer: the selection count, the status message or
@@ -974,7 +901,7 @@ func (m listModel) Footer() string {
 
 	footer := selectionPrefix
 	if m.statusMessage != "" {
-		footer += renderStatusMessage(m.statusMessage, m.statusKind, m.width-lipgloss.Width(selectionPrefix), maxStatusFooterLines(m.height), m.ascii)
+		footer += renderStatusMessage(m.statusMessage, m.statusKind, m.width-lipgloss.Width(selectionPrefix), maxStatusFooterLines(m.height), m.display.ascii())
 	} else {
 		footer += m.hints
 	}
@@ -998,34 +925,10 @@ func (m listModel) updateIndicator() string {
 	}
 	style := lipgloss.NewStyle().Foreground(ui.ColorPrimary).Bold(true)
 	text := fmt.Sprintf("↑ nibs %s available — nibs upgrade", m.updateLatest)
-	if m.ascii {
+	if m.display.ascii() {
 		text = fmt.Sprintf("^ nibs %s available - nibs upgrade", m.updateLatest)
 	}
 	return "  " + style.Render(text)
-}
-
-// updateTitle sets the border title from the project name; buildBorderTopLine
-// adds the badges.
-func (m *listModel) updateTitle() {
-	m.borderTitle = fmt.Sprintf("Nibs - %s", m.config.GetProjectName())
-}
-
-// ViewConstrained renders the bordered list without footer, for the left pane
-// in two-column mode. The result is height rows tall, except at small heights:
-// however small a height it is given, a paginated list renders six rows and one
-// that fits on a page five.
-func (m listModel) ViewConstrained(width, height int) string {
-	m.width = width
-	m.height = height
-
-	innerHeight := height - 2
-	m.list.SetSize(width-2, innerHeight)
-
-	m.cols = ui.CalculateResponsiveColumns(width, m.hasTags)
-	m.applyWideMode()
-	m.updateDelegate()
-
-	return m.viewContent(innerHeight)
 }
 
 // findSiblings returns the children of n's parent in tree order, or the roots

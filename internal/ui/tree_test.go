@@ -567,32 +567,6 @@ func TestFlattenTreeFiltered(t *testing.T) {
 	})
 }
 
-func TestHasAnyChildren(t *testing.T) {
-	t.Run("tree with children", func(t *testing.T) {
-		tree := []*TreeNode{
-			{
-				Nib: &nib.Nib{ID: "m1"},
-				Children: []*TreeNode{
-					{Nib: &nib.Nib{ID: "t1"}},
-				},
-			},
-		}
-		if !HasAnyChildren(tree) {
-			t.Error("expected HasAnyChildren to return true")
-		}
-	})
-
-	t.Run("flat list no children", func(t *testing.T) {
-		tree := []*TreeNode{
-			{Nib: &nib.Nib{ID: "t1"}},
-			{Nib: &nib.Nib{ID: "t2"}},
-		}
-		if HasAnyChildren(tree) {
-			t.Error("expected HasAnyChildren to return false")
-		}
-	})
-}
-
 func TestCollectParentIDs(t *testing.T) {
 	tree := []*TreeNode{
 		{

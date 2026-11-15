@@ -37,11 +37,10 @@ type display struct {
 	prefix   string  // the store's own ID prefix
 }
 
-// ascii reports whether the TUI draws in ASCII: its icons, the list's tree,
-// cursor, markers and box, and the nib view's link rows. The palette, modals
-// and other boxes stay UTF-8.
+// ascii reports whether the TUI draws in ASCII, as iconSet.ascii says. The
+// palette, modals and other boxes stay UTF-8.
 func (d display) ascii() bool {
-	return d.icons == iconsASCII
+	return d.icons.ascii()
 }
 
 // id returns id as rows show it: without the store's own prefix while short

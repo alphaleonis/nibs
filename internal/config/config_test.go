@@ -30,9 +30,6 @@ func TestDefault(t *testing.T) {
 	if cfg.Nibs.HideCompleted == nil || !*cfg.Nibs.HideCompleted {
 		t.Error("HideCompleted should be ptr(true)")
 	}
-	if cfg.Nibs.WideMode == nil || !*cfg.Nibs.WideMode {
-		t.Error("WideMode should be ptr(true)")
-	}
 	// Both types and statuses are hardcoded
 	if len(DefaultTypes) != 6 {
 		t.Errorf("len(DefaultTypes) = %d, want 6", len(DefaultTypes))
@@ -1078,7 +1075,7 @@ func TestLoadRejectsRetiredNibsPath(t *testing.T) {
 	}
 }
 
-func TestSaveIncludesHideCompletedAndWideMode(t *testing.T) {
+func TestSaveIncludesHideCompleted(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	cfg := DefaultWithPrefix("test-")
@@ -1096,9 +1093,6 @@ func TestSaveIncludesHideCompletedAndWideMode(t *testing.T) {
 	if !strings.Contains(content, "hide_completed:") {
 		t.Errorf("saved config missing hide_completed field:\n%s", content)
 	}
-	if !strings.Contains(content, "wide_mode:") {
-		t.Errorf("saved config missing wide_mode field:\n%s", content)
-	}
 }
 
 func TestSavePreservesExplicitFalseValues(t *testing.T) {
@@ -1106,7 +1100,6 @@ func TestSavePreservesExplicitFalseValues(t *testing.T) {
 
 	cfg := DefaultWithPrefix("test-")
 	cfg.Nibs.HideCompleted = boolPtr(false)
-	cfg.Nibs.WideMode = boolPtr(false)
 	cfg.SetStoreDir(tmpDir)
 	if _, err := cfg.Save(tmpDir); err != nil {
 		t.Fatalf("Save() error = %v", err)
@@ -1120,9 +1113,6 @@ func TestSavePreservesExplicitFalseValues(t *testing.T) {
 
 	if !strings.Contains(content, "hide_completed:") {
 		t.Errorf("saved config dropped hide_completed when false:\n%s", content)
-	}
-	if !strings.Contains(content, "wide_mode:") {
-		t.Errorf("saved config dropped wide_mode when false:\n%s", content)
 	}
 }
 

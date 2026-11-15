@@ -1,0 +1,24 @@
+── Nibs - sample-project ───────────────────────────────────────────────────────────────────────────
+Tree  -status:closed                                                                         70 nibs
+▌ ◐‼  ⚑   v1.0 MVP Launch                                                                       m001
+  ◌   ⚑   v1.1 Team Collaboration                                                               m002
+  ○   ▣   Write database migration strategy doc                            docs                 t034
+  ○↓  ▣   Accessibility audit                                              a11y                 t035
+  ○!● ▣   Security penetration testing                                     security             t036
+  ◐   ▣   Update npm dependencies to latest                                                     t037
+  ○↓  ▣   Optimize Docker image size                                       devops               t039
+  ○   ▣   Load testing with 1000 concurrent users                          perf                 t040
+  ○   ▣   Write onboarding guide for new developers                        docs                 t044
+  ◐‼  ✱   Memory leak in development server after hot reload                                    b008
+  ○!  ✱   Flaky test in user_service_test.go                                                    b009
+  ○   ✱   CSS grid layout breaks on Safari 15                              browser-compat       b010
+  ○!  ✱   API returns 500 on malformed JSON body                                                b011
+  ○   ✦   Keyboard shortcuts for power users                               ux                   f019
+  ○   ✦ ▾ Bulk task operations                                                                  f020
+  ○   ▣ ├─   Design bulk selection UI                                                           t041
+  ○   ▣ └─   Implement batch API endpoint                                                       t042
+  ◐   ✱   Search results not updating after task deletion                                       b012
+  ○!  ✱   File upload fails for names with special characters              i18n                 b013
+  ○‼  ✱   Race condition in concurrent task updates                                             b014
+─────────────────────────────────────────────────────────────────────────────────────────── 1 / 71 ─
+n create  e edit  enter open  / filter  ? help  q quit

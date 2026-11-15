@@ -60,9 +60,6 @@ func TestLoadUserConfig(t *testing.T) {
 		if cfg.Nibs.HideCompleted != nil {
 			t.Errorf("HideCompleted = %v, want nil", cfg.Nibs.HideCompleted)
 		}
-		if cfg.Nibs.WideMode != nil {
-			t.Errorf("WideMode = %v, want nil", cfg.Nibs.WideMode)
-		}
 	})
 
 	t.Run("parses valid YAML with all fields", func(t *testing.T) {
@@ -88,9 +85,6 @@ func TestLoadUserConfig(t *testing.T) {
 		if cfg.Nibs.HideCompleted == nil || *cfg.Nibs.HideCompleted != false {
 			t.Errorf("HideCompleted = %v, want ptr(false)", cfg.Nibs.HideCompleted)
 		}
-		if cfg.Nibs.WideMode == nil || *cfg.Nibs.WideMode != true {
-			t.Errorf("WideMode = %v, want ptr(true)", cfg.Nibs.WideMode)
-		}
 	})
 
 	t.Run("handles partial config with only some fields", func(t *testing.T) {
@@ -115,9 +109,6 @@ func TestLoadUserConfig(t *testing.T) {
 		if cfg.Nibs.HideCompleted != nil {
 			t.Errorf("HideCompleted = %v, want nil (unset)", cfg.Nibs.HideCompleted)
 		}
-		if cfg.Nibs.WideMode != nil {
-			t.Errorf("WideMode = %v, want nil (unset)", cfg.Nibs.WideMode)
-		}
 	})
 }
 
@@ -130,26 +121,11 @@ func TestBoolAccessors(t *testing.T) {
 		}
 	})
 
-	t.Run("nil WideMode defaults to true", func(t *testing.T) {
-		cfg := &Config{}
-		if !cfg.WideMode() {
-			t.Error("WideMode() = false, want true (nil defaults to true)")
-		}
-	})
-
 	t.Run("explicit false HideCompleted returns false", func(t *testing.T) {
 		f := false
 		cfg := &Config{Nibs: NibsConfig{HideCompleted: &f}}
 		if cfg.HideCompleted() {
 			t.Error("HideCompleted() = true, want false (explicitly set to false)")
-		}
-	})
-
-	t.Run("explicit false WideMode returns false", func(t *testing.T) {
-		f := false
-		cfg := &Config{Nibs: NibsConfig{WideMode: &f}}
-		if cfg.WideMode() {
-			t.Error("WideMode() = true, want false (explicitly set to false)")
 		}
 	})
 
@@ -166,9 +142,6 @@ func TestBoolAccessors(t *testing.T) {
 		if !cfg.HideCompleted() {
 			t.Error("Default().HideCompleted() = false, want true")
 		}
-		if !cfg.WideMode() {
-			t.Error("Default().WideMode() = false, want true")
-		}
 	})
 }
 
@@ -178,7 +151,6 @@ func TestBoolFieldsRoundTrip(t *testing.T) {
 
 		cfg := Default()
 		cfg.Nibs.HideCompleted = boolPtr(false)
-		cfg.Nibs.WideMode = boolPtr(false)
 		cfg.SetStoreDir(tmpDir)
 
 		if _, err := cfg.Save(tmpDir); err != nil {
@@ -193,15 +165,9 @@ func TestBoolFieldsRoundTrip(t *testing.T) {
 		if loaded.HideCompleted() {
 			t.Error("HideCompleted() = true after round-trip, want false")
 		}
-		if loaded.WideMode() {
-			t.Error("WideMode() = true after round-trip, want false")
-		}
 		// Verify the pointers are non-nil (not relying on default)
 		if loaded.Nibs.HideCompleted == nil {
 			t.Error("HideCompleted pointer is nil after round-trip, want non-nil")
-		}
-		if loaded.Nibs.WideMode == nil {
-			t.Error("WideMode pointer is nil after round-trip, want non-nil")
 		}
 	})
 
@@ -212,7 +178,7 @@ func TestBoolFieldsRoundTrip(t *testing.T) {
 			Nibs: NibsConfig{
 				Prefix:   "test-",
 				IDLength: 4,
-				// HideCompleted and WideMode intentionally nil
+				// HideCompleted intentionally nil
 			},
 		}
 		cfg.SetStoreDir(tmpDir)
@@ -229,9 +195,6 @@ func TestBoolFieldsRoundTrip(t *testing.T) {
 		// nil fields should use defaults via accessor
 		if !loaded.HideCompleted() {
 			t.Error("HideCompleted() = false, want true (nil -> default)")
-		}
-		if !loaded.WideMode() {
-			t.Error("WideMode() = false, want true (nil -> default)")
 		}
 	})
 }
@@ -285,7 +248,7 @@ func TestLoadStoreWithUserConfigPath(t *testing.T) {
 		projectDir := t.TempDir()
 		userCfgDir := t.TempDir()
 
-		// User config: hide_completed=false, wide_mode=false
+		// User config: hide_completed=false
 		userYAML := `nibs:
   hide_completed: false
   wide_mode: false
@@ -312,9 +275,6 @@ func TestLoadStoreWithUserConfigPath(t *testing.T) {
 		// User config values should apply for unset project fields
 		if cfg.HideCompleted() {
 			t.Error("HideCompleted() = true, want false (user config fallthrough)")
-		}
-		if cfg.WideMode() {
-			t.Error("WideMode() = true, want false (user config fallthrough)")
 		}
 	})
 
@@ -380,10 +340,6 @@ func TestLoadStoreWithUserConfigPath(t *testing.T) {
 		if cfg.HideCompleted() {
 			t.Error("HideCompleted() = true, want false")
 		}
-		// WideMode not set in project -> system default true
-		if !cfg.WideMode() {
-			t.Error("WideMode() = false, want true (system default)")
-		}
 	})
 
 	t.Run("no project config, user only", func(t *testing.T) {
@@ -413,9 +369,6 @@ func TestLoadStoreWithUserConfigPath(t *testing.T) {
 		}
 		if cfg.HideCompleted() {
 			t.Error("HideCompleted() = true, want false (from user config)")
-		}
-		if cfg.WideMode() {
-			t.Error("WideMode() = true, want false (from user config)")
 		}
 		// System defaults should fill in the rest
 		if cfg.Nibs.DefaultStatus != "todo" {
@@ -468,9 +421,6 @@ func TestDefaultWithPrefixFromUserConfig(t *testing.T) {
 		}
 		if !cfg.HideCompleted() {
 			t.Error("HideCompleted() = false, want true (system default)")
-		}
-		if !cfg.WideMode() {
-			t.Error("WideMode() = false, want true (system default)")
 		}
 	})
 
@@ -581,5 +531,27 @@ func TestProjectConfigWithATUIBlockLoads(t *testing.T) {
 	}
 	if cfg.Nibs.Prefix != "proj" {
 		t.Errorf("prefix = %q, want proj", cfg.Nibs.Prefix)
+	}
+}
+
+// wide_mode is a setting nibs no longer reads. A project or user config that
+// still carries it loads, with every other setting applied.
+func TestARetiredWideModeKeyStillLoads(t *testing.T) {
+	storeDir := storeDirFor(t, t.TempDir())
+	project := "nibs:\n  prefix: proj-\n  wide_mode: true\n"
+	if err := os.WriteFile(filepath.Join(storeDir, store.ConfigFileName), []byte(project), 0644); err != nil {
+		t.Fatal(err)
+	}
+	userPath := filepath.Join(t.TempDir(), "nibs.yml")
+	if err := os.WriteFile(userPath, []byte("nibs:\n  hide_completed: false\n  wide_mode: false\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, _, err := LoadStoreWithUserConfigPath(storeDir, userPath)
+	if err != nil {
+		t.Fatalf("LoadStoreWithUserConfigPath() error = %v", err)
+	}
+	if cfg.Nibs.Prefix != "proj-" || cfg.HideCompleted() {
+		t.Errorf("prefix = %q, hide completed = %v; want proj- and false", cfg.Nibs.Prefix, cfg.HideCompleted())
 	}
 }

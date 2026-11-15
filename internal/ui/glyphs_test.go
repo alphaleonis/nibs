@@ -6,57 +6,9 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-func TestGetPrioritySymbol_ASCII(t *testing.T) {
-
-	tests := []struct {
-		priority string
-		want     string
-	}{
-		{"critical", "!!"},
-		{"high", "!"},
-		{"low", "v"},
-		{"normal", ""},
-		{"deferred", ""}, // removed priority value falls through to the empty default
-		{"", ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.priority, func(t *testing.T) {
-			got := GetPrioritySymbol(tt.priority, true)
-			if got != tt.want {
-				t.Errorf("GetPrioritySymbol(%q) [ASCII] = %q, want %q", tt.priority, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestGetPrioritySymbol_UTF8(t *testing.T) {
-
-	tests := []struct {
-		priority string
-		want     string
-	}{
-		{"critical", "‼"}, // ‼
-		{"high", "!"},
-		{"low", "↓"}, // ↓
-		{"normal", ""},
-		{"deferred", ""}, // removed priority value falls through to the empty default
-		{"", ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.priority, func(t *testing.T) {
-			got := GetPrioritySymbol(tt.priority, false)
-			if got != tt.want {
-				t.Errorf("GetPrioritySymbol(%q) [UTF-8] = %q, want %q", tt.priority, got, tt.want)
-			}
-		})
-	}
-}
-
 // TestGlyphTreeConnector_3Cells enforces the invariant documented in tree.go
 // (treeIndent = 3) and glyphs.go (every tree connector occupies 3 display
-// cells). Column widths are sized from tree depth on that assumption — if a
-// future glyph change breaks it, every connector at every depth shifts
-// horizontally and alignment regresses silently.
+// cells).
 func TestGlyphTreeConnector_3Cells(t *testing.T) {
 	connectors := []struct {
 		name string

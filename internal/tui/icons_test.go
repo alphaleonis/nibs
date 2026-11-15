@@ -302,7 +302,7 @@ func TestATerminalWithoutUTF8GetsAnASCIIListView(t *testing.T) {
 		{"warning at 160 columns", "Ignored 1 TUI setting"},
 		{"warning at 160 columns", "v9.9.9 available"},
 		{"selection at 100 columns", "(1 selected)"},
-		{"selection at 100 columns", "> nib-2"},
+		{"selection at 100 columns", "+- > Child"},
 	} {
 		if !strings.Contains(views[part.view], part.text) {
 			t.Fatalf("premise failed: the %s lacks %q:\n%s", part.view, part.text, views[part.view])

@@ -101,7 +101,7 @@ const (
 	actConfirmYes    actionName = "confirm.yes"
 	actConfirmNo     actionName = "confirm.no"
 	actHideClosed    actionName = "view.hide_closed"
-	actWideMode      actionName = "view.wide"
+	actNibView       actionName = "view.nib"
 	actFilter        actionName = "filter.text"
 	actFilterApply   actionName = "filter.apply"
 	actTagFilter     actionName = "filter.tags"
@@ -318,7 +318,7 @@ var defaultActions = []action{
 
 	{Name: actHideClosed, Group: "View", Desc: "hide or show closed nibs", Contexts: []keyContext{ctxList, ctxParentPicker}, Keys: []string{"z h"},
 		Hint: func(st actionState) bool { return st.ctx == ctxParentPicker }, Label: label("toggle closed")},
-	{Name: actWideMode, Group: "View", Desc: "wide mode", Contexts: []keyContext{ctxList}, Keys: []string{"W"}},
+	{Name: actNibView, Group: "View", Desc: "show or hide the nib view", Contexts: []keyContext{ctxList}, Keys: []string{"z p"}},
 
 	{Name: actFilter, Group: "Find", Desc: "filter", Contexts: filterTargets, Keys: []string{"/"}, Hint: hintFilter},
 	{Name: actTagFilter, Group: "Find", Desc: "filter by tag", Contexts: []keyContext{ctxList}, Keys: []string{"g t"}},

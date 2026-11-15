@@ -61,6 +61,10 @@ var (
 	}
 )
 
+// ascii reports whether s is the ASCII set, which also draws the list's tree,
+// cursor, markers and rules, and the nib view's link rows, in ASCII.
+func (s iconSet) ascii() bool { return s == iconsASCII }
+
 // lookup returns value's glyph from table in s, or false when table has no row
 // for value.
 func (s iconSet) lookup(table map[string]glyph, value string) (string, bool) {

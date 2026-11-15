@@ -66,7 +66,7 @@ type linkDelegate struct {
 	cfg   *config.Config
 	width int
 	cols  ui.ResponsiveColumns
-	ascii bool // draw the row's glyphs in ASCII
+	icons iconSet
 }
 
 func (d linkDelegate) Height() int                             { return 1 }
@@ -83,15 +83,17 @@ func (d linkDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 
 	cursor := "  "
 	if index == m.Index() {
-		cursor = ui.Primary.Render(ui.GlyphSectionCursor(d.ascii))
+		cursor = ui.Primary.Render(ui.GlyphSectionCursor(d.icons.ascii()))
 	}
 
 	labelCol := lipgloss.NewStyle().Width(12).Render(ui.Muted.Render(item.label + ":"))
 
-	// EffectiveType so a type-less nib keeps its "task" badge. Raw Priority is
-	// fine: "" and "normal" both render no priority symbol, so the color that
-	// differs between them is never drawn.
+	// EffectiveType so a type-less nib keeps its "task" badge.
 	colors := d.cfg.GetNibColors(link.nib.Status, link.nib.EffectiveType(), link.nib.Priority)
+	var priority string
+	if p := link.nib.EffectivePriority(); p != nib.DefaultPriority {
+		priority = d.icons.renderPriority(d.cfg, p)
+	}
 
 	// The cursor (2), the label (12) and RenderNibRow's three column separators.
 	// MaxTitleWidth covers the indicator column as well as the title.
@@ -109,8 +111,7 @@ func (d linkDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 		ui.NibRowConfig{
 			StatusColor:   colors.StatusColor,
 			TypeColor:     colors.TypeColor,
-			PriorityColor: colors.PriorityColor,
-			Priority:      link.nib.Priority,
+			PriorityGlyph: priority,
 			IsClosed:      colors.IsClosed,
 			MaxTitleWidth: maxTitleWidth,
 			ShowCursor:    false,
@@ -120,7 +121,7 @@ func (d linkDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 			TagsColWidth:  d.cols.Tags,
 			MaxTags:       d.cols.MaxTags,
 			UseFullNames:  d.cols.UseFullTypeStatus,
-			ASCIIGlyphs:   d.ascii,
+			ASCIIGlyphs:   d.icons.ascii(),
 		},
 	)
 
@@ -145,11 +146,11 @@ type detailModel struct {
 	cols          ui.ResponsiveColumns
 	statusMessage string
 	statusKind    statusKind
-	hints         string // the rendered hint row, set by App
-	ascii         bool   // draw link rows and the status message in ASCII
+	hints         string  // the rendered hint row, set by App
+	icons         iconSet // the set link rows and the status message draw with
 }
 
-func newDetailModel(b *nib.Nib, backend Backend, cfg *config.Config, width, height int, ascii bool) detailModel {
+func newDetailModel(b *nib.Nib, backend Backend, cfg *config.Config, width, height int, icons iconSet) detailModel {
 	m := detailModel{
 		nib:         b,
 		backend:     backend,
@@ -158,7 +159,7 @@ func newDetailModel(b *nib.Nib, backend Backend, cfg *config.Config, width, heig
 		height:      height,
 		ready:       true,
 		linksActive: false,
-		ascii:       ascii,
+		icons:       icons,
 	}
 
 	m.links = m.resolveAllLinks()
@@ -461,7 +462,7 @@ func (m detailModel) newLinkDelegate() linkDelegate {
 		cfg:   m.config,
 		width: m.width,
 		cols:  m.cols,
-		ascii: m.ascii,
+		icons: m.icons,
 	}
 }
 
@@ -548,7 +549,7 @@ func (m detailModel) renderFooter(painted paintedFrame) string {
 
 	if m.statusMessage != "" {
 		// On its own lines above the hint row, so the keys stay on screen.
-		footer = renderStatusMessage(m.statusMessage, m.statusKind, m.width, maxStatusFooterLines(m.height), m.ascii) + "\n" + footer
+		footer = renderStatusMessage(m.statusMessage, m.statusKind, m.width, maxStatusFooterLines(m.height), m.icons.ascii()) + "\n" + footer
 	}
 	// The hint row does not wrap, so clip it; the status message is already
 	// wrapped to width.

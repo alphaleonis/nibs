@@ -246,7 +246,7 @@ func TestSuccessfulStatusChangeReportsNothing(t *testing.T) {
 // went through.
 func TestDetailFooterColorsARefusalAsAWarning(t *testing.T) {
 	n := &nib.Nib{ID: "nib-1", Title: "First", Type: "milestone", Status: "todo"}
-	m := newDetailModel(n, &StubBackend{}, config.Default(), 80, 24, false)
+	m := newDetailModel(n, &StubBackend{}, config.Default(), 80, 24, iconsUnicode)
 	m.statusMessage = "Status change failed: " + refusalReason
 
 	m.statusKind = statusOK
@@ -526,13 +526,12 @@ func TestRefusalIsLegibleAtEveryTerminalWidth(t *testing.T) {
 			},
 		},
 		{
-			// W leaves wide mode, which is what puts the list beside the
-			// preview pane — a different composition, with its own footer
-			// arithmetic.
+			// z p puts the nib view beside the list — a different
+			// composition, with its own footer arithmetic.
 			name: "two-column",
 			enter: func(t *testing.T, app *App, width int) {
-				sendKey(app, tea.KeyPressMsg{Code: 'W', Text: "W"})
-				if want := width >= TwoColumnMinWidth; app.isTwoColumnMode() != want {
+				pressKeys(app, "z p")
+				if want := width >= previewMinWidth; app.isTwoColumnMode() != want {
 					t.Fatalf("premise failed: two-column mode = %v at width %d, want %v", app.isTwoColumnMode(), width, want)
 				}
 			},

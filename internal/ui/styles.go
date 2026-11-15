@@ -243,43 +243,13 @@ func ShortStatus(s string) string {
 	return "?"
 }
 
-// GetPrioritySymbol returns the raw symbol for a priority without styling.
-// Returns empty string for normal/empty priority.
-func GetPrioritySymbol(priority string, ascii bool) string {
-	switch priority {
-	case "critical":
-		return glyphCritical(ascii)
-	case "high":
-		return glyphHigh(ascii)
-	case "low":
-		return glyphLow(ascii)
-	default:
-		return ""
-	}
-}
-
-// RenderPrioritySymbol returns the styled priority symbol, or "" for
-// normal/empty priority.
-func RenderPrioritySymbol(priority, color string, ascii bool) string {
-	symbol := GetPrioritySymbol(priority, ascii)
-	if symbol == "" {
-		return ""
-	}
-
-	c := ResolveColor(color)
-	style := lipgloss.NewStyle().Foreground(c)
-	if priority == "critical" || priority == "high" {
-		style = style.Bold(true)
-	}
-	return style.Render(symbol)
-}
-
 // NibRowConfig holds configuration for rendering a nib row
 type NibRowConfig struct {
-	StatusColor   string
-	TypeColor     string
-	PriorityColor string
-	Priority      string // Priority value (critical, high, normal, low)
+	StatusColor string
+	TypeColor   string
+	// PriorityGlyph is the priority's one-cell glyph, already colored, or ""
+	// for none.
+	PriorityGlyph string
 	IsClosed      bool
 	MaxTitleWidth int  // 0 means no truncation
 	ShowCursor    bool // Show selection cursor
@@ -489,21 +459,18 @@ func RenderNibRow(id, status, typeName, title string, cfg NibRowConfig) string {
 	slot2Width := 0
 
 	if !cfg.Dimmed && cfg.IsBlocked {
-		raw := glyphBlocked(cfg.ASCIIGlyphs)
+		raw := GlyphBlocked(cfg.ASCIIGlyphs)
 		slot1 = padSlot(lipgloss.NewStyle().Foreground(ColorDanger).Bold(true).Render(raw), raw)
 		slot1Width = 2
 	} else if !cfg.Dimmed && cfg.IsBlocking {
-		raw := glyphBlocking(cfg.ASCIIGlyphs)
+		raw := GlyphBlocking(cfg.ASCIIGlyphs)
 		slot1 = padSlot(lipgloss.NewStyle().Foreground(ColorWarning).Bold(true).Render(raw), raw)
 		slot1Width = 2
 	}
 
-	if !cfg.Dimmed {
-		raw := GetPrioritySymbol(cfg.Priority, cfg.ASCIIGlyphs)
-		if raw != "" {
-			slot2 = padSlot(RenderPrioritySymbol(cfg.Priority, cfg.PriorityColor, cfg.ASCIIGlyphs), raw)
-			slot2Width = 2
-		}
+	if !cfg.Dimmed && cfg.PriorityGlyph != "" {
+		slot2 = cfg.PriorityGlyph + " "
+		slot2Width = 2
 	}
 
 	indicatorCol := slot1 + slot2
@@ -535,7 +502,7 @@ func RenderNibRow(id, status, typeName, title string, cfg NibRowConfig) string {
 	var titleStyled string
 	if cfg.ShowCursor {
 		if cfg.IsSelected {
-			cursor = lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render(glyphCursor(cfg.ASCIIGlyphs))
+			cursor = lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render(GlyphCursor(cfg.ASCIIGlyphs))
 			titleStyled = lipgloss.NewStyle().Bold(true).Foreground(ColorPrimary).Render(displayTitle)
 		} else {
 			cursor = " "

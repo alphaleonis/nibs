@@ -137,7 +137,6 @@ type NibsConfig struct {
 	RequireIfMatch bool         `yaml:"require_if_match,omitempty"`
 	AutoActivation bool         `yaml:"auto_activation,omitempty"`
 	HideCompleted  *bool        `yaml:"hide_completed,omitempty"`
-	WideMode       *bool        `yaml:"wide_mode,omitempty"`
 	Server         ServerConfig `yaml:"server,omitempty"`
 }
 
@@ -165,7 +164,6 @@ func Default() *Config {
 			DefaultStatus: defaultStatusName,
 			DefaultType:   defaultTypeName,
 			HideCompleted: boolPtr(true),
-			WideMode:      boolPtr(true),
 		},
 	}
 }
@@ -775,15 +773,6 @@ func (c *Config) GetEstimate(name string) *EstimateConfig {
 func (c *Config) HideCompleted() bool {
 	if c.Nibs.HideCompleted != nil {
 		return *c.Nibs.HideCompleted
-	}
-	return true
-}
-
-// WideMode returns whether wide mode is enabled.
-// Defaults to true when not explicitly set (nil).
-func (c *Config) WideMode() bool {
-	if c.Nibs.WideMode != nil {
-		return *c.Nibs.WideMode
 	}
 	return true
 }

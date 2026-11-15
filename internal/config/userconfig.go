@@ -28,7 +28,6 @@ type UserConfig struct {
 type UserNibsConfig struct {
 	IDLength      int   `yaml:"id_length,omitempty"`
 	HideCompleted *bool `yaml:"hide_completed,omitempty"`
-	WideMode      *bool `yaml:"wide_mode,omitempty"`
 }
 
 // UserConfigPath returns nibs/nibs.yml under os.UserConfigDir.
@@ -210,8 +209,5 @@ func overlayUserNibs(dst *NibsConfig, user UserNibsConfig, onlyUnset bool) {
 	}
 	if user.HideCompleted != nil && (!onlyUnset || dst.HideCompleted == nil) {
 		dst.HideCompleted = boolPtr(*user.HideCompleted)
-	}
-	if user.WideMode != nil && (!onlyUnset || dst.WideMode == nil) {
-		dst.WideMode = boolPtr(*user.WideMode)
 	}
 }

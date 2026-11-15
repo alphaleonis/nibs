@@ -2,11 +2,9 @@ package tui
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/ui"
@@ -471,123 +469,6 @@ func TestFindSiblings(t *testing.T) {
 		sibs := m2.findSiblings(&nib.Nib{ID: "c1", Parent: "parent"})
 		if sibs != nil {
 			t.Errorf("expected nil with nil tree, got %v", sibs)
-		}
-	})
-}
-
-func TestBuildBorderTopLine(t *testing.T) {
-	cfg := config.Default()
-
-	t.Run("line width matches m.width", func(t *testing.T) {
-		m := newListModel(&StubBackend{Nibs: map[string]*nib.Nib{}}, cfg)
-		m.width = 80
-		m.borderTitle = "Nibs - testproject"
-
-		line := m.buildBorderTopLine()
-		got := lipgloss.Width(line)
-		if got != 80 {
-			t.Errorf("expected line width 80, got %d", got)
-		}
-	})
-
-	t.Run("contains title text", func(t *testing.T) {
-		m := newListModel(&StubBackend{Nibs: map[string]*nib.Nib{}}, cfg)
-		m.width = 80
-		m.borderTitle = "Nibs - myproject"
-
-		line := m.buildBorderTopLine()
-		if !strings.Contains(line, "Nibs - myproject") {
-			t.Error("expected border line to contain title text")
-		}
-	})
-
-	t.Run("contains No completed badge when hiding", func(t *testing.T) {
-		m := newListModel(&StubBackend{Nibs: map[string]*nib.Nib{}}, cfg)
-		m.width = 80
-		m.borderTitle = "Nibs - test"
-		m.hideCompleted = true
-
-		line := m.buildBorderTopLine()
-		if !strings.Contains(line, "No completed") {
-			t.Error("expected border line to contain 'No completed' badge")
-		}
-	})
-
-	t.Run("no completed badge when showing completed", func(t *testing.T) {
-		m := newListModel(&StubBackend{Nibs: map[string]*nib.Nib{}}, cfg)
-		m.width = 80
-		m.borderTitle = "Nibs - test"
-		m.hideCompleted = false
-
-		line := m.buildBorderTopLine()
-		if strings.Contains(line, "completed") && strings.Contains(line, "No") {
-			t.Error("expected no completed badge when not hiding")
-		}
-	})
-
-	t.Run("contains Wide badge when wideMode is true", func(t *testing.T) {
-		m := newListModel(&StubBackend{Nibs: map[string]*nib.Nib{}}, cfg)
-		m.width = 80
-		m.borderTitle = "Nibs - test"
-		m.wideMode = true
-
-		line := m.buildBorderTopLine()
-		if !strings.Contains(line, "Wide") {
-			t.Error("expected border line to contain Wide badge when wideMode is true")
-		}
-	})
-
-	t.Run("no Wide badge when wideMode is false", func(t *testing.T) {
-		m := newListModel(&StubBackend{Nibs: map[string]*nib.Nib{}}, cfg)
-		m.width = 80
-		m.borderTitle = "Nibs - test"
-		m.wideMode = false
-
-		line := m.buildBorderTopLine()
-		if strings.Contains(line, "Wide") {
-			t.Error("expected border line to NOT contain Wide badge when wideMode is false")
-		}
-	})
-
-	t.Run("contains tag filter badge", func(t *testing.T) {
-		m := newListModel(&StubBackend{Nibs: map[string]*nib.Nib{}}, cfg)
-		m.width = 100
-		m.borderTitle = "Nibs - test"
-		m.tagFilter = "urgent"
-
-		line := m.buildBorderTopLine()
-		if !strings.Contains(line, "tag: urgent") {
-			t.Error("expected border line to contain tag filter badge")
-		}
-	})
-
-	t.Run("width matches with all badges active", func(t *testing.T) {
-		m := newListModel(&StubBackend{Nibs: map[string]*nib.Nib{}}, cfg)
-		m.width = 120
-		m.borderTitle = "Nibs - myproject"
-		m.tagFilter = "feature"
-		m.wideMode = true
-		m.hideCompleted = true
-
-		line := m.buildBorderTopLine()
-		got := lipgloss.Width(line)
-		if got != 120 {
-			t.Errorf("expected line width 120 with all badges, got %d", got)
-		}
-	})
-
-	t.Run("starts with rounded corner and ends with rounded corner", func(t *testing.T) {
-		m := newListModel(&StubBackend{Nibs: map[string]*nib.Nib{}}, cfg)
-		m.width = 80
-		m.borderTitle = "Nibs - test"
-
-		line := m.buildBorderTopLine()
-		plain := stripAnsi(line)
-		if !strings.HasPrefix(plain, "╭") {
-			t.Errorf("expected line to start with ╭, got %q", plain[:20])
-		}
-		if !strings.HasSuffix(plain, "╮") {
-			t.Errorf("expected line to end with ╮, got %q", plain[len(plain)-20:])
 		}
 	})
 }

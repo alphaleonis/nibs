@@ -186,17 +186,6 @@ type FlatItem struct {
 	Collapsed   bool   // true if this node is collapsed (children hidden)
 }
 
-// MaxTreeDepth returns the maximum depth of the flattened tree.
-func MaxTreeDepth(items []FlatItem) int {
-	maxDepth := 0
-	for _, item := range items {
-		if item.Depth > maxDepth {
-			maxDepth = item.Depth
-		}
-	}
-	return maxDepth
-}
-
 // CollapseIndicatorLeaf pads a leaf to the width of the collapse indicators.
 const CollapseIndicatorLeaf = "  "
 
@@ -261,19 +250,6 @@ func flattenNodesFiltered(nodes []*TreeNode, depth int, ancestry []bool, collaps
 			flattenNodesFiltered(node.Children, depth+1, newAncestry, collapsedIDs, ascii, items)
 		}
 	}
-}
-
-// HasAnyChildren returns true if any node in the tree has children.
-func HasAnyChildren(nodes []*TreeNode) bool {
-	for _, node := range nodes {
-		if len(node.Children) > 0 {
-			return true
-		}
-		if HasAnyChildren(node.Children) {
-			return true
-		}
-	}
-	return false
 }
 
 // CollectParentIDs collects IDs of all nodes that have children into the provided map.

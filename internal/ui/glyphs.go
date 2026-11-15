@@ -27,43 +27,24 @@ func localeUTF8(getenv func(string) string) bool {
 	return false
 }
 
-// Priority symbols. The ASCII critical glyph "!!" is two cells where "‼" is
-// one; RenderNibRow's 2-cell indicator slot holds either.
-func glyphCritical(ascii bool) string {
-	if ascii {
-		return "!!"
-	}
-	return "‼"
-}
-
-func glyphHigh(_ bool) string {
-	return "!"
-}
-
-func glyphLow(ascii bool) string {
-	if ascii {
-		return "v"
-	}
-	return "↓"
-}
-
-// Blocked and blocking indicators.
-func glyphBlocked(ascii bool) string {
+// GlyphBlocked returns the mark of a nib that something blocks.
+func GlyphBlocked(ascii bool) string {
 	if ascii {
 		return "*"
 	}
 	return "●"
 }
 
-func glyphBlocking(ascii bool) string {
+// GlyphBlocking returns the mark of a nib that blocks something.
+func GlyphBlocking(ascii bool) string {
 	if ascii {
 		return "#"
 	}
 	return "◆"
 }
 
-// Selection cursor for RenderNibRow.
-func glyphCursor(ascii bool) string {
+// GlyphCursor returns the mark of the row under the cursor.
+func GlyphCursor(ascii bool) string {
 	if ascii {
 		return ">"
 	}
