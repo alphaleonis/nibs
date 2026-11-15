@@ -65,7 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **A running `nibs serve` now reports a second file claiming a nib id it already holds**, instead of silently answering with whichever of the two the filesystem happened to deliver last.
 - **A pre-layout project nested under a store no longer resolves to that ancestor store**, where `nibs migrate` moved and rewrote the ancestor's nib files while leaving the project it was run in untouched.
 - **`nibs serve` answers queries while one of its edits waits for another nibs process to finish writing**, where every read stalled until that edit completed.
-- **A nib body with one deeply nested list or blockquote line, or a long run of unclosed links, no longer stalls every command**, where a 480 KB body of either took tens of seconds to load.
+- **A nib body with one deeply nested list or blockquote line, or a long run of unclosed links or link labels, no longer stalls every command**, where a 480 KB body of any of them took tens of seconds to load.
 - **Text read from a file can no longer rewrite the terminal**, such as a control sequence in a config value or a nib body reaching a message that echoes it.
 - **Commands a refusal prescribes are quoted for the shell of the platform printing them**, instead of POSIX quoting that `cmd.exe` passes through literally.
 - **`nibs prime` no longer primes an agent for a project it cannot use** — a pre-layout project now gets the same migration refusal as every other command, in place of instructions whose every command refuses there.
@@ -84,8 +84,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **The roadmap no longer omits outstanding work** — it expanded epics alone, so a feature or bug with children rendered as one bare bullet while its children appeared in no section at all, and an open container whose children had all closed vanished entirely even while `nibs next` was offering it as the thing to do.
 - **The roadmap's backlog now shows exactly the work outside every milestone** — items under a milestone hidden by a `--status` filter no longer leak into the backlog, and a work item whose parent link names no nib now appears there instead of vanishing from the roadmap entirely.
 - **Reading a nib's children no longer writes to the store** — `nibs plan`, `nibs rel --rel children` and the GraphQL `children` field backfilled a missing order key to disk as a side effect, leaving a clean `.nibs` repo dirty and restamping `updated_at`.
+- **A numeric character reference such as `&#39;` is no longer counted as a mention of nib `39`.**
 - **A search after a failed search-index build retries the build**, where the partly filled index answered every later search in that process with nibs missing.
-- **The web links a `#<id>` mention only where the server counts one**, where a one-character id went unlinked, `#abc-` linked `ab`, and a mention inside a raw HTML block linked though no mention count included it.
+- **The web links a mention only where the server counts one**, where a one-character id went unlinked, `#abc-` linked `ab`, and text in raw HTML, code or a character reference linked though no mention count included it.
 - **`nibs new` no longer silently shadows an existing nib when a generated id collides** — a colliding draw is redrawn, and a caller-supplied duplicate id is refused as a conflict instead of leaving two files claiming one id.
 - **An edit racing a `nibs config set-prefix` is no longer reported as saved when it was not** — every write verb wrote to the path it loaded at startup, leaving the edit on a resurrected copy under the nib's old name while the live file kept the old value, and exiting 0.
 - **`nibs new` no longer names a file under a prefix the store has stopped using** — a create parked behind a `nibs config set-prefix` refuses rather than drawing from the vocabulary it loaded at startup, since a nib's id comes from its filename and cannot be relabeled afterwards.
@@ -125,6 +126,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Destructive red is readable on the dark themes** — error text, delete menu items and destructive buttons used the light theme's red on Midnight, Graphite and Dracula, which fell below normal text contrast on their dialog and menu surfaces.
 
 ### Security
+- **Built with Go 1.26.11 and `golang.org/x/net` v0.62.0**, clearing a `net/http` advisory ([GO-2026-6859](https://pkg.go.dev/vuln/GO-2026-6859)) and two in an `x/net` package nibs links but never calls.
 - **`nibs serve` now bounds how deep and how wide a query may recurse, and refuses a disallowed origin instead of answering it** — a page at any origin could otherwise make it resolve a tree that multiplied at every level.
 - **The release workflow no longer pastes its version input into the shell programs it runs**, where a dispatched value could run as code on the job that holds the signing key.
 - **Release build code never runs beside the signing key or a release write token** — archives are signed on a fresh runner, and only a job that runs no build code can create the release.
