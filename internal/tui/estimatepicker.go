@@ -33,8 +33,10 @@ type estimateItem struct {
 	description string
 	color       string
 	isCurrent   bool
+	key         string
 }
 
+func (i estimateItem) accelerator() string { return i.key }
 func (i estimateItem) Title() string       { return i.name }
 func (i estimateItem) Description() string { return i.description }
 func (i estimateItem) FilterValue() string { return i.name + " " + i.description }
@@ -67,7 +69,7 @@ func (d estimateItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 		currentIndicator = ui.Muted.Render(" (current)")
 	}
 
-	_, _ = fmt.Fprint(w, cursor+estimateText+currentIndicator)
+	_, _ = fmt.Fprint(w, cursor+renderAccelerator(item.key)+estimateText+currentIndicator)
 }
 
 // estimatePickerModel is the model for the estimate picker view
@@ -85,6 +87,12 @@ func newEstimatePickerModel(nibIDs []string, nibTitle, currentEstimate string, w
 
 	delegate := estimateItemDelegate{}
 
+	hints := make([]string, len(estimates))
+	for i, e := range estimates {
+		hints[i] = e.Name
+	}
+	keys := assignAccelerators(ctxEstimatePicker, hints)
+
 	items := make([]list.Item, 0, len(estimates))
 	selectedIndex := 0
 
@@ -98,6 +106,7 @@ func newEstimatePickerModel(nibIDs []string, nibTitle, currentEstimate string, w
 			description: e.Description,
 			color:       e.Color,
 			isCurrent:   isCurrent,
+			key:         keys[i],
 		})
 	}
 
@@ -161,6 +170,12 @@ func (m estimatePickerModel) Update(msg tea.Msg) (estimatePickerModel, tea.Cmd) 
 			}
 		case actLeave:
 			return m, func() tea.Msg { return closeEstimatePickerMsg{} }
+		}
+		return m, nil
+
+	case acceleratorMsg:
+		if selectAccelerator(&m.list, nil, msg.key) {
+			return m.Update(actionMsg{name: actOpen})
 		}
 		return m, nil
 

@@ -33,8 +33,10 @@ type priorityItem struct {
 	description string
 	color       string
 	isCurrent   bool
+	key         string
 }
 
+func (i priorityItem) accelerator() string { return i.key }
 func (i priorityItem) Title() string       { return i.name }
 func (i priorityItem) Description() string { return i.description }
 func (i priorityItem) FilterValue() string { return i.name + " " + i.description }
@@ -67,7 +69,7 @@ func (d priorityItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 		currentIndicator = ui.Muted.Render(" (current)")
 	}
 
-	_, _ = fmt.Fprint(w, cursor+priorityText+currentIndicator)
+	_, _ = fmt.Fprint(w, cursor+renderAccelerator(item.key)+priorityText+currentIndicator)
 }
 
 // priorityPickerModel is the model for the priority picker view
@@ -85,6 +87,12 @@ func newPriorityPickerModel(nibIDs []string, nibTitle, currentPriority string, w
 
 	delegate := priorityItemDelegate{}
 
+	hints := make([]string, len(priorities))
+	for i, p := range priorities {
+		hints[i] = p.Name
+	}
+	keys := assignAccelerators(ctxPriorityPicker, hints)
+
 	items := make([]list.Item, 0, len(priorities))
 	selectedIndex := 0
 
@@ -98,6 +106,7 @@ func newPriorityPickerModel(nibIDs []string, nibTitle, currentPriority string, w
 			description: p.Description,
 			color:       p.Color,
 			isCurrent:   isCurrent,
+			key:         keys[i],
 		})
 	}
 
@@ -161,6 +170,12 @@ func (m priorityPickerModel) Update(msg tea.Msg) (priorityPickerModel, tea.Cmd) 
 			}
 		case actLeave:
 			return m, func() tea.Msg { return closePriorityPickerMsg{} }
+		}
+		return m, nil
+
+	case acceleratorMsg:
+		if selectAccelerator(&m.list, nil, msg.key) {
+			return m.Update(actionMsg{name: actOpen})
 		}
 		return m, nil
 

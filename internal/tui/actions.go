@@ -25,6 +25,7 @@ const (
 	ctxPriorityPicker
 	ctxEstimatePicker
 	ctxTagPicker
+	ctxModifyPicker
 	ctxConfirm
 	// ctxFilterInput is a list's filter while it is being typed.
 	ctxFilterInput
@@ -44,6 +45,7 @@ var keyContextNames = [numKeyContexts]string{
 	ctxPriorityPicker: "priority picker",
 	ctxEstimatePicker: "estimate picker",
 	ctxTagPicker:      "tag picker",
+	ctxModifyPicker:   "modify picker",
 	ctxConfirm:        "confirm dialog",
 	ctxFilterInput:    "filter input",
 	ctxTextInput:      "text input",
@@ -86,6 +88,7 @@ const (
 	actBlocking      actionName = "nib.blocking"
 	actPriority      actionName = "nib.priority"
 	actEstimate      actionName = "nib.estimate"
+	actModify        actionName = "nib.modify"
 	actMoveUp        actionName = "nib.move_up"
 	actMoveDown      actionName = "nib.move_down"
 	actArchive       actionName = "nib.archive"
@@ -136,7 +139,7 @@ var (
 	nibContexts   = []keyContext{ctxList, ctxNibLinks, ctxNibBody}
 	nibViewCtx    = []keyContext{ctxNibLinks, ctxNibBody}
 	listPickers   = []keyContext{ctxStatusPicker, ctxParentPicker, ctxBlockingPicker, ctxPriorityPicker, ctxEstimatePicker, ctxTagPicker}
-	allPickers    = append([]keyContext{ctxTypePicker}, listPickers...)
+	allPickers    = append([]keyContext{ctxTypePicker, ctxModifyPicker}, listPickers...)
 	browsing      = slices.Concat(nibContexts, allPickers)
 	everyContext  = allKeyContexts()
 	filterTargets = slices.Concat([]keyContext{ctxList, ctxNibLinks}, listPickers)
@@ -213,6 +216,7 @@ var actions = []action{
 	{Name: actBlocking, Group: "Edit", Desc: "manage blocking", Contexts: nibContexts, Keys: []string{"b"}, Ready: readyOnNib},
 	{Name: actPriority, Group: "Edit", Desc: "change priority", Contexts: nibContexts, Ready: readyOnTargets},
 	{Name: actEstimate, Group: "Edit", Desc: "change estimate", Contexts: nibContexts, Ready: readyOnTargets},
+	{Name: actModify, Group: "Edit", Desc: "modify a field", Contexts: nibContexts, Keys: []string{"m"}, Ready: readyOnTargets},
 	{Name: actMoveUp, Group: "Edit", Desc: "move up among siblings", Contexts: []keyContext{ctxList}, Keys: []string{"ctrl+up"}},
 	{Name: actMoveDown, Group: "Edit", Desc: "move down among siblings", Contexts: []keyContext{ctxList}, Keys: []string{"ctrl+down"}},
 	{Name: actArchive, Group: "Edit", Desc: "archive", Contexts: []keyContext{ctxList}, Keys: []string{"a"}, Ready: readyOnNib},
@@ -312,8 +316,8 @@ type actionMsg struct {
 	name actionName
 }
 
-// acceleratorMsg is a key no action takes, offered to a picker that chooses a
-// row by key.
+// acceleratorMsg is a key no action takes, offered to a picker to choose the
+// row that shows it.
 type acceleratorMsg struct {
 	key string
 }

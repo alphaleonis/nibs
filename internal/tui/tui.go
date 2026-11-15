@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -35,6 +36,7 @@ const (
 	viewBlockingPicker
 	viewPriorityPicker
 	viewEstimatePicker
+	viewModifyPicker
 	viewCreateModal
 	viewCreateTypePicker
 	viewConfirmDialog
@@ -148,6 +150,7 @@ type App struct {
 	blockingPicker blockingPickerModel
 	priorityPicker priorityPickerModel
 	estimatePicker estimatePickerModel
+	modifyPicker   modifyPickerModel
 	createModal    createModalModel
 	confirmDialog  confirmDialog
 	helpExpanded   bool          // help panel expanded (non-modal, toggles with ?)
@@ -223,6 +226,8 @@ func (a *App) keyContext() keyContext {
 		return inList(a.blockingPicker.list, ctxBlockingPicker)
 	case viewTypePicker, viewCreateTypePicker:
 		return ctxTypePicker
+	case viewModifyPicker:
+		return ctxModifyPicker
 	case viewCreateModal:
 		return ctxTextInput
 	case viewConfirmDialog:
@@ -267,7 +272,7 @@ func (a *App) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	case ctx == ctxFilterInput, ctx == ctxTextInput:
 		return a.updateActiveView(msg)
-	case ctx == ctxTypePicker:
+	case slices.Contains(allPickers, ctx):
 		return a.updateActiveView(acceleratorMsg{key: key})
 	}
 	return nil
@@ -539,6 +544,21 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.reportMutationFailures("Priority change", "nib", errs)
 		return a, a.list.loadNibs
+
+	case openModifyPickerMsg:
+		a.previousState = a.state
+		a.modifyPicker = newModifyPickerModel(msg.targets, a.width, a.height)
+		a.state = viewModifyPicker
+		return a, nil
+
+	case closeModifyPickerMsg:
+		a.state = a.previousState
+		return a, nil
+
+	case modifyChosenMsg:
+		// The field's picker opens over the view m was typed in, and returns there.
+		a.state = a.previousState
+		return a.Update(msg.open)
 
 	case openEstimatePickerMsg:
 		a.previousState = a.state
@@ -844,6 +864,8 @@ func (a *App) updateActiveView(msg tea.Msg) tea.Cmd {
 		a.priorityPicker, cmd = a.priorityPicker.Update(msg)
 	case viewEstimatePicker:
 		a.estimatePicker, cmd = a.estimatePicker.Update(msg)
+	case viewModifyPicker:
+		a.modifyPicker, cmd = a.modifyPicker.Update(msg)
 	case viewBlockingPicker:
 		a.blockingPicker, cmd = a.blockingPicker.Update(msg)
 	case viewCreateModal:
@@ -920,6 +942,8 @@ func (a *App) render() string {
 		return a.priorityPicker.ModalView(a.getBackgroundView(), a.width, a.height)
 	case viewEstimatePicker:
 		return a.estimatePicker.ModalView(a.getBackgroundView(), a.width, a.height)
+	case viewModifyPicker:
+		return a.modifyPicker.ModalView(a.getBackgroundView(), a.width, a.height)
 	case viewBlockingPicker:
 		return a.blockingPicker.ModalView(a.getBackgroundView(), a.width, a.height)
 	case viewCreateModal:

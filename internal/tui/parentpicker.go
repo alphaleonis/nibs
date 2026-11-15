@@ -44,7 +44,8 @@ func (i clearParentItem) FilterValue() string { return "no parent clear none" }
 
 // parentItemDelegate handles rendering of parent picker items
 type parentItemDelegate struct {
-	cfg *config.Config
+	cfg      *config.Config
+	pageKeys []string
 }
 
 func (d parentItemDelegate) Height() int                             { return 1 }
@@ -58,6 +59,8 @@ func (d parentItemDelegate) Render(w io.Writer, m list.Model, index int, listIte
 	} else {
 		cursor = "  "
 	}
+
+	cursor += renderAccelerator(rowAccelerator(m, d.pageKeys, index))
 
 	switch item := listItem.(type) {
 	case clearParentItem:
@@ -87,6 +90,7 @@ type parentPickerModel struct {
 	currentParent string     // preselected parent ID; empty for a multi-selection
 	hideCompleted bool       // whether to hide nibs in a closed status
 	allEligible   []*nib.Nib // all eligible nibs before status filtering
+	pageKeys      []string   // the accelerators of the rows on a page, in order
 	width         int
 	height        int
 	cfg           *config.Config
@@ -155,7 +159,8 @@ func newParentPickerModel(nibIDs []string, nibTitle string, nibTypes []string, c
 	})
 
 	// rebuildList populates the items.
-	delegate := parentItemDelegate{cfg: cfg}
+	pageKeys := freeAccelerators(ctxParentPicker)
+	delegate := parentItemDelegate{cfg: cfg, pageKeys: pageKeys}
 	modalWidth := pickerModalWidth(width, 60, 80)
 	modalHeight := pickerModalHeight(height, 60, 20)
 	listWidth := modalWidth - 6
@@ -179,6 +184,7 @@ func newParentPickerModel(nibIDs []string, nibTitle string, nibTypes []string, c
 		currentParent: currentParent,
 		hideCompleted: true,
 		allEligible:   eligibleNibs,
+		pageKeys:      pageKeys,
 		width:         width,
 		height:        height,
 		cfg:           cfg,
@@ -315,6 +321,12 @@ func (m parentPickerModel) Update(msg tea.Msg) (parentPickerModel, tea.Cmd) {
 			return m, cmd
 		case actLeave:
 			return m, func() tea.Msg { return closeParentPickerMsg{} }
+		}
+		return m, nil
+
+	case acceleratorMsg:
+		if selectAccelerator(&m.list, m.pageKeys, msg.key) {
+			return m.Update(actionMsg{name: actOpen})
 		}
 		return m, nil
 

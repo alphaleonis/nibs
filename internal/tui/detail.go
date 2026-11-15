@@ -418,6 +418,9 @@ func (m *detailModel) runAction(name actionName) tea.Cmd {
 		return func() tea.Msg {
 			return openEstimatePickerMsg{nibIDs: []string{n.ID}, nibTitle: n.Title, currentEstimate: n.Estimate}
 		}
+	case actModify:
+		targets := modifyTargets{nibs: []*nib.Nib{n}, title: n.Title}
+		return func() tea.Msg { return openModifyPickerMsg{targets: targets} }
 	case actBlocking:
 		currentBlocking := computeCurrentBlocking(m.backend, n.ID)
 		return func() tea.Msg {

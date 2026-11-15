@@ -15,6 +15,7 @@ type pickerModalConfig struct {
 	ListContent string      // the rendered list
 	Description string      // optional description shown below list
 	ExtraHelp   []helpEntry // additional help entries shown before esc/cancel
+	NoFilter    bool        // the picker has no filter, so the help omits /
 	Width       int         // screen width
 	WidthPct    int         // modal width percentage (0 means 50)
 	MaxWidth    int         // max modal width (0 means 60)
@@ -87,8 +88,10 @@ func renderPickerModal(cfg pickerModalConfig) string {
 
 	subtitle := ui.Muted.Render(cfg.NibID)
 
-	help := helpKeyStyle.Render("enter") + " " + helpStyle.Render("select") + "  " +
-		helpKeyStyle.Render("/") + " " + helpStyle.Render("filter") + "  "
+	help := helpKeyStyle.Render("enter") + " " + helpStyle.Render("select") + "  "
+	if !cfg.NoFilter {
+		help += helpKeyStyle.Render("/") + " " + helpStyle.Render("filter") + "  "
+	}
 	for _, e := range cfg.ExtraHelp {
 		help += helpKeyStyle.Render(e.Key) + " " + helpStyle.Render(e.Desc) + "  "
 	}

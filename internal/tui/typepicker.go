@@ -56,10 +56,10 @@ type typeItem struct {
 	description string
 	color       string
 	isCurrent   bool
+	key         string
 }
 
-// typePickerModel is the model for the type picker view: a cursor over items,
-// with first-letter shortcuts.
+// typePickerModel is the model for the type picker view: a cursor over items.
 type typePickerModel struct {
 	items       []typeItem
 	cursor      int
@@ -82,6 +82,7 @@ func newTypePickerModel(nibIDs []string, nibTitle, currentType string, validType
 	}
 
 	items := make([]typeItem, 0, len(types))
+	var hints []string
 	cursor := 0
 
 	for _, t := range types {
@@ -98,6 +99,10 @@ func newTypePickerModel(nibIDs []string, nibTitle, currentType string, validType
 			color:       t.Color,
 			isCurrent:   isCurrent,
 		})
+		hints = append(hints, t.Name)
+	}
+	for i, key := range assignAccelerators(ctxTypePicker, hints) {
+		items[i].key = key
 	}
 
 	return typePickerModel{
@@ -142,15 +147,10 @@ func (m typePickerModel) Update(msg tea.Msg) (typePickerModel, tea.Cmd) {
 		}
 
 	case acceleratorMsg:
-		// A letter chooses the first type it starts.
-		if len(msg.key) == 1 {
-			for _, item := range m.items {
-				if strings.HasPrefix(item.name, msg.key) {
-					nibType := item.name
-					return m, func() tea.Msg {
-						return typeSelectedMsg{nibIDs: m.nibIDs, nibType: nibType}
-					}
-				}
+		for i, item := range m.items {
+			if item.key == msg.key {
+				m.cursor = i
+				return m.Update(actionMsg{name: actOpen})
 			}
 		}
 	}
@@ -187,7 +187,7 @@ func (m typePickerModel) View() string {
 			currentIndicator = ui.Muted.Render(" (current)")
 		}
 
-		lines = append(lines, cursor+typeText+currentIndicator)
+		lines = append(lines, cursor+renderAccelerator(item.key)+typeText+currentIndicator)
 	}
 	listContent := strings.Join(lines, "\n")
 
@@ -214,6 +214,7 @@ func (m typePickerModel) View() string {
 		NibID:       nibID,
 		ListContent: listContent,
 		Description: description,
+		NoFilter:    true,
 		Width:       m.width,
 	})
 }

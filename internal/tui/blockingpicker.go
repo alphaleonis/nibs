@@ -64,6 +64,7 @@ func (i blockingItem) FilterValue() string { return i.nib.Title + " " + i.nib.ID
 type blockingItemDelegate struct {
 	cfg             *config.Config
 	pendingBlocking *map[string]bool // read at render time, so toggles show immediately
+	pageKeys        []string
 }
 
 func (d blockingItemDelegate) Height() int                             { return 1 }
@@ -82,6 +83,8 @@ func (d blockingItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 	} else {
 		cursor = "  "
 	}
+
+	cursor += renderAccelerator(rowAccelerator(m, d.pageKeys, index))
 
 	isBlocking := (*d.pendingBlocking)[item.nib.ID]
 	var blockingIndicator string
@@ -110,6 +113,7 @@ type blockingPickerModel struct {
 	nibTitle         string          // the nib's title
 	originalBlocking map[string]bool // original state (for computing diff)
 	pendingBlocking  map[string]bool // pending state (toggled by space)
+	pageKeys         []string        // the accelerators of the rows on a page, in order
 	cfg              *config.Config
 	width            int
 	height           int
@@ -159,7 +163,8 @@ func newBlockingPickerModel(nibID, nibTitle string, currentBlocking []string, ba
 	// header(1) + subtitle(1) + blank(1) + blank(1) + description(1) + blank(1) + help(1) + border(2) = 9
 	listHeight := modalHeight - 9
 
-	delegate := blockingItemDelegate{cfg: cfg, pendingBlocking: &pendingBlocking}
+	pageKeys := freeAccelerators(ctxBlockingPicker)
+	delegate := blockingItemDelegate{cfg: cfg, pendingBlocking: &pendingBlocking, pageKeys: pageKeys}
 
 	l := list.New(items, delegate, listWidth, listHeight)
 	l.Title = "Manage Blocking"
@@ -178,6 +183,7 @@ func newBlockingPickerModel(nibID, nibTitle string, currentBlocking []string, ba
 		nibTitle:         nibTitle,
 		originalBlocking: originalBlocking,
 		pendingBlocking:  pendingBlocking,
+		pageKeys:         pageKeys,
 		cfg:              cfg,
 		width:            width,
 		height:           height,
@@ -233,6 +239,13 @@ func (m blockingPickerModel) Update(msg tea.Msg) (blockingPickerModel, tea.Cmd) 
 			}
 		case actLeave:
 			return m, func() tea.Msg { return closeBlockingPickerMsg{} }
+		}
+		return m, nil
+
+	// A row's accelerator marks it, as space does, since enter confirms them all.
+	case acceleratorMsg:
+		if selectAccelerator(&m.list, m.pageKeys, msg.key) {
+			return m.Update(actionMsg{name: actSelect})
 		}
 		return m, nil
 

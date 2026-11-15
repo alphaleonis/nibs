@@ -34,8 +34,10 @@ type statusItem struct {
 	color       string
 	isClosed    bool
 	isCurrent   bool
+	key         string
 }
 
+func (i statusItem) accelerator() string { return i.key }
 func (i statusItem) Title() string       { return i.name }
 func (i statusItem) Description() string { return i.description }
 func (i statusItem) FilterValue() string { return i.name + " " + i.description }
@@ -67,7 +69,7 @@ func (d statusItemDelegate) Render(w io.Writer, m list.Model, index int, listIte
 		currentIndicator = ui.Muted.Render(" (current)")
 	}
 
-	_, _ = fmt.Fprint(w, cursor+statusText+currentIndicator)
+	_, _ = fmt.Fprint(w, cursor+renderAccelerator(item.key)+statusText+currentIndicator)
 }
 
 // statusPickerModel is the model for the status picker view
@@ -85,6 +87,12 @@ func newStatusPickerModel(nibIDs []string, nibTitle, currentStatus string, cfg *
 
 	delegate := statusItemDelegate{}
 
+	hints := make([]string, len(statuses))
+	for i, s := range statuses {
+		hints[i] = s.Name
+	}
+	keys := assignAccelerators(ctxStatusPicker, hints)
+
 	items := make([]list.Item, 0, len(statuses))
 	selectedIndex := 0
 
@@ -99,6 +107,7 @@ func newStatusPickerModel(nibIDs []string, nibTitle, currentStatus string, cfg *
 			color:       s.Color,
 			isClosed:    s.Role.Closed(),
 			isCurrent:   isCurrent,
+			key:         keys[i],
 		})
 	}
 
@@ -162,6 +171,12 @@ func (m statusPickerModel) Update(msg tea.Msg) (statusPickerModel, tea.Cmd) {
 			}
 		case actLeave:
 			return m, func() tea.Msg { return closeStatusPickerMsg{} }
+		}
+		return m, nil
+
+	case acceleratorMsg:
+		if selectAccelerator(&m.list, nil, msg.key) {
+			return m.Update(actionMsg{name: actOpen})
 		}
 		return m, nil
 

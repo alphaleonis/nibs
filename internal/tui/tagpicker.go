@@ -28,7 +28,9 @@ func (i tagItem) Description() string { return "" }
 func (i tagItem) FilterValue() string { return i.tag }
 
 // tagItemDelegate handles rendering of tag items
-type tagItemDelegate struct{}
+type tagItemDelegate struct {
+	pageKeys []string
+}
 
 func (d tagItemDelegate) Height() int                             { return 1 }
 func (d tagItemDelegate) Spacing() int                            { return 0 }
@@ -47,6 +49,8 @@ func (d tagItemDelegate) Render(w io.Writer, m list.Model, index int, listItem l
 		cursor = "  "
 	}
 
+	cursor += renderAccelerator(rowAccelerator(m, d.pageKeys, index))
+
 	tagBadge := ui.RenderTag(item.tag)
 	count := ui.Muted.Render(fmt.Sprintf(" (%d)", item.count))
 
@@ -55,10 +59,11 @@ func (d tagItemDelegate) Render(w io.Writer, m list.Model, index int, listItem l
 
 // tagPickerModel is the model for the tag picker view
 type tagPickerModel struct {
-	list   list.Model
-	tags   []tagWithCount
-	width  int
-	height int
+	list     list.Model
+	tags     []tagWithCount
+	pageKeys []string // the accelerators of the rows on a page, in order
+	width    int
+	height   int
 }
 
 func newTagPickerModel(tags []tagWithCount, width, height int) tagPickerModel {
@@ -69,7 +74,8 @@ func newTagPickerModel(tags []tagWithCount, width, height int) tagPickerModel {
 		return tags[i].tag < tags[j].tag
 	})
 
-	delegate := tagItemDelegate{}
+	pageKeys := freeAccelerators(ctxTagPicker)
+	delegate := tagItemDelegate{pageKeys: pageKeys}
 
 	items := make([]list.Item, len(tags))
 	for i, t := range tags {
@@ -87,10 +93,11 @@ func newTagPickerModel(tags []tagWithCount, width, height int) tagPickerModel {
 	applyFilterStyles(&l.Styles)
 
 	return tagPickerModel{
-		list:   l,
-		tags:   tags,
-		width:  width,
-		height: height,
+		list:     l,
+		tags:     tags,
+		pageKeys: pageKeys,
+		width:    width,
+		height:   height,
 	}
 }
 
@@ -118,6 +125,12 @@ func (m tagPickerModel) Update(msg tea.Msg) (tagPickerModel, tea.Cmd) {
 			}
 		case actLeave:
 			return m, func() tea.Msg { return backToListMsg{} }
+		}
+		return m, nil
+
+	case acceleratorMsg:
+		if selectAccelerator(&m.list, m.pageKeys, msg.key) {
+			return m.Update(actionMsg{name: actOpen})
 		}
 		return m, nil
 

@@ -496,6 +496,19 @@ func (m *listModel) runAction(name actionName) tea.Cmd {
 			msg.currentEstimate = focused.Estimate
 		}
 		return func() tea.Msg { return msg }
+	case actModify:
+		ids, title, _ := m.targets()
+		nibs := make([]*nib.Nib, 0, len(ids))
+		for _, id := range ids {
+			if n, err := m.backend.GetNib(context.Background(), id); err == nil && n != nil {
+				nibs = append(nibs, n)
+			}
+		}
+		if len(nibs) == 0 {
+			return nil
+		}
+		targets := modifyTargets{nibs: nibs, title: title}
+		return func() tea.Msg { return openModifyPickerMsg{targets: targets} }
 	case actBlocking:
 		if n := m.focusedNib(); n != nil {
 			currentBlocking := computeCurrentBlocking(m.backend, n.ID)
