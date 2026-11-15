@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/sha256"
 	"os"
 	"path/filepath"
 
@@ -47,14 +48,40 @@ func LoadUserConfig() (*UserConfig, error) {
 // LoadUserConfigFrom returns a zero-value UserConfig and no error when path does
 // not exist.
 func LoadUserConfigFrom(path string) (*UserConfig, error) {
+	cfg, _, err := ReadUserConfig(path)
+	return cfg, err
+}
+
+// UserConfigSnapshot identifies the user config file as one read found it, so
+// SetUserSetting can tell whether the file changed since. The zero value stands
+// for a file that did not exist.
+type UserConfigSnapshot struct {
+	exists bool
+	sum    [sha256.Size]byte
+}
+
+func snapshotOf(data []byte) UserConfigSnapshot {
+	return UserConfigSnapshot{exists: true, sum: sha256.Sum256(data)}
+}
+
+// ReadUserConfig is LoadUserConfigFrom that also returns a snapshot of the file
+// it read, to hand to SetUserSetting. A file that is read but does not parse
+// still gets its snapshot, beside the error. The snapshot is the zero value when
+// the file does not exist or cannot be read.
+func ReadUserConfig(path string) (*UserConfig, UserConfigSnapshot, error) {
 	data, err := yamlfile.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &UserConfig{}, nil
+			return &UserConfig{}, UserConfigSnapshot{}, nil
 		}
-		return nil, err
+		return nil, UserConfigSnapshot{}, err
 	}
+	cfg, err := parseUserConfig(data)
+	return cfg, snapshotOf(data), err
+}
 
+// parseUserConfig is the check that decides whether a user config loads.
+func parseUserConfig(data []byte) (*UserConfig, error) {
 	var cfg UserConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, err
