@@ -113,9 +113,12 @@ func commandNeedsNoStore(cmd *cobra.Command) bool {
 // initAppForCommand resolves the store, refuses an unmigrated one, and loads it
 // into the App a command reads through getApp.
 func initAppForCommand(cmd *cobra.Command) (*App, error) {
-	root, cfg, err := resolveCLIStore()
+	root, cfg, userFailure, err := resolveCLIStore()
 	if err != nil {
 		return nil, err
+	}
+	if reportsUserConfigFailureOnStderr(cmd) {
+		warnUserConfigFailure(cmd.ErrOrStderr(), userFailure)
 	}
 
 	// Refuse a store with pending migrations BEFORE Load ever sees it.
@@ -158,8 +161,24 @@ func isCompletionRequest(cmd *cobra.Command) bool {
 	return false
 }
 
+// reportsUserConfigFailureOnStderr reports whether cmd warns on stderr about a
+// user config that did not load. The TUI shows it in its status line instead,
+// and a completion request runs on every TAB press.
+func reportsUserConfigFailureOnStderr(cmd *cobra.Command) bool {
+	return cmd.Name() != "tui" && !isCompletionRequest(cmd)
+}
+
+// warnUserConfigFailure writes failure to w as one warning line, or nothing
+// when failure is nil. Call it once per command, and never with stdout as w, so
+// --json output stays parseable.
+func warnUserConfigFailure(w io.Writer, failure *config.UserConfigFailure) {
+	if failure != nil {
+		_, _ = fmt.Fprintf(w, "warning: %s\n", failure.Message())
+	}
+}
+
 // resolveCLIStore resolves the store every command operates on and loads THAT
-// store's config.
+// store's config. It also returns why the user config did not load, or nil.
 //
 // CANONICAL INVARIANT: the two answers come as a pair, so a store is always read
 // under its OWN vocabulary — pointing nibs at another project's store carries
@@ -167,25 +186,25 @@ func isCompletionRequest(cmd *cobra.Command) bool {
 // project's. resolveStoreDir keeps this true by refusing --config together with
 // --nibs-path/NIBS_PATH, the one combination that would source the store and the
 // config from different projects.
-func resolveCLIStore() (string, *config.Config, error) {
+func resolveCLIStore() (string, *config.Config, *config.UserConfigFailure, error) {
 	storeDir, err := resolveStoreDir()
 	if err != nil {
-		return "", nil, err
+		return "", nil, nil, err
 	}
 
 	// Either way the user config layers underneath.
 	if configPath != "" {
-		cfg, err := config.LoadFromExplicitPathWithUserConfig(configPath)
+		cfg, userFailure, err := config.LoadFromExplicitPathWithUserConfig(configPath)
 		if err != nil {
-			return "", nil, fmt.Errorf("loading config from %s: %w", configPath, err)
+			return "", nil, nil, fmt.Errorf("loading config from %s: %w", configPath, err)
 		}
-		return storeDir, cfg, nil
+		return storeDir, cfg, userFailure, nil
 	}
-	cfg, err := config.LoadStoreWithUserConfig(storeDir)
+	cfg, userFailure, err := config.LoadStoreWithUserConfig(storeDir)
 	if err != nil {
-		return "", nil, fmt.Errorf("loading config: %w", err)
+		return "", nil, nil, fmt.Errorf("loading config: %w", err)
 	}
-	return storeDir, cfg, nil
+	return storeDir, cfg, userFailure, nil
 }
 
 // resolveStoreDir determines the `.nibs` store directory. It is also migrate's

@@ -323,11 +323,17 @@ func TestKeysAnEmptyTUIBlockIsTheDefaults(t *testing.T) {
 func setupTestAppWithUserConfig(t *testing.T, nibs []*nib.Nib, cfg *config.Config, text string) *App {
 	t.Helper()
 	user, path := writeUserConfig(t, text)
+	return setupTestAppWithUserLayer(t, nibs, cfg, config.UserLayer{Config: user, Path: path})
+}
+
+// setupTestAppWithUserLayer is setupTestApp with user as the user config.
+func setupTestAppWithUserLayer(t *testing.T, nibs []*nib.Nib, cfg *config.Config, user config.UserLayer) *App {
+	t.Helper()
 	stub := &StubBackend{Nibs: map[string]*nib.Nib{}, AllNibs: nibs}
 	for _, n := range nibs {
 		stub.Nibs[n.ID] = n
 	}
-	app := New(stub, cfg, user, path, "dev")
+	app := New(stub, cfg, user, "dev")
 	initCmd := app.Init()
 	app.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	processCmd(app, initCmd)
@@ -456,6 +462,42 @@ func TestIgnoredBindingsWarnAndThePaletteListsThem(t *testing.T) {
 	pressKeys(app, "e s t")
 	if view := stripAnsi(app.palette.View()); strings.Contains(view, "nib.prority") {
 		t.Errorf("an ignored entry that does not match the query is shown:\n%s", view)
+	}
+}
+
+func TestAUserConfigThatDidNotLoadWarnsAndKeepsTheDefaultKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nibs.yml")
+	text := "tui:\n  keys:\n    nib.priority: P\n  broken: [\n"
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	user := config.LoadUserLayerFrom(path)
+	if user.Failure == nil {
+		t.Fatal("premise failed: the user config loaded")
+	}
+	app := setupTestAppWithUserLayer(t, listKeysNibs(), config.Default(), user)
+
+	if app.list.statusKind != statusWarn || !strings.Contains(app.list.statusMessage, user.Failure.Message()) {
+		t.Errorf("status = %q (kind %d), want a warning carrying %q", app.list.statusMessage, app.list.statusKind, user.Failure.Message())
+	}
+	view := strings.Join(strings.Fields(stripAnsi(app.View().Content)), " ")
+	for _, part := range []string{path, "did not load", "line 4"} {
+		if !strings.Contains(view, part) {
+			t.Errorf("the view does not show %q:\n%s", part, view)
+		}
+	}
+	if len(app.keys.ignored) != 0 {
+		t.Errorf("ignored = %+v, want none: the whole file failed", app.keys.ignored)
+	}
+	for _, a := range defaultActions {
+		if got := keysOf(app.keys, a.Name); !slices.Equal(got, a.Keys) {
+			t.Errorf("%s keys = %v, want the default %v", a.Name, got, a.Keys)
+		}
+	}
+
+	pressKeys(app, "?")
+	if view := stripAnsi(app.palette.View()); strings.Contains(view, "Ignored key bindings") {
+		t.Errorf("the palette lists ignored bindings for a file that did not load:\n%s", view)
 	}
 }
 

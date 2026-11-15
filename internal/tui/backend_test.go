@@ -266,7 +266,7 @@ func TestNewAppWithBackend(t *testing.T) {
 	}
 
 	cfg := config.Default()
-	app := New(stub, cfg, nil, "", "dev")
+	app := New(stub, cfg, config.UserLayer{}, "dev")
 
 	if app == nil {
 		t.Fatal("New() returned nil")

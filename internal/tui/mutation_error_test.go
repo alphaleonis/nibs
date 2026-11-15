@@ -334,7 +334,7 @@ func setupRealBackendApp(t *testing.T, nibs []*nib.Nib) *App {
 		Blocking:  core,
 		Orderer:   graph.NewOrderer(core, core),
 	}
-	app := New(NewRealBackend(core, resolver), cfg, nil, "", "dev")
+	app := New(NewRealBackend(core, resolver), cfg, config.UserLayer{}, "dev")
 	initCmd := app.Init()
 	app.Update(tea.WindowSizeMsg{Width: 160, Height: 40})
 	processCmd(app, initCmd)

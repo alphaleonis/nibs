@@ -139,7 +139,7 @@ func TestAppEstimatePickerWiring(t *testing.T) {
 				{ID: "nib-1", Title: "Test", Status: "todo", Type: "task", Estimate: "m"},
 			},
 		}
-		return New(stub, config.Default(), nil, "", "dev"), stub
+		return New(stub, config.Default(), config.UserLayer{}, "dev"), stub
 	}
 
 	t.Run("openEstimatePickerMsg transitions to picker state", func(t *testing.T) {

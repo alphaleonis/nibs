@@ -178,13 +178,13 @@ type App struct {
 
 // New creates the TUI application.
 //
-// Its keys are the defaults with the tui.keys of user applied. user is the user
-// config read from userConfigPath, and may be nil. version is the running
-// binary version, for the update-available indicator.
-func New(backend Backend, cfg *config.Config, user *config.UserConfig, userConfigPath, version string) *App {
+// Its keys are the defaults with the tui.keys of user applied. A user config
+// that did not load opens the TUI with a warning in the status line. version is
+// the running binary version, for the update-available indicator.
+func New(backend Backend, cfg *config.Config, user config.UserLayer, version string) *App {
 	keys := defaultKeymap()
-	if user != nil {
-		keys = buildKeymap(defaultActions, &user.TUI, userConfigPath)
+	if user.Config != nil {
+		keys = buildKeymap(defaultActions, &user.Config.TUI, user.Path)
 	}
 	a := &App{
 		state:   viewList,
@@ -195,7 +195,10 @@ func New(backend Backend, cfg *config.Config, user *config.UserConfig, userConfi
 		preview: newPreviewModel(nil, 0, 0),
 		version: version,
 	}
-	if n := len(keys.ignored); n > 0 {
+	if user.Failure != nil {
+		a.list.statusMessage = "Warning: " + user.Failure.Message()
+		a.list.statusKind = statusWarn
+	} else if n := len(keys.ignored); n > 0 {
 		a.list.statusMessage = ignoredBindingsWarning(n, keys.firstKey(actHelp))
 		a.list.statusKind = statusWarn
 	}
@@ -1145,8 +1148,8 @@ func getEditor() string {
 
 // Run starts the TUI and forwards store changes to it until it exits. The
 // parameters are as for New.
-func Run(backend Backend, cfg *config.Config, user *config.UserConfig, userConfigPath, version string) error {
-	app := New(backend, cfg, user, userConfigPath, version)
+func Run(backend Backend, cfg *config.Config, user config.UserLayer, version string) error {
+	app := New(backend, cfg, user, version)
 	p := tea.NewProgram(app)
 
 	app.program = p

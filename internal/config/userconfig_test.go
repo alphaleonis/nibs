@@ -264,7 +264,7 @@ func TestLoadStoreWithUserConfigPath(t *testing.T) {
 			t.Fatalf("WriteFile error = %v", err)
 		}
 
-		cfg, err := LoadStoreWithUserConfigPath(storeDirFor(t, projectDir), userCfgPath)
+		cfg, _, err := LoadStoreWithUserConfigPath(storeDirFor(t, projectDir), userCfgPath)
 		if err != nil {
 			t.Fatalf("LoadStoreWithUserConfigPath() error = %v", err)
 		}
@@ -304,7 +304,7 @@ func TestLoadStoreWithUserConfigPath(t *testing.T) {
 			t.Fatalf("WriteFile error = %v", err)
 		}
 
-		cfg, err := LoadStoreWithUserConfigPath(filepath.Join(projectDir, store.DirName), userCfgPath)
+		cfg, _, err := LoadStoreWithUserConfigPath(filepath.Join(projectDir, store.DirName), userCfgPath)
 		if err != nil {
 			t.Fatalf("LoadStoreWithUserConfigPath() error = %v", err)
 		}
@@ -340,7 +340,7 @@ func TestLoadStoreWithUserConfigPath(t *testing.T) {
 			t.Fatalf("WriteFile error = %v", err)
 		}
 
-		cfg, err := LoadStoreWithUserConfigPath(storeDirFor(t, projectDir), userCfgPath)
+		cfg, _, err := LoadStoreWithUserConfigPath(storeDirFor(t, projectDir), userCfgPath)
 		if err != nil {
 			t.Fatalf("LoadStoreWithUserConfigPath() error = %v", err)
 		}
@@ -365,7 +365,7 @@ func TestLoadStoreWithUserConfigPath(t *testing.T) {
 		}
 
 		// Non-existent user config path
-		cfg, err := LoadStoreWithUserConfigPath(storeDirFor(t, projectDir), "/nonexistent/user/nibs.yml")
+		cfg, _, err := LoadStoreWithUserConfigPath(storeDirFor(t, projectDir), "/nonexistent/user/nibs.yml")
 		if err != nil {
 			t.Fatalf("LoadStoreWithUserConfigPath() error = %v", err)
 		}
@@ -402,7 +402,7 @@ func TestLoadStoreWithUserConfigPath(t *testing.T) {
 			t.Fatalf("WriteFile error = %v", err)
 		}
 
-		cfg, err := LoadStoreWithUserConfigPath(filepath.Join(projectDir, store.DirName), userCfgPath)
+		cfg, _, err := LoadStoreWithUserConfigPath(filepath.Join(projectDir, store.DirName), userCfgPath)
 		if err != nil {
 			t.Fatalf("LoadStoreWithUserConfigPath() error = %v", err)
 		}
