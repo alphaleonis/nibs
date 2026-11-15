@@ -217,7 +217,9 @@ function visibleTextNodes(root: Node): Text[] {
 function expectedMentions(body: string): ExpectedCandidate[] {
   const tokens = sharedMarked.lexer(body);
   const out: ExpectedCandidate[] = [];
-  collectExpected(tokens, { out, leading: tokens[0], references: new Map(), htmlLines: serverHtmlLines(body) }, [], 0);
+  const opaqueLines = serverOpaqueLines(body);
+  const places = mentionPlaces(body, opaqueLines);
+  collectExpected(tokens, { out, leading: tokens[0], references: new Map(), opaqueLines, places }, [], 0);
   return out;
 }
 
@@ -227,8 +229,9 @@ interface CollectContext {
   leading: Token | undefined;
   /** The text each character reference in the body shows, by the reference. */
   references: Map<string, string>;
-  /** Whether the server reads each source line, by its 0-based number, as part of an HTML block. */
-  htmlLines: Uint8Array;
+  /** Whether each source line, by its 0-based number, is opaque, as `serverOpaqueLines` defines it. */
+  opaqueLines: Uint8Array;
+  places: MentionPlaces;
 }
 
 function countNewlines(s: string): number {
@@ -258,8 +261,10 @@ function collectExpected(tokens: Token[], ctx: CollectContext, openInline: strin
     for (const c of text === "" ? [] : segmentMentions(text, breaks, decoded)) {
       // A newline that a character reference shows is not a line break in the source.
       for (; from < c.index; from++) if (text.charCodeAt(from) === 10 && !decoded.has(from)) line++;
-      const inHtml = ctx.htmlLines[Math.min(line, lastLine)] === 1;
-      ctx.out.push({ key: c.key, mention: inHtml ? null : c.mention, source });
+      const counted = ctx.opaqueLines[Math.min(line, lastLine)] === 1;
+      const needle = c.key.startsWith("[[") ? c.key : `#${c.mention}`;
+      const opaque = c.mention !== null && onOpaqueLine(ctx.places, needle, counted);
+      ctx.out.push({ key: c.key, mention: opaque ? null : c.mention, source });
     }
     text = "";
     breaks = [];
@@ -358,6 +363,58 @@ function trackInlineTag(tag: string, open: string[]): void {
   else if (open.includes(name)) open.length = open.lastIndexOf(name);
 }
 
+/**
+ * The mention-shaped text on the body's source lines, split by whether the line
+ * is opaque. Each entry is a `#` with every id character after it, or a
+ * bracketed id, and each array is sorted.
+ */
+interface MentionPlaces {
+  opaque: string[];
+  text: string[];
+}
+
+const MENTION_PLACE = new RegExp(`#[a-z0-9-]+|\\[\\[${MENTION_ID}\\]\\]`, "g");
+
+function mentionPlaces(body: string, opaqueLines: Uint8Array): MentionPlaces {
+  const places: MentionPlaces = { opaque: [], text: [] };
+  // With no opaque line every lookup misses, and the count then finds no opaque line either.
+  if (!opaqueLines.includes(1)) return places;
+  body.split(/\r\n|\r|\n/).forEach((line, i) => {
+    for (const m of line.matchAll(MENTION_PLACE)) {
+      (opaqueLines[i] === 1 ? places.opaque : places.text).push(m[0]);
+    }
+  });
+  places.opaque.sort();
+  places.text.sort();
+  return places;
+}
+
+/** Returns whether a sorted `entries` holds a string that starts with `prefix`. */
+function hasPrefix(entries: string[], prefix: string): boolean {
+  let lo = 0;
+  let hi = entries.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (entries[mid] < prefix) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo < entries.length && entries[lo].startsWith(prefix);
+}
+
+/**
+ * Returns whether the source line that holds a mention is opaque. `needle` is
+ * the mention as the source writes it, and `counted` is the answer for the line
+ * that marked's newlines give.
+ *
+ * The source line always holds the needle, while marked's newlines can drift from
+ * the source's in lazy and over-indented lines. So the count decides only when
+ * both an opaque line and a text line hold the needle, or neither does.
+ */
+function onOpaqueLine(places: MentionPlaces, needle: string, counted: boolean): boolean {
+  const opaque = hasPrefix(places.opaque, needle);
+  return opaque === hasPrefix(places.text, needle) ? counted : opaque;
+}
+
 // The server's markdown parser is goldmark, whose HTML block start and end conditions differ from marked's:
 // https://github.com/yuin/goldmark/blob/v1.8.5/parser/html_block.go#L13-L214
 const SERVER_BLOCK_TAGS = new Set(
@@ -420,30 +477,69 @@ function serverHtmlBlockStart(line: string, paragraph: boolean): "blank" | ((lin
 /**
  * Returns whether `content`, a line without the list markers before it, is
  * paragraph text that a later line can continue. Text in a blockquote is, and
- * a blockquote's heading, fence or HTML block is not.
+ * a blockquote's heading, fence or HTML block is not. `htmlContent` is the same
+ * text as `htmlBlockText` returns it.
  */
-function serverParagraphText(content: string): boolean {
+function serverParagraphText(content: string, htmlContent = content): boolean {
   const inner = content.replace(/^(?: {0,3}> ?)+/, "");
   return (
     !/^[ \t]*$/.test(inner) &&
     !SERVER_NOT_PARAGRAPH.test(inner) &&
-    serverHtmlBlockStart(inner, false) === null &&
+    serverHtmlBlockStart(htmlContent.replace(/^(?: {0,3}> ?)+/, ""), false) === null &&
     !SERVER_FENCE.test(inner)
   );
 }
 
+/** Returns the list marker that starts `line`, or null when none does. */
+function listItemAt(line: string): ListItem | null {
+  return SERVER_NOT_PARAGRAPH.test(line) ? null : ((SERVER_LIST_ITEM.exec(line)?.groups ?? null) as ListItem | null);
+}
+
 /**
- * Returns whether the server reads each line of `body` as part of an HTML block,
- * by the 0-based number marked gives the line.
+ * Returns `line` with each tab in its indentation and container markers replaced
+ * by the spaces to the next multiple of 4 columns, which is how goldmark measures them:
+ * https://github.com/yuin/goldmark/blob/v1.8.5/util/util.go#L142-L144
+ */
+function expandStructureTabs(line: string): string {
+  const prefix = /^[ \t>*+\-0-9.)]*/.exec(line)?.[0] ?? "";
+  if (!prefix.includes("\t")) return line;
+  let out = "";
+  for (const ch of prefix) out += ch === "\t" ? " ".repeat(4 - (out.length % 4)) : ch;
+  return out + line.slice(prefix.length);
+}
+
+/**
+ * Returns the text of `line` from `column` on, as goldmark's HTML block patterns
+ * read it once the list items take their columns. A tab that `column` splits
+ * leaves its other columns as spaces, and a tab after `column` stays a tab:
+ * https://github.com/yuin/goldmark/blob/v1.8.5/parser/list_item.go#L74-L75
+ * Those patterns take only spaces as indentation:
+ * https://github.com/yuin/goldmark/blob/v1.8.5/parser/html_block.go#L94
+ */
+function htmlBlockText(line: string, column: number): string {
+  let col = 0;
+  for (let i = 0; i < line.length; i++) {
+    if (col >= column) return line.slice(i);
+    const end = line[i] === "\t" ? col + 4 - (col % 4) : col + 1;
+    if (end > column) return " ".repeat(end - column) + line.slice(i + 1);
+    col = end;
+  }
+  return "";
+}
+
+/**
+ * Returns whether each line of `body`, by the 0-based number marked gives it, is
+ * opaque. An opaque line is one the server reads as part of an HTML block or a
+ * code block, so it finds no mention there.
  *
  * It follows list items by their content columns, and ends a block or a fence
- * where its list item ends. It reads a blockquote line as paragraph text, and
- * a line with two list markers as opening only the first item.
+ * where its list item ends. It reads a blockquote line as paragraph text.
  */
-function serverHtmlLines(body: string): Uint8Array {
+function serverOpaqueLines(body: string): Uint8Array {
   // goldmark ends a line only at `\n`.
-  const lines = body.split("\n").map((l) => (l.endsWith("\r") ? l.slice(0, -1) : l));
-  const html = new Uint8Array(lines.length);
+  const source = body.split("\n").map((l) => (l.endsWith("\r") ? l.slice(0, -1) : l));
+  const lines = source.map(expandStructureTabs);
+  const opaque = new Uint8Array(lines.length);
   let open: ReturnType<typeof serverHtmlBlockStart> = null;
   let fence = "";
   // The content column of the list item the open block or fence is in, or 0 outside a list.
@@ -459,7 +555,7 @@ function serverHtmlLines(body: string): Uint8Array {
     const inItem = blank || indent >= openItem;
     if (open !== null) {
       if (inItem && !(open === "blank" && blank)) {
-        html[i] = 1;
+        opaque[i] = 1;
         if (open !== "blank" && open(line)) open = null;
         continue;
       }
@@ -469,6 +565,7 @@ function serverHtmlLines(body: string): Uint8Array {
       if (inItem) {
         const close = SERVER_FENCE_CLOSE.exec(line.slice(openItem));
         if (close !== null && close[1][0] === fence[0] && close[1].length >= fence.length) fence = "";
+        opaque[i] = 1;
         continue;
       }
       fence = "";
@@ -482,53 +579,65 @@ function serverHtmlLines(body: string): Uint8Array {
     while (depth > 0 && items[depth - 1] > indent) depth--;
     const column = depth > 0 ? items[depth - 1] : 0;
     const rest = line.slice(column);
-    const item = (SERVER_NOT_PARAGRAPH.test(rest) ? null : (SERVER_LIST_ITEM.exec(rest)?.groups ?? null)) as ListItem | null;
+    const htmlRest = htmlBlockText(source[i], column);
+    const item = listItemAt(rest);
     // A new list cannot interrupt a paragraph with an empty item, or with a numbered one that does not start at 1.
     const newList = items.length === depth;
     const interrupts: boolean = !paragraph || !newList || (item?.empty === undefined && Number(item?.number ?? 1) === 1);
     const marker: ListItem | null = interrupts ? item : null;
-    const start: ReturnType<typeof serverHtmlBlockStart> = marker === null ? serverHtmlBlockStart(rest, paragraph) : null;
+    const start: ReturnType<typeof serverHtmlBlockStart> = marker === null ? serverHtmlBlockStart(htmlRest, paragraph) : null;
     const opened: RegExpExecArray | null = marker === null && start === null ? SERVER_FENCE.exec(rest) : null;
     // A blockquote line ends the list items it is not indented into, though it reads as paragraph text here.
     const quote = /^ {0,3}>/.test(rest);
     const lazy: boolean = paragraph && marker === null && start === null && opened === null && !quote && !SERVER_NOT_PARAGRAPH.test(rest);
     if (!lazy) items.length = depth;
     if (marker !== null) {
-      const content = column + marker.marker.length + (marker.gap?.length ?? 1);
-      items.push(content);
-      // The text after the marker can open a block, or be indented code, which is not paragraph text.
-      const first: string = marker.gap === undefined ? "" : rest.slice(marker.marker.length + marker.gap.length);
+      let content = column;
+      let first = rest;
+      let code = false;
+      // The text after a marker can open another list item, a block, or be indented code, which is not paragraph text.
+      for (let m: ListItem | null = marker; m !== null; m = listItemAt(first)) {
+        content += m.marker.length + (m.gap?.length ?? 1);
+        items.push(content);
+        code = m.gap === undefined && m.empty === undefined;
+        first = m.gap === undefined ? "" : first.slice(m.marker.length + m.gap.length);
+      }
+      if (code) opaque[i] = 1;
       const inner = first === "" ? null : serverHtmlBlockStart(first, false);
       const innerFence = first === "" || inner !== null ? null : SERVER_FENCE.exec(first);
       if (inner !== null) {
-        html[i] = 1;
+        opaque[i] = 1;
         open = inner !== "blank" && inner(first) ? null : inner;
         openItem = content;
       } else if (innerFence !== null) {
+        opaque[i] = 1;
         fence = innerFence[1];
         openItem = content;
       }
       paragraph = inner === null && innerFence === null && serverParagraphText(first);
     } else if (start !== null) {
-      html[i] = 1;
+      opaque[i] = 1;
       // A block of types 1 to 5 can end on its first line.
       open = start !== "blank" && start(line) ? null : start;
       openItem = column;
       paragraph = false;
     } else if (opened !== null) {
+      opaque[i] = 1;
       fence = opened[1];
       openItem = column;
       paragraph = false;
     } else {
       // A line 4 columns past its container is indented code, which a paragraph would take as text.
-      paragraph = lazy || (!/^(?: {4}| {0,3}\t)/.test(rest) && serverParagraphText(rest));
+      const code: boolean = !lazy && /^ {4}/.test(rest);
+      if (code) opaque[i] = 1;
+      paragraph = lazy || (!code && serverParagraphText(rest, htmlRest));
     }
   }
-  if (!body.includes("\r")) return html;
+  if (!body.includes("\r")) return opaque;
   // marked also ends a line at a lone `\r`, so one server line can hold several of marked's.
   const out: number[] = [];
   lines.forEach((l, i) => {
-    for (let n = l.split("\r").length; n > 0; n--) out.push(html[i]);
+    for (let n = l.split("\r").length; n > 0; n--) out.push(opaque[i]);
   });
   return Uint8Array.from(out);
 }
