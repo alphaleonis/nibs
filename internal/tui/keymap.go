@@ -8,6 +8,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textinput"
 	"github.com/alphaleonis/nibs/internal/safetext"
 	"gopkg.in/yaml.v3"
 )
@@ -174,6 +176,9 @@ func checkEntry(defaults []action, name actionName, value *yaml.Node) ([]string,
 		if ctx, ok := typingContext(a); ok && typesText(seq[0]) {
 			return nil, fmt.Sprintf("%q types text in the %s", seq[0], ctx)
 		}
+		if ctx, ok := typingContext(a); ok && editsText(seq[0]) {
+			return nil, fmt.Sprintf("%q edits text in the %s", seq[0], ctx)
+		}
 	}
 	return keys, ""
 }
@@ -231,6 +236,23 @@ func typingContext(a *action) (keyContext, bool) {
 // into a text box.
 func typesText(k string) bool {
 	return k == "space" || utf8.RuneCountInString(k) == 1
+}
+
+// editsText reports whether the text field of a text box moves its cursor,
+// deletes or pastes on k. Its suggestion keys are left out: no box shows the
+// field's own suggestions.
+func editsText(k string) bool {
+	m := textinput.DefaultKeyMap()
+	for _, b := range []key.Binding{
+		m.CharacterForward, m.CharacterBackward, m.WordForward, m.WordBackward,
+		m.DeleteWordBackward, m.DeleteWordForward, m.DeleteAfterCursor, m.DeleteBeforeCursor,
+		m.DeleteCharacterBackward, m.DeleteCharacterForward, m.LineStart, m.LineEnd, m.Paste,
+	} {
+		if slices.Contains(b.Keys(), k) {
+			return true
+		}
+	}
+	return false
 }
 
 // keyModifiers are the modifiers a key can carry, in the order Bubbletea writes

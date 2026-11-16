@@ -287,6 +287,22 @@ func TestKeysATextBoxKeepsTheKeysThatType(t *testing.T) {
 	}
 }
 
+func TestKeysATextBoxKeepsTheKeysThatEdit(t *testing.T) {
+	for _, k := range []string{"backspace", "delete", "left", "right", "home", "end", "ctrl+a", "ctrl+e", "ctrl+w", "ctrl+u", "ctrl+k", "alt+backspace", "ctrl+v"} {
+		t.Run(k, func(t *testing.T) {
+			km := loadUserSettings(t, "tui:\n  keys:\n    input.cancel: "+k+"\n")
+			if b := ignoredNamed(t, km, "input.cancel"); !strings.Contains(b.reason, fmt.Sprintf("%q edits text in the filter input", k)) {
+				t.Errorf("input.cancel ignored as %q", b.reason)
+			}
+		})
+	}
+	// tab and up/down are the filter box's completion keys, not the text field's.
+	km := loadUserSettings(t, "tui:\n  keys:\n    input.cancel: [ctrl+g, f2]\n")
+	if len(km.ignored) != 0 || !slices.Equal(keysOf(km.keys, actInputCancel), []string{"ctrl+g", "f2"}) {
+		t.Errorf("ignored %+v, input.cancel keys %v; want none and [ctrl+g f2]", km.ignored, keysOf(km.keys, actInputCancel))
+	}
+}
+
 // A tui block or keys of the wrong shape is one ignored entry, warned about
 // like any other.
 func TestKeysOfTheWrongShapeAreOneIgnoredEntry(t *testing.T) {
