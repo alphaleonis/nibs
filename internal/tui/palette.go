@@ -32,8 +32,10 @@ type paletteModel struct {
 	entries []paletteEntry
 	query   textinput.Model
 	cursor  int // index into shown()
-	width   int
-	height  int
+	// offset is the body line at the top of the visible lines.
+	offset int
+	width  int
+	height int
 }
 
 // newPaletteModel lists the actions of keys active in st.ctx, in actionsByGroup
@@ -96,14 +98,27 @@ func (m paletteModel) Update(msg tea.Msg) (paletteModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		m.offset = m.visibleOffset(m.room())
 		return m, nil
 	case actionMsg:
 		switch msg.name {
 		case actPaletteUp:
 			m.cursor = max(0, m.cursor-1)
+			// Show a group's heading with its first action, and the ignored
+			// entries with the very first action.
+			highlight, heading, _ := m.lineIndexes()
+			top := highlight
+			if heading == highlight-1 {
+				top = heading
+			}
+			if m.cursor == 0 {
+				top = 0
+			}
+			m.offset = min(m.offset, top)
 		case actPaletteDown:
 			m.cursor = min(max(0, len(m.shown())-1), m.cursor+1)
 		}
+		m.offset = m.visibleOffset(m.room())
 		return m, nil
 	case tea.KeyPressMsg:
 		before := m.query.Value()
@@ -111,6 +126,7 @@ func (m paletteModel) Update(msg tea.Msg) (paletteModel, tea.Cmd) {
 		m.query, cmd = m.query.Update(msg)
 		if m.query.Value() != before {
 			m.cursor = 0
+			m.offset = 0
 		}
 		return m, cmd
 	}
@@ -133,6 +149,47 @@ var (
 // the hint row.
 const paletteChromeRows = 7
 
+// room returns how many body lines the modal shows. It caps the body so a full
+// modal leaves two rows above and below it, so the footer stays in sight.
+func (m paletteModel) room() int {
+	return max(1, m.height-paletteChromeRows-4)
+}
+
+// lineIndexes returns the body line of the highlighted entry, the body line of
+// its group's heading, and the body's line count. Both indexes are 0 when no
+// action matches the query. It counts the lines in the order bodyLines renders
+// them, so the two must change together.
+func (m paletteModel) lineIndexes() (highlight, heading, total int) {
+	if n := len(m.matchingIgnored()); n > 0 {
+		total = n + 2 // the heading and the trailing blank
+	}
+	shown := m.shown()
+	if len(shown) == 0 {
+		return 0, 0, total + 1
+	}
+	group, groupLine := "", 0
+	for i, e := range shown {
+		if e.act.Group != group {
+			group, groupLine = e.act.Group, total
+			total++
+		}
+		if i == m.cursor {
+			highlight, heading = total, groupLine
+		}
+		total++
+	}
+	return highlight, heading, total
+}
+
+// visibleOffset returns m.offset moved just far enough that the highlighted
+// entry is among the room visible lines. It also keeps the visible lines from
+// ending past the body's last line when the body has more than room lines.
+func (m paletteModel) visibleOffset(room int) int {
+	highlight, _, total := m.lineIndexes()
+	offset := min(m.offset, max(0, total-room))
+	return min(max(offset, highlight-room+1), highlight)
+}
+
 // View renders the palette modal.
 func (m paletteModel) View() string {
 	modalWidth := max(20, min(m.width-4, 80))
@@ -141,10 +198,7 @@ func (m paletteModel) View() string {
 	title := lipgloss.NewStyle().Bold(true).Render("Actions") + ui.Muted.Render(" · "+m.ctx.String())
 	m.query.SetWidth(max(1, inner-lipgloss.Width(m.query.Prompt)-1))
 
-	// Cap the body so a full modal leaves two rows above and below it, so the
-	// footer stays in sight.
-	room := max(1, m.height-paletteChromeRows-4)
-	body := strings.Join(m.bodyLines(inner, room), "\n")
+	body := strings.Join(m.bodyLines(inner, m.room()), "\n")
 
 	hints := hintRowWithin(m.keys.actions, actionState{ctx: ctxPalette}, inner)
 	content := strings.Join([]string{clipToWidth(title, inner), m.query.View(), "", body, "", hints}, "\n")
@@ -159,7 +213,7 @@ func (m paletteModel) View() string {
 
 // bodyLines renders the ignored entries that match the query, then the shown
 // entries under their group headings. It renders at most room lines of width
-// cells, scrolled so the highlighted entry is on screen.
+// cells, from the line visibleOffset returns.
 func (m paletteModel) bodyLines(width, room int) []string {
 	lines := m.ignoredLines(width)
 	shown := m.shown()
@@ -180,23 +234,16 @@ func (m paletteModel) bodyLines(width, room int) []string {
 		descWidth = width - 2 - keyWidth - 2
 	}
 
-	cursorLine := 0
 	group := ""
 	for i, e := range shown {
 		if e.act.Group != group {
 			group = e.act.Group
 			lines = append(lines, paletteGroupStyle.Render(group))
 		}
-		if i == m.cursor {
-			cursorLine = len(lines)
-		}
 		lines = append(lines, m.entryLine(e, i == m.cursor, keyWidth, descWidth, nameWidth))
 	}
 
-	start := 0
-	if cursorLine >= room {
-		start = cursorLine - room + 1
-	}
+	start := m.visibleOffset(room)
 	return lines[start:min(len(lines), start+room)]
 }
 
@@ -204,12 +251,8 @@ func (m paletteModel) bodyLines(width, room int) []string {
 // the query, ignoring letter case, under a heading that names the file. It
 // returns nothing when no ignored entry matches.
 func (m paletteModel) ignoredLines(width int) []string {
-	q := strings.ToLower(m.query.Value())
 	var lines []string
-	for _, b := range m.ignored {
-		if !strings.Contains(strings.ToLower(b.entry+"\n"+b.reason), q) {
-			continue
-		}
+	for _, b := range m.matchingIgnored() {
 		line := fmt.Sprintf("  line %d  %s  %s", b.line, b.entry, ui.Muted.Render(b.reason))
 		lines = append(lines, truncateTitle(line, width))
 	}
@@ -222,6 +265,19 @@ func (m paletteModel) ignoredLines(width int) []string {
 	}
 	lines = slices.Insert(lines, 0, truncateTitle(paletteWarnStyle.Render(heading), width))
 	return append(lines, "")
+}
+
+// matchingIgnored returns the ignored tui entries whose text or reason contains
+// the query, ignoring letter case.
+func (m paletteModel) matchingIgnored() []ignoredEntry {
+	q := strings.ToLower(m.query.Value())
+	var out []ignoredEntry
+	for _, b := range m.ignored {
+		if strings.Contains(strings.ToLower(b.entry+"\n"+b.reason), q) {
+			out = append(out, b)
+		}
+	}
+	return out
 }
 
 // entryLine renders one action: key, description and config name, or dimmed

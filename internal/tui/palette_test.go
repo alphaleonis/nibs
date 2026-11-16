@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/ui"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // footerLine is the frame's last row with its colors removed.
@@ -355,4 +356,233 @@ func TestAPickerHintRowEndsAtAWholeHint(t *testing.T) {
 			}
 		})
 	}
+}
+
+// openScrollPalette is a list-context palette whose body has a room of nine lines.
+func openScrollPalette(ignored []ignoredEntry) paletteModel {
+	return newPaletteModel(keymap{actions: defaultActions}, ignored, "", viewList, actionState{ctx: ctxList}, 80, 20)
+}
+
+func pressPalette(m paletteModel, name actionName, times int) paletteModel {
+	for range times {
+		m, _ = m.Update(actionMsg{name: name})
+	}
+	return m
+}
+
+// visibleBody is the body lines the palette shows, colors removed.
+func visibleBody(m paletteModel) []string {
+	var out []string
+	for _, line := range m.bodyLines(m.width, m.room()) {
+		out = append(out, ansi.Strip(line))
+	}
+	return out
+}
+
+// fullBody is every body line, as a palette tall enough to show them all renders them.
+func fullBody(m paletteModel) []string {
+	m.height = 10000
+	m.offset = 0
+	return visibleBody(m)
+}
+
+// topLine is the index in fullBody of the first visible line.
+func topLine(t *testing.T, m paletteModel) int {
+	t.Helper()
+	full, visible := fullBody(m), visibleBody(m)
+	for i := 0; i+len(visible) <= len(full); i++ {
+		if slices.Equal(full[i:i+len(visible)], visible) {
+			return i
+		}
+	}
+	t.Fatalf("the visible lines are not a run of the full body:\n%s", strings.Join(visible, "\n"))
+	return 0
+}
+
+// highlightRow is the row of the visible lines that holds the cursor, or -1.
+func highlightRow(m paletteModel) int {
+	return slices.IndexFunc(visibleBody(m), func(l string) bool { return strings.HasPrefix(l, "▸ ") })
+}
+
+// highlightLine is the index in fullBody of the line that holds the cursor, or -1.
+func highlightLine(m paletteModel) int {
+	return slices.IndexFunc(fullBody(m), func(l string) bool { return strings.HasPrefix(l, "▸ ") })
+}
+
+// isGroupHeading reports whether a body line, colors removed, is a group heading
+// of a palette with no ignored entries.
+func isGroupHeading(line string) bool {
+	return line != "" && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "▸")
+}
+
+func TestThePaletteScrollsOnlyAtItsEdges(t *testing.T) {
+	t.Run("up from the bottom row keeps the first visible line", func(t *testing.T) {
+		m := pressPalette(openScrollPalette(nil), actPaletteDown, 12)
+		room := m.room()
+		if row := highlightRow(m); row != room-1 || topLine(t, m) == 0 {
+			t.Fatalf("premise failed: the highlight is on row %d of %d with the list at line %d, want the bottom row of a scrolled list", row, room, topLine(t, m))
+		}
+		top := topLine(t, m)
+
+		m = pressPalette(m, actPaletteUp, 1)
+
+		if got := topLine(t, m); got != top {
+			t.Errorf("the first visible line moved from %d to %d", top, got)
+		}
+		if row := highlightRow(m); row != room-2 {
+			t.Errorf("the highlight is on row %d, want %d", row, room-2)
+		}
+	})
+
+	t.Run("down from the top row keeps the first visible line", func(t *testing.T) {
+		m := pressPalette(openScrollPalette(nil), actPaletteDown, 30)
+		for range 30 {
+			if highlightRow(m) == 0 {
+				break
+			}
+			m = pressPalette(m, actPaletteUp, 1)
+		}
+		if row := highlightRow(m); row != 0 || topLine(t, m) == 0 {
+			t.Fatalf("premise failed: the highlight is on row %d with the list at line %d, want the top row of a scrolled list", row, topLine(t, m))
+		}
+		top := topLine(t, m)
+
+		m = pressPalette(m, actPaletteDown, 1)
+
+		if got := topLine(t, m); got != top {
+			t.Errorf("the first visible line moved from %d to %d", top, got)
+		}
+		if row := highlightRow(m); row != 1 {
+			t.Errorf("the highlight is on row %d, want 1", row)
+		}
+	})
+
+	t.Run("down past the bottom row scrolls by one line", func(t *testing.T) {
+		m := openScrollPalette(nil)
+		room := m.room()
+		for range 30 {
+			hl := highlightLine(m)
+			if highlightRow(m) == room-1 && !isGroupHeading(fullBody(m)[hl+1]) {
+				break
+			}
+			m = pressPalette(m, actPaletteDown, 1)
+		}
+		hl := highlightLine(m)
+		if highlightRow(m) != room-1 || isGroupHeading(fullBody(m)[hl+1]) {
+			t.Fatalf("premise failed: the highlight is on row %d of %d, want the bottom row with an action below it", highlightRow(m), room)
+		}
+		top := topLine(t, m)
+
+		m = pressPalette(m, actPaletteDown, 1)
+
+		if got := topLine(t, m); got != top+1 {
+			t.Errorf("the first visible line moved from %d to %d, want %d", top, got, top+1)
+		}
+		if row := highlightRow(m); row != room-1 {
+			t.Errorf("the highlight is on row %d, want the bottom row %d", row, room-1)
+		}
+	})
+
+	t.Run("up onto a group's first action shows its heading", func(t *testing.T) {
+		m := pressPalette(openScrollPalette(nil), actPaletteDown, 100)
+		hidden := 0
+		for m.cursor > 0 {
+			before := topLine(t, m)
+			m = pressPalette(m, actPaletteUp, 1)
+			heading := highlightLine(m) - 1
+			if !isGroupHeading(fullBody(m)[heading]) {
+				continue
+			}
+			if heading < before {
+				hidden++
+			}
+			if got := topLine(t, m); got > heading {
+				t.Errorf("the highlight is on the first %s action with the list at line %d, which hides the heading at line %d", fullBody(m)[heading], got, heading)
+			}
+		}
+		if hidden == 0 {
+			t.Fatal("premise failed: no up press reached a group whose heading was above the visible lines")
+		}
+	})
+
+	t.Run("the first action scrolls to the top and shows the ignored entries", func(t *testing.T) {
+		ignored := []ignoredEntry{{entry: "tui.keys.bogus: x", line: 3, reason: "is not an action"}}
+		m := pressPalette(openScrollPalette(ignored), actPaletteDown, 30)
+		if topLine(t, m) == 0 {
+			t.Fatal("premise failed: the list did not scroll")
+		}
+
+		m = pressPalette(m, actPaletteUp, 30)
+
+		if m.cursor != 0 {
+			t.Fatalf("premise failed: the cursor is %d, want 0", m.cursor)
+		}
+		if got := topLine(t, m); got != 0 {
+			t.Errorf("the list is at line %d, want 0", got)
+		}
+		if first := visibleBody(m)[0]; !strings.HasPrefix(first, "Ignored TUI settings") {
+			t.Errorf("the first visible line is %q, want the ignored entries' heading", first)
+		}
+	})
+
+	t.Run("up at the top and down at the bottom stop", func(t *testing.T) {
+		m := pressPalette(openScrollPalette(nil), actPaletteUp, 1)
+		if m.cursor != 0 || topLine(t, m) != 0 {
+			t.Errorf("up at the top left the cursor at %d and the list at line %d", m.cursor, topLine(t, m))
+		}
+		m = pressPalette(m, actPaletteDown, 100)
+		if last := len(m.shown()) - 1; m.cursor != last {
+			t.Errorf("the cursor is %d after a hundred down presses, want the last action %d", m.cursor, last)
+		}
+		if got := visibleBody(m); got[len(got)-1] != fullBody(m)[len(fullBody(m))-1] {
+			t.Errorf("the last visible line is %q, want the body's last line", got[len(got)-1])
+		}
+	})
+
+	t.Run("typing a query returns to the top", func(t *testing.T) {
+		m := pressPalette(openScrollPalette(nil), actPaletteDown, 30)
+		if topLine(t, m) == 0 {
+			t.Fatal("premise failed: the list did not scroll")
+		}
+
+		m, _ = m.Update(keyPress("e"))
+
+		if len(fullBody(m)) <= m.room() {
+			t.Fatalf("premise failed: the query leaves %d lines, which fit the room of %d", len(fullBody(m)), m.room())
+		}
+		if got := topLine(t, m); got != 0 {
+			t.Errorf("the list is at line %d after typing, want 0", got)
+		}
+		if m.cursor != 0 {
+			t.Errorf("the cursor is %d after typing, want 0", m.cursor)
+		}
+	})
+
+	t.Run("a resize keeps the highlight in the visible lines", func(t *testing.T) {
+		m := pressPalette(openScrollPalette(nil), actPaletteDown, 30)
+
+		m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 15})
+
+		hl, room := highlightLine(m), m.room()
+		if room >= 9 {
+			t.Fatalf("premise failed: the room is %d, want less than before the resize", room)
+		}
+		if hl < m.offset || hl >= m.offset+room {
+			t.Errorf("the highlight is at line %d, outside the %d visible lines from line %d", hl, room, m.offset)
+		}
+	})
+
+	t.Run("growing the window fills it from the end of the list", func(t *testing.T) {
+		m := pressPalette(openScrollPalette(nil), actPaletteDown, 1000)
+
+		m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
+
+		room, total := m.room(), len(fullBody(m))
+		if room <= 9 || total <= room {
+			t.Fatalf("premise failed: the room is %d for %d lines, want more than before the resize and fewer than the lines", room, total)
+		}
+		if got := len(visibleBody(m)); got != room {
+			t.Errorf("the palette shows %d lines in a room of %d, want it full", got, room)
+		}
+	})
 }
