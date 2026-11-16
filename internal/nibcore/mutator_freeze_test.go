@@ -667,7 +667,7 @@ func TestCoreMutators_FreezePartition(t *testing.T) {
 		"IsBlocking":         true,
 		"Load":               true,
 		"LoadDiagnostics":    true,
-		"LockDir":            true,
+		"LockTempDir":        true,
 		"NormalizeID":        true,
 		"Warn":               true,
 		"Root":               true,

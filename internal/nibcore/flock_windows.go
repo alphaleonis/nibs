@@ -5,18 +5,34 @@ package nibcore
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 
 	"golang.org/x/sys/windows"
 )
 
+// lockDirName needs no user in it, because Windows gives each user a temp dir
+// of their own by default.
+func lockDirName() string {
+	return "nibs"
+}
+
+// prepareLockDir creates dir if it is missing. It does not create the OS temp
+// dir above it, so a missing temp dir fails the lock as it does on Unix.
+func prepareLockDir(dir string) error {
+	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+		return fmt.Errorf("creating lock directory: %w", err)
+	}
+	return nil
+}
+
 // acquireFileLock blocks until it holds an exclusive lock on the whole file at
 // path (creating it if needed) via LockFileEx, then returns a release func that
 // unlocks and closes the handle. Mirrors flock_unix.go.
 func acquireFileLock(path string) (func() error, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	f, err := openLockFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("opening lock file: %w", err)
+		return nil, err
 	}
 	handle := windows.Handle(f.Fd())
 	overlapped := new(windows.Overlapped)
@@ -57,9 +73,9 @@ func acquireFileLockShared(path string) (func() error, error) {
 }
 
 func acquireFileLockNB(path string, flags uint32) (func() error, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	f, err := openLockFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("opening lock file: %w", err)
+		return nil, err
 	}
 	handle := windows.Handle(f.Fd())
 	overlapped := new(windows.Overlapped)
