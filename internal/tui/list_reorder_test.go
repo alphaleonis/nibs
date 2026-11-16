@@ -252,8 +252,7 @@ func TestAQueueMoveRefusesToPlaceANibAboveItsOwnDescendant(t *testing.T) {
 			app, stub := setupTestApp(t, descendantQueueNibs(tc.b1Status))
 			pressKeys(app, "v m")
 			if tc.tag != "" {
-				app.list.setTagFilter(tc.tag)
-				reload(app)
+				app.list.setQuery("tags:" + tc.tag)
 			}
 			if rows := rowIDs(app); slices.Contains(rows, "b1") || !slices.Contains(rows, "e1") {
 				t.Fatalf("premise failed: Milestones shows %v, want e1 without b1", rows)

@@ -79,7 +79,6 @@ func TestNibTextReachesNoViewAsAControlSequence(t *testing.T) {
 		{"b", "esc", viewBlockingPicker, "Parent"},
 		{"m", "esc", viewModifyPicker, "Child"},
 		{"a", "n", viewConfirmDialog, "Child"},
-		{"g t", "esc", viewTagPicker, "tag"},
 	}
 	for _, p := range pickers {
 		app.list.restoreCursor("evil-c")

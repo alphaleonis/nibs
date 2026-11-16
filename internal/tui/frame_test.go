@@ -13,22 +13,37 @@ import (
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
-// A list taking filter input owns every printable key, so q and ? become part
-// of the filter text instead of quitting or opening the palette.
-func TestAFilteringListTakesQAndQuestionMark(t *testing.T) {
+// The list's filter box owns every printable key, so q and ? become part of
+// the query instead of quitting or opening the palette.
+func TestTheFilterBoxTakesQAndQuestionMark(t *testing.T) {
+	app, _ := setupTestApp(t, pickerTestNibs())
+	pressKeys(app, "/ ctrl+u")
+	_, quitCmd := app.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
+	app.Update(tea.KeyPressMsg{Code: '?', Text: "?"})
+	if app.state != viewList || !app.list.editing || app.list.box.Value() != "q?" {
+		t.Errorf("after q ? the state is %d, the box open = %v with %q; want the list's box holding q?", app.state, app.list.editing, app.list.box.Value())
+	}
+	if quitCmd != nil {
+		if _, quit := runCmdNonBlocking(quitCmd).(tea.QuitMsg); quit {
+			t.Error("typing q into the filter quit the app")
+		}
+	}
+}
+
+// A picker taking filter input owns every printable key, so q and ? become
+// part of the filter text instead of quitting or opening the palette.
+func TestAFilteringPickerTakesQAndQuestionMark(t *testing.T) {
 	stubViews := []struct {
 		name   string
 		open   func(app *App)
 		state  viewState
 		filter func(app *App) list.Model
 	}{
-		{"list", func(*App) {}, viewList, func(a *App) list.Model { return a.list.list }},
 		{"parent picker", func(a *App) { sendKey(a, tea.KeyPressMsg{Code: 'p', Text: "p"}) }, viewParentPicker, func(a *App) list.Model { return a.parentPicker.list }},
 		{"status picker", func(a *App) { sendKey(a, tea.KeyPressMsg{Code: 's', Text: "s"}) }, viewStatusPicker, func(a *App) list.Model { return a.statusPicker.list }},
 		{"priority picker", func(a *App) { processCmd(a, a.runAction(findAction(defaultActions, actPriority))) }, viewPriorityPicker, func(a *App) list.Model { return a.priorityPicker.list }},
 		{"estimate picker", func(a *App) { processCmd(a, a.runAction(findAction(defaultActions, actEstimate))) }, viewEstimatePicker, func(a *App) list.Model { return a.estimatePicker.list }},
 		{"blocking picker", func(a *App) { sendKey(a, tea.KeyPressMsg{Code: 'b', Text: "b"}) }, viewBlockingPicker, func(a *App) list.Model { return a.blockingPicker.list }},
-		{"tag picker", func(a *App) { a.Update(openTagPickerMsg{}) }, viewTagPicker, func(a *App) list.Model { return a.tagPicker.list }},
 		{"milestone picker", func(a *App) { pressKeys(a, "m m") }, viewAssignPicker, func(a *App) list.Model { return a.assignPicker.list }},
 		{"area picker", func(a *App) { pressKeys(a, "m a") }, viewAssignPicker, func(a *App) list.Model { return a.assignPicker.list }},
 	}
@@ -341,17 +356,16 @@ func TestTheRulesFillThePaneExactly(t *testing.T) {
 	}
 }
 
-// A tag filter can empty the list, and the header's token is then the only
-// thing on screen that says why. It comes before the default -status:closed
-// and the count, which give way to it in a narrow header.
-func TestTheTagFilterTokenOutlivesTheRestOfTheHeader(t *testing.T) {
+// A query can empty the list, and the header's tokens are then the only thing
+// on screen that says why. The count gives way to them in a narrow header.
+func TestTheQueryOutlivesTheCountInTheHeader(t *testing.T) {
 	for _, width := range []int{30, 34, 38, 46, 80, 200} {
 		t.Run(fmt.Sprint(width), func(t *testing.T) {
 			m := newListModel(&StubBackend{}, config.Default())
-			m.width, m.tagFilter = width, "needs-triage"
+			m.width, m.query = width, "tags:needs-triage"
 			line := ansiSGR.ReplaceAllString(m.header(width), "")
 			if !strings.Contains(line, "tags:needs-triage") {
-				t.Errorf("the tag filter token is absent at %d columns: %q", width, line)
+				t.Errorf("the query is absent at %d columns: %q", width, line)
 			}
 			if got := lipgloss.Width(line); got > width {
 				t.Errorf("the header is %d cells for a %d-column terminal: %q", got, width, line)

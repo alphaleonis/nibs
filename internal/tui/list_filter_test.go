@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"charm.land/bubbles/v2/list"
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
@@ -50,8 +49,8 @@ func TestList_CollapseKeysKeepAnAppliedFilter(t *testing.T) {
 			if got := len(shownRows(app)); got == before {
 				t.Fatalf("%s did not change what the tree shows (%d rows), so it never reshaped", tt.name, before)
 			}
-			if got := app.list.list.FilterState(); got != list.FilterApplied {
-				t.Errorf("after %s the filter is %v, want it applied", tt.name, got)
+			if app.list.editing || !strings.Contains(app.list.query, "Alpha") {
+				t.Errorf("after %s the box is open = %v with query %q, want Alpha applied", tt.name, app.list.editing, app.list.query)
 			}
 			for _, r := range shownRows(app) {
 				if !r.dimmed && !strings.Contains(app.list.byID[r.id].Title, "Alpha") {

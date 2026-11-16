@@ -2,6 +2,11 @@ package tui
 
 import (
 	"context"
+	"fmt"
+	"maps"
+	"reflect"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -9,6 +14,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/viewshape"
 )
 
 // Compile-time checks: both implementations must satisfy Backend.
@@ -46,6 +52,12 @@ type StubBackend struct {
 	// Blocking status
 	Blocked  map[string]bool
 	Blocking map[string]bool
+
+	// FilterIDsFn, when set, answers FilterIDs in place of the stub's own
+	// evaluation; see FilterIDs.
+	FilterIDsFn func(filter *model.NibFilter) (map[string]bool, error)
+	// FilterCalls records the filter of each FilterIDs call.
+	FilterCalls []model.NibFilter
 
 	// Error injection
 	ListErr   error
@@ -111,6 +123,45 @@ func (s *StubBackend) ListNibs(_ context.Context, _ *model.NibFilter) ([]*nib.Ni
 		return nil, s.ListErr
 	}
 	return s.AllNibs, nil
+}
+
+// FilterIDs evaluates the metadata fields as viewshape.Matches does, and a
+// search as words that must each be in the title or the id, in any letter
+// case. A search adds the hits' ancestors, as the GraphQL nibs field does. Any
+// other field fails, so a test of one sets FilterIDsFn or uses the real
+// backend.
+func (s *StubBackend) FilterIDs(_ context.Context, filter *model.NibFilter) (map[string]bool, error) {
+	s.FilterCalls = append(s.FilterCalls, *filter)
+	if s.FilterIDsFn != nil {
+		return s.FilterIDsFn(filter)
+	}
+	meta, rest := splitFilter(*filter)
+	var words []string
+	if rest != nil && rest.Search != nil {
+		words = strings.Fields(strings.ToLower(*rest.Search))
+		rest.Search = nil
+		if reflect.ValueOf(*rest).IsZero() {
+			rest = nil
+		}
+	}
+	if rest != nil {
+		return nil, fmt.Errorf("stub backend: FilterIDs does not evaluate %+v", *rest)
+	}
+	ids := make(map[string]bool)
+	for _, n := range s.AllNibs {
+		text := strings.ToLower(n.Title + " " + n.ID)
+		if viewshape.Matches(n, meta) && !slices.ContainsFunc(words, func(w string) bool { return !strings.Contains(text, w) }) {
+			ids[n.ID] = true
+		}
+	}
+	if len(words) > 0 {
+		for id := range maps.Clone(ids) {
+			for p := s.Nibs[id]; p != nil && p.Parent != "" && !ids[p.Parent]; p = s.Nibs[p.Parent] {
+				ids[p.Parent] = true
+			}
+		}
+	}
+	return ids, nil
 }
 
 func (s *StubBackend) GetParent(_ context.Context, obj *nib.Nib) (*nib.Nib, error) {

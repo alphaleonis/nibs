@@ -13,6 +13,11 @@ type Backend interface {
 	// GetNib returns (nil, nil) when no nib has the given ID.
 	GetNib(ctx context.Context, id string) (*nib.Nib, error)
 	ListNibs(ctx context.Context, filter *model.NibFilter) ([]*nib.Nib, error)
+	// FilterIDs returns the ids of the nibs the GraphQL nibs field returns for
+	// filter. With search words that is the hits and their ancestors, which
+	// the web's table counts as matches too. A filter the server refuses, such
+	// as one naming no nib, returns its error.
+	FilterIDs(ctx context.Context, filter *model.NibFilter) (map[string]bool, error)
 
 	GetParent(ctx context.Context, obj *nib.Nib) (*nib.Nib, error)
 	GetChildren(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error)

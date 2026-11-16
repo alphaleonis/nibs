@@ -209,10 +209,11 @@ func TestTheHeaderShowsTheFilterAndTheCount(t *testing.T) {
 		t.Errorf("with closed nibs shown the header = %q, want no token and %d nibs", h, matched())
 	}
 
-	_, cmd := app.Update(tagSelectedMsg{tag: "ux"})
-	processCmd(app, cmd)
+	pressKeys(app, "/")
+	typeText(app, "tags:ux")
+	pressKeys(app, "enter")
 	if h := header(); !strings.Contains(h, "tags:ux") || !strings.HasSuffix(h, fmt.Sprintf("%d nibs", matched())) {
-		t.Errorf("with a tag filter the header = %q, want tags:ux and %d nibs", h, matched())
+		t.Errorf("with a tag token the header = %q, want tags:ux and %d nibs", h, matched())
 	}
 }
 
@@ -302,12 +303,11 @@ func typeText(app *App, s string) {
 	}
 }
 
-// While a filter is typed the header keeps the tokens and the end of the query
-// in view: in the full width with the count, and in the list pane beside the
-// nib view without it.
+// While a filter is typed the header keeps the end of the query in view: in
+// the full width with the count, and in the list pane beside the nib view
+// without it.
 func TestTheFilterInputFitsTheHeader(t *testing.T) {
-	// Too long for an 80-column header with an input as wide as the pane, and
-	// within the filter input's 64-character limit.
+	// Too long for an 80-column header with a box as wide as the pane.
 	query := strings.Repeat("implement batch ", 3) + "endpoint x"
 	tests := []struct {
 		name      string
@@ -317,7 +317,8 @@ func TestTheFilterInputFitsTheHeader(t *testing.T) {
 		wantCount bool
 	}{
 		{"full width", 80, false, 80, true},
-		{"beside the nib view", 100, true, 39, false},
+		{"beside the nib view", 100, true, 39, true},
+		{"too narrow for the count", 26, false, 26, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -329,9 +330,6 @@ func TestTheFilterInputFitsTheHeader(t *testing.T) {
 			typeText(app, query)
 			line := strings.Split(app.View().Content, "\n")[1]
 			header := ansi.Strip(ansi.Truncate(line, tt.pane, ""))
-			if !strings.Contains(header, "-status:closed") {
-				t.Errorf("the %d-cell header dropped the tokens it has room for: %q", tt.pane, header)
-			}
 			if !strings.Contains(header, "endpoint x") {
 				t.Errorf("the end of the query is not in the %d-cell header: %q", tt.pane, header)
 			}

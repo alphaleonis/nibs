@@ -155,27 +155,30 @@ var listFilters = []struct {
 	target string
 }{
 	{"text query", func(t *testing.T, app *App) {
+		// The search also matches hub's parent, and typing puts the cursor on
+		// the first match.
 		pressKeys(app, "esc / H u b enter")
+		focusOn(app, "hub")
 	}, hubToRC1, "rc1"},
-	{"tag filter", func(t *testing.T, app *App) {
-		_, cmd := app.Update(tagSelectedMsg{tag: "tui"})
-		processCmd(app, cmd)
+	{"tag token", func(t *testing.T, app *App) {
+		pressKeys(app, "/")
+		typeText(app, "tags:tui")
+		pressKeys(app, "enter")
 	}, hubToRC1, "rc1"},
 	{"hide closed", func(t *testing.T, app *App) {
-		if !app.list.hideCompleted {
-			pressKeys(app, "esc z h")
+		if !strings.Contains(app.list.query, closedToken) {
+			pressKeys(app, "z h")
 		}
 	}, hubToRM, "rm"},
 }
 
 // filterState is everything that filters the list.
 type filterState struct {
-	query, tag string
-	hideClosed bool
+	query string
 }
 
 func filtersOf(app *App) filterState {
-	return filterState{query: app.list.textQuery(), tag: app.list.tagFilter, hideClosed: app.list.hideCompleted}
+	return filterState{query: app.list.query}
 }
 
 // A link to a nib the filter hides shows that nib with a note, and leaves the
@@ -229,7 +232,7 @@ func TestFollowingToAFilteredOutNibShowsItWithANote(t *testing.T) {
 }
 
 // pinnedApp follows hub's relation to rc1 in the docked view under the tag
-// filter, which leaves rc1 no row: the view shows rc1, the cursor stays on hub
+// token, which leaves rc1 no row: the view shows rc1, the cursor stays on hub
 // and the focus stays in the view.
 func pinnedApp(t *testing.T) *App {
 	t.Helper()
@@ -305,7 +308,7 @@ func TestAFilterOrViewChangeAfterAPinShowsTheCursorsNib(t *testing.T) {
 // pin and takes the list cursor to its row.
 func TestAPinnedNibThatGainsARowTakesTheCursor(t *testing.T) {
 	app := pinnedApp(t)
-	app.list.setTagFilter("")
+	app.list.query = app.list.defaultQuery
 	_, cmd := app.Update(nibsChangedMsg{})
 	processCmd(app, cmd)
 	requireAt(t, app, "after the filter cleared under the view", "rc1", "rc1")

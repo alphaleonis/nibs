@@ -93,6 +93,10 @@ func (d displayBackend) ListNibs(ctx context.Context, filter *model.NibFilter) (
 	return displayNibs(d.inner.ListNibs(ctx, filter))
 }
 
+func (d displayBackend) FilterIDs(ctx context.Context, filter *model.NibFilter) (map[string]bool, error) {
+	return d.inner.FilterIDs(ctx, filter)
+}
+
 func (d displayBackend) GetParent(ctx context.Context, obj *nib.Nib) (*nib.Nib, error) {
 	return displayOne(d.inner.GetParent(ctx, obj))
 }

@@ -29,6 +29,18 @@ func (b *RealBackend) ListNibs(ctx context.Context, filter *model.NibFilter) ([]
 	return b.resolver.Query().Nibs(ctx, filter, nil)
 }
 
+func (b *RealBackend) FilterIDs(ctx context.Context, filter *model.NibFilter) (map[string]bool, error) {
+	nibs, err := b.resolver.Query().Nibs(ctx, filter, nil)
+	if err != nil {
+		return nil, err
+	}
+	ids := make(map[string]bool, len(nibs))
+	for _, n := range nibs {
+		ids[n.ID] = true
+	}
+	return ids, nil
+}
+
 func (b *RealBackend) GetParent(ctx context.Context, obj *nib.Nib) (*nib.Nib, error) {
 	return b.resolver.Nib().Parent(ctx, obj)
 }

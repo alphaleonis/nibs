@@ -548,24 +548,18 @@ func TestKeysASecondEntryForAnActionIsIgnored(t *testing.T) {
 	}
 }
 
-// The list widget binds enter and esc to drive its filter, so a rebound
+// A picker's list widget binds enter and esc to drive its filter, so a rebound
 // input.accept or input.cancel must take them out of reach.
-func TestAReboundAcceptOrCancelIsTheOnlyKeyThatLeavesAFilter(t *testing.T) {
+func TestAReboundAcceptOrCancelIsTheOnlyKeyThatLeavesAPickerFilter(t *testing.T) {
 	const text = "tui:\n  keys:\n    input.accept: ctrl+j\n    input.cancel: ctrl+g\n"
-	ctrlJ := tea.KeyPressMsg{Code: 'j', Mod: tea.ModCtrl}
-	ctrlG := tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl}
 	tests := []struct {
 		name  string
-		open  string // the keys that reach a list with a filter
-		list  func(*App) list.Model
 		leave tea.KeyPressMsg
 		after list.FilterState
 		stale string // the default key, which must not leave
 	}{
-		{"list accept", "", func(a *App) list.Model { return a.list.list }, ctrlJ, list.FilterApplied, "enter"},
-		{"list cancel", "", func(a *App) list.Model { return a.list.list }, ctrlG, list.Unfiltered, "esc"},
-		{"status picker accept", "s", func(a *App) list.Model { return a.statusPicker.list }, ctrlJ, list.FilterApplied, "enter"},
-		{"status picker cancel", "s", func(a *App) list.Model { return a.statusPicker.list }, ctrlG, list.Unfiltered, "esc"},
+		{"accept", ctrlJ, list.FilterApplied, "enter"},
+		{"cancel", ctrlG, list.Unfiltered, "esc"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -573,18 +567,56 @@ func TestAReboundAcceptOrCancelIsTheOnlyKeyThatLeavesAFilter(t *testing.T) {
 			if !focusOn(app, "nib-4") {
 				t.Fatal("premise failed: could not focus nib-4")
 			}
-			pressKeys(app, tt.open+" / t")
-			if got := tt.list(app).FilterState(); got != list.Filtering {
+			pressKeys(app, "s / t")
+			if got := app.statusPicker.list.FilterState(); got != list.Filtering {
 				t.Fatalf("premise failed: filter state = %v after / t, want filtering", got)
 			}
 
 			pressKeys(app, tt.stale)
-			if got := tt.list(app).FilterState(); got != list.Filtering {
+			if got := app.statusPicker.list.FilterState(); got != list.Filtering {
 				t.Errorf("filter state = %v after %s, want still filtering", got, tt.stale)
 			}
 			sendKeyNonBlocking(app, tt.leave)
-			if got := tt.list(app).FilterState(); got != tt.after {
+			if got := app.statusPicker.list.FilterState(); got != tt.after {
 				t.Errorf("filter state = %v after %s, want %v", got, tt.leave, tt.after)
+			}
+		})
+	}
+}
+
+var (
+	ctrlJ = tea.KeyPressMsg{Code: 'j', Mod: tea.ModCtrl}
+	ctrlG = tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl}
+)
+
+// The filter box leaves only on the keys input.accept and input.cancel are
+// bound to.
+func TestAReboundAcceptOrCancelIsTheOnlyKeyThatLeavesTheFilterBox(t *testing.T) {
+	const text = "tui:\n  keys:\n    input.accept: ctrl+j\n    input.cancel: ctrl+g\n"
+	tests := []struct {
+		name      string
+		leave     tea.KeyPressMsg
+		stale     string // the default key, which must not leave
+		wantQuery string
+	}{
+		{"accept", ctrlJ, "enter", closedToken + " x"},
+		{"cancel", ctrlG, "esc", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := setupTestAppWithUserConfig(t, listKeysNibs(), config.Default(), text)
+			pressKeys(app, "/ x")
+			if !app.list.editing || app.keyContext() != ctxFilterBox {
+				t.Fatalf("premise failed: after / x the box is open = %v in the %s", app.list.editing, app.keyContext())
+			}
+
+			pressKeys(app, tt.stale)
+			if !app.list.editing {
+				t.Errorf("%s closed the box", tt.stale)
+			}
+			sendKeyNonBlocking(app, tt.leave)
+			if app.list.editing || app.list.query != tt.wantQuery {
+				t.Errorf("after %s the box is open = %v with query %q, want closed with %q", tt.leave, app.list.editing, app.list.query, tt.wantQuery)
 			}
 		})
 	}

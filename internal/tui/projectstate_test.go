@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/config"
@@ -149,27 +148,32 @@ func TestANeverOpenedProjectOpensOnMilestones(t *testing.T) {
 	}
 }
 
-// Rows: groupedNibs in Areas under the query "o", which t1 (One), t2 (Two)
-// and t4 (Four) match.
+// Rows: groupedNibs in Areas under the query "type:task o", which t1 (One),
+// t2 (Two) and t4 (Four) match. The state file holds the whole query, the
+// tokens included.
 func TestARelaunchReopensTheViewAndTheQuery(t *testing.T) {
-	isolateStateDir(t)
+	dir := isolateStateDir(t)
 	root := newStoreDir(t)
 	first := sessionOn(t, root)
-	pressKeys(first, "v a /")
-	typeText(first, "o")
+	pressKeys(first, "v a / ctrl+u")
+	typeText(first, "type:task o -tags:wip")
 	pressKeys(first, "enter")
-	if first.list.level != viewshape.LevelAreas || first.list.list.FilterState() != list.FilterApplied {
-		t.Fatalf("premise failed: the first session shows %q in filter state %v", first.list.level, first.list.list.FilterState())
+	const query = "type:task -tags:wip o"
+	if first.list.level != viewshape.LevelAreas || first.list.editing || first.list.query != query {
+		t.Fatalf("premise failed: the first session shows %q with the box open = %v and query %q", first.list.level, first.list.editing, first.list.query)
 	}
 	want := rowIDs(first)
+	if data, err := os.ReadFile(stateFileOf(dir, root)); err != nil || !strings.Contains(string(data), "query: "+query+"\n") {
+		t.Errorf("the state file holds %q (%v), want the query %q", data, err, query)
+	}
 
 	again := sessionOn(t, root)
 
 	if again.list.level != viewshape.LevelAreas {
 		t.Errorf("the relaunch opened on %q, want Areas", again.list.level)
 	}
-	if again.list.list.FilterState() != list.FilterApplied || again.list.textQuery() != "o" {
-		t.Errorf("the relaunch has query %q in filter state %v, want o applied", again.list.textQuery(), again.list.list.FilterState())
+	if again.list.editing || again.list.query != query {
+		t.Errorf("the relaunch has query %q with the box open = %v, want %q applied", again.list.query, again.list.editing, query)
 	}
 	if got := rowIDs(again); !slices.Equal(got, want) {
 		t.Errorf("the relaunch shows rows %v, want %v", got, want)
@@ -179,19 +183,48 @@ func TestARelaunchReopensTheViewAndTheQuery(t *testing.T) {
 	}
 }
 
+// esc in the box empties the query, -status:closed included, and a relaunch
+// keeps it empty rather than opening on the default query.
 func TestClearingTheQueryIsRemembered(t *testing.T) {
 	isolateStateDir(t)
 	root := newStoreDir(t)
 	first := sessionOn(t, root)
 	pressKeys(first, "/")
 	typeText(first, "o")
-	pressKeys(first, "enter esc")
-	if first.list.list.FilterState() != list.Unfiltered {
-		t.Fatalf("premise failed: esc left filter state %v", first.list.list.FilterState())
+	pressKeys(first, "enter / esc")
+	if first.list.editing || first.list.query != "" {
+		t.Fatalf("premise failed: esc left the box open = %v with query %q", first.list.editing, first.list.query)
 	}
 
-	if again := sessionOn(t, root); again.list.list.FilterState() != list.Unfiltered {
-		t.Errorf("the relaunch has query %q, want none", again.list.textQuery())
+	if again := sessionOn(t, root); again.list.query != "" {
+		t.Errorf("the relaunch has query %q, want none", again.list.query)
+	}
+}
+
+// A version 1 file holds only the words of a text filter, which match the same
+// nibs as search words, and the config decided whether closed nibs showed.
+func TestAVersion1StateFileOpensWithItsWordsAfterTheDefaultQuery(t *testing.T) {
+	shown := config.Default()
+	shown.Nibs.HideCompleted = new(bool)
+	for name, tt := range map[string]struct {
+		cfg  *config.Config
+		want string
+	}{
+		"closed hidden": {config.Default(), closedToken + " o"},
+		"closed shown":  {shown, "o"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := isolateStateDir(t)
+			root := newStoreDir(t)
+			writeFile(t, stateFileOf(dir, root), "version: 1\nview: areas\nquery: o\n")
+
+			app := startSession(t, newGroupedStub(t, root), tt.cfg, config.UserLayer{})
+
+			if app.list.level != viewshape.LevelAreas || app.list.query != tt.want || app.list.statusMessage != "" {
+				t.Errorf("the session opened on %q with query %q and status %q, want Areas with %q and no warning",
+					app.list.level, app.list.query, app.list.statusMessage, tt.want)
+			}
+		})
 	}
 }
 
@@ -208,18 +241,18 @@ func TestAQueryWithFormatOrSpaceRunesReopens(t *testing.T) {
 			isolateStateDir(t)
 			root := newStoreDir(t)
 			first := sessionOn(t, root)
-			pressKeys(first, "v a /")
+			pressKeys(first, "v a / ctrl+u")
 			typeText(first, query)
 			pressKeys(first, "enter")
-			if first.list.textQuery() != query {
-				t.Fatalf("premise failed: the filter input holds %q, want %q", first.list.textQuery(), query)
+			if first.list.query != canonicalQuery(query, nil) {
+				t.Fatalf("premise failed: the query is %q, want %q", first.list.query, canonicalQuery(query, nil))
 			}
 
 			again := sessionOn(t, root)
 
-			if again.list.level != viewshape.LevelAreas || again.list.textQuery() != query || again.list.statusMessage != "" {
+			if again.list.level != viewshape.LevelAreas || again.list.query != first.list.query || again.list.statusMessage != "" {
 				t.Errorf("the relaunch opened on %q with query %q and status %q, want Areas with %q and no warning",
-					again.list.level, again.list.textQuery(), again.list.statusMessage, query)
+					again.list.level, again.list.query, again.list.statusMessage, first.list.query)
 			}
 		})
 	}
@@ -275,7 +308,7 @@ func TestAMalformedStateFileOpensOnTheDefaultsWithAWarning(t *testing.T) {
 	}{
 		{name: "not YAML", content: "version: [1\n"},
 		{name: "no version", content: "view: areas\nquery: o\n"},
-		{name: "another version", content: "version: 2\nview: areas\nquery: o\n"},
+		{name: "another version", content: "version: 3\nview: areas\nquery: o\n"},
 		{name: "an unknown view", content: "version: 1\nview: epics\nquery: o\n"},
 		{name: "a query that drives the terminal", content: "version: 1\nview: areas\nquery: \"\\e[31mo\"\n"},
 		{name: "a query of invalid UTF-8", content: "version: 1\nview: areas\nquery: o\xff\n"},
@@ -289,8 +322,8 @@ func TestAMalformedStateFileOpensOnTheDefaultsWithAWarning(t *testing.T) {
 
 			app := sessionOn(t, root)
 
-			if app.list.level != viewshape.LevelMilestones || app.list.textQuery() != "" {
-				t.Errorf("the session opened on %q with query %q, want Milestones and none", app.list.level, app.list.textQuery())
+			if app.list.level != viewshape.LevelMilestones || app.list.query != closedToken {
+				t.Errorf("the session opened on %q with query %q, want Milestones and %s", app.list.level, app.list.query, closedToken)
 			}
 			if app.list.statusKind != statusWarn || !strings.Contains(app.list.statusMessage, "malformed") {
 				t.Errorf("the status line reads %q, want a warning that the state file is malformed", app.list.statusMessage)
@@ -318,13 +351,13 @@ func TestAMalformedStateFileWarnsBesideAUserConfigWarning(t *testing.T) {
 func TestAStateFileWithAnUnknownFieldStillApplies(t *testing.T) {
 	dir := isolateStateDir(t)
 	root := newStoreDir(t)
-	writeFile(t, stateFileOf(dir, root), "version: 1\nview: areas\nquery: o\nfolds: [t1]\n")
+	writeFile(t, stateFileOf(dir, root), "version: 2\nview: areas\nquery: o\nfolds: [t1]\n")
 
 	app := sessionOn(t, root)
 
-	if app.list.level != viewshape.LevelAreas || app.list.textQuery() != "o" || app.list.statusMessage != "" {
+	if app.list.level != viewshape.LevelAreas || app.list.query != "o" || app.list.statusMessage != "" {
 		t.Errorf("the session opened on %q with query %q and status %q, want Areas with o and no warning",
-			app.list.level, app.list.textQuery(), app.list.statusMessage)
+			app.list.level, app.list.query, app.list.statusMessage)
 	}
 }
 
@@ -388,7 +421,7 @@ func TestTheStateFileIsWrittenOutsideTheStoreAndTheProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, line := range []string{"version: 1", "view: areas", "query: api"} {
+	for _, line := range []string{"version: 2", "view: areas", "query: " + closedToken + " api"} {
 		if !strings.Contains(string(data), line+"\n") {
 			t.Errorf("the state file lacks %q:\n%s", line, data)
 		}
@@ -471,8 +504,8 @@ func TestAStateDirectoryInsideTheProjectIsRefused(t *testing.T) {
 
 			app := sessionOn(t, store)
 
-			if app.list.level != viewshape.LevelMilestones || app.list.textQuery() != "" {
-				t.Errorf("the session read the planted state file: it opened on %q with query %q", app.list.level, app.list.textQuery())
+			if app.list.level != viewshape.LevelMilestones || app.list.query != closedToken {
+				t.Errorf("the session read the planted state file: it opened on %q with query %q", app.list.level, app.list.query)
 			}
 			if !strings.Contains(app.list.statusMessage, "not remembered") {
 				t.Errorf("the status line reads %q, want a warning that nothing is remembered", app.list.statusMessage)

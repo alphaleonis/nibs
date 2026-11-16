@@ -30,7 +30,7 @@ const (
 	reorderReasonInParentCycle     = "Can't move: that nib is in a parent cycle — run nibs check"
 	reorderReasonFlat              = "Can't move in Flat: switch to Tree or Milestones to reorder"
 	reorderReasonAreas             = "Can't move in Areas: switch to Tree or Milestones to reorder"
-	reorderReasonTextFilter        = "Can't move while a text filter is on: clear it to reorder"
+	reorderReasonSearch            = "Can't move while the filter searches text: remove its words to reorder"
 )
 
 // moveDir is where a reorder moves rows within their ordering group.

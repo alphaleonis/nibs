@@ -26,13 +26,16 @@ const (
 	ctxEstimatePicker
 	ctxMilestonePicker
 	ctxAreaPicker
-	ctxTagPicker
 	ctxModifyPicker
 	ctxColumnPicker
 	ctxViewPicker
 	ctxConfirm
-	// ctxFilterInput is a list's filter while it is being typed.
+	// ctxFilterInput is a picker's filter while it is being typed.
 	ctxFilterInput
+	// ctxFilterBox is the list's filter box while it is open and offers no
+	// completions, and ctxFilterMenu while it does.
+	ctxFilterBox
+	ctxFilterMenu
 	// ctxTextInput is any other focused text box, such as the create modal.
 	ctxTextInput
 	// ctxPalette is the ? overlay, whose query box takes every key no action
@@ -53,12 +56,13 @@ var keyContextNames = [numKeyContexts]string{
 	ctxEstimatePicker:  "estimate picker",
 	ctxMilestonePicker: "milestone picker",
 	ctxAreaPicker:      "area picker",
-	ctxTagPicker:       "tag picker",
 	ctxModifyPicker:    "modify picker",
 	ctxColumnPicker:    "column picker",
 	ctxViewPicker:      "view picker",
 	ctxConfirm:         "confirm dialog",
 	ctxFilterInput:     "filter input",
+	ctxFilterBox:       "filter box",
+	ctxFilterMenu:      "filter completions",
 	ctxTextInput:       "text input",
 	ctxPalette:         "action palette",
 }
@@ -74,64 +78,67 @@ func (c keyContext) String() string {
 type actionName string
 
 const (
-	actUp            actionName = "move.up"
-	actDown          actionName = "move.down"
-	actPageUp        actionName = "move.page_up"
-	actPageDown      actionName = "move.page_down"
-	actTop           actionName = "move.top"
-	actBottom        actionName = "move.bottom"
-	actFoldRow       actionName = "fold.row"
-	actUnfoldRow     actionName = "unfold.row"
-	actFoldSubtree   actionName = "fold.subtree"
-	actUnfoldSubtree actionName = "unfold.subtree"
-	actFoldAll       actionName = "fold.all"
-	actUnfoldAll     actionName = "unfold.all"
-	actFocusNext     actionName = "focus.next"
-	actFocusPrev     actionName = "focus.previous"
-	actOpen          actionName = "go.open"
-	actLeave         actionName = "go.leave"
-	actJumpBack      actionName = "go.back"
-	actGoParent      actionName = "go.parent"
-	actSelect        actionName = "nib.select"
-	actCreate        actionName = "nib.create"
-	actEdit          actionName = "nib.edit"
-	actStatus        actionName = "nib.status"
-	actType          actionName = "nib.type"
-	actParent        actionName = "nib.parent"
-	actBlocking      actionName = "nib.blocking"
-	actPriority      actionName = "nib.priority"
-	actEstimate      actionName = "nib.estimate"
-	actModify        actionName = "nib.modify"
-	actMoveUp        actionName = "nib.move_up"
-	actMoveDown      actionName = "nib.move_down"
-	actMoveTop       actionName = "nib.move_top"
-	actMoveBottom    actionName = "nib.move_bottom"
-	actArchive       actionName = "nib.archive"
-	actDelete        actionName = "nib.delete"
-	actCopyID        actionName = "nib.copy_id"
-	actConfirmYes    actionName = "confirm.yes"
-	actConfirmNo     actionName = "confirm.no"
-	actHideClosed    actionName = "view.hide_closed"
-	actNibView       actionName = "view.nib"
-	actNibPlacement  actionName = "view.nib_placement"
-	actNibScrollUp   actionName = "view.nib_scroll_up"
-	actNibScrollDown actionName = "view.nib_scroll_down"
-	actColumns       actionName = "view.columns"
-	actViewPick      actionName = "view.pick"
-	actViewNext      actionName = "view.next"
-	actViewPrevious  actionName = "view.previous"
-	actFilter        actionName = "filter.text"
-	actFilterApply   actionName = "filter.apply"
-	actTagFilter     actionName = "filter.tags"
-	actInputAccept   actionName = "input.accept"
-	actInputCancel   actionName = "input.cancel"
-	actHelp          actionName = "app.help"
-	actPaletteUp     actionName = "palette.up"
-	actPaletteDown   actionName = "palette.down"
-	actPaletteRun    actionName = "palette.run"
-	actPaletteClose  actionName = "palette.close"
-	actQuit          actionName = "app.quit"
-	actForceQuit     actionName = "app.force_quit"
+	actUp               actionName = "move.up"
+	actDown             actionName = "move.down"
+	actPageUp           actionName = "move.page_up"
+	actPageDown         actionName = "move.page_down"
+	actTop              actionName = "move.top"
+	actBottom           actionName = "move.bottom"
+	actFoldRow          actionName = "fold.row"
+	actUnfoldRow        actionName = "unfold.row"
+	actFoldSubtree      actionName = "fold.subtree"
+	actUnfoldSubtree    actionName = "unfold.subtree"
+	actFoldAll          actionName = "fold.all"
+	actUnfoldAll        actionName = "unfold.all"
+	actFocusNext        actionName = "focus.next"
+	actFocusPrev        actionName = "focus.previous"
+	actOpen             actionName = "go.open"
+	actLeave            actionName = "go.leave"
+	actJumpBack         actionName = "go.back"
+	actGoParent         actionName = "go.parent"
+	actSelect           actionName = "nib.select"
+	actCreate           actionName = "nib.create"
+	actEdit             actionName = "nib.edit"
+	actStatus           actionName = "nib.status"
+	actType             actionName = "nib.type"
+	actParent           actionName = "nib.parent"
+	actBlocking         actionName = "nib.blocking"
+	actPriority         actionName = "nib.priority"
+	actEstimate         actionName = "nib.estimate"
+	actModify           actionName = "nib.modify"
+	actMoveUp           actionName = "nib.move_up"
+	actMoveDown         actionName = "nib.move_down"
+	actMoveTop          actionName = "nib.move_top"
+	actMoveBottom       actionName = "nib.move_bottom"
+	actArchive          actionName = "nib.archive"
+	actDelete           actionName = "nib.delete"
+	actCopyID           actionName = "nib.copy_id"
+	actConfirmYes       actionName = "confirm.yes"
+	actConfirmNo        actionName = "confirm.no"
+	actHideClosed       actionName = "view.hide_closed"
+	actNibView          actionName = "view.nib"
+	actNibPlacement     actionName = "view.nib_placement"
+	actNibScrollUp      actionName = "view.nib_scroll_up"
+	actNibScrollDown    actionName = "view.nib_scroll_down"
+	actColumns          actionName = "view.columns"
+	actViewPick         actionName = "view.pick"
+	actViewNext         actionName = "view.next"
+	actViewPrevious     actionName = "view.previous"
+	actFilter           actionName = "filter.text"
+	actFilterApply      actionName = "filter.apply"
+	actComplete         actionName = "filter.complete"
+	actCompleteNext     actionName = "filter.complete_next"
+	actCompletePrevious actionName = "filter.complete_previous"
+	actCompleteClose    actionName = "filter.complete_close"
+	actInputAccept      actionName = "input.accept"
+	actInputCancel      actionName = "input.cancel"
+	actHelp             actionName = "app.help"
+	actPaletteUp        actionName = "palette.up"
+	actPaletteDown      actionName = "palette.down"
+	actPaletteRun       actionName = "palette.run"
+	actPaletteClose     actionName = "palette.close"
+	actQuit             actionName = "app.quit"
+	actForceQuit        actionName = "app.force_quit"
 )
 
 // actionState is what an action's Hint, Label and Ready read: the app as it is
@@ -141,7 +148,7 @@ type actionState struct {
 	prefix         string // the pending prefix, or "" when none is
 	hasNib         bool   // a nib is under the list cursor, or the nib view shows one
 	selected       int    // nibs marked in the list
-	filtered       bool   // a tag or text filter narrows the list
+	filtered       bool   // the list's query differs from its default query
 	relationsShown bool   // the nib view draws a related nib
 	onDocument     bool   // the nib view's relations cursor is on a document
 	docked         bool   // the list is on screen with the nib view docked
@@ -171,12 +178,14 @@ type action struct {
 var (
 	nibContexts   = []keyContext{ctxList, ctxNibRelations, ctxNibBody}
 	nibViewCtx    = []keyContext{ctxNibRelations, ctxNibBody}
-	listPickers   = []keyContext{ctxStatusPicker, ctxParentPicker, ctxBlockingPicker, ctxPriorityPicker, ctxEstimatePicker, ctxMilestonePicker, ctxAreaPicker, ctxTagPicker}
+	listPickers   = []keyContext{ctxStatusPicker, ctxParentPicker, ctxBlockingPicker, ctxPriorityPicker, ctxEstimatePicker, ctxMilestonePicker, ctxAreaPicker}
 	allPickers    = append([]keyContext{ctxTypePicker, ctxModifyPicker, ctxColumnPicker, ctxViewPicker}, listPickers...)
 	browsing      = slices.Concat(nibContexts, allPickers)
 	everyContext  = allKeyContexts()
 	filterTargets = slices.Concat([]keyContext{ctxList}, listPickers)
-	textInputs    = []keyContext{ctxFilterInput, ctxTextInput}
+	textInputs    = []keyContext{ctxFilterInput, ctxFilterBox, ctxFilterMenu, ctxTextInput}
+	// filterBoxes are the list's filter box with its menu closed and open.
+	filterBoxes = []keyContext{ctxFilterBox, ctxFilterMenu}
 )
 
 func allKeyContexts() []keyContext {
@@ -246,7 +255,7 @@ func labelLeave(st actionState) string {
 	case marking(st):
 		return "clear"
 	case st.ctx == ctxList:
-		return "clear filter"
+		return "reset filter"
 	case inNibView(st):
 		return "back"
 	}
@@ -258,6 +267,13 @@ func labelAccept(st actionState) string {
 		return "create"
 	}
 	return "apply"
+}
+
+func labelCancel(st actionState) string {
+	if st.ctx == ctxFilterBox {
+		return "clear"
+	}
+	return "cancel"
 }
 
 // readyOnNib needs a nib under the cursor, or the one the nib view shows.
@@ -361,7 +377,7 @@ var defaultActions = []action{
 
 	{Name: actOpen, Group: "Go", Desc: "open", Contexts: slices.Concat(nibContexts, allPickers), Keys: []string{"enter"},
 		Hint: hintOutsideMarking, Label: labelOpen, Ready: readyToOpen},
-	{Name: actLeave, Group: "Go", Desc: "leave, or clear the selection or filter", Contexts: slices.Concat(browsing, []keyContext{ctxConfirm}), Keys: []string{"esc"},
+	{Name: actLeave, Group: "Go", Desc: "leave, or clear the selection or reset the filter", Contexts: slices.Concat(browsing, []keyContext{ctxConfirm}), Keys: []string{"esc"},
 		Hint: hintLeave, Label: labelLeave},
 	{Name: actJumpBack, Group: "Go", Desc: "jump back", Contexts: nibContexts, Keys: []string{"backspace"},
 		Hint: inNibView, Ready: readyToJumpBack},
@@ -407,10 +423,14 @@ var defaultActions = []action{
 	{Name: actViewPrevious, Group: "View", Desc: "show the previous view", Contexts: []keyContext{ctxList}},
 
 	{Name: actFilter, Group: "Find", Desc: "filter", Contexts: filterTargets, Keys: []string{"/"}, Hint: hintFilter},
-	{Name: actTagFilter, Group: "Find", Desc: "filter by tag", Contexts: []keyContext{ctxList}, Keys: []string{"g t"}},
-	{Name: actFilterApply, Group: "Find", Desc: "apply the filter", Contexts: []keyContext{ctxFilterInput}, Keys: []string{"up", "down"}},
+	{Name: actFilterApply, Group: "Find", Desc: "apply the filter", Contexts: []keyContext{ctxFilterInput, ctxFilterBox}, Keys: []string{"up", "down"}},
 	{Name: actInputAccept, Group: "Find", Desc: "accept", Contexts: textInputs, Keys: []string{"enter"}, Hint: hintAlways, Label: labelAccept},
-	{Name: actInputCancel, Group: "Find", Desc: "cancel", Contexts: textInputs, Keys: []string{"esc"}, Hint: hintAlways},
+	{Name: actInputCancel, Group: "Find", Desc: "cancel, or clear the filter box", Contexts: []keyContext{ctxFilterInput, ctxFilterBox, ctxTextInput}, Keys: []string{"esc"},
+		Hint: hintAlways, Label: labelCancel},
+	{Name: actComplete, Group: "Find", Desc: "complete the token", Contexts: filterBoxes, Keys: []string{"tab"}, Hint: hintAlways, Label: label("complete")},
+	{Name: actCompleteNext, Group: "Find", Desc: "highlight the next completion", Contexts: []keyContext{ctxFilterMenu}, Keys: []string{"down"}},
+	{Name: actCompletePrevious, Group: "Find", Desc: "highlight the previous completion", Contexts: []keyContext{ctxFilterMenu}, Keys: []string{"up"}},
+	{Name: actCompleteClose, Group: "Find", Desc: "close the completions", Contexts: []keyContext{ctxFilterMenu}, Keys: []string{"esc"}, Hint: hintAlways, Label: label("close")},
 
 	{Name: actHelp, Group: "App", Desc: "list and run actions", Contexts: browsing, Keys: []string{"?"}, Hint: hintAlways, Label: label("help")},
 	{Name: actQuit, Group: "App", Desc: "quit", Contexts: browsing, Keys: []string{"q"},

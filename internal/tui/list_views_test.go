@@ -407,7 +407,7 @@ func TestGroupedViewsShowTheSectionsViewshapeShapes(t *testing.T) {
 				t.Fatal(err)
 			}
 			rows, err := viewshape.Shape(nibs, viewshape.View{
-				Level: app.list.level, Filter: app.list.filter(), Sort: viewshape.SortOrder, Areas: app.list.backend.Areas(),
+				Level: app.list.level, Filter: app.list.filter.meta, Sort: viewshape.SortOrder, Areas: app.list.backend.Areas(),
 			})
 			if err != nil {
 				t.Fatal(err)

@@ -20,19 +20,27 @@ import (
 )
 
 // rememberedView is what the TUI remembers of a project between launches: the
-// view and the text filter's applied query, or "" for none.
+// view and the filter's applied query, or "" for none.
 type rememberedView struct {
 	level viewshape.Level
 	query string
 }
 
-// defaultView is the view a project opens on when the TUI remembers nothing
-// of it.
-var defaultView = rememberedView{level: viewshape.LevelMilestones}
+// defaultView returns the view a project opens on when the TUI remembers
+// nothing of it, with query as its filter.
+func defaultView(query string) rememberedView {
+	return rememberedView{level: viewshape.LevelMilestones, query: query}
+}
 
-// stateFileVersion is the format version the state file is written in. A file
-// of any other version is malformed.
-const stateFileVersion = 1
+// stateFileVersion is the format version the state file is written in.
+// parseStateFile also reads stateFileVersion1, and a file of any other version
+// is malformed.
+const stateFileVersion = 2
+
+// stateFileVersion1 is the format whose query is only the words of a text
+// filter, which matched a nib's title or id. Closed nibs were hidden or not by
+// the config, outside the query.
+const stateFileVersion1 = 1
 
 // stateFile is the YAML a state file holds.
 type stateFile struct {
@@ -54,14 +62,16 @@ type projectMemory struct {
 }
 
 // openProjectMemory returns the state file of the store at root, and the view
-// it remembers.
+// it remembers. defaultQuery is the query of the default view, and what a
+// version 1 file's words are added to.
 //
 // A missing or unreadable file remembers defaultView. So does a malformed one,
 // and warning then says so for the status line; otherwise warning is "". The
 // memory is nil when the OS gives no user state directory, and when
 // refusedStateDir refuses the nibs directory in it that holds the state files.
 // warning says so in the second case.
-func openProjectMemory(root string) (memory *projectMemory, view rememberedView, warning string) {
+func openProjectMemory(root, defaultQuery string) (memory *projectMemory, view rememberedView, warning string) {
+	defaultView := defaultView(defaultQuery)
 	dir, err := userStateDir()
 	if err != nil {
 		return nil, defaultView, ""
@@ -77,7 +87,7 @@ func openProjectMemory(root string) (memory *projectMemory, view rememberedView,
 	if err != nil {
 		return memory, defaultView, ""
 	}
-	view, ok := parseStateFile(data)
+	view, ok := parseStateFile(data, defaultQuery)
 	if !ok {
 		return memory, defaultView, fmt.Sprintf("Opened on %s: the state file %s is malformed",
 			levelNames[defaultView.level], safetext.Strip(memory.path))
@@ -100,8 +110,9 @@ func refusedStateDir(stateDir, store, project string) bool {
 }
 
 // parseStateFile returns the view a state file's content remembers, and false
-// when the content is malformed.
-func parseStateFile(data []byte) (rememberedView, bool) {
+// when the content is malformed. A version 1 file's words become search words
+// after defaultQuery, which then stands for the config's closed filter.
+func parseStateFile(data []byte, defaultQuery string) (rememberedView, bool) {
 	var f stateFile
 	if err := yaml.Unmarshal(data, &f); err != nil {
 		return rememberedView{}, false
@@ -110,10 +121,15 @@ func parseStateFile(data []byte) (rememberedView, bool) {
 	// The filter input turns a tab or a line break into a space and drops every
 	// other control rune, so a query holding one was not saved from it:
 	// https://github.com/charmbracelet/bubbles/blob/v2.1.1/internal/runeutil/runeutil.go#L88
-	if f.Version != stateFileVersion || !slices.Contains(levels, level) || strings.ContainsFunc(f.Query, unicode.IsControl) {
+	if (f.Version != stateFileVersion && f.Version != stateFileVersion1) ||
+		!slices.Contains(levels, level) || strings.ContainsFunc(f.Query, unicode.IsControl) {
 		return rememberedView{}, false
 	}
-	return rememberedView{level: level, query: f.Query}, true
+	query := f.Query
+	if f.Version == stateFileVersion1 {
+		query = strings.TrimSpace(defaultQuery + " " + f.Query)
+	}
+	return rememberedView{level: level, query: query}, true
 }
 
 // save writes view to the state file when it differs from what the file was

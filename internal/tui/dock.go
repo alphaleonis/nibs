@@ -138,11 +138,11 @@ func (a *App) syncDock() {
 	p := a.dockPlacement()
 	if p == "" {
 		a.docked.active = false
-		a.list.setPane(0, 0)
+		a.list.setPane(0)
 		return
 	}
 	list, _ := dockSizes(p, a.width, a.height-a.list.footerHeight())
-	a.list.setPane(list.width, list.height)
+	a.list.setPane(list.height)
 	a.syncDocked()
 }
 

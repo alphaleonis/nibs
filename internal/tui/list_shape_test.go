@@ -1,17 +1,18 @@
 package tui
 
 import (
+	"fmt"
 	"maps"
 	"slices"
 	"strings"
 	"testing"
 
-	"charm.land/bubbles/v2/list"
+	tea "charm.land/bubbletea/v2"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/viewshape"
 )
 
-// shapeNibs is a tree whose only nested match for "zeta" is t1:
+// shapeNibs is a tree whose only nested match for zetaToken is t1:
 //
 //	e1 Epic
 //	  f1 Feature
@@ -22,11 +23,21 @@ func shapeNibs() []*nib.Nib {
 	return []*nib.Nib{
 		{ID: "e1", Title: "Epic", Type: "epic", Status: "todo", Order: "a0"},
 		{ID: "f1", Title: "Feature", Type: "feature", Status: "todo", Parent: "e1", Order: "a1"},
-		{ID: "t1", Title: "Write the zeta docs", Type: "task", Status: "todo", Parent: "f1", Order: "a2"},
+		{ID: "t1", Title: "Write the zeta docs", Type: "task", Status: "todo", Parent: "f1", Order: "a2", Tags: []string{"zeta"}},
 		{ID: "t2", Title: "Other", Type: "task", Status: "todo", Parent: "f1", Order: "a3"},
-		{ID: "r1", Title: "zeta", Type: "task", Status: "todo", Order: "a4"},
+		{ID: "r1", Title: "zeta", Type: "task", Status: "todo", Order: "a4", Tags: []string{"zeta"}},
 	}
 }
+
+// pasteText pastes s into the app, one change however long s is.
+func pasteText(app *App, s string) {
+	_, cmd := app.Update(tea.PasteMsg{Content: s})
+	processCmdNonBlocking(app, cmd)
+}
+
+// zetaToken selects t1 and r1 of shapeNibs. It is a field token, because
+// search words would also match the hits' ancestors; see listModel.evaluate.
+const zetaToken = "tags:zeta"
 
 // shownRow is a row of the list as the tests compare it.
 type shownRow struct {
@@ -46,7 +57,7 @@ func shownRows(app *App) []shownRow {
 func TestATreeFilterKeepsAncestorsDimmedInTreeOrder(t *testing.T) {
 	app, _ := setupTestApp(t, shapeNibs())
 	pressKeys(app, "/")
-	typeText(app, "ZETA")
+	typeText(app, strings.ToUpper(zetaToken))
 
 	want := []shownRow{{"e1", true}, {"f1", true}, {"t1", false}, {"r1", false}}
 	if got := shownRows(app); !slices.Equal(got, want) {
@@ -56,7 +67,8 @@ func TestATreeFilterKeepsAncestorsDimmedInTreeOrder(t *testing.T) {
 
 func TestFlatShowsOnlyMatches(t *testing.T) {
 	app, _ := setupTestApp(t, shapeNibs())
-	pressKeys(app, "v f / z e t a")
+	pressKeys(app, "v f /")
+	typeText(app, zetaToken)
 
 	if app.list.level != viewshape.LevelFlat {
 		t.Fatalf("premise failed: v left the list at level %q", app.list.level)
@@ -84,8 +96,8 @@ func TestTheTextFilterKeepsTreeOrder(t *testing.T) {
 		typeText(app, "zeta")
 		if accept {
 			pressKeys(app, "enter")
-			if app.list.list.FilterState() != list.FilterApplied {
-				t.Fatalf("premise failed: enter left the filter %v", app.list.list.FilterState())
+			if app.list.editing {
+				t.Fatal("premise failed: enter left the filter box open")
 			}
 		}
 		want := []shownRow{{"n1", false}, {"n3", false}}
@@ -98,7 +110,7 @@ func TestTheTextFilterKeepsTreeOrder(t *testing.T) {
 func TestDimmedRowsAreNotCounted(t *testing.T) {
 	app, _ := setupTestApp(t, shapeNibs())
 	pressKeys(app, "/")
-	typeText(app, "zeta")
+	typeText(app, zetaToken)
 	pressKeys(app, "enter")
 
 	if got := headerCount(t, app); got != "2" {
@@ -109,7 +121,7 @@ func TestDimmedRowsAreNotCounted(t *testing.T) {
 func TestFoldingADimmedAncestorHidesTheMatchBeneath(t *testing.T) {
 	app, _ := setupTestApp(t, shapeNibs())
 	pressKeys(app, "/")
-	typeText(app, "zeta")
+	typeText(app, zetaToken)
 	pressKeys(app, "enter home")
 	if !focusOn(app, "e1") {
 		t.Fatal("premise failed: could not focus e1")
@@ -130,19 +142,19 @@ func TestFoldingADimmedAncestorHidesTheMatchBeneath(t *testing.T) {
 func TestTypingAQueryFocusesTheFirstMatch(t *testing.T) {
 	app, _ := setupTestApp(t, shapeNibs())
 	pressKeys(app, "/")
-	typeText(app, "zeta")
+	typeText(app, zetaToken)
 	if got := selectedID(app); got != "t1" {
 		t.Errorf("the cursor is on %q, want the first match t1", got)
 	}
 }
 
 func TestAReloadKeepsTheCursorFoldsAndFilter(t *testing.T) {
-	for _, state := range []list.FilterState{list.Filtering, list.FilterApplied} {
-		t.Run(state.String(), func(t *testing.T) {
+	for _, applied := range []bool{false, true} {
+		t.Run(fmt.Sprintf("applied=%v", applied), func(t *testing.T) {
 			app, stub := setupTestApp(t, shapeNibs())
 			pressKeys(app, "/")
-			typeText(app, "e")
-			pressKeys(app, "enter")
+			typeText(app, zetaToken)
+			pressKeys(app, "enter home")
 			if !focusOn(app, "f1") {
 				t.Fatal("premise failed: could not focus f1")
 			}
@@ -151,23 +163,23 @@ func TestAReloadKeepsTheCursorFoldsAndFilter(t *testing.T) {
 				t.Fatal("premise failed: could not focus r1")
 			}
 			pressKeys(app, "/")
-			typeText(app, "t")
-			if state == list.FilterApplied {
+			typeText(app, "-tags:wip")
+			if applied {
 				pressKeys(app, "enter")
 			}
 			if !focusOn(app, "r1") {
 				t.Fatal("premise failed: could not focus r1 under the query")
 			}
-			rows := shownRows(app)
+			rows, query := shownRows(app), app.list.queryText()
 
 			// A match ahead of every row moves each row down one.
-			stub.AllNibs = append(stub.AllNibs, &nib.Nib{ID: "z0", Title: "Beta", Type: "task", Status: "todo", Order: "0"})
+			stub.AllNibs = append(stub.AllNibs, &nib.Nib{ID: "z0", Title: "Beta", Type: "task", Status: "todo", Order: "0", Tags: []string{"zeta"}})
 			rows = append([]shownRow{{"z0", false}}, rows...)
 			_, cmd := app.Update(nibsChangedMsg{})
 			processCmd(app, cmd)
 
-			if got := app.list.list.FilterState(); got != state || app.list.list.FilterValue() != "et" {
-				t.Errorf("after the reload the filter is %v %q, want %v %q", got, app.list.list.FilterValue(), state, "et")
+			if app.list.editing == applied || app.list.queryText() != query {
+				t.Errorf("after the reload the box is open = %v with query %q, want %v and %q", app.list.editing, app.list.queryText(), !applied, query)
 			}
 			if !app.list.collapsed()["f1"] {
 				t.Error("the reload unfolded f1")
@@ -193,7 +205,7 @@ func TestAFilterKeepsOnlyMarksThatMatch(t *testing.T) {
 		pressKeys(app, "space")
 	}
 	pressKeys(app, "/")
-	typeText(app, "zeta")
+	pasteText(app, zetaToken)
 
 	if got := slices.Sorted(maps.Keys(app.list.selectedNibs)); !slices.Equal(got, []string{"t1"}) {
 		t.Errorf("marked = %v, want [t1]", got)
@@ -294,15 +306,15 @@ func TestSlashReopensAQueryThatMatchesNothing(t *testing.T) {
 	stub.AllNibs = renamed
 	_, cmd := app.Update(nibsChangedMsg{})
 	processCmd(app, cmd)
-	if len(shownRows(app)) != 0 || app.list.list.FilterState() != list.FilterApplied {
-		t.Fatalf("premise failed: rows %v under filter state %v, want none under an applied filter",
-			shownRows(app), app.list.list.FilterState())
+	if len(shownRows(app)) != 0 || app.list.editing {
+		t.Fatalf("premise failed: rows %v with the box open = %v, want none under an applied filter",
+			shownRows(app), app.list.editing)
 	}
 
 	pressKeys(app, "/ x")
 
-	if got := app.list.list.FilterValue(); app.list.list.FilterState() != list.Filtering || got != "zetax" {
-		t.Errorf("after / x the filter is %v %q, want filtering %q", app.list.list.FilterState(), got, "zetax")
+	if got, want := app.list.box.Value(), closedToken+" zeta x"; !app.list.editing || got != want {
+		t.Errorf("after / x the box is open = %v with %q, want open with %q", app.list.editing, got, want)
 	}
 }
 
@@ -343,7 +355,7 @@ func TestSwitchingViewsUnmarksNibsTheViewDoesNotShow(t *testing.T) {
 func TestAFirstVisitPutsTheCursorOnTheFirstRowWhenTheNibHasNoRow(t *testing.T) {
 	app, _ := setupTestApp(t, shapeNibs())
 	pressKeys(app, "/")
-	typeText(app, "zeta")
+	typeText(app, zetaToken)
 	pressKeys(app, "enter home down")
 	if got := selectedID(app); got != "f1" {
 		t.Fatalf("premise failed: the cursor is on %q, want f1", got)
@@ -365,9 +377,9 @@ func TestATextFilterRefusesToReorder(t *testing.T) {
 		t.Fatal("premise failed: could not focus r1")
 	}
 	pressKeys(app, "ctrl+up")
-	if len(stub.ReorderCalls) != 0 || app.list.statusMessage != reorderReasonTextFilter {
+	if len(stub.ReorderCalls) != 0 || app.list.statusMessage != reorderReasonSearch {
 		t.Errorf("ctrl+up under a text filter wrote %+v and said %q, want nothing written and %q",
-			stub.ReorderCalls, app.list.statusMessage, reorderReasonTextFilter)
+			stub.ReorderCalls, app.list.statusMessage, reorderReasonSearch)
 	}
 }
 

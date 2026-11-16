@@ -121,17 +121,6 @@ var pickerCases = []pickerCase{
 		},
 	},
 	{
-		name: "tag", ctx: ctxTagPicker, open: "g t", choose: "enter",
-		view: func(a *App) string { return a.tagPicker.View() },
-		rows: func(a *App) []string {
-			var rows []string
-			for _, item := range a.tagPicker.list.VisibleItems() {
-				rows = append(rows, item.(tagItem).tag)
-			}
-			return rows
-		},
-	},
-	{
 		name: "modify", ctx: ctxModifyPicker, open: "m", choose: "enter",
 		view: func(a *App) string { return a.modifyPicker.View() },
 		rows: func(*App) []string { return []string{"priority", "estimate", "milestone", "area"} },
@@ -205,7 +194,7 @@ type pickerOutcome struct {
 	Updates     []stubUpdateCall
 	Parents     []stubSetParentCall
 	Blocks      []stubBlockingCall
-	TagFilter   string
+	Query       string
 	CreateType  string
 	PriorityFor []string
 	Level       viewshape.Level
@@ -213,12 +202,12 @@ type pickerOutcome struct {
 
 func outcomeOf(app *App, stub *StubBackend) pickerOutcome {
 	o := pickerOutcome{
-		State:     app.state,
-		Updates:   stub.UpdateCalls,
-		Parents:   stub.SetParentCalls,
-		Blocks:    stub.AddBlockingCalls,
-		TagFilter: app.list.tagFilter,
-		Level:     app.list.level,
+		State:   app.state,
+		Updates: stub.UpdateCalls,
+		Parents: stub.SetParentCalls,
+		Blocks:  stub.AddBlockingCalls,
+		Query:   app.list.query,
+		Level:   app.list.level,
 	}
 	if app.state == viewCreateModal {
 		o.CreateType = app.createModal.nibType
@@ -277,8 +266,6 @@ func openedState(tc pickerCase) viewState {
 		return viewPriorityPicker
 	case ctxEstimatePicker:
 		return viewEstimatePicker
-	case ctxTagPicker:
-		return viewTagPicker
 	case ctxModifyPicker:
 		return viewModifyPicker
 	case ctxViewPicker:

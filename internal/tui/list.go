@@ -13,6 +13,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/filterlang"
+	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/safetext"
 	"github.com/alphaleonis/nibs/internal/ui"
@@ -102,28 +104,6 @@ var levelViews = map[viewshape.Level]string{
 	viewshape.LevelAreas:      areasView,
 }
 
-// keepOrder is the list's filter. Rows reach the list already shaped for the
-// query, so it keeps every row in its place.
-func keepOrder(_ string, targets []string) []list.Rank {
-	ranks := make([]list.Rank, len(targets))
-	for i := range targets {
-		ranks[i] = list.Rank{Index: i}
-	}
-	return ranks
-}
-
-// textMatch returns the test a nib passes when its title or ID holds query in
-// any letter case, or nil for an empty query.
-func textMatch(query string) func(*nib.Nib) bool {
-	if query == "" {
-		return nil
-	}
-	q := strings.ToLower(query)
-	return func(n *nib.Nib) bool {
-		return strings.Contains(strings.ToLower(n.Title), q) || strings.Contains(strings.ToLower(n.ID), q)
-	}
-}
-
 // listModel is the model for the nib list view
 type listModel struct {
 	list    list.Model
@@ -142,13 +122,28 @@ type listModel struct {
 	columns       []columnName
 	columnsByView map[string][]columnName
 
-	// paneWidth and paneHeight are the size the list pane is drawn at, or 0
-	// for the whole terminal above the footer. The App sets them through
-	// setPane while the docked nib view takes part of the screen.
-	paneWidth, paneHeight int
+	// paneHeight is the height the list pane is drawn at, or 0 for the whole
+	// terminal above the footer. The App sets it through setPane while the
+	// docked nib view takes part of the screen.
+	paneHeight int
 
-	tagFilter     string
-	hideCompleted bool // hides every closed status, not only completed
+	// query is the filter's text in the web's token language, the one source
+	// of the list's filter. defaultQuery is the query esc in the list returns
+	// to; see defaultQuery.
+	query, defaultQuery string
+	// filter is the query being typed, or else query, as the rows were last
+	// shaped for it; see evaluate.
+	filter queryFilter
+	// box is where the query is typed while editing is set.
+	box     textinput.Model
+	editing bool
+	// completions are the menu's rows while the box is open, and highlight the
+	// index of the highlighted one, or -1 for none.
+	completions []filterlang.Completion
+	highlight   int
+	// closedToggle is the last z h, which the next one undoes. setQuery
+	// clears it when the query changes.
+	closedToggle closedToggle
 
 	level     viewshape.Level
 	prevLevel viewshape.Level                 // the view shown before level, or level itself
@@ -161,10 +156,6 @@ type listModel struct {
 	// unfolded is the rows the view shows with every row unfolded, from the
 	// last reshape.
 	unfolded []viewshape.Row
-	// shapedQuery is the text query the rows were last shaped for.
-	shapedQuery string
-	// unqueriedCount is the nibs that match the view without the text query.
-	unqueriedCount int
 
 	display display // how rows show a nib; set through setDisplay
 
@@ -191,26 +182,26 @@ func newListModel(backend Backend, cfg *config.Config) listModel {
 	selectedNibs := make(map[string]bool)
 	delegate := itemDelegate{cfg: cfg, selectedNibs: &selectedNibs}
 
-	// The list draws only its rows. The header carries the filter input, and
-	// the bottom rule the row position.
+	// The list draws only its rows, already shaped for the query. The header
+	// carries the filter box, and the bottom rule the row position.
 	l := list.New([]list.Item{}, delegate, 0, 0)
 	l.SetShowTitle(false)
 	l.SetShowStatusBar(false)
 	l.SetShowFilter(false)
 	l.SetShowPagination(false)
-	l.SetFilteringEnabled(true)
-	l.Filter = keepOrder
+	l.SetFilteringEnabled(false)
 	l.SetShowHelp(false)
 	l.SetStatusBarItemName("nib", "nibs")
-	l.FilterInput.Prompt = "/"
-	l.KeyMap = listKeyMap()
-	applyFilterStyles(&l.Styles)
+	l.KeyMap = list.KeyMap{}
 
 	m := listModel{
 		list:          l,
 		backend:       backend,
 		config:        cfg,
-		hideCompleted: cfg.HideCompleted(),
+		query:         defaultQuery(cfg),
+		defaultQuery:  defaultQuery(cfg),
+		box:           newFilterBox(),
+		highlight:     -1,
 		selectedNibs:  selectedNibs,
 		level:         viewshape.LevelTree,
 		prevLevel:     viewshape.LevelTree,
@@ -287,25 +278,30 @@ func (m listModel) setFold(id string, fold bool) {
 	}
 }
 
-// filter is the metadata filter that the tag filter and hiding closed nibs
-// make.
-func (m listModel) filter() viewshape.Filter {
-	var f viewshape.Filter
-	if m.tagFilter != "" {
-		f.Tags = []string{m.tagFilter}
+// queryText is the query being typed, or else the applied query.
+func (m listModel) queryText() string {
+	if m.editing {
+		return m.box.Value()
 	}
-	if m.hideCompleted {
-		f.ExcludeStatus = m.config.ClosedStatusNames()
-	}
-	return f
+	return m.query
 }
 
-// textQuery is the text filter's query, or "" while there is none.
-func (m listModel) textQuery() string {
-	if m.list.FilterState() == list.Unfiltered {
-		return ""
+// evaluate reads queryText into m.filter, and asks the backend for the nibs
+// that the fields beyond the metadata ones select. As in the web's table, the
+// rest goes to the GraphQL nibs field and the metadata fields are matched
+// here, so an ancestor that the field adds to search hits matches when it
+// passes the metadata fields.
+func (m *listModel) evaluate() {
+	text := m.queryText()
+	f, diags := filterlang.ParseWithAreas(text, m.areas)
+	q := queryFilter{text: text, parsed: f, invalid: filterlang.InvalidTokens(diags)}
+	var rest *model.NibFilter
+	q.meta, rest = splitFilter(f)
+	if rest != nil {
+		q.server = true
+		q.ids, q.err = m.backend.FilterIDs(context.Background(), rest)
 	}
-	return m.list.FilterValue()
+	m.filter = q
 }
 
 // shapeView is the current view as viewshape shapes it.
@@ -313,8 +309,8 @@ func (m listModel) shapeView() viewshape.View {
 	st := m.state()
 	return viewshape.View{
 		Level:             m.level,
-		Filter:            m.filter(),
-		Match:             textMatch(m.textQuery()),
+		Filter:            m.filter.meta,
+		Match:             m.filter.match(),
 		Collapsed:         st.collapsed,
 		CollapsedSections: st.collapsedSections,
 		Sort:              viewshape.SortOrder,
@@ -333,6 +329,8 @@ func (m *listModel) load(msg nibsLoadedMsg, focus string) {
 	m.areas = msg.areas
 	m.facts = msg.facts
 	m.idWidth = msg.idWidth
+	// The server's answer and the declared areas both change with the store.
+	m.evaluate()
 
 	if err := m.pruneFolds(); err != nil {
 		m.err = err
@@ -342,12 +340,12 @@ func (m *listModel) load(msg nibsLoadedMsg, focus string) {
 	m.pruneMarks()
 }
 
-// pruneFolds forgets the fold of each row that has no children to hide under
-// the metadata filter, so a row that gains children later starts unfolded. The
-// text query does not count, so typing one keeps every fold.
+// pruneFolds forgets the fold of each row that has no children to hide with
+// no filter on, so a row that gains children later starts unfolded. The query
+// does not count, so typing one keeps every fold.
 func (m *listModel) pruneFolds() error {
 	for level, st := range m.views {
-		rows, err := viewshape.Shape(m.nibs, viewshape.View{Level: level, Filter: m.filter(), Sort: viewshape.SortOrder, Areas: m.areas})
+		rows, err := viewshape.Shape(m.nibs, viewshape.View{Level: level, Sort: viewshape.SortOrder, Areas: m.areas})
 		if err != nil {
 			return err
 		}
@@ -385,20 +383,10 @@ func (m *listModel) reshape(focus string) {
 		v.Collapsed, v.CollapsedSections = nil, nil
 		m.unfolded, err = viewshape.Shape(m.nibs, v)
 	}
-	if err == nil {
-		m.unqueriedCount = countMatches(m.unfolded)
-		if v.Match != nil {
-			v.Match = nil
-			var unqueried []viewshape.Row
-			unqueried, err = viewshape.Shape(m.nibs, v)
-			m.unqueriedCount = countMatches(unqueried)
-		}
-	}
 	if err != nil {
 		m.err = err
 		return
 	}
-	m.shapedQuery = m.textQuery()
 
 	prefixes := ui.TreePrefixes(rows, m.folded, m.display.ascii())
 	items := make([]list.Item, 0, len(rows))
@@ -423,11 +411,7 @@ func (m *listModel) reshape(focus string) {
 			facts:      m.facts[r.NibID],
 		})
 	}
-	// Under a filter, SetItems hands back the command that matches the rows
-	// with keepOrder. Running it here shows the rows before the next draw.
-	if cmd := m.list.SetItems(items); cmd != nil {
-		m.list, _ = m.list.Update(cmd())
-	}
+	m.list.SetItems(items)
 	m.restoreCursor(focus)
 }
 
@@ -461,16 +445,22 @@ func countMatches(rows []viewshape.Row) int {
 	return n
 }
 
-// followQuery shapes the rows again when the text query has changed since the
-// last shape. A new query puts the cursor on its first match.
+// followQuery shapes the rows again when the query has changed since the last
+// shape. Text that reads as the same query, such as the space openBox adds,
+// is no change. A query being typed puts the cursor on its first match.
 func (m *listModel) followQuery() {
-	query := m.textQuery()
-	if query == m.shapedQuery {
+	text := m.queryText()
+	if text == m.filter.text {
 		return
 	}
+	if canonicalQuery(text, m.areas) == canonicalQuery(m.filter.text, m.areas) {
+		m.filter.text = text
+		return
+	}
+	m.evaluate()
 	m.reshape(m.focusedRowID())
 	m.pruneMarks()
-	if query == "" {
+	if !m.editing || strings.TrimSpace(m.queryText()) == "" {
 		return
 	}
 	for i, item := range m.list.VisibleItems() {
@@ -510,21 +500,16 @@ func (m *listModel) showLevel(level viewshape.Level) {
 func (m *listModel) restoreView(view rememberedView) {
 	m.level, m.prevLevel = view.level, view.level
 	m.columns = m.columnsByView[levelViews[view.level]]
-	if view.query != "" {
-		m.list.SetFilterText(view.query)
-	}
+	m.query = view.query
 }
 
-// shownView returns the view shown and its applied text query, and false
-// while a query is being typed.
+// shownView returns the view shown and its applied query, and false while a
+// query is being typed.
 func (m listModel) shownView() (rememberedView, bool) {
-	switch m.list.FilterState() {
-	case list.Filtering:
+	if m.editing {
 		return rememberedView{}, false
-	case list.FilterApplied:
-		return rememberedView{level: m.level, query: m.list.FilterValue()}, true
 	}
-	return rememberedView{level: m.level}, true
+	return rememberedView{level: m.level, query: m.query}, true
 }
 
 // stepLevel shows the view step places after the current one in levels,
@@ -534,23 +519,99 @@ func (m *listModel) stepLevel(step int) {
 	m.showLevel(levels[(i+step+len(levels))%len(levels)])
 }
 
-func (m *listModel) setTagFilter(tag string) {
-	m.tagFilter = tag
+// setQuery applies text as the query, keeping the cursor on its row or the
+// nearest ancestor shown.
+func (m *listModel) setQuery(text string) {
+	if canonicalQuery(text, m.areas) != canonicalQuery(m.query, m.areas) {
+		m.closedToggle = closedToggle{}
+	}
+	m.query = text
+	m.evaluate()
+	m.reshape(m.focusedRowID())
+	m.pruneMarks()
 }
 
-func (m *listModel) toggleHideCompleted() {
-	m.hideCompleted = !m.hideCompleted
+// toggleClosed hides closed nibs, or shows them when the query hides them all;
+// see toggleClosed. The next press restores the query it started from, so the
+// user's own status tokens survive, unless the query changed in between.
+func (m *listModel) toggleClosed() {
+	if m.closedToggle.set && m.closedToggle.made == m.query {
+		m.setQuery(m.closedToggle.from)
+		return
+	}
+	from := m.query
+	m.setQuery(toggleClosed(from, m.areas))
+	m.closedToggle = closedToggle{from: from, made: m.query, set: true}
 }
 
-// clearFilter clears the tag filter; hideCompleted is kept.
-func (m *listModel) clearFilter() {
-	m.tagFilter = ""
+// filtered reports whether the query filters more or less than the default
+// query, so esc in the list has a filter to reset.
+func (m listModel) filtered() bool {
+	return canonicalQuery(m.query, m.areas) != canonicalQuery(m.defaultQuery, m.areas)
 }
 
-// hasActiveFilter reports whether a tag filter is set; hideCompleted does not
-// count.
-func (m *listModel) hasActiveFilter() bool {
-	return m.tagFilter != ""
+// openBox opens the filter box on the applied query, with the cursor after
+// it and a space, so what is typed starts a token.
+func (m *listModel) openBox() {
+	m.editing = true
+	text := m.query
+	if text != "" {
+		text += " "
+	}
+	m.box.SetValue(text)
+	m.box.CursorEnd()
+	m.box.Focus()
+	m.complete(false)
+}
+
+// closeBox closes the filter box and applies text as the query, as the web's
+// box shows it once it loses focus.
+func (m *listModel) closeBox(text string) {
+	m.editing = false
+	m.box.Blur()
+	m.completions, m.highlight = nil, -1
+	m.setQuery(canonicalQuery(text, m.areas))
+}
+
+// complete fills the completion menu for the box's cursor, with every field
+// name for an empty token when explicit is set, as a key press asks for.
+func (m *listModel) complete(explicit bool) {
+	text := m.box.Value()
+	cursor := byteOffset(text, m.box.Position())
+	if explicit {
+		m.completions = filterlang.CompleteExplicit(text, cursor, m.completionVocabulary())
+	} else {
+		m.completions = filterlang.Complete(text, cursor, m.completionVocabulary())
+	}
+	m.highlight = -1
+}
+
+// acceptCompletion makes the edit of the highlighted completion, or else of
+// the first, and offers the completions for where the cursor lands.
+func (m *listModel) acceptCompletion() {
+	if len(m.completions) == 0 {
+		return
+	}
+	text, cursor := m.completions[max(0, m.highlight)].Apply(m.box.Value())
+	m.box.SetValue(text)
+	m.box.SetCursor(runeIndex(text, cursor))
+	m.complete(false)
+}
+
+// moveHighlight moves the menu's highlight step rows, wrapping at either end.
+func (m *listModel) moveHighlight(step int) {
+	n := len(m.completions)
+	if n == 0 {
+		return
+	}
+	switch {
+	case m.highlight < 0 && step < 0:
+		m.highlight = n - 1
+	case m.highlight < 0:
+		m.highlight = 0
+	default:
+		m.highlight = (m.highlight + step + n) % n
+	}
 }
 
 func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
@@ -585,21 +646,20 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 		return m, tea.Batch(cmd, m.cursorChangedCmd(prev))
 
 	case tea.KeyPressMsg:
-		// Only a filter being typed takes keys; actions do everything else.
-		if m.list.FilterState() != list.Filtering {
+		// Only the filter box takes keys; actions do everything else.
+		if !m.editing {
 			return m, nil
 		}
 	}
 
-	// The input scrolls its query by the width it has when a key arrives.
-	m.sizeFilterInput(m.drawnWidth())
-	if m.list.FilterState() == list.Filtering {
-		// The list's own update returns a command that matches the rows it
-		// holds now, which would replace the rows followQuery shapes. So the
-		// input alone takes the message.
-		m.list.FilterInput, cmd = m.list.FilterInput.Update(msg)
-	} else {
+	if !m.editing {
 		m.list, cmd = m.list.Update(msg)
+		return m, tea.Batch(cmd, m.cursorChangedCmd(prev))
+	}
+	value, pos := m.box.Value(), m.box.Position()
+	m.box, cmd = m.box.Update(msg)
+	if m.box.Value() != value || m.box.Position() != pos {
+		m.complete(false)
 	}
 	m.followQuery()
 	return m, tea.Batch(cmd, m.cursorChangedCmd(prev))
@@ -686,27 +746,33 @@ func (m *listModel) runAction(name actionName) tea.Cmd {
 		m.list.GoToStart()
 	case actBottom:
 		m.list.GoToEnd()
-	case actInputAccept, actFilterApply:
-		// A query that matches nothing leaves nothing to browse, so accepting
-		// it clears it.
-		if m.list.FilterState() == list.Filtering && len(m.list.Items()) == 0 {
-			m.list.ResetFilter()
-			return nil
-		}
-		cmd, _ := browseList(&m.list, name)
-		return cmd
 	case actFilter:
-		// The list turns off its own filter key while it has no rows, and an
-		// applied query can come to match none.
-		if m.list.FilterState() == list.FilterApplied {
-			m.list.SetFilterState(list.Filtering)
-			return textinput.Blink
+		m.openBox()
+	case actInputAccept:
+		// In the menu, enter takes the highlighted completion, as on the web.
+		if m.highlight >= 0 && m.highlight < len(m.completions) {
+			m.acceptCompletion()
+			break
 		}
-		cmd, _ := browseList(&m.list, name)
-		return cmd
+		m.closeBox(m.box.Value())
+	case actFilterApply:
+		m.closeBox(m.box.Value())
 	case actInputCancel:
-		cmd, _ := browseList(&m.list, name)
-		return cmd
+		// As the web's clear button does, esc empties the query, the default
+		// token included.
+		m.closeBox("")
+	case actComplete:
+		if len(m.completions) > 0 {
+			m.acceptCompletion()
+		} else {
+			m.complete(true)
+		}
+	case actCompleteNext:
+		m.moveHighlight(1)
+	case actCompletePrevious:
+		m.moveHighlight(-1)
+	case actCompleteClose:
+		m.completions, m.highlight = nil, -1
 	case actFoldRow:
 		m.foldRow()
 	case actUnfoldRow:
@@ -775,8 +841,7 @@ func (m *listModel) runAction(name actionName) tea.Cmd {
 			return func() tea.Msg { return copyNibIDMsg{ids: ids} }
 		}
 	case actHideClosed:
-		m.toggleHideCompleted()
-		return m.loadNibs
+		m.toggleClosed()
 	}
 	return nil
 }
@@ -815,15 +880,13 @@ func (m listModel) descendants(id string) []viewshape.Row {
 	return m.unfolded[i+1 : end]
 }
 
-// leave clears the selection, else the tag filter, else the text filter.
+// leave clears the selection, else returns the query to the default query.
 func (m *listModel) leave() tea.Cmd {
 	switch {
 	case len(m.selectedNibs) > 0:
 		clear(m.selectedNibs)
-	case m.hasActiveFilter():
-		return func() tea.Msg { return clearFilterMsg{} }
-	case m.list.IsFiltered():
-		m.list.ResetFilter()
+	case m.filtered():
+		m.setQuery(m.defaultQuery)
 	}
 	return nil
 }
@@ -1101,9 +1164,19 @@ func (m listModel) pane(width, height int) string {
 	// Size the list to this pane: the footer may have grown since the last
 	// resize, and the nib view takes part of the width.
 	m.list.SetSize(width, m.rowsHeight(height))
-	m.sizeFilterInput(width)
 	m.updateDelegate(width)
-	return strings.Join([]string{m.topRule(width), m.header(width), m.list.View(), m.bottomRule(width)}, "\n")
+	rows := m.list.View()
+	if m.filter.err != nil && len(m.list.Items()) == 0 {
+		// The server refused the query, so the list's empty state would
+		// misreport the store.
+		lines := strings.Split(rows, "\n")
+		lines[0] = dockNoteStyle.Render(fitText(m.filter.err.Error(), width, ellipsis(m.display.ascii())))
+		rows = strings.Join(lines, "\n")
+	}
+	if m.editing {
+		rows = overlayRows(rows, completionMenu(m.completions, m.highlight, width), width)
+	}
+	return strings.Join([]string{m.topRule(width), m.header(width), rows, m.bottomRule(width)}, "\n")
 }
 
 // ruleGlyph returns the character horizontal rules are drawn with.
@@ -1115,10 +1188,9 @@ func ruleGlyph(ascii bool) string {
 }
 
 var (
-	dockNoteStyle    = lipgloss.NewStyle().Foreground(ui.ColorWarning)
-	ruleStyle        = lipgloss.NewStyle().Foreground(ui.ColorMuted)
-	viewNameStyle    = lipgloss.NewStyle().Bold(true)
-	filterTokenStyle = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
+	dockNoteStyle = lipgloss.NewStyle().Foreground(ui.ColorWarning)
+	ruleStyle     = lipgloss.NewStyle().Foreground(ui.ColorMuted)
+	viewNameStyle = lipgloss.NewStyle().Bold(true)
 )
 
 // fitText fits s into budget cells, ending a cut with mark. Spaces left before
@@ -1177,58 +1249,41 @@ func (m listModel) position() string {
 	return fmt.Sprintf("%d / %d", m.list.Index()+1, total)
 }
 
-// filterInputMinWidth is the fewest cells of query the header keeps for the
-// filter input while a filter is typed.
-const filterInputMinWidth = 10
+// filterBoxMinWidth is the fewest cells of query the header keeps for the
+// filter box while a query is typed.
+const filterBoxMinWidth = 10
 
-// headerParts is what the header of a pane draws: whether it shows the tokens
-// and the count, and the cells of query the filter input gets while a filter
-// is typed, or 0 while none is.
-type headerParts struct {
-	tokens, count bool
-	input         int
+// headerLayout is what the header of a pane draws: whether it shows the
+// count, and the cells of query the filter box gets while a query is typed,
+// or 0 while none is.
+type headerLayout struct {
+	count bool
+	box   int
 }
 
-// headerParts lays out the header of a pane width cells wide. While a filter
-// is typed and the input would get fewer than filterInputMinWidth cells, the
-// header drops the count, then the tokens.
-func (m listModel) headerParts(width int) headerParts {
-	if m.list.FilterState() != list.Filtering {
-		return headerParts{tokens: true, count: true}
+// headerLayout lays out the header of a pane width cells wide. While a query
+// is typed and the box would get fewer than filterBoxMinWidth cells, the
+// header drops the count.
+func (m listModel) headerLayout(width int) headerLayout {
+	if !m.editing {
+		return headerLayout{count: true}
 	}
-	tokens := lipgloss.Width(strings.Join(m.filterTokens(), " "))
-	// The count is reserved at its widest, so the input keeps one width while
-	// the query narrows the list: the unfiltered count, or "0 nibs" when that
-	// is "1 nib".
-	count := max(lipgloss.Width(nibCount(m.unqueriedCount)), lipgloss.Width(nibCount(0)))
-	// The view's name, the gap before the input, its prompt and its cursor.
-	fixed := lipgloss.Width(levelNames[m.level]) + 2 + lipgloss.Width(m.list.FilterInput.Prompt) + 1
-	for _, p := range []headerParts{{tokens: true, count: true}, {tokens: true}} {
-		used := fixed
-		if p.tokens && tokens > 0 {
-			used += 2 + tokens
-		}
-		if p.count {
-			used += 2 + count
-		}
-		if p.input = width - used; p.input >= filterInputMinWidth {
-			return p
-		}
+	// The count is reserved at its widest, every nib, so the box keeps one
+	// width while the query narrows the list. "0 nibs" is wider than "1 nib".
+	count := max(lipgloss.Width(nibCount(len(m.nibs))), lipgloss.Width(nibCount(0)))
+	// The view's name, the gap before the box, its prompt and its cursor.
+	fixed := lipgloss.Width(levelNames[m.level]) + 2 + lipgloss.Width(m.box.Prompt) + 1
+	if box := width - fixed - 2 - count; box >= filterBoxMinWidth {
+		return headerLayout{count: true, box: box + 1}
 	}
-	return headerParts{input: max(1, width-fixed)}
+	return headerLayout{box: max(1, width-fixed+1)}
 }
 
-// sizeFilterInput fits the filter input to the header of a pane width cells
-// wide.
-func (m *listModel) sizeFilterInput(width int) {
-	m.list.FilterInput.SetWidth(m.headerParts(width).input)
-}
-
-// setPane sets the size the list pane is drawn at, or 0 and 0 for the whole
+// setPane sets the height the list pane is drawn at, or 0 for the whole
 // terminal above the footer, and fits the rows to it, so a page move goes by
-// the rows on screen.
-func (m *listModel) setPane(width, height int) {
-	m.paneWidth, m.paneHeight = width, height
+// the rows on screen. The width comes with each draw; see pane.
+func (m *listModel) setPane(height int) {
+	m.paneHeight = height
 	m.list.SetSize(m.list.Width(), m.rowsHeight(m.drawnHeight()))
 }
 
@@ -1240,29 +1295,23 @@ func (m listModel) drawnHeight() int {
 	return m.height - m.footerHeight()
 }
 
-// drawnWidth is the width the list pane is drawn at.
-func (m listModel) drawnWidth() int {
-	if m.paneWidth > 0 {
-		return m.paneWidth
-	}
-	return m.width
-}
-
 // header draws the line under the top rule, width cells wide: the view's name
-// and the active filter as tokens on the left, and the count of nibs that
-// match on the right. While a filter is typed, its input follows the tokens.
-// A narrow header drops the count first, and while a query is typed the
-// tokens next. What still does not fit is cut at the right edge.
+// and the query on the left, colored by token, and the count of nibs that
+// match on the right. While a query is typed, the box takes the query's place.
+// A narrow header drops the count first. What still does not fit is cut at
+// the right edge.
 func (m listModel) header(width int) string {
-	parts := m.headerParts(width)
+	layout := m.headerLayout(width)
 	left := viewNameStyle.Render(levelNames[m.level])
-	if tokens := m.filterTokens(); parts.tokens && len(tokens) > 0 {
-		left += "  " + filterTokenStyle.Render(strings.Join(tokens, " "))
+	switch {
+	case m.editing:
+		text := m.box.Value()
+		left += "  " + filterPromptStyle.Render(m.box.Prompt) +
+			renderQuery(text, filterlang.SpansWithAreas(text, m.areas), m.box.Position(), layout.box)
+	case m.query != "":
+		left += "  " + renderQuery(m.query, filterlang.SpansWithAreas(m.query, m.areas), -1, max(0, width-lipgloss.Width(left)-2))
 	}
-	if m.list.FilterState() == list.Filtering {
-		left += "  " + m.list.FilterInput.View()
-	}
-	if !parts.count {
+	if !layout.count {
 		return clipToWidth(left, width)
 	}
 	count := nibCount(m.matchCount())
@@ -1279,24 +1328,6 @@ func nibCount(n int) string {
 		return "1 nib"
 	}
 	return fmt.Sprintf("%d nibs", n)
-}
-
-// filterTokens returns the active filter: the tag and closed statuses it
-// hides, in the web's token language, with an applied text filter as the
-// TUI's own "/text" between them. The default -status:closed comes last, so a
-// narrow header cuts it before the filters the user set.
-func (m listModel) filterTokens() []string {
-	var tokens []string
-	if m.tagFilter != "" {
-		tokens = append(tokens, "tags:"+m.tagFilter)
-	}
-	if m.list.FilterState() == list.FilterApplied {
-		tokens = append(tokens, "/"+m.list.FilterValue())
-	}
-	if m.hideCompleted {
-		tokens = append(tokens, "-status:closed")
-	}
-	return tokens
 }
 
 // matchCount is the nibs that match the filter, in folded rows too, leaving
@@ -1360,9 +1391,11 @@ func (m listModel) reorder(dir moveDir) tea.Cmd {
 	case viewshape.LevelAreas:
 		return refuseReorderCmd(reorderReasonAreas)
 	}
-	// A text filter can hide the rows a move passes, so the web refuses it too.
-	if m.textQuery() != "" {
-		return refuseReorderCmd(reorderReasonTextFilter)
+	// Search words can hide the rows a move passes, so the web refuses a drag
+	// under them too. The other tokens keep the rows a move passes in their
+	// group's order.
+	if m.filter.searches() {
+		return refuseReorderCmd(reorderReasonSearch)
 	}
 	subjects := effectiveRows(m.unfolded, m.selectedNibs)
 	focusID := m.focusedRowID()

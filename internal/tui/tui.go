@@ -31,7 +31,6 @@ type viewState int
 const (
 	viewList viewState = iota
 	viewExpanded
-	viewTagPicker
 	viewParentPicker
 	viewStatusPicker
 	viewTypePicker
@@ -69,14 +68,6 @@ func checkForUpdateCmd(version string) tea.Cmd {
 // It carries no id: by the time it arrives the cursor may have moved again,
 // so the handler reads the cursor itself.
 type cursorChangedMsg struct{}
-
-type openTagPickerMsg struct{}
-
-type tagSelectedMsg struct {
-	tag string
-}
-
-type clearFilterMsg struct{}
 
 type copyNibIDMsg struct {
 	ids []string
@@ -123,7 +114,6 @@ type App struct {
 	list           listModel
 	expanded       nibViewModel // the nib view at full screen
 	docked         nibViewModel // the nib view beside or below the list
-	tagPicker      tagPickerModel
 	parentPicker   parentPickerModel
 	statusPicker   statusPickerModel
 	typePicker     typePickerModel
@@ -172,8 +162,8 @@ type App struct {
 	memory *projectMemory
 }
 
-// New creates the TUI application. It opens on Tree with no filter query, and
-// saves neither; newSession opens it on what the store's state file holds.
+// New creates the TUI application. It opens on Tree with the default query
+// (see defaultQuery), and saves neither; newSession opens it on what the store's state file holds.
 //
 // It applies the tui block of user over the default settings, as loadSettings
 // does. Icons are ascii when the terminal does not display UTF-8, whatever the
@@ -197,13 +187,13 @@ func New(backend Backend, cfg *config.Config, user config.UserLayer, version str
 }
 
 // newSession is New opened on the view and the filter query that the state
-// file of backend's store remembers, or on Milestones with no query when it
-// remembers none. The App saves both to that file each time either changes.
+// file of backend's store remembers, or on Milestones with the default query
+// when it remembers none. The App saves both to that file each time either changes.
 // A warning from openProjectMemory is added to the status line after any
 // warning New put there.
 func newSession(backend Backend, cfg *config.Config, user config.UserLayer, version string) *App {
 	a := New(backend, cfg, user, version)
-	memory, view, warning := openProjectMemory(backend.Root())
+	memory, view, warning := openProjectMemory(backend.Root(), a.list.defaultQuery)
 	a.memory = memory
 	a.list.restoreView(view)
 	if warning != "" {
@@ -306,11 +296,15 @@ func (a *App) keyContext() keyContext {
 		if a.dockFocused() {
 			return nibViewContext(a.docked)
 		}
-		return inList(a.list.list, ctxList)
+		switch {
+		case a.list.editing && len(a.list.completions) > 0:
+			return ctxFilterMenu
+		case a.list.editing:
+			return ctxFilterBox
+		}
+		return ctxList
 	case viewExpanded:
 		return nibViewContext(a.expanded)
-	case viewTagPicker:
-		return inList(a.tagPicker.list, ctxTagPicker)
 	case viewParentPicker:
 		return inList(a.parentPicker.list, ctxParentPicker)
 	case viewStatusPicker:
@@ -355,7 +349,7 @@ func (a *App) actionState() actionState {
 		ctx:         a.keyContext(),
 		prefix:      a.pendingKey,
 		selected:    len(a.list.selectedNibs),
-		filtered:    a.list.hasActiveFilter() || a.list.list.IsFiltered(),
+		filtered:    a.list.filtered(),
 		docked:      a.state == viewList && a.dockPlacement() != "",
 		canJumpBack: len(a.jumps) > 0,
 	}
@@ -401,7 +395,7 @@ func (a *App) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 		// raw one would leave the filter even with input.accept or input.cancel
 		// bound to another key.
 		return nil
-	case ctx == ctxFilterInput, ctx == ctxTextInput, ctx == ctxPalette:
+	case slices.Contains(textInputs, ctx), ctx == ctxPalette:
 		return a.updateActiveView(msg)
 	case slices.Contains(allPickers, ctx):
 		return a.updateActiveView(acceleratorMsg{key: key})
@@ -428,8 +422,6 @@ func (a *App) runAction(act *action) tea.Cmd {
 		return nil
 	case actPaletteRun:
 		return a.runPaletteEntry()
-	case actTagFilter:
-		return a.showView(openTagPickerMsg{})
 	case actNibView:
 		return a.toggleNibView()
 	case actNibPlacement:
@@ -606,20 +598,6 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.expanded = a.expanded.withNib(updatedNib)
 			}
 		}
-		return a, a.list.loadNibs
-
-	case openTagPickerMsg:
-		tags := a.collectTagsWithCounts()
-		if len(tags) == 0 {
-			return a, nil
-		}
-		a.tagPicker = newTagPickerModel(a.keys.actions, tags, a.width, a.height)
-		a.state = viewTagPicker
-		return a, a.tagPicker.Init()
-
-	case tagSelectedMsg:
-		a.state = viewList
-		a.list.setTagFilter(msg.tag)
 		return a, a.list.loadNibs
 
 	case openParentPickerMsg:
@@ -1029,10 +1007,6 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.reportMutationFailures("Parent change", "nib", errs)
 		return a, a.list.loadNibs
 
-	case clearFilterMsg:
-		a.list.clearFilter()
-		return a, a.list.loadNibs
-
 	case copyNibIDMsg:
 		var statusMsg string
 		statusMsgKind := statusOK
@@ -1090,8 +1064,6 @@ func (a *App) updateActiveView(msg tea.Msg) tea.Cmd {
 		a.followCursor()
 	case viewExpanded:
 		a.expanded, cmd = a.expanded.Update(msg)
-	case viewTagPicker:
-		a.tagPicker, cmd = a.tagPicker.Update(msg)
 	case viewParentPicker:
 		a.parentPicker, cmd = a.parentPicker.Update(msg)
 	case viewStatusPicker:
@@ -1126,23 +1098,6 @@ func (a *App) updateActiveView(msg tea.Msg) tea.Cmd {
 	return cmd
 }
 
-func (a *App) collectTagsWithCounts() []tagWithCount {
-	nibs, _ := a.backend.ListNibs(context.Background(), nil)
-	tagCounts := make(map[string]int)
-	for _, b := range nibs {
-		for _, tag := range b.Tags {
-			tagCounts[tag]++
-		}
-	}
-
-	tags := make([]tagWithCount, 0, len(tagCounts))
-	for tag, count := range tagCounts {
-		tags = append(tags, tagWithCount{tag: tag, count: count})
-	}
-
-	return tags
-}
-
 // View renders the current screen in the alt screen.
 func (a *App) View() tea.View {
 	v := tea.NewView(a.render())
@@ -1167,8 +1122,6 @@ func (a *App) renderState(state viewState) string {
 		return a.renderList()
 	case viewExpanded:
 		return a.expanded.View()
-	case viewTagPicker:
-		return a.tagPicker.View()
 	case viewParentPicker:
 		return a.parentPicker.ModalView(a.getBackgroundView(), a.width, a.height)
 	case viewStatusPicker:
@@ -1208,7 +1161,7 @@ func (a *App) expandedOnScreen() bool {
 		state = a.palette.origin
 	}
 	switch state {
-	case viewList, viewExpanded, viewTagPicker:
+	case viewList, viewExpanded:
 		return state == viewExpanded
 	}
 	return a.previousState == viewExpanded

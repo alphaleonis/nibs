@@ -1,10 +1,10 @@
 package tui
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
-	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 	"github.com/alphaleonis/nibs/internal/nib"
 )
@@ -35,6 +35,7 @@ func keyPress(k string) tea.KeyPressMsg {
 		"ctrl+end":   {Code: tea.KeyEnd, Mod: tea.ModCtrl},
 		"delete":     {Code: tea.KeyDelete},
 		"ctrl+c":     {Code: 'c', Mod: tea.ModCtrl},
+		"ctrl+u":     {Code: 'u', Mod: tea.ModCtrl},
 	}
 	if msg, ok := named[k]; ok {
 		return msg
@@ -161,12 +162,21 @@ func TestAngleBracketsFoldAndUnfoldEveryRow(t *testing.T) {
 	}
 }
 
-func TestZHHidesClosedNibs(t *testing.T) {
+// z h toggles the -status:closed token in the query, keeping the other tokens.
+func TestZHTogglesTheClosedToken(t *testing.T) {
 	app, _ := setupTestApp(t, listKeysNibs())
-	before := app.list.hideCompleted
+	if app.list.query != closedToken || slices.Contains(rowIDs(app), "nib-3") {
+		t.Fatalf("premise failed: the list opened on query %q with rows %v, want %s hiding nib-3", app.list.query, rowIDs(app), closedToken)
+	}
+	pressKeys(app, "/")
+	typeText(app, "type:task")
+	pressKeys(app, "enter z h")
+	if app.list.query != "type:task" || !slices.Contains(rowIDs(app), "nib-3") {
+		t.Errorf("after z h the query is %q with rows %v, want type:task showing nib-3", app.list.query, rowIDs(app))
+	}
 	pressKeys(app, "z h")
-	if app.list.hideCompleted == before {
-		t.Errorf("z h left hiding closed nibs at %v", before)
+	if app.list.query != "type:task -status:closed" || slices.Contains(rowIDs(app), "nib-3") {
+		t.Errorf("after a second z h the query is %q with rows %v, want type:task -status:closed hiding nib-3", app.list.query, rowIDs(app))
 	}
 }
 
@@ -177,12 +187,12 @@ func TestZHHidesClosedNibsInTheParentPicker(t *testing.T) {
 	if app.state != viewParentPicker {
 		t.Fatalf("premise failed: state = %d after p, want the parent picker", app.state)
 	}
-	before, listBefore := app.parentPicker.hideCompleted, app.list.hideCompleted
+	before, listBefore := app.parentPicker.hideCompleted, app.list.query
 	pressKeys(app, "z h")
 	if app.parentPicker.hideCompleted == before {
 		t.Errorf("z h left the parent picker hiding closed nibs at %v", before)
 	}
-	if app.list.hideCompleted != listBefore {
+	if app.list.query != listBefore {
 		t.Error("z h in the parent picker also toggled the list")
 	}
 }
@@ -218,13 +228,23 @@ func TestAPrefixAndAnUnboundKeyDoNothing(t *testing.T) {
 	}
 }
 
-func TestGTOpensTheTagFilter(t *testing.T) {
+// Tags are filtered with a tags: token, so g t is bound to nothing.
+func TestGTDoesNothing(t *testing.T) {
 	nibs := listKeysNibs()
 	nibs[0].Tags = []string{"quux"}
 	app, _ := setupTestApp(t, nibs)
+	before := plainView(app)
 	pressKeys(app, "g t")
-	if app.state != viewTagPicker {
-		t.Errorf("state = %d after g t, want the tag picker", app.state)
+	if app.state != viewList || app.pendingKey != "" || app.list.query != closedToken {
+		t.Errorf("g t left state %d, pending %q and query %q", app.state, app.pendingKey, app.list.query)
+	}
+	if after := plainView(app); after != before {
+		t.Errorf("g t changed the screen:\n%s", after)
+	}
+	for _, a := range defaultActions {
+		if slices.Contains(a.Keys, "g t") {
+			t.Errorf("%s is bound to g t", a.Name)
+		}
 	}
 }
 
@@ -241,7 +261,7 @@ func TestRetiredKeysDoNothingInTheList(t *testing.T) {
 			before := selectedID(app)
 			page := app.list.list.Paginator.Page
 			folded := len(app.list.collapsed())
-			hide := app.list.hideCompleted
+			query := app.list.query
 
 			_, cmd := app.Update(keyPress(k))
 			if cmd != nil {
@@ -257,7 +277,7 @@ func TestRetiredKeysDoNothingInTheList(t *testing.T) {
 			if got := selectedID(app); got != before || app.list.list.Paginator.Page != page {
 				t.Errorf("%s moved the cursor from %q to %q (page %d to %d)", k, before, got, page, app.list.list.Paginator.Page)
 			}
-			if len(app.list.collapsed()) != folded || app.list.hideCompleted != hide {
+			if len(app.list.collapsed()) != folded || app.list.query != query {
 				t.Errorf("%s changed the folds or the closed filter", k)
 			}
 		})
@@ -266,16 +286,16 @@ func TestRetiredKeysDoNothingInTheList(t *testing.T) {
 
 func TestATextBoxTakesKeysTheTableBinds(t *testing.T) {
 	app, _ := setupTestApp(t, listKeysNibs())
-	pressKeys(app, "/ g g n a z h")
-	if got := app.list.list.FilterValue(); got != "ggnazh" {
+	pressKeys(app, "/ ctrl+u g g n a z h")
+	if got := app.list.box.Value(); got != "ggnazh" {
 		t.Errorf("filter text = %q, want %q", got, "ggnazh")
 	}
 	if app.state != viewList {
 		t.Errorf("typing into the filter left the list for state %d", app.state)
 	}
 	pressKeys(app, "esc")
-	if got := app.list.list.FilterValue(); got != "" {
-		t.Errorf("esc left the filter text %q", got)
+	if app.list.editing || app.list.query != "" {
+		t.Errorf("esc left the box open = %v with query %q, want it closed and the query cleared", app.list.editing, app.list.query)
 	}
 }
 
@@ -311,16 +331,16 @@ func TestArrowsApplyAFilterBeingTyped(t *testing.T) {
 	for _, k := range []string{"down", "up"} {
 		t.Run(k, func(t *testing.T) {
 			app, _ := setupTestApp(t, nibs)
-			pressKeys(app, "/ A l p h a")
-			if got := app.list.list.FilterState(); got != list.Filtering {
-				t.Fatalf("premise failed: filter state = %v after typing, want filtering", got)
+			pressKeys(app, "/ ctrl+u A l p h a")
+			if !app.list.editing || len(app.list.completions) > 0 {
+				t.Fatalf("premise failed: after typing the box is open = %v with completions %v, want open with none", app.list.editing, app.list.completions)
 			}
 			before := selectedID(app)
 
 			pressKeys(app, k)
 
-			if got := app.list.list.FilterState(); got != list.FilterApplied {
-				t.Errorf("filter state = %v after %s, want filter applied", got, k)
+			if app.list.editing || app.list.query != "Alpha" {
+				t.Errorf("after %s the box is open = %v with query %q, want it closed on Alpha", k, app.list.editing, app.list.query)
 			}
 			if got := len(app.list.list.VisibleItems()); got != 2 {
 				t.Errorf("%d rows visible after %s, want the 2 that match", got, k)

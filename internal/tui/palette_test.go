@@ -204,19 +204,20 @@ func TestTheFooterShowsBulkActionsWithASelection(t *testing.T) {
 	}
 }
 
-func TestTheFooterSaysHowToClearAFilter(t *testing.T) {
-	nibs := listKeysNibs()
-	nibs[0].Tags = []string{"quux"}
-	app, _ := setupTestApp(t, nibs)
-	if got := footerLine(app); strings.Contains(got, "esc clear filter") {
-		t.Fatalf("premise failed: the footer offers to clear a filter that is not set: %q", got)
+func TestTheFooterSaysHowToResetAFilter(t *testing.T) {
+	app, _ := setupTestApp(t, listKeysNibs())
+	if got := footerLine(app); strings.Contains(got, "esc reset filter") {
+		t.Fatalf("premise failed: the footer offers to reset the default filter: %q", got)
 	}
-	pressKeys(app, "g t enter")
-	if app.list.tagFilter != "quux" {
-		t.Fatalf("premise failed: tag filter = %q, want quux", app.list.tagFilter)
+	pressKeys(app, "/")
+	typeText(app, "type:epic")
+	pressKeys(app, "enter")
+	if got := footerLine(app); !strings.Contains(got, "esc reset filter") {
+		t.Errorf("the footer does not say how to reset the filter: %q", got)
 	}
-	if got := footerLine(app); !strings.Contains(got, "esc clear filter") {
-		t.Errorf("the footer does not say how to clear the tag filter: %q", got)
+	pressKeys(app, "esc")
+	if app.list.query != closedToken {
+		t.Errorf("esc in the list left the query %q, want the default %q", app.list.query, closedToken)
 	}
 }
 
@@ -226,7 +227,7 @@ func TestAfterAPrefixTheFooterListsItsContinuations(t *testing.T) {
 		want    []string
 		notWant []string
 	}{
-		{prefix: "g", want: []string{"g then", "g top", "t filter by tag"}, notWant: []string{"n create", "h hide"}},
+		{prefix: "g", want: []string{"g then", "g top"}, notWant: []string{"n create", "h hide", "t filter by tag"}},
 		{prefix: "z", want: []string{"z then", "h toggle closed"}, notWant: []string{"n create", "g top"}},
 	}
 	for _, tt := range tests {
