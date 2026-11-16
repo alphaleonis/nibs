@@ -1,7 +1,8 @@
 // Package filterlang reads and writes the web filter box's query language:
 // Parse turns filter text into a NibFilter, and Serialize turns one back into
-// canonical text. The cases in internal/filterlangcontract hold both to the
-// web's parser.
+// canonical text. Spans splits filter text into highlight spans, and Complete
+// offers completions at a cursor. The cases in internal/filterlangcontract
+// hold them, and RelValueAt, to the web's query functions.
 //
 // The package also defines the language's token tables and renders them as a
 // TypeScript module the web's parser imports. `task codegen` writes the module

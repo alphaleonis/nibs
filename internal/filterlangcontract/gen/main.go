@@ -1,5 +1,5 @@
-// Command gen writes the generated filter-parsing parity contract to its
-// committed location. Run it through `task codegen`.
+// Command gen writes the generated filter-language parity contracts to their
+// committed locations. Run it through `task codegen`.
 package main
 
 import (
@@ -22,11 +22,20 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	out := filepath.Join(root, filepath.FromSlash(filterlangcontract.OutputPath))
-	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
-		return err
+	modules := map[string]string{
+		filterlangcontract.OutputPath:      filterlangcontract.Render(),
+		filterlangcontract.InputOutputPath: filterlangcontract.RenderInput(),
 	}
-	return os.WriteFile(out, []byte(filterlangcontract.Render()), 0o644)
+	for path, content := range modules {
+		out := filepath.Join(root, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(out, []byte(content), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // moduleRoot walks up from the working directory (the go:generate package

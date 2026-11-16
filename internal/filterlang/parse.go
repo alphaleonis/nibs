@@ -93,7 +93,7 @@ func ParseWithAreas(text string, areas *area.Vocabulary) (model.NibFilter, []Dia
 		case existenceToken:
 			*fieldOf[*bool](&f, t.rel.Field) = &t.rel.Value
 		case areaToken:
-			if areas != nil && !areas.Exists(t.value) {
+			if refusesArea(areas, t.value) {
 				diags = append(diags, Diagnostic{Token: t.area.Name + ":" + t.value, Start: t.colon + 1, End: t.end, Reason: UndeclaredArea})
 				continue
 			}
@@ -112,6 +112,12 @@ func ParseWithAreas(text string, areas *area.Vocabulary) (model.NibFilter, []Dia
 		f.Search = &search
 	}
 	return f, diags
+}
+
+// refusesArea reports whether ParseWithAreas rejects an area path: areas does
+// not declare it. A nil areas rejects none.
+func refusesArea(areas *area.Vocabulary, path string) bool {
+	return areas != nil && !areas.Exists(path)
 }
 
 // InvalidTokens returns the distinct tokens of diags in order, the list the

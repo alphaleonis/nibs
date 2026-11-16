@@ -1,12 +1,17 @@
-// Package filterlangcontract holds the filter-parsing cases that
-// internal/filterlang and the web's query parser must both pass, and renders
-// them as a TypeScript module. web/src/lib/query/filterParseContract.test.ts
-// runs that module through the web's parseQuery and serializeQuery, and this
-// package's tests run the same cases through filterlang.ParseWithAreas and
-// filterlang.Serialize.
+// Package filterlangcontract holds the filter-language cases that
+// internal/filterlang and the web's query functions must both pass, and
+// renders them as two TypeScript modules.
+//
+// web/src/lib/query/filterParseContract.test.ts runs the parsing cases through
+// the web's parseQuery and serializeQuery, and this package's tests run them
+// through filterlang.ParseWithAreas and filterlang.Serialize.
+// web/src/lib/query/filterInputContract.test.ts runs the highlighting and
+// completion cases through tokenizeSpans, relTokenValueContext and
+// getCompletion, and this package's tests run them through
+// filterlang.SpansWithAreas, filterlang.RelValueAt and filterlang.Complete.
 //
 // A rule that no case exercises can drift on either side without a failure. A
-// new parsing rule needs a case whose result it changes, and `task codegen`.
+// new rule needs a case whose result it changes, and `task codegen`.
 package filterlangcontract
 
 //go:generate go run ./gen
@@ -33,15 +38,7 @@ func Render() string {
 		b.WriteString("  {\n")
 		fmt.Fprintf(&b, "    name: %s,\n", jsLiteral(c.Name))
 		fmt.Fprintf(&b, "    text: %s,\n", jsLiteral(c.Text))
-		if c.Areas == nil {
-			b.WriteString("    areas: null,\n")
-		} else {
-			b.WriteString("    areas: [\n")
-			for _, a := range wireAreas(c.Areas) {
-				fmt.Fprintf(&b, "      %s,\n", a)
-			}
-			b.WriteString("    ],\n")
-		}
+		writeAreas(&b, c.Areas)
 		fmt.Fprintf(&b, "    filter: %s,\n", jsLiteral(c.Want))
 		fmt.Fprintf(&b, "    invalidTokens: %s,\n", jsLiteral(nonNil(c.Invalid)))
 		fmt.Fprintf(&b, "    canonical: %s,\n", jsLiteral(c.Canonical))
@@ -81,6 +78,19 @@ export interface FilterParseCase {
 }
 
 `
+
+// writeAreas writes a case's `areas` property, null for a nil vocabulary.
+func writeAreas(b *strings.Builder, areas *area.Vocabulary) {
+	if areas == nil {
+		b.WriteString("    areas: null,\n")
+		return
+	}
+	b.WriteString("    areas: [\n")
+	for _, a := range wireAreas(areas) {
+		fmt.Fprintf(b, "      %s,\n", a)
+	}
+	b.WriteString("    ],\n")
+}
 
 // wireAreas renders a vocabulary as `Config.areas` delivers it: in Paths order,
 // each node with its depth from a root.
