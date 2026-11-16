@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/alphaleonis/nibs/internal/safetext"
 )
 
 func TestIsIDChar(t *testing.T) {
@@ -475,6 +477,46 @@ func TestValidateIDRoundTrip(t *testing.T) {
 			}
 			if err != nil {
 				t.Errorf("ValidateIDRoundTrip(%q, %q, %q) = %v, want nil", tt.id, tt.slug, tt.prefix, err)
+			}
+		})
+	}
+}
+
+func TestValidateIDText(t *testing.T) {
+	tests := []struct {
+		name    string
+		id      string
+		wantErr bool
+	}{
+		{"prefixed id", "nibs-z5r9", false},
+		{"uppercase and dots", "PX-tkn1.v2", false},
+		{"non-ASCII letters", "nibs-åäö", false},
+		{"ascii space", "nibs-a b", false},
+		{"escape", "tnib-\x1b[31mevil", true},
+		{"bell", "tnib-\aa", true},
+		{"C1 control", "tnib-\u009ba", true},
+		{"right-to-left override", "tnib-\u202ea", true},
+		{"zero-width joiner", "tnib-a\u200db", true},
+		{"newline", "tnib-a\nb", true},
+		{"backtick", "tnib-a`b", true},
+		{"blank-rendering filler", "tnib-a\u3164b", true},
+		{"invalid UTF-8", "tnib-a\xffb", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateIDText(tt.id)
+			if !tt.wantErr {
+				if err != nil {
+					t.Errorf("ValidateIDText(%q) = %v, want nil", tt.id, err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrIDNotText) {
+				t.Fatalf("ValidateIDText(%q) = %v, want an error wrapping ErrIDNotText", tt.id, err)
+			}
+			if msg := err.Error(); safetext.Strip(msg) != msg {
+				t.Errorf("ValidateIDText(%q) error %q carries the id raw", tt.id, msg)
 			}
 		})
 	}

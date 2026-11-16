@@ -1259,6 +1259,34 @@ func TestNewRefusesPrefixWithPathSeparator(t *testing.T) {
 	}
 }
 
+// TestNewRefusesPrefixWithAControlCharacter covers a prefix that makes an id the
+// load would skip (see nib.ValidateIDText).
+func TestNewRefusesPrefixWithAControlCharacter(t *testing.T) {
+	nibsDir := setupNewTest(t)
+	t.Setenv("EDITOR", "")
+	t.Setenv("VISUAL", "")
+
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"new", "Escape", "--prefix", "tnib-\x1b[31m", "--no-edit",
+	})
+	var runErr error
+	_ = captureStdout(t, func() { runErr = rootCmd.Execute() })
+	var ce *output.CodedError
+	if !errors.As(runErr, &ce) {
+		t.Fatalf("error = %v, want a *output.CodedError", runErr)
+	}
+	if ce.Code != output.ErrValidation {
+		t.Errorf("code = %q, want %q", ce.Code, output.ErrValidation)
+	}
+	if strings.ContainsRune(ce.Error(), '\x1b') {
+		t.Errorf("the refusal prints the escape raw: %q", ce.Error())
+	}
+	if n := countNibFiles(t, nibsDir); n != 0 {
+		t.Errorf("store holds %d nibs after a refused create, want 0", n)
+	}
+}
+
 // TestNewRefusesPrefixWithPathSeparatorJSON pins the --json envelope for the
 // same refusal: {"error":{"code","message"}} with the validation code.
 func TestNewRefusesPrefixWithPathSeparatorJSON(t *testing.T) {
