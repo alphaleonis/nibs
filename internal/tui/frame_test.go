@@ -29,6 +29,8 @@ func TestAFilteringListTakesQAndQuestionMark(t *testing.T) {
 		{"estimate picker", func(a *App) { processCmd(a, a.runAction(findAction(defaultActions, actEstimate))) }, viewEstimatePicker, func(a *App) list.Model { return a.estimatePicker.list }},
 		{"blocking picker", func(a *App) { sendKey(a, tea.KeyPressMsg{Code: 'b', Text: "b"}) }, viewBlockingPicker, func(a *App) list.Model { return a.blockingPicker.list }},
 		{"tag picker", func(a *App) { a.Update(openTagPickerMsg{}) }, viewTagPicker, func(a *App) list.Model { return a.tagPicker.list }},
+		{"milestone picker", func(a *App) { pressKeys(a, "m m") }, viewAssignPicker, func(a *App) list.Model { return a.assignPicker.list }},
+		{"area picker", func(a *App) { pressKeys(a, "m a") }, viewAssignPicker, func(a *App) list.Model { return a.assignPicker.list }},
 	}
 
 	type view struct {

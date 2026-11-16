@@ -185,28 +185,22 @@ func TestAppEstimatePickerWiring(t *testing.T) {
 		}
 	})
 
-	t.Run("detail view estimate action triggers openEstimatePickerMsg", func(t *testing.T) {
+	t.Run("detail view estimate action opens the estimate picker", func(t *testing.T) {
 		app, stub := newTestApp()
 		cfg := config.Default()
 		app.state = viewDetail
 		testNib := &nib.Nib{ID: "nib-1", Title: "Test", Status: "todo", Type: "task", Estimate: "m"}
 		app.detail = newDetailModel(testNib, stub, cfg, 80, 24, iconsUnicode)
 
-		cmd := app.runAction(findAction(defaultActions, actEstimate))
-		if cmd == nil {
-			t.Fatal("expected a command from the estimate action in the detail view")
+		app.runAction(findAction(defaultActions, actEstimate))
+		if app.state != viewEstimatePicker {
+			t.Fatalf("state = %d after the estimate action, want the estimate picker", app.state)
 		}
-
-		msg := cmd()
-		openMsg, ok := msg.(openEstimatePickerMsg)
-		if !ok {
-			t.Fatalf("expected openEstimatePickerMsg, got %T", msg)
+		if ids := app.estimatePicker.nibIDs; len(ids) != 1 || ids[0] != "nib-1" {
+			t.Errorf("got nibIDs %v, want [nib-1]", ids)
 		}
-		if len(openMsg.nibIDs) != 1 || openMsg.nibIDs[0] != "nib-1" {
-			t.Errorf("got nibIDs %v, want [nib-1]", openMsg.nibIDs)
-		}
-		if openMsg.currentEstimate != "m" {
-			t.Errorf("got currentEstimate %q, want %q", openMsg.currentEstimate, "m")
+		if got := app.estimatePicker.currentEstimate; got != "m" {
+			t.Errorf("got currentEstimate %q, want %q", got, "m")
 		}
 	})
 

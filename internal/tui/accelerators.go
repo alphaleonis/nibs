@@ -26,10 +26,67 @@ func takenKeys(table []action, ctx keyContext) map[string]bool {
 	return taken
 }
 
+// pickerOpeners are the actions that open each picker whose rows write a
+// field.
+var pickerOpeners = map[keyContext][]actionName{
+	ctxStatusPicker:   {actStatus},
+	ctxTypePicker:     {actType, actCreate},
+	ctxParentPicker:   {actParent},
+	ctxBlockingPicker: {actBlocking},
+	ctxPriorityPicker: {actPriority},
+	ctxEstimatePicker: {actEstimate},
+}
+
+// modifyRowFields are the pickers the modify picker's rows open, by row label.
+var modifyRowFields = map[keyContext]string{
+	ctxPriorityPicker:  "priority",
+	ctxEstimatePicker:  "estimate",
+	ctxMilestonePicker: "milestone",
+	ctxAreaPicker:      "area",
+}
+
+// openerKeys returns the last key of each binding that opens ctx's picker under
+// table, and the modify picker's key for the row that opens it. A row with one
+// of them as its accelerator would be chosen by a double tap or a key repeat of
+// the key that opened the picker.
+func openerKeys(table []action, ctx keyContext) map[string]bool {
+	keys := map[string]bool{}
+	for _, name := range pickerOpeners[ctx] {
+		if a := findAction(table, name); a != nil {
+			for _, binding := range a.Keys {
+				fields := strings.Fields(binding)
+				keys[fields[len(fields)-1]] = true
+			}
+		}
+	}
+	if label, ok := modifyRowFields[ctx]; ok {
+		keys[modifyRowKey(table, label)] = true
+	}
+	return keys
+}
+
+// modifyRowKey returns the modify picker's accelerator for the row labeled
+// label under table, or "" when it has none.
+func modifyRowKey(table []action, label string) string {
+	hints := make([]string, len(modifyRows))
+	for i, row := range modifyRows {
+		hints[i] = row.label
+	}
+	keys := assignAccelerators(table, ctxModifyPicker, hints)
+	if i := slices.Index(hints, label); i >= 0 {
+		return keys[i]
+	}
+	return ""
+}
+
 // freeAccelerators returns acceleratorPool without the keys an action of table
-// in ctx takes; see takenKeys.
+// in ctx takes, see takenKeys, and without the keys that open ctx's picker, see
+// openerKeys.
 func freeAccelerators(table []action, ctx keyContext) []string {
 	taken := takenKeys(table, ctx)
+	for k := range openerKeys(table, ctx) {
+		taken[k] = true
+	}
 	free := make([]string, 0, len(acceleratorPool))
 	for _, k := range acceleratorPool {
 		if !taken[k] {

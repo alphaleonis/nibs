@@ -39,6 +39,10 @@ type StubBackend struct {
 	DeleteCalls         []string
 	ReloadCalls         []string
 
+	// ApplyAssignments makes UpdateNib write an update's milestone and area to
+	// the stored nib, so a reload shows the nib in its new section.
+	ApplyAssignments bool
+
 	// Blocking status
 	Blocked  map[string]bool
 	Blocking map[string]bool
@@ -162,10 +166,41 @@ func (s *StubBackend) UpdateNib(_ context.Context, id string, input model.Update
 		return nil, err
 	}
 	s.UpdateCalls = append(s.UpdateCalls, stubUpdateCall{ID: id, Input: input})
+	if s.ApplyAssignments {
+		s.applyAssignments(id, input)
+	}
 	if n, ok := s.Nibs[id]; ok {
 		return n, nil
 	}
 	return &nib.Nib{ID: id}, nil
+}
+
+// applyAssignments replaces the stored nib id with a clone carrying input's
+// milestone and area, leaving the nib the test built untouched.
+func (s *StubBackend) applyAssignments(id string, input model.UpdateNibInput) {
+	n, ok := s.Nibs[id]
+	if !ok {
+		return
+	}
+	c := n.Clone()
+	if input.Milestone.IsSet() {
+		c.Milestone = ""
+		if v := input.Milestone.Value(); v != nil {
+			c.Milestone = *v
+		}
+	}
+	if input.Area.IsSet() {
+		c.Area = ""
+		if v := input.Area.Value(); v != nil {
+			c.Area = *v
+		}
+	}
+	s.Nibs[id] = c
+	for i, m := range s.AllNibs {
+		if m.ID == id {
+			s.AllNibs[i] = c
+		}
+	}
 }
 
 func (s *StubBackend) SetParent(_ context.Context, id string, parentID *string, ifMatch *string) (*nib.Nib, error) {

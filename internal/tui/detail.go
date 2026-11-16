@@ -373,6 +373,9 @@ func (m detailModel) route(msg tea.Msg) (detailModel, tea.Cmd) {
 
 // runAction does what the named action does in the nib view.
 func (m *detailModel) runAction(name actionName) tea.Cmd {
+	if msg := m.viewMsg(name); msg != nil {
+		return func() tea.Msg { return msg }
+	}
 	if m.linksActive {
 		if cmd, ok := browseList(&m.linkList, name); ok {
 			return cmd
@@ -382,50 +385,51 @@ func (m *detailModel) runAction(name actionName) tea.Cmd {
 	}
 	n := m.nib
 	switch name {
-	case actLeave, actJumpBack:
-		return func() tea.Msg { return backToListMsg{} }
 	case actFocusNext, actFocusPrev:
 		if len(m.links) > 0 {
 			m.linksActive = !m.linksActive
-		}
-	case actOpen:
-		if item, ok := m.linkList.SelectedItem().(linkItem); ok && m.linksActive {
-			target := item.link.nib
-			return func() tea.Msg { return selectNibMsg{nib: target} }
-		}
-	case actParent:
-		return func() tea.Msg {
-			return openParentPickerMsg{nibIDs: []string{n.ID}, nibTitle: n.Title, nibTypes: []string{n.EffectiveType()}, currentParent: n.Parent}
-		}
-	case actStatus:
-		return func() tea.Msg {
-			return openStatusPickerMsg{nibIDs: []string{n.ID}, nibTitle: n.Title, currentStatus: n.Status}
-		}
-	case actType:
-		validTypes := validTypesForNib(n, m.backend)
-		return func() tea.Msg {
-			return openTypePickerMsg{nibIDs: []string{n.ID}, nibTitle: n.Title, currentType: n.EffectiveType(), validTypes: validTypes}
-		}
-	case actPriority:
-		return func() tea.Msg {
-			return openPriorityPickerMsg{nibIDs: []string{n.ID}, nibTitle: n.Title, currentPriority: n.EffectivePriority()}
-		}
-	case actEstimate:
-		return func() tea.Msg {
-			return openEstimatePickerMsg{nibIDs: []string{n.ID}, nibTitle: n.Title, currentEstimate: n.Estimate}
-		}
-	case actModify:
-		targets := modifyTargets{nibs: []*nib.Nib{n}, title: n.Title}
-		return func() tea.Msg { return openModifyPickerMsg{targets: targets} }
-	case actBlocking:
-		currentBlocking := computeCurrentBlocking(m.backend, n.ID)
-		return func() tea.Msg {
-			return openBlockingPickerMsg{nibID: n.ID, nibTitle: n.Title, currentBlocking: currentBlocking}
 		}
 	case actEdit:
 		return func() tea.Msg { return openEditorMsg{nibID: n.ID, nibPath: n.Path} }
 	case actCopyID:
 		return func() tea.Msg { return copyNibIDMsg{ids: []string{n.ID}} }
+	}
+	return nil
+}
+
+// viewMsg returns the message that shows another view for the named action:
+// the view before this one, the nib under the links cursor, or a picker for
+// the nib on screen. It returns nil when the action shows no other view. The
+// App applies it at once; see App.showView.
+func (m *detailModel) viewMsg(name actionName) tea.Msg {
+	switch name {
+	case actLeave, actJumpBack:
+		return backToListMsg{}
+	case actOpen:
+		if item, ok := m.linkList.SelectedItem().(linkItem); ok && m.linksActive {
+			return selectNibMsg{nib: item.link.nib}
+		}
+		return nil
+	}
+	n := m.nib
+	if n == nil {
+		return nil
+	}
+	switch name {
+	case actParent:
+		return openParentPickerMsg{nibIDs: []string{n.ID}, nibTitle: n.Title, nibTypes: []string{n.EffectiveType()}, currentParent: n.Parent}
+	case actStatus:
+		return openStatusPickerMsg{nibIDs: []string{n.ID}, nibTitle: n.Title, currentStatus: n.Status}
+	case actType:
+		return openTypePickerMsg{nibIDs: []string{n.ID}, nibTitle: n.Title, currentType: n.EffectiveType(), validTypes: validTypesForNib(n, m.backend)}
+	case actPriority:
+		return openPriorityPickerMsg{nibIDs: []string{n.ID}, nibTitle: n.Title, currentPriority: n.EffectivePriority()}
+	case actEstimate:
+		return openEstimatePickerMsg{nibIDs: []string{n.ID}, nibTitle: n.Title, currentEstimate: n.Estimate}
+	case actModify:
+		return openModifyPickerMsg{targets: modifyTargets{nibs: []*nib.Nib{n}, title: n.Title}}
+	case actBlocking:
+		return openBlockingPickerMsg{nibID: n.ID, nibTitle: n.Title, currentBlocking: computeCurrentBlocking(m.backend, n.ID)}
 	}
 	return nil
 }

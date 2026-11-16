@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/viewshape"
@@ -37,14 +38,14 @@ type pickerCase struct {
 }
 
 // pickerNibs gives the tag picker more rows than the pool has keys before g,
-// the first one an action takes in a picker.
+// the first one an action takes in a picker, and the milestone picker a row.
 func pickerNibs() []*nib.Nib {
 	nibs := listKeysNibs()
 	nibs[0].Tags = []string{"quux"}
 	for i := range 20 {
 		nibs[3].Tags = append(nibs[3].Tags, fmt.Sprintf("tag%02d", i))
 	}
-	return nibs
+	return append(nibs, &nib.Nib{ID: "nib-5", Title: "Ship", Type: "milestone", Status: "todo", Order: "5"})
 }
 
 func namesOf[T any](items []T, name func(T) string) []string {
@@ -133,7 +134,17 @@ var pickerCases = []pickerCase{
 	{
 		name: "modify", ctx: ctxModifyPicker, open: "m", choose: "enter",
 		view: func(a *App) string { return a.modifyPicker.View() },
-		rows: func(*App) []string { return []string{"priority", "estimate"} },
+		rows: func(*App) []string { return []string{"priority", "estimate", "milestone", "area"} },
+	},
+	{
+		name: "milestone", ctx: ctxMilestonePicker, open: "m m", choose: "enter",
+		view: func(a *App) string { return a.assignPicker.View() },
+		rows: func(*App) []string { return []string{"(No milestone)", "Ship"} },
+	},
+	{
+		name: "area", ctx: ctxAreaPicker, open: "m a", choose: "enter",
+		view: func(a *App) string { return a.assignPicker.View() },
+		rows: func(*App) []string { return []string{"(No area)", "api", "api/webhooks", "docs"} },
 	},
 	{
 		name: "view", ctx: ctxViewPicker, open: "v", choose: "enter",
@@ -146,6 +157,11 @@ var pickerCases = []pickerCase{
 func openPicker(t *testing.T, tc pickerCase) (*App, *StubBackend) {
 	t.Helper()
 	app, stub := setupTestApp(t, pickerNibs())
+	vocab, err := area.Parse([]byte(groupedAreas))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub.AreaVocab = vocab
 	if !focusOn(app, "nib-4") {
 		t.Fatal("premise failed: nib-4 is not in the list")
 	}
@@ -267,6 +283,8 @@ func openedState(tc pickerCase) viewState {
 		return viewModifyPicker
 	case ctxViewPicker:
 		return viewViewPicker
+	case ctxMilestonePicker, ctxAreaPicker:
+		return viewAssignPicker
 	}
 	return viewTypePicker
 }

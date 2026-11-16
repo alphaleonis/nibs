@@ -24,6 +24,8 @@ const (
 	ctxBlockingPicker
 	ctxPriorityPicker
 	ctxEstimatePicker
+	ctxMilestonePicker
+	ctxAreaPicker
 	ctxTagPicker
 	ctxModifyPicker
 	ctxColumnPicker
@@ -40,23 +42,25 @@ const (
 )
 
 var keyContextNames = [numKeyContexts]string{
-	ctxList:           "list",
-	ctxNibLinks:       "nib view links",
-	ctxNibBody:        "nib view body",
-	ctxStatusPicker:   "status picker",
-	ctxTypePicker:     "type picker",
-	ctxParentPicker:   "parent picker",
-	ctxBlockingPicker: "blocking picker",
-	ctxPriorityPicker: "priority picker",
-	ctxEstimatePicker: "estimate picker",
-	ctxTagPicker:      "tag picker",
-	ctxModifyPicker:   "modify picker",
-	ctxColumnPicker:   "column picker",
-	ctxViewPicker:     "view picker",
-	ctxConfirm:        "confirm dialog",
-	ctxFilterInput:    "filter input",
-	ctxTextInput:      "text input",
-	ctxPalette:        "action palette",
+	ctxList:            "list",
+	ctxNibLinks:        "nib view links",
+	ctxNibBody:         "nib view body",
+	ctxStatusPicker:    "status picker",
+	ctxTypePicker:      "type picker",
+	ctxParentPicker:    "parent picker",
+	ctxBlockingPicker:  "blocking picker",
+	ctxPriorityPicker:  "priority picker",
+	ctxEstimatePicker:  "estimate picker",
+	ctxMilestonePicker: "milestone picker",
+	ctxAreaPicker:      "area picker",
+	ctxTagPicker:       "tag picker",
+	ctxModifyPicker:    "modify picker",
+	ctxColumnPicker:    "column picker",
+	ctxViewPicker:      "view picker",
+	ctxConfirm:         "confirm dialog",
+	ctxFilterInput:     "filter input",
+	ctxTextInput:       "text input",
+	ctxPalette:         "action palette",
 }
 
 func (c keyContext) String() string {
@@ -159,7 +163,7 @@ type action struct {
 var (
 	nibContexts   = []keyContext{ctxList, ctxNibLinks, ctxNibBody}
 	nibViewCtx    = []keyContext{ctxNibLinks, ctxNibBody}
-	listPickers   = []keyContext{ctxStatusPicker, ctxParentPicker, ctxBlockingPicker, ctxPriorityPicker, ctxEstimatePicker, ctxTagPicker}
+	listPickers   = []keyContext{ctxStatusPicker, ctxParentPicker, ctxBlockingPicker, ctxPriorityPicker, ctxEstimatePicker, ctxMilestonePicker, ctxAreaPicker, ctxTagPicker}
 	allPickers    = append([]keyContext{ctxTypePicker, ctxModifyPicker, ctxColumnPicker, ctxViewPicker}, listPickers...)
 	browsing      = slices.Concat(nibContexts, allPickers)
 	everyContext  = allKeyContexts()

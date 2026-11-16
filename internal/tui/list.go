@@ -668,6 +668,9 @@ func (m listModel) focusedNib() *nib.Nib {
 
 // runAction does what the named action does in the list.
 func (m *listModel) runAction(name actionName) tea.Cmd {
+	if msg := m.viewMsg(name); msg != nil {
+		return func() tea.Msg { return msg }
+	}
 	switch name {
 	case actUp:
 		m.list.CursorUp()
@@ -742,10 +745,6 @@ func (m *listModel) runAction(name actionName) tea.Cmd {
 		m.stepLevel(1)
 	case actViewPrevious:
 		m.stepLevel(-1)
-	case actOpen:
-		if n := m.focusedNib(); n != nil {
-			return func() tea.Msg { return selectNibMsg{nib: n} }
-		}
 	case actLeave:
 		return m.leave()
 	case actSelect:
@@ -757,70 +756,9 @@ func (m *listModel) runAction(name actionName) tea.Cmd {
 			}
 			m.list.CursorDown()
 		}
-	case actCreate:
-		selectedType := ""
-		if n := m.focusedNib(); n != nil {
-			selectedType = n.EffectiveType()
-		}
-		smartDefault := defaultTypeForContext(selectedType)
-		return func() tea.Msg { return openCreateTypePickerMsg{defaultType: smartDefault} }
 	case actEdit:
 		if n := m.focusedNib(); n != nil {
 			return func() tea.Msg { return openEditorMsg{nibID: n.ID, nibPath: n.Path} }
-		}
-	case actStatus:
-		ids, title, focused := m.targets()
-		if ids == nil {
-			return nil
-		}
-		msg := openStatusPickerMsg{nibIDs: ids, nibTitle: title}
-		if len(m.selectedNibs) == 0 {
-			msg.currentStatus = focused.Status
-		}
-		return func() tea.Msg { return msg }
-	case actType:
-		return m.openTypePicker()
-	case actParent:
-		return m.openParentPicker()
-	case actPriority:
-		ids, title, focused := m.targets()
-		if ids == nil {
-			return nil
-		}
-		msg := openPriorityPickerMsg{nibIDs: ids, nibTitle: title}
-		if len(m.selectedNibs) == 0 {
-			msg.currentPriority = focused.EffectivePriority()
-		}
-		return func() tea.Msg { return msg }
-	case actEstimate:
-		ids, title, focused := m.targets()
-		if ids == nil {
-			return nil
-		}
-		msg := openEstimatePickerMsg{nibIDs: ids, nibTitle: title}
-		if len(m.selectedNibs) == 0 {
-			msg.currentEstimate = focused.Estimate
-		}
-		return func() tea.Msg { return msg }
-	case actModify:
-		ids, title, _ := m.targets()
-		nibs := make([]*nib.Nib, 0, len(ids))
-		for _, id := range ids {
-			if n, err := m.backend.GetNib(context.Background(), id); err == nil && n != nil {
-				nibs = append(nibs, n)
-			}
-		}
-		if len(nibs) == 0 {
-			return nil
-		}
-		targets := modifyTargets{nibs: nibs, title: title}
-		return func() tea.Msg { return openModifyPickerMsg{targets: targets} }
-	case actBlocking:
-		if n := m.focusedNib(); n != nil {
-			currentBlocking := computeCurrentBlocking(m.backend, n.ID)
-			return func() tea.Msg {
-				return openBlockingPickerMsg{nibID: n.ID, nibTitle: n.Title, currentBlocking: currentBlocking}
-			}
 		}
 	case actMoveUp:
 		return m.reorder(moveUp)
@@ -830,10 +768,6 @@ func (m *listModel) runAction(name actionName) tea.Cmd {
 		return m.reorder(moveTop)
 	case actMoveBottom:
 		return m.reorder(moveBottom)
-	case actArchive:
-		return m.confirm("archive")
-	case actDelete:
-		return m.confirm("delete")
 	case actCopyID:
 		if ids, _, _ := m.targets(); ids != nil {
 			return func() tea.Msg { return copyNibIDMsg{ids: ids} }
@@ -913,24 +847,99 @@ func (m *listModel) pageDown() {
 
 // confirm asks before archiving or deleting the nib under the cursor and its
 // descendants.
-func (m *listModel) confirm(verb string) tea.Cmd {
+func (m *listModel) confirm(verb string) tea.Msg {
 	n := m.focusedNib()
 	if n == nil {
 		return nil
 	}
 	ids := gatherNibAndDescendants(m.backend, n.ID)
 	dialog := buildConfirmDialog(verb, n.Title, ids, len(ids)-1)
-	return func() tea.Msg { return openConfirmMsg{dialog: dialog} }
+	return openConfirmMsg{dialog: dialog}
 }
 
-func (m *listModel) openTypePicker() tea.Cmd {
+// viewMsg returns the message that shows another view for the named action:
+// the focused nib, or a picker or dialog for the focused or selected nibs. It
+// returns nil when the action shows no other view or has no nib to act on. The
+// App applies it at once; see App.showView.
+func (m *listModel) viewMsg(name actionName) tea.Msg {
+	switch name {
+	case actOpen:
+		if n := m.focusedNib(); n != nil {
+			return selectNibMsg{nib: n}
+		}
+	case actCreate:
+		selectedType := ""
+		if n := m.focusedNib(); n != nil {
+			selectedType = n.EffectiveType()
+		}
+		return openCreateTypePickerMsg{defaultType: defaultTypeForContext(selectedType)}
+	case actStatus:
+		ids, title, focused := m.targets()
+		if ids == nil {
+			return nil
+		}
+		msg := openStatusPickerMsg{nibIDs: ids, nibTitle: title}
+		if len(m.selectedNibs) == 0 {
+			msg.currentStatus = focused.Status
+		}
+		return msg
+	case actType:
+		return m.openTypePicker()
+	case actParent:
+		return m.openParentPicker()
+	case actPriority:
+		ids, title, focused := m.targets()
+		if ids == nil {
+			return nil
+		}
+		msg := openPriorityPickerMsg{nibIDs: ids, nibTitle: title}
+		if len(m.selectedNibs) == 0 {
+			msg.currentPriority = focused.EffectivePriority()
+		}
+		return msg
+	case actEstimate:
+		ids, title, focused := m.targets()
+		if ids == nil {
+			return nil
+		}
+		msg := openEstimatePickerMsg{nibIDs: ids, nibTitle: title}
+		if len(m.selectedNibs) == 0 {
+			msg.currentEstimate = focused.Estimate
+		}
+		return msg
+	case actModify:
+		ids, title, _ := m.targets()
+		nibs := make([]*nib.Nib, 0, len(ids))
+		for _, id := range ids {
+			if n, err := m.backend.GetNib(context.Background(), id); err == nil && n != nil {
+				nibs = append(nibs, n)
+			}
+		}
+		if len(nibs) == 0 {
+			return nil
+		}
+		return openModifyPickerMsg{targets: modifyTargets{nibs: nibs, title: title}}
+	case actBlocking:
+		if n := m.focusedNib(); n != nil {
+			currentBlocking := computeCurrentBlocking(m.backend, n.ID)
+			return openBlockingPickerMsg{nibID: n.ID, nibTitle: n.Title, currentBlocking: currentBlocking}
+		}
+	case actArchive:
+		return m.confirm("archive")
+	case actDelete:
+		return m.confirm("delete")
+	}
+	return nil
+}
+
+func (m *listModel) openTypePicker() tea.Msg {
 	ids, title, focused := m.targets()
 	if ids == nil {
 		return nil
 	}
 	if len(m.selectedNibs) == 0 {
 		msg := openTypePickerMsg{nibIDs: ids, nibTitle: title, currentType: focused.EffectiveType(), validTypes: validTypesForNib(focused, m.backend)}
-		return func() tea.Msg { return msg }
+		return msg
 	}
 	var validTypes []string
 	first := true
@@ -946,17 +955,17 @@ func (m *listModel) openTypePicker() tea.Cmd {
 		}
 	}
 	msg := openTypePickerMsg{nibIDs: ids, nibTitle: title, validTypes: validTypes}
-	return func() tea.Msg { return msg }
+	return msg
 }
 
-func (m *listModel) openParentPicker() tea.Cmd {
+func (m *listModel) openParentPicker() tea.Msg {
 	ids, title, focused := m.targets()
 	if ids == nil {
 		return nil
 	}
 	if len(m.selectedNibs) == 0 {
 		msg := openParentPickerMsg{nibIDs: ids, nibTitle: title, nibTypes: []string{focused.EffectiveType()}, currentParent: focused.Parent}
-		return func() tea.Msg { return msg }
+		return msg
 	}
 	types := make([]string, 0, len(ids))
 	for _, id := range ids {
@@ -965,7 +974,7 @@ func (m *listModel) openParentPicker() tea.Cmd {
 		}
 	}
 	msg := openParentPickerMsg{nibIDs: ids, nibTitle: title, nibTypes: types}
-	return func() tea.Msg { return msg }
+	return msg
 }
 
 // updateDelegate lays the rows out for a list width cells wide.

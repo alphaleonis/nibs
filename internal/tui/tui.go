@@ -40,6 +40,7 @@ const (
 	viewPriorityPicker
 	viewEstimatePicker
 	viewModifyPicker
+	viewAssignPicker
 	viewColumnPicker
 	viewViewPicker
 	viewCreateModal
@@ -149,6 +150,7 @@ type App struct {
 	priorityPicker priorityPickerModel
 	estimatePicker estimatePickerModel
 	modifyPicker   modifyPickerModel
+	assignPicker   assignPickerModel
 	columnPicker   columnPickerModel
 	viewPicker     viewPickerModel
 	createModal    createModalModel
@@ -365,6 +367,8 @@ func (a *App) keyContext() keyContext {
 		return ctxTypePicker
 	case viewModifyPicker:
 		return ctxModifyPicker
+	case viewAssignPicker:
+		return inList(a.assignPicker.list, a.assignPicker.field.ctx)
 	case viewColumnPicker:
 		return ctxColumnPicker
 	case viewViewPicker:
@@ -447,22 +451,53 @@ func (a *App) runAction(act *action) tea.Cmd {
 	case actPaletteRun:
 		return a.runPaletteEntry()
 	case actTagFilter:
-		return func() tea.Msg { return openTagPickerMsg{} }
+		return a.showView(openTagPickerMsg{})
 	case actNibView:
 		a.toggleNibView()
 		return nil
 	case actColumns:
-		a.previousState = a.state
 		a.columnPicker = newColumnPickerModel(a.keys.actions, levelViews[a.list.level], a.list.columns, a.width, a.height)
-		a.state = viewColumnPicker
+		a.openModal(viewColumnPicker)
 		return nil
 	case actViewPick:
-		a.previousState = a.state
 		a.viewPicker = newViewPickerModel(a.keys, a.list.level, a.list.prevLevel, a.width, a.height)
-		a.state = viewViewPicker
+		a.openModal(viewViewPicker)
 		return nil
 	}
+	if msg := a.viewMsg(act.Name); msg != nil {
+		return a.showView(msg)
+	}
 	return a.updateActiveView(actionMsg{name: act.Name})
+}
+
+// viewMsg returns the message that shows another view for act in the list or
+// the nib view on screen, or nil when act shows none there.
+func (a *App) viewMsg(act actionName) tea.Msg {
+	switch a.state {
+	case viewList:
+		return a.list.viewMsg(act)
+	case viewDetail:
+		return a.detail.viewMsg(act)
+	}
+	return nil
+}
+
+// showView applies msg, which changes the view on screen, before Update
+// returns. A key typed right after the one that sent msg then reaches the view
+// msg shows, even when it arrives before any command's message.
+func (a *App) showView(msg tea.Msg) tea.Cmd {
+	_, cmd := a.update(msg)
+	return cmd
+}
+
+// openModal shows state, a picker or dialog, over the list or the nib view.
+// Over another modal it keeps the view under that modal, so canceling returns
+// to the list or the nib view.
+func (a *App) openModal(state viewState) {
+	if a.state == viewList || a.state == viewDetail {
+		a.previousState = a.state
+	}
+	a.state = state
 }
 
 // runPaletteEntry closes the palette and runs its highlighted action in the
@@ -598,9 +633,8 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return a, nil
 			}
 		}
-		a.previousState = a.state
 		a.parentPicker = newParentPickerModel(a.keys.actions, msg.nibIDs, msg.nibTitle, msg.nibTypes, msg.currentParent, a.backend, a.config, a.width, a.height)
-		a.state = viewParentPicker
+		a.openModal(viewParentPicker)
 		return a, a.parentPicker.Init()
 
 	case closeParentPickerMsg:
@@ -609,9 +643,8 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.list.loadNibs
 
 	case openStatusPickerMsg:
-		a.previousState = a.state
 		a.statusPicker = newStatusPickerModel(a.keys.actions, msg.nibIDs, msg.nibTitle, msg.currentStatus, a.config, a.width, a.height)
-		a.state = viewStatusPicker
+		a.openModal(viewStatusPicker)
 		return a, a.statusPicker.Init()
 
 	case closeStatusPickerMsg:
@@ -641,16 +674,14 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.list.loadNibs
 
 	case openCreateTypePickerMsg:
-		a.previousState = a.state
 		// For creation: no nibIDs, and every type is valid.
 		a.typePicker = newTypePickerModel(a.keys.actions, nil, "", msg.defaultType, nil, a.width, a.height)
-		a.state = viewCreateTypePicker
+		a.openModal(viewCreateTypePicker)
 		return a, a.typePicker.Init()
 
 	case openTypePickerMsg:
-		a.previousState = a.state
 		a.typePicker = newTypePickerModel(a.keys.actions, msg.nibIDs, msg.nibTitle, msg.currentType, msg.validTypes, a.width, a.height)
-		a.state = viewTypePicker
+		a.openModal(viewTypePicker)
 		return a, a.typePicker.Init()
 
 	case closeTypePickerMsg:
@@ -690,9 +721,8 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.createModal.Init()
 
 	case openPriorityPickerMsg:
-		a.previousState = a.state
 		a.priorityPicker = newPriorityPickerModel(a.keys.actions, msg.nibIDs, msg.nibTitle, msg.currentPriority, a.width, a.height)
-		a.state = viewPriorityPicker
+		a.openModal(viewPriorityPicker)
 		return a, a.priorityPicker.Init()
 
 	case closePriorityPickerMsg:
@@ -722,14 +752,42 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.list.loadNibs
 
 	case openModifyPickerMsg:
-		a.previousState = a.state
-		a.modifyPicker = newModifyPickerModel(a.keys.actions, msg.targets, a.width, a.height)
-		a.state = viewModifyPicker
+		a.modifyPicker = newModifyPickerModel(a.keys.actions, msg.targets, a.backend, a.width, a.height)
+		a.openModal(viewModifyPicker)
 		return a, nil
 
 	case closeModifyPickerMsg:
 		a.state = a.previousState
 		return a, nil
+
+	case openAssignPickerMsg:
+		a.assignPicker = newAssignPickerModel(a.keys.actions, msg.field, msg.targets, a.backend, a.config, a.width, a.height)
+		a.openModal(viewAssignPicker)
+		return a, nil
+
+	case closeAssignPickerMsg:
+		a.state = a.previousState
+		return a, a.list.loadNibs
+
+	case assignChosenMsg:
+		var errs []error
+		for _, nibID := range msg.nibIDs {
+			var input model.UpdateNibInput
+			msg.field.set(&input, msg.value)
+			if _, err := a.backend.UpdateNib(context.Background(), nibID, input); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		a.state = a.previousState
+		clear(a.list.selectedNibs)
+		if a.state == viewDetail && len(msg.nibIDs) == 1 {
+			updatedNib, _ := a.backend.GetNib(context.Background(), msg.nibIDs[0])
+			if updatedNib != nil {
+				a.detail = a.initDetailModel(updatedNib)
+			}
+		}
+		a.reportMutationFailures(msg.field.title+" change", "nib", errs)
+		return a, a.list.loadNibs
 
 	case columnsChosenMsg:
 		a.state = a.previousState
@@ -755,9 +813,8 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.Update(msg.open)
 
 	case openEstimatePickerMsg:
-		a.previousState = a.state
 		a.estimatePicker = newEstimatePickerModel(a.keys.actions, msg.nibIDs, msg.nibTitle, msg.currentEstimate, a.width, a.height)
-		a.state = viewEstimatePicker
+		a.openModal(viewEstimatePicker)
 		return a, a.estimatePicker.Init()
 
 	case closeEstimatePickerMsg:
@@ -786,9 +843,8 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.list.loadNibs
 
 	case openBlockingPickerMsg:
-		a.previousState = a.state
 		a.blockingPicker = newBlockingPickerModel(a.keys.actions, msg.nibID, msg.nibTitle, msg.currentBlocking, a.backend, a.config, a.width, a.height)
-		a.state = viewBlockingPicker
+		a.openModal(viewBlockingPicker)
 		return a, a.blockingPicker.Init()
 
 	case closeBlockingPickerMsg:
@@ -847,10 +903,9 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case openConfirmMsg:
-		a.previousState = a.state
 		a.confirmDialog = msg.dialog
 		a.confirmDialog.table = a.keys.actions
-		a.state = viewConfirmDialog
+		a.openModal(viewConfirmDialog)
 		return a, nil
 
 	case confirmActionMsg:
@@ -1054,7 +1109,13 @@ func (a *App) updateActiveView(msg tea.Msg) tea.Cmd {
 	case viewEstimatePicker:
 		a.estimatePicker, cmd = a.estimatePicker.Update(msg)
 	case viewModifyPicker:
-		a.modifyPicker, cmd = a.modifyPicker.Update(msg)
+		var chosen tea.Msg
+		a.modifyPicker, chosen = a.modifyPicker.Update(msg)
+		if chosen != nil {
+			cmd = a.showView(chosen)
+		}
+	case viewAssignPicker:
+		a.assignPicker, cmd = a.assignPicker.Update(msg)
 	case viewColumnPicker:
 		a.columnPicker, cmd = a.columnPicker.Update(msg)
 	case viewViewPicker:
@@ -1148,6 +1209,8 @@ func (a *App) renderState(state viewState) string {
 		return a.estimatePicker.ModalView(a.getBackgroundView(), a.width, a.height)
 	case viewModifyPicker:
 		return a.modifyPicker.ModalView(a.getBackgroundView(), a.width, a.height)
+	case viewAssignPicker:
+		return a.assignPicker.ModalView(a.getBackgroundView(), a.width, a.height)
 	case viewColumnPicker:
 		return a.columnPicker.ModalView(a.getBackgroundView(), a.width, a.height)
 	case viewViewPicker:
