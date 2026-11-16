@@ -126,7 +126,7 @@ func (m tagPickerModel) Update(msg tea.Msg) (tagPickerModel, tea.Cmd) {
 				return m, func() tea.Msg { return tagSelectedMsg{tag: item.tag} }
 			}
 		case actLeave:
-			return m, func() tea.Msg { return backToListMsg{} }
+			return m, func() tea.Msg { return returnToListMsg{} }
 		}
 		return m, nil
 

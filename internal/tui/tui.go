@@ -137,7 +137,8 @@ type App struct {
 	createModal    createModalModel
 	confirmDialog  confirmDialog
 	palette        paletteModel
-	history        []nibViewModel // the expanded views that links were followed from, the latest last
+	jumps          []jump // the jump history, the latest last; see jump
+	pinned         pin    // the nib the nib view shows in place of the cursor's; see App.dockTarget
 	backend        Backend
 	config         *config.Config
 	keys           keymap
@@ -351,11 +352,12 @@ func nibViewContext(m nibViewModel) keyContext {
 // actionState snapshots what the actions' Hint, Label and Ready read.
 func (a *App) actionState() actionState {
 	st := actionState{
-		ctx:      a.keyContext(),
-		prefix:   a.pendingKey,
-		selected: len(a.list.selectedNibs),
-		filtered: a.list.hasActiveFilter() || a.list.list.IsFiltered(),
-		docked:   a.state == viewList && a.dockPlacement() != "",
+		ctx:         a.keyContext(),
+		prefix:      a.pendingKey,
+		selected:    len(a.list.selectedNibs),
+		filtered:    a.list.hasActiveFilter() || a.list.list.IsFiltered(),
+		docked:      a.state == viewList && a.dockPlacement() != "",
+		canJumpBack: len(a.jumps) > 0,
 	}
 	view := &a.expanded
 	switch {
@@ -363,12 +365,14 @@ func (a *App) actionState() actionState {
 	case a.state == viewList && a.dockFocused():
 		view = &a.docked
 	default:
-		_, st.hasNib = a.list.list.SelectedItem().(nibItem)
+		n := a.list.focusedNib()
+		st.hasNib, st.hasParent = n != nil, n != nil && n.Parent != ""
 		return st
 	}
 	// The nib view acts on its own nib only, never on the list's marks.
 	st.selected = 0
 	st.hasNib = view.nib != nil
+	st.hasParent = st.hasNib && view.nib.Parent != ""
 	st.relationsShown = view.relationsShown()
 	st.onDocument = view.selectedRelation() == nil
 	return st
@@ -443,12 +447,17 @@ func (a *App) runAction(act *action) tea.Cmd {
 			a.cycleDockFocus(act.Name == actFocusNext)
 			return nil
 		}
-	case actLeave, actJumpBack:
-		// The docked view has no views of its own to step back through.
+	case actLeave:
 		if a.state == viewList && a.dockFocused() {
 			a.docked.active = false
 			return nil
 		}
+	case actJumpBack:
+		a.jumpBack()
+		return nil
+	case actGoParent:
+		a.goToParent()
+		return nil
 	case actColumns:
 		a.columnPicker = newColumnPickerModel(a.keys.actions, levelViews[a.list.level], a.list.columns, a.width, a.height)
 		a.openModal(viewColumnPicker)
@@ -509,10 +518,12 @@ func (a *App) runPaletteEntry() tea.Cmd {
 	return a.runAction(e.act)
 }
 
-// Update handles msg, then saves the view and the filter query when either
-// changed.
+// Update handles msg, brings the pin and the nib views' notInList up to date
+// with it, then saves the view and the filter query when either changed.
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	model, cmd := a.update(msg)
+	a.syncPin()
+	a.noteListMembership()
 	a.remember()
 	return model, cmd
 }
@@ -574,6 +585,7 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case nibsLoadedMsg:
 		a.list, cmd = a.list.Update(msg)
+		a.dropDeletedJumps()
 		a.syncDocked()
 		return a, cmd
 
@@ -590,7 +602,6 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if err != nil || updatedNib == nil {
 				// The nib is gone or unreadable, so any overlay on it closes too.
 				a.state = viewList
-				a.history = nil
 			} else {
 				a.expanded = a.expanded.withNib(updatedNib)
 			}
@@ -1047,25 +1058,18 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case selectNibMsg:
-		if a.state == viewExpanded {
-			a.history = append(a.history, a.expanded)
-		}
 		a.state = viewExpanded
 		a.expanded = a.newNibView(msg.nib)
 		return a, nil
 
-	case backToListMsg:
-		if len(a.history) == 0 {
-			return a, a.returnToList()
-		}
-		a.expanded = a.history[len(a.history)-1]
-		a.history = a.history[:len(a.history)-1]
-		// The terminal may have been resized since this view was pushed.
-		a.expanded, _ = a.expanded.Update(tea.WindowSizeMsg{Width: a.width, Height: a.height})
+	case followNibMsg:
+		a.follow(msg.id)
 		return a, nil
 
-	case leaveNibViewMsg:
-		a.history = nil
+	case returnToListMsg:
+		// Leaving the expanded view lands in the list even when it was opened
+		// from the docked view, which ends any pin; see pin.
+		a.docked.active = false
 		return a, a.returnToList()
 	}
 

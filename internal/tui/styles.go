@@ -95,4 +95,8 @@ var (
 	helpKeyStyle = lipgloss.NewStyle().
 			Foreground(ui.ColorPrimary).
 			Bold(true)
+
+	// noteStyle draws a note about what a view shows, such as notInListNote.
+	noteStyle = lipgloss.NewStyle().
+			Foreground(ui.ColorWarning)
 )

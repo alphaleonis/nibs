@@ -177,8 +177,9 @@ func actionTreeNibs() []*nib.Nib {
 	}
 }
 
-// followedToChild expands nib-2 and follows its relation to nib-3, so the view
-// shows a nib other than the one under the list cursor.
+// followedToChild expands nib-2 and follows its relation to nib-3, then puts
+// the list cursor back on nib-2, so the view shows a nib other than the one
+// under the list cursor.
 func followedToChild(t *testing.T) (*App, *StubBackend) {
 	t.Helper()
 	app, stub := setupTestApp(t, actionTreeNibs())
@@ -188,6 +189,7 @@ func followedToChild(t *testing.T) (*App, *StubBackend) {
 		t.Fatalf("premise failed: enter opened state %d focused on %d, want the relations of nib-2", app.state, app.expanded.focus)
 	}
 	pressKeys(app, "j enter")
+	app.list.restoreCursor("nib-2")
 	if app.expanded.nib.ID != "nib-3" || app.list.focusedID() != "nib-2" {
 		t.Fatalf("premise failed: the view shows %s with the list on %s, want nib-3 over nib-2", app.expanded.nib.ID, app.list.focusedID())
 	}
@@ -257,7 +259,8 @@ func TestExpandedViewActionsWriteToTheNibOnScreen(t *testing.T) {
 	})
 }
 
-// esc returns to the list from a followed link; backspace steps back first.
+// esc returns to the list from a followed link. backspace steps back to the
+// nib the link was followed from, and no further.
 func TestEscLeavesTheNibViewAndBackspaceStepsBack(t *testing.T) {
 	app, _ := followedToChild(t)
 	pressKeys(app, "backspace")
@@ -265,14 +268,14 @@ func TestEscLeavesTheNibViewAndBackspaceStepsBack(t *testing.T) {
 		t.Fatalf("backspace left state %d on %v, want the expanded view of nib-2", app.state, app.expanded.nib)
 	}
 	pressKeys(app, "backspace")
-	if app.state != viewList {
-		t.Errorf("a second backspace left state %d, want the list", app.state)
+	if app.state != viewExpanded || app.expanded.nib.ID != "nib-2" {
+		t.Errorf("a second backspace left state %d on %v, want the expanded view of nib-2", app.state, app.expanded.nib)
 	}
 
 	app, _ = followedToChild(t)
 	pressKeys(app, "esc")
-	if app.state != viewList || len(app.history) != 0 {
-		t.Errorf("esc left state %d with %d views to step back to, want the list with none", app.state, len(app.history))
+	if app.state != viewList {
+		t.Errorf("esc left state %d, want the list", app.state)
 	}
 }
 

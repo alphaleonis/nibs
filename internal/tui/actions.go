@@ -91,6 +91,7 @@ const (
 	actOpen          actionName = "go.open"
 	actLeave         actionName = "go.leave"
 	actJumpBack      actionName = "go.back"
+	actGoParent      actionName = "go.parent"
 	actSelect        actionName = "nib.select"
 	actCreate        actionName = "nib.create"
 	actEdit          actionName = "nib.edit"
@@ -144,6 +145,8 @@ type actionState struct {
 	relationsShown bool   // the nib view draws a related nib
 	onDocument     bool   // the nib view's relations cursor is on a document
 	docked         bool   // the list is on screen with the nib view docked
+	hasParent      bool   // the nib under the list cursor, or the one the nib view shows, has a parent
+	canJumpBack    bool   // the jump history holds a jump
 }
 
 // action is one named thing a key can do. Dispatch reads the keymap's
@@ -230,6 +233,8 @@ func labelOpen(st actionState) string {
 		return "open"
 	case ctxNibRelations:
 		return "follow"
+	case ctxNibBody:
+		return "open"
 	case ctxBlockingPicker, ctxColumnPicker:
 		return "apply"
 	}
@@ -263,15 +268,19 @@ func readyOnNib(st actionState) (bool, string) {
 	return false, "no nib under the cursor"
 }
 
-// readyToOpen needs a nib under the list cursor, and a related nib under the
-// nib view's relations cursor. Elsewhere enter chooses a row, which needs no
-// nib.
+// readyToOpen needs a nib under the list cursor, a related nib under the nib
+// view's relations cursor, and in the nib view's body a docked view showing a
+// nib. Elsewhere enter chooses a row, which needs no nib.
 func readyToOpen(st actionState) (bool, string) {
 	switch {
 	case st.ctx == ctxList:
 		return readyOnNib(st)
 	case st.ctx == ctxNibRelations && st.onDocument:
 		return false, "a document is not a nib"
+	case st.ctx == ctxNibBody && !st.docked:
+		return false, "the nib view is already expanded"
+	case st.ctx == ctxNibBody:
+		return readyOnNib(st)
 	}
 	return true, ""
 }
@@ -309,8 +318,20 @@ func readyDocked(st actionState) (bool, string) {
 }
 
 func readyToJumpBack(st actionState) (bool, string) {
-	if st.ctx == ctxList {
-		return false, "nothing to jump back to"
+	if st.canJumpBack {
+		return true, ""
+	}
+	return false, "nothing to jump back to"
+}
+
+// readyToGoToParent needs a nib with a parent under the list cursor, or shown
+// in the nib view.
+func readyToGoToParent(st actionState) (bool, string) {
+	switch {
+	case !st.hasNib:
+		return readyOnNib(st)
+	case !st.hasParent:
+		return false, "the nib has no parent"
 	}
 	return true, ""
 }
@@ -338,11 +359,13 @@ var defaultActions = []action{
 	{Name: actPaletteUp, Group: "Move", Desc: "highlight the previous action", Contexts: []keyContext{ctxPalette}, Keys: []string{"up"}},
 	{Name: actPaletteDown, Group: "Move", Desc: "highlight the next action", Contexts: []keyContext{ctxPalette}, Keys: []string{"down"}},
 
-	{Name: actOpen, Group: "Go", Desc: "open", Contexts: slices.Concat([]keyContext{ctxList, ctxNibRelations}, allPickers), Keys: []string{"enter"},
+	{Name: actOpen, Group: "Go", Desc: "open", Contexts: slices.Concat(nibContexts, allPickers), Keys: []string{"enter"},
 		Hint: hintOutsideMarking, Label: labelOpen, Ready: readyToOpen},
 	{Name: actLeave, Group: "Go", Desc: "leave, or clear the selection or filter", Contexts: slices.Concat(browsing, []keyContext{ctxConfirm}), Keys: []string{"esc"},
 		Hint: hintLeave, Label: labelLeave},
-	{Name: actJumpBack, Group: "Go", Desc: "jump back", Contexts: nibContexts, Keys: []string{"backspace"}, Ready: readyToJumpBack},
+	{Name: actJumpBack, Group: "Go", Desc: "jump back", Contexts: nibContexts, Keys: []string{"backspace"},
+		Hint: inNibView, Ready: readyToJumpBack},
+	{Name: actGoParent, Group: "Go", Desc: "go to the parent", Contexts: nibContexts, Keys: []string{"g p"}, Ready: readyToGoToParent},
 	{Name: actPaletteRun, Group: "Go", Desc: "run the highlighted action", Contexts: []keyContext{ctxPalette}, Keys: []string{"enter"},
 		Hint: hintAlways, Label: label("run")},
 	{Name: actPaletteClose, Group: "Go", Desc: "close the palette", Contexts: []keyContext{ctxPalette}, Keys: []string{"esc"},

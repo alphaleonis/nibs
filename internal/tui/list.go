@@ -1031,6 +1031,26 @@ func (m *listModel) restoreCursor(id string) {
 	}
 }
 
+// hasRow reports whether the current view has a row for the nib id, folded
+// away or not. A row that the filter dims for context counts.
+func (m listModel) hasRow(id string) bool {
+	return slices.ContainsFunc(m.unfolded, func(r viewshape.Row) bool { return r.NibID == id })
+}
+
+// reveal puts the cursor on the row of id, unfolding the rows it is nested
+// under in the current view. It reports false, and leaves the cursor where it
+// is, when the view has no row for id; id is a row id, see rowIDOf.
+func (m *listModel) reveal(id string) bool {
+	if !slices.ContainsFunc(m.unfolded, func(r viewshape.Row) bool { return rowIDOf(r) == id }) {
+		return false
+	}
+	for _, ancestor := range m.ancestors(id) {
+		m.setFold(ancestor, false)
+	}
+	m.reshape(id)
+	return m.focusedRowID() == id
+}
+
 // ancestors returns the ids of the rows above the row of id that it is nested
 // under when every row is unfolded, nearest first. When the view shows no row
 // for id, it returns the ids of the nib's parents by their links instead.

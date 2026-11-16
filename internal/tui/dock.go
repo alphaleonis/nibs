@@ -146,18 +146,20 @@ func (a *App) syncDock() {
 	a.syncDocked()
 }
 
-// syncDocked shows the nib under the list cursor in the docked view.
+// syncDocked shows the nib under the list cursor in the docked view, or the
+// pinned nib; see dockTarget.
 func (a *App) syncDocked() {
-	a.showDocked(a.list.focusedID())
+	a.showDocked(a.dockTarget())
 }
 
-// followCursor shows the nib under the list cursor in the docked view when it
-// shows another, and does nothing while the view is not docked.
+// followCursor shows the nib under the list cursor, or the pinned nib, in the
+// docked view when it shows another, and does nothing while the view is not
+// docked.
 func (a *App) followCursor() {
+	id := a.dockTarget()
 	if a.dockPlacement() == "" {
 		return
 	}
-	id := a.list.focusedID()
 	if shown := a.docked.nib; (shown == nil && id == "") || (shown != nil && shown.ID == id) {
 		return
 	}

@@ -76,13 +76,16 @@ func asciiMarkdownStyle() ansi.StyleConfig {
 	return s
 }
 
-// backToListMsg steps back to the nib view a link was followed from, or to the
-// list when there is none.
-type backToListMsg struct{}
+// returnToListMsg shows the list.
+type returnToListMsg struct{}
 
-// leaveNibViewMsg returns from the expanded nib view to the list, whatever
-// links were followed to reach it.
-type leaveNibViewMsg struct{}
+// followNibMsg shows the nib id in the nib view on screen; see App.follow.
+type followNibMsg struct {
+	id string
+}
+
+// notInListNote leads the meta band of a nib the list has no row for.
+const notInListNote = "Not in this list"
 
 // nibRegion is a part of the nib view that can hold focus.
 type nibRegion uint8
@@ -163,6 +166,10 @@ type nibViewModel struct {
 	// for the docked view, which has no footer, its pane.
 	width, height int
 	docked        bool // whether the view is the pane beside or below the list
+
+	// notInList is whether the list has no row for the nib, which the meta
+	// band then notes. The App sets it; see App.noteListMembership.
+	notInList bool
 
 	groups []relationGroup
 	active bool      // whether the view takes keys
@@ -262,6 +269,15 @@ func (m nibViewModel) relationNibs() []*nib.Nib {
 		ns = append(ns, g.nibs...)
 	}
 	return ns
+}
+
+// restore puts the relations cursor on the relation that relationEntry.key
+// names, where the nib still has it, and scrolls the body to offset.
+func (m *nibViewModel) restore(relation string, offset int) {
+	if i := slices.IndexFunc(m.entries(), func(e relationEntry) bool { return e.key() == relation }); i >= 0 {
+		m.cursor = i
+	}
+	m.body.SetYOffset(offset)
 }
 
 // selectedRelation is the nib under the relations cursor, or nil when the
@@ -403,18 +419,22 @@ func (m *nibViewModel) runAction(name actionName) tea.Cmd {
 }
 
 // viewMsg returns the message that shows another view for the named action:
-// the list, the view before this one, the nib under the relations cursor, or a
-// picker for the nib on screen. It returns nil when the action shows no other
-// view. The App applies it at once; see App.showView.
+// the list, the nib under the relations cursor, the docked view's nib
+// expanded, or a picker for the nib on screen. It returns nil when the action shows no other view. The App applies
+// it at once; see App.showView.
 func (m *nibViewModel) viewMsg(name actionName) tea.Msg {
 	switch name {
 	case actLeave:
-		return leaveNibViewMsg{}
-	case actJumpBack:
-		return backToListMsg{}
+		return returnToListMsg{}
 	case actOpen:
-		if r := m.selectedRelation(); r != nil && m.focused() == regionRelations {
-			return selectNibMsg{nib: r}
+		if m.focused() == regionBody {
+			if m.docked && m.nib != nil {
+				return selectNibMsg{nib: m.nib}
+			}
+			return nil
+		}
+		if r := m.selectedRelation(); r != nil {
+			return followNibMsg{id: r.ID}
 		}
 		return nil
 	}
@@ -592,19 +612,24 @@ func (m nibViewModel) headLines(width int) []string {
 	return append(lines, m.rule(width))
 }
 
-// metaLines draws the meta band, width cells wide: the status, type and
-// priority, then the estimate, milestone, area and tags when the nib has them.
-// The fields wrap as a whole onto further lines.
+// metaLines draws the meta band, width cells wide: notInListNote when the list
+// has no row for the nib, the status, type and priority, then the estimate,
+// milestone, area and tags when the nib has them. The fields wrap as a whole
+// onto further lines.
 func (m nibViewModel) metaLines(width int) []string {
 	n := m.nib
 	icons := m.display.icons
 	mark := ellipsis(m.display.ascii())
 	field := func(label, value string) string { return helpStyle.Render(label) + " " + value }
 
-	fields := []string{
+	var fields []string
+	if m.notInList {
+		fields = append(fields, noteStyle.Render(fitText(notInListNote, width, mark)))
+	}
+	fields = append(fields,
 		field("Status", icons.renderStatus(m.config, n.Status)+" "+fitText(n.Status, 20, mark)),
 		field("Type", icons.renderType(m.config, n.EffectiveType())+" "+fitText(n.EffectiveType(), 20, mark)),
-	}
+	)
 	priority := fitText(n.EffectivePriority(), 20, mark)
 	if g := icons.priority(n.EffectivePriority()); strings.TrimSpace(g) != "" {
 		priority = icons.renderPriority(m.config, n.EffectivePriority()) + " " + priority
