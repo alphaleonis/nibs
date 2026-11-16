@@ -38,8 +38,8 @@ func refuseUserSetting(path, format string, a ...any) error {
 // The edit applies to the file as it is now, so a change written after loaded
 // is kept. It creates the file, its directory and the missing mappings on the
 // way to keyPath. Like PlanSetStoredPrefix, it keeps content and comments and
-// normalizes the layout, and the comments inside a replaced value are lost with
-// it. It writes atomically, keeps the file mode, and writes to the file a
+// normalizes the layout, here to two-space indentation. The comments inside a
+// replaced value are lost with it. It writes atomically, keeps the file mode, and writes to the file a
 // symlink at path leads to, even one that does not exist yet. It takes no lock,
 // so a write by another process between its read and its write is lost.
 //
@@ -91,7 +91,7 @@ func SetUserSetting(path string, loaded UserConfigSnapshot, keyPath []string, va
 			"in the user config %s, `%s` on line %d is not a mapping, so %s cannot be saved under it — make it a mapping or remove it, then retry",
 			shownPath, strings.Join(at, "."), node.Line, setting)
 	}
-	out, err := yaml.Marshal(&doc)
+	out, err := encodeUserConfig(&doc)
 	if err != nil {
 		return UserConfigSnapshot{}, false, err
 	}
@@ -118,6 +118,21 @@ func SetUserSetting(path string, loaded UserConfigSnapshot, keyPath []string, va
 		current = snapshotOf(data)
 	}
 	return snapshotOf(out), current != loaded, nil
+}
+
+// encodeUserConfig renders doc with two-space indentation, as a user config is
+// usually written by hand.
+func encodeUserConfig(doc *yaml.Node) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(doc); err != nil {
+		return nil, err
+	}
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // holdsNoContent reports whether doc came from a file with no content, such as

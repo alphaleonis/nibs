@@ -28,6 +28,12 @@ const listHeight = 24
 // rule names the same project on every machine.
 func sampleApp(t *testing.T, width int) *App {
 	t.Helper()
+	return sampleAppWithUser(t, width, config.UserLayer{})
+}
+
+// sampleAppWithUser is sampleApp with user as the user config.
+func sampleAppWithUser(t *testing.T, width int, user config.UserLayer) *App {
+	t.Helper()
 	project := filepath.Join(t.TempDir(), "sample-project")
 	if err := os.Rename(fixtures.CopySampleProject(t), project); err != nil {
 		t.Fatalf("moving the fixture copy: %v", err)
@@ -43,7 +49,7 @@ func sampleApp(t *testing.T, width int) *App {
 		t.Fatalf("load core: %v", err)
 	}
 	resolver := &graph.Resolver{Reader: core, Writer: core, Validator: core, Blocking: core, Orderer: graph.NewOrderer(core, core)}
-	app := New(NewRealBackend(core, resolver), cfg, config.UserLayer{}, "dev")
+	app := New(NewRealBackend(core, resolver), cfg, user, "dev")
 	initCmd := app.Init()
 	app.Update(tea.WindowSizeMsg{Width: width, Height: listHeight})
 	processCmd(app, initCmd)

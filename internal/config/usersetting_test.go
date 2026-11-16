@@ -467,3 +467,16 @@ func equalStrings(v any, want ...string) bool {
 }
 
 func ptr(s string) *string { return &s }
+
+// A write lays the file out with two-space indentation, the way a user config
+// is usually written by hand.
+func TestSetUserSettingIndentsByTwoSpaces(t *testing.T) {
+	path := writeUserConfig(t, "# settings\nnibs:\n  id_length: 4\ntui:\n  icons: nerd\n")
+	if _, _, err := SetUserSetting(path, loadSnapshot(t, path), []string{"tui", "columns", "tree"}, []string{"title", "id"}); err != nil {
+		t.Fatal(err)
+	}
+	want := "# settings\nnibs:\n  id_length: 4\ntui:\n  icons: nerd\n  columns:\n    tree:\n      - title\n      - id\n"
+	if got := readUserConfigText(t, path); got != want {
+		t.Errorf("the write laid the file out as\n%s\nwant\n%s", got, want)
+	}
+}

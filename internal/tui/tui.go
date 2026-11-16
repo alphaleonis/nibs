@@ -38,6 +38,7 @@ const (
 	viewPriorityPicker
 	viewEstimatePicker
 	viewModifyPicker
+	viewColumnPicker
 	viewCreateModal
 	viewCreateTypePicker
 	viewConfirmDialog
@@ -156,6 +157,7 @@ type App struct {
 	priorityPicker priorityPickerModel
 	estimatePicker estimatePickerModel
 	modifyPicker   modifyPickerModel
+	columnPicker   columnPickerModel
 	createModal    createModalModel
 	confirmDialog  confirmDialog
 	palette        paletteModel
@@ -168,9 +170,11 @@ type App struct {
 	// ignored, and settingsSource the file they are in, or "" for none.
 	ignored        []ignoredEntry
 	settingsSource string
-	width          int
-	height         int
-	program        *tea.Program // receives watcher events; see Run
+	// userSnapshot is the user config file as the TUI last read or wrote it.
+	userSnapshot config.UserConfigSnapshot
+	width        int
+	height       int
+	program      *tea.Program // receives watcher events; see Run
 
 	// The keys typed so far of a sequence such as "g g", or "" when none are.
 	pendingKey string
@@ -198,28 +202,34 @@ type App struct {
 // that was ignored, opens the TUI with a warning in the status line.
 // version is the running binary version, for the update-available indicator.
 func New(backend Backend, cfg *config.Config, user config.UserLayer, version string) *App {
+	a := &App{
+		state:   viewList,
+		backend: backend,
+		config:  cfg,
+		list:    newListModel(backend, cfg),
+		preview: newPreviewModel(nil, 0, 0),
+		version: version,
+	}
+	a.applyUserLayer(user)
+	return a
+}
+
+// applyUserLayer applies the tui block of user as New describes, and warns in
+// the status line when user did not load or has ignored entries.
+func (a *App) applyUserLayer(user config.UserLayer) {
 	var tui *yaml.Node
 	if user.Config != nil {
 		tui = &user.Config.TUI
 	}
 	s := loadSettings(defaultActions, tui, user.Path)
-	s.display.prefix = cfg.Nibs.Prefix
+	s.display.prefix = a.config.Nibs.Prefix
 	if !terminalUTF8() {
 		s.display.icons = iconsASCII
 	}
-	a := &App{
-		state:          viewList,
-		backend:        backend,
-		config:         cfg,
-		keys:           s.keys,
-		display:        s.display,
-		ignored:        s.ignored,
-		settingsSource: s.source,
-		list:           newListModel(backend, cfg),
-		preview:        newPreviewModel(nil, 0, 0),
-		version:        version,
-	}
+	a.keys, a.display, a.ignored, a.settingsSource = s.keys, s.display, s.ignored, s.source
+	a.userSnapshot = user.Snapshot
 	a.list.setDisplay(s.display)
+	a.list.setColumns(s.columns[treeView])
 	if user.Failure != nil {
 		a.list.statusMessage = "Warning: " + user.Failure.Message()
 		a.list.statusKind = statusWarn
@@ -227,7 +237,35 @@ func New(backend Backend, cfg *config.Config, user config.UserLayer, version str
 		a.list.statusMessage = ignoredSettingsWarning(n, s.keys.firstKey(actHelp))
 		a.list.statusKind = statusWarn
 	}
-	return a
+}
+
+// chooseColumns shows columns after the title in view, and saves them as
+// tui.columns.<view> in the user config. A failed save, such as one the user
+// config refuses, leaves the choice for the session, with a warning. After a save over a file
+// that changed since the TUI read it, the TUI reads the file again, and the
+// command it returns reloads the nibs.
+func (a *App) chooseColumns(view string, columns []columnName) tea.Cmd {
+	a.list.setColumns(columns)
+	if a.settingsSource == "" {
+		a.reportFailure("The columns apply until you quit: the OS gives no place for a user config")
+		return nil
+	}
+	names := []string{string(colTitle)}
+	for _, name := range columns {
+		names = append(names, string(name))
+	}
+	written, changed, err := config.SetUserSetting(a.settingsSource, a.userSnapshot, []string{"tui", "columns", view}, names)
+	if err != nil {
+		a.reportFailure("The columns apply until you quit: " + err.Error())
+		return nil
+	}
+	a.userSnapshot = written
+	a.list.statusMessage, a.list.statusKind = "Saved the columns to the user config", statusOK
+	if !changed {
+		return nil
+	}
+	a.applyUserLayer(config.LoadUserLayerFrom(a.settingsSource))
+	return a.list.loadNibs
 }
 
 // ignoredSettingsWarning is the status line's warning that n entries of the
@@ -302,6 +340,8 @@ func (a *App) keyContext() keyContext {
 		return ctxTypePicker
 	case viewModifyPicker:
 		return ctxModifyPicker
+	case viewColumnPicker:
+		return ctxColumnPicker
 	case viewCreateModal:
 		return ctxTextInput
 	case viewConfirmDialog:
@@ -383,6 +423,11 @@ func (a *App) runAction(act *action) tea.Cmd {
 		return func() tea.Msg { return openTagPickerMsg{} }
 	case actNibView:
 		a.toggleNibView()
+		return nil
+	case actColumns:
+		a.previousState = a.state
+		a.columnPicker = newColumnPickerModel(a.keys.actions, treeView, a.list.columns, a.width, a.height)
+		a.state = viewColumnPicker
 		return nil
 	}
 	return a.updateActiveView(actionMsg{name: act.Name})
@@ -629,6 +674,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case closeModifyPickerMsg:
+		a.state = a.previousState
+		return a, nil
+
+	case columnsChosenMsg:
+		a.state = a.previousState
+		return a, a.chooseColumns(msg.view, msg.columns)
+
+	case closeColumnPickerMsg:
 		a.state = a.previousState
 		return a, nil
 
@@ -943,6 +996,8 @@ func (a *App) updateActiveView(msg tea.Msg) tea.Cmd {
 		a.estimatePicker, cmd = a.estimatePicker.Update(msg)
 	case viewModifyPicker:
 		a.modifyPicker, cmd = a.modifyPicker.Update(msg)
+	case viewColumnPicker:
+		a.columnPicker, cmd = a.columnPicker.Update(msg)
 	case viewBlockingPicker:
 		a.blockingPicker, cmd = a.blockingPicker.Update(msg)
 	case viewCreateModal:
@@ -1032,6 +1087,8 @@ func (a *App) renderState(state viewState) string {
 		return a.estimatePicker.ModalView(a.getBackgroundView(), a.width, a.height)
 	case viewModifyPicker:
 		return a.modifyPicker.ModalView(a.getBackgroundView(), a.width, a.height)
+	case viewColumnPicker:
+		return a.columnPicker.ModalView(a.getBackgroundView(), a.width, a.height)
 	case viewBlockingPicker:
 		return a.blockingPicker.ModalView(a.getBackgroundView(), a.width, a.height)
 	case viewCreateModal:

@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/list"
@@ -17,36 +18,52 @@ import (
 // icon and a space.
 const rowLeadWidth = 8
 
-const (
-	// tagsColumnWidth is the width of the tags column.
-	tagsColumnWidth = 20
-	// minTitleWidth is the narrowest room for the tree prefix and title that
-	// the tags column may leave. Below it the column is hidden.
-	minTitleWidth = 30
-)
+// minTitleWidth is the narrowest room for the tree prefix and title that the
+// columns may leave. Columns that would leave less are dropped.
+const minTitleWidth = 30
 
 // rowLayout is the widths a list row is drawn at. A row is the lead, the tree
-// prefix and title, then the tags column when it is shown, then the ID.
+// prefix and title, then each column in columns.
 type rowLayout struct {
-	width   int // the whole row
-	idWidth int // the widest ID as rows show it
-	tags    int // the tags column, or 0 while it is hidden
+	width   int           // the whole row
+	columns []shownColumn // the columns after the title, in columnOrder
 }
 
-func newRowLayout(width, idWidth int) rowLayout {
-	l := rowLayout{width: width, idWidth: idWidth, tags: tagsColumnWidth}
-	if l.titleWidth() < minTitleWidth {
-		l.tags = 0
+// shownColumn is a column a row draws, and its width.
+type shownColumn struct {
+	name  columnName
+	width int
+}
+
+// newRowLayout lays out a row width cells wide that shows the columns of
+// visible, at the widths widthOf gives. While the title would get fewer than
+// minTitleWidth cells, it drops the rightmost column other than the ID.
+func newRowLayout(width int, visible []columnName, widthOf func(columnName) int) rowLayout {
+	l := rowLayout{width: width}
+	for _, name := range columnOrder {
+		if name != colTitle && slices.Contains(visible, name) {
+			l.columns = append(l.columns, shownColumn{name: name, width: widthOf(name)})
+		}
+	}
+	for l.titleWidth() < minTitleWidth {
+		i := len(l.columns) - 1
+		for i >= 0 && l.columns[i].name == colID {
+			i--
+		}
+		if i < 0 {
+			break
+		}
+		l.columns = slices.Delete(l.columns, i, i+1)
 	}
 	return l
 }
 
 // titleWidth is the cells left for the tree prefix and the title: the row
-// less the lead, each column after the title and the space before each.
+// less the lead, each column and the space before each.
 func (l rowLayout) titleWidth() int {
-	w := l.width - rowLeadWidth - (l.idWidth + 1)
-	if l.tags > 0 {
-		w -= l.tags + 1
+	w := l.width - rowLeadWidth
+	for _, c := range l.columns {
+		w -= c.width + 1
 	}
 	return max(0, w)
 }
@@ -125,22 +142,32 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	var b strings.Builder
 	b.WriteString(cursor + " " + status + priority + mark + " " + nibType + " ")
 	b.WriteString(treeStyle.Render(item.treePrefix) + titleStyle.Render(title) + pad)
-	if d.layout.tags > 0 {
-		tagsCellStyle := tagStyle
-		if context {
-			tagsCellStyle = ui.Muted
-		}
-		b.WriteString(" " + tagsCell(n.Tags, d.layout.tags, tagsCellStyle, ellipsis(ascii)))
+	for _, c := range d.layout.columns {
+		b.WriteString(" " + d.cell(c, item, context))
 	}
-	id := d.display.id(n.ID)
-	if context {
-		id = ui.Muted.Render(id)
-	}
-	b.WriteString(" " + id)
 
 	// Clip to the list width: the lead, the tree prefix and the ID do not
 	// shrink, so a row can be wider than a narrow list.
 	_, _ = fmt.Fprint(w, clipToWidth(b.String(), m.Width()))
+}
+
+// cell renders column c of item in exactly c.width cells. A row drawn only as
+// context draws every cell muted.
+func (d itemDelegate) cell(c shownColumn, item nibItem, context bool) string {
+	mark := ellipsis(d.display.ascii())
+	if c.name == colTags {
+		style := tagStyle
+		if context {
+			style = ui.Muted
+		}
+		return tagsCell(item.nib.Tags, c.width, style, mark)
+	}
+	text, style := d.cellText(c.name, item)
+	if context {
+		style = ui.Muted
+	}
+	text = fitText(text, c.width, mark)
+	return style.Render(text) + strings.Repeat(" ", max(0, c.width-lipgloss.Width(text)))
 }
 
 // tagsCell renders tags in exactly width cells: the tags that fit whole, in

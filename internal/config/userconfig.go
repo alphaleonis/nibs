@@ -94,6 +94,8 @@ type UserLayer struct {
 	// Failure says why the file did not load, or nil when it loaded or is
 	// absent.
 	Failure *UserConfigFailure
+	// Snapshot is the file as it was read, to hand to SetUserSetting.
+	Snapshot UserConfigSnapshot
 }
 
 // UserConfigFailure is a user config file that did not load, so its layer is
@@ -137,11 +139,11 @@ func LoadUserLayer() UserLayer {
 
 // LoadUserLayerFrom is LoadUserLayer for the user config at path.
 func LoadUserLayerFrom(path string) UserLayer {
-	user, err := LoadUserConfigFrom(path)
+	user, snapshot, err := ReadUserConfig(path)
 	if err != nil {
-		return UserLayer{Config: &UserConfig{}, Path: path, Failure: &UserConfigFailure{Path: path, Cause: err}}
+		return UserLayer{Config: &UserConfig{}, Path: path, Failure: &UserConfigFailure{Path: path, Cause: err}, Snapshot: snapshot}
 	}
-	return UserLayer{Config: user, Path: path}
+	return UserLayer{Config: user, Path: path, Snapshot: snapshot}
 }
 
 // LoadStoreWithUserConfig loads an already-resolved store's config, layering the

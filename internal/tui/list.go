@@ -23,6 +23,7 @@ type nibItem struct {
 	collapsed   bool
 	isBlocked   bool
 	isBlocking  bool
+	facts       rowFacts
 }
 
 func (i nibItem) Title() string       { return i.nib.Title }
@@ -38,7 +39,12 @@ type listModel struct {
 	height  int
 	err     error
 
-	idWidth int // the widest ID as rows show it, over every nib in the store
+	idWidth int                 // the widest ID as rows show it, over every nib in the store
+	facts   map[string]rowFacts // each nib's row facts, from the last load
+
+	// columns are the columns the rows show after the title, in any order;
+	// set through setColumns.
+	columns []columnName
 
 	// paneWidth is the width the list pane is drawn at, or 0 for the whole
 	// terminal. The App sets it while the nib view takes part of the width.
@@ -94,6 +100,7 @@ func newListModel(backend Backend, cfg *config.Config) listModel {
 		hideCompleted: cfg.HideCompleted(),
 		selectedNibs:  selectedNibs,
 		collapsedIDs:  make(map[string]bool),
+		columns:       defaultColumns[treeView],
 		title:         fmt.Sprintf("Nibs - %s", cfg.GetProjectName()),
 	}
 	return m
@@ -102,6 +109,7 @@ func newListModel(backend Backend, cfg *config.Config) listModel {
 type nibsLoadedMsg struct {
 	items   []ui.FlatItem
 	idWidth int
+	facts   map[string]rowFacts
 	tree    []*ui.TreeNode
 }
 
@@ -153,7 +161,7 @@ func (m listModel) loadNibs() tea.Msg {
 		idWidth = max(idWidth, lipgloss.Width(m.display.id(b.ID)))
 	}
 
-	return nibsLoadedMsg{items: items, idWidth: idWidth, tree: tree}
+	return nibsLoadedMsg{items: items, idWidth: idWidth, facts: rowFactsOf(allNibs, m.config), tree: tree}
 }
 
 func (m *listModel) setTagFilter(tag string) {
@@ -201,6 +209,7 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 			}
 		}
 
+		m.facts = msg.facts
 		items := m.listItems(msg.items)
 		// Under an applied filter SetItems clears the visible set and returns
 		// the command that re-matches it.
@@ -559,11 +568,19 @@ func (m *listModel) openParentPicker() tea.Cmd {
 // updateDelegate lays the rows out for a list width cells wide.
 func (m *listModel) updateDelegate(width int) {
 	m.list.SetDelegate(itemDelegate{
-		cfg:          m.config,
-		display:      m.display,
-		layout:       newRowLayout(width, m.idWidth),
+		cfg:     m.config,
+		display: m.display,
+		layout: newRowLayout(width, m.columns, func(name columnName) int {
+			return columnWidth(m.config, name, m.idWidth)
+		}),
 		selectedNibs: &m.selectedNibs,
 	})
+}
+
+// setColumns sets the columns the rows show after the title.
+func (m *listModel) setColumns(columns []columnName) {
+	m.columns = columns
+	m.updateDelegate(m.width)
 }
 
 // setDisplay sets how rows show a nib. Call it before the first load, which
@@ -585,6 +602,7 @@ func (m *listModel) listItems(flat []ui.FlatItem) []list.Item {
 			collapsed:   fi.Collapsed,
 			isBlocked:   m.backend.IsBlocked(fi.Nib.ID),
 			isBlocking:  m.backend.IsBlocking(fi.Nib.ID),
+			facts:       m.facts[fi.Nib.ID],
 		}
 	}
 	return items

@@ -26,6 +26,7 @@ const (
 	ctxEstimatePicker
 	ctxTagPicker
 	ctxModifyPicker
+	ctxColumnPicker
 	ctxConfirm
 	// ctxFilterInput is a list's filter while it is being typed.
 	ctxFilterInput
@@ -49,6 +50,7 @@ var keyContextNames = [numKeyContexts]string{
 	ctxEstimatePicker: "estimate picker",
 	ctxTagPicker:      "tag picker",
 	ctxModifyPicker:   "modify picker",
+	ctxColumnPicker:   "column picker",
 	ctxConfirm:        "confirm dialog",
 	ctxFilterInput:    "filter input",
 	ctxTextInput:      "text input",
@@ -102,6 +104,7 @@ const (
 	actConfirmNo     actionName = "confirm.no"
 	actHideClosed    actionName = "view.hide_closed"
 	actNibView       actionName = "view.nib"
+	actColumns       actionName = "view.columns"
 	actFilter        actionName = "filter.text"
 	actFilterApply   actionName = "filter.apply"
 	actTagFilter     actionName = "filter.tags"
@@ -150,7 +153,7 @@ var (
 	nibContexts   = []keyContext{ctxList, ctxNibLinks, ctxNibBody}
 	nibViewCtx    = []keyContext{ctxNibLinks, ctxNibBody}
 	listPickers   = []keyContext{ctxStatusPicker, ctxParentPicker, ctxBlockingPicker, ctxPriorityPicker, ctxEstimatePicker, ctxTagPicker}
-	allPickers    = append([]keyContext{ctxTypePicker, ctxModifyPicker}, listPickers...)
+	allPickers    = append([]keyContext{ctxTypePicker, ctxModifyPicker, ctxColumnPicker}, listPickers...)
 	browsing      = slices.Concat(nibContexts, allPickers)
 	everyContext  = allKeyContexts()
 	filterTargets = slices.Concat([]keyContext{ctxList, ctxNibLinks}, listPickers)
@@ -213,7 +216,7 @@ func labelOpen(st actionState) string {
 		return "open"
 	case ctxNibLinks:
 		return "follow"
-	case ctxBlockingPicker:
+	case ctxBlockingPicker, ctxColumnPicker:
 		return "apply"
 	}
 	return "choose"
@@ -292,8 +295,8 @@ var defaultActions = []action{
 	{Name: actPaletteClose, Group: "Go", Desc: "close the palette", Contexts: []keyContext{ctxPalette}, Keys: []string{"esc"},
 		Hint: hintAlways, Label: label("close")},
 
-	{Name: actSelect, Group: "Edit", Desc: "select", Contexts: []keyContext{ctxList, ctxBlockingPicker}, Keys: []string{"space"},
-		Hint: func(st actionState) bool { return st.ctx == ctxBlockingPicker }, Label: label("toggle")},
+	{Name: actSelect, Group: "Edit", Desc: "select", Contexts: []keyContext{ctxList, ctxBlockingPicker, ctxColumnPicker}, Keys: []string{"space"},
+		Hint: func(st actionState) bool { return st.ctx != ctxList }, Label: label("toggle")},
 	{Name: actCreate, Group: "Edit", Desc: "create", Contexts: []keyContext{ctxList}, Keys: []string{"n"}, Hint: hintOnFocused},
 	{Name: actEdit, Group: "Edit", Desc: "edit in $EDITOR", Contexts: nibContexts, Keys: []string{"e"},
 		Hint: hintOnFocusedOrNibView, Label: label("edit"), Ready: readyOnNib},
@@ -319,6 +322,7 @@ var defaultActions = []action{
 	{Name: actHideClosed, Group: "View", Desc: "hide or show closed nibs", Contexts: []keyContext{ctxList, ctxParentPicker}, Keys: []string{"z h"},
 		Hint: func(st actionState) bool { return st.ctx == ctxParentPicker }, Label: label("toggle closed")},
 	{Name: actNibView, Group: "View", Desc: "show or hide the nib view", Contexts: []keyContext{ctxList}, Keys: []string{"z p"}},
+	{Name: actColumns, Group: "View", Desc: "choose the columns", Contexts: []keyContext{ctxList}, Keys: []string{"z c"}},
 
 	{Name: actFilter, Group: "Find", Desc: "filter", Contexts: filterTargets, Keys: []string{"/"}, Hint: hintFilter},
 	{Name: actTagFilter, Group: "Find", Desc: "filter by tag", Contexts: []keyContext{ctxList}, Keys: []string{"g t"}},
