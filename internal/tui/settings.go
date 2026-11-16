@@ -20,6 +20,8 @@ type settings struct {
 	// columns are the columns each view shows after the title, by view name.
 	columns map[string][]columnName
 	nibView nibViewSettings
+	// mouse is whether the terminal reports the mouse to the TUI.
+	mouse bool
 	// ignored lists the entries of the block that the TUI ignored, by line.
 	ignored []ignoredEntry
 	// source is the path of the file the block came from, or "" for none.
@@ -64,6 +66,7 @@ type tuiBlock struct {
 	ShortIDs yaml.Node `yaml:"short_ids"`
 	Columns  yaml.Node `yaml:"columns"`
 	NibView  yaml.Node `yaml:"nib_view"`
+	Mouse    yaml.Node `yaml:"mouse"`
 
 	keyLines map[string]int // the line of each key written in the block itself
 }
@@ -79,11 +82,11 @@ func (b *tuiBlock) line(name string, value *yaml.Node) int {
 
 // loadSettings applies tui, the user config's tui block, over the defaults:
 // the keys of defaults, which must have no key conflicts, unicode icons, short
-// IDs, defaultColumns and a hidden nib view placed auto. A setting whose value
-// cannot be used is ignored and keeps its default. A block that is not a
-// mapping or does not decode is one ignored entry, and every setting keeps its
-// default. A nil or empty block gives the defaults. source is the file tui came
-// from.
+// IDs, defaultColumns, a hidden nib view placed auto, and the mouse on. A
+// setting whose value cannot be used is ignored and keeps its default. A block
+// that is not a mapping or does not decode is one ignored entry, and every
+// setting keeps its default. A nil or empty block gives the defaults. source
+// is the file tui came from.
 //
 // The display it returns has no store prefix, and its icons are the configured
 // set whatever the terminal can show.
@@ -93,6 +96,7 @@ func loadSettings(defaults []action, tui *yaml.Node, source string) settings {
 		display: display{icons: iconsUnicode, shortIDs: true},
 		columns: maps.Clone(defaultColumns),
 		nibView: nibViewSettings{placement: placementAuto},
+		mouse:   true,
 		source:  source,
 	}
 	block, bad := decodeTUIBlock(tui)
@@ -110,8 +114,8 @@ func loadSettings(defaults []action, tui *yaml.Node, source string) settings {
 	return s
 }
 
-// applyDisplay sets the display settings of block on s.display, and returns
-// the entries it ignored.
+// applyDisplay sets the display settings of block on s.display, and whether
+// the mouse is on, and returns the entries it ignored.
 func (s *settings) applyDisplay(block *tuiBlock) []ignoredEntry {
 	var ignored []ignoredEntry
 	ignore := func(name string, n *yaml.Node, reason string) {
@@ -126,14 +130,20 @@ func (s *settings) applyDisplay(block *tuiBlock) []ignoredEntry {
 		}
 	}
 
-	if n := resolveAlias(&block.ShortIDs); !absentNode(n) {
+	boolSetting := func(name string, node *yaml.Node, set *bool) {
+		n := resolveAlias(node)
+		if absentNode(n) {
+			return
+		}
 		var on bool
 		if n.Kind == yaml.ScalarNode && n.Tag == "!!bool" && n.Decode(&on) == nil {
-			s.display.shortIDs = on
+			*set = on
 		} else {
-			ignore("short_ids", &block.ShortIDs, "is not true or false")
+			ignore(name, node, "is not true or false")
 		}
 	}
+	boolSetting("short_ids", &block.ShortIDs, &s.display.shortIDs)
+	boolSetting("mouse", &block.Mouse, &s.mouse)
 	return ignored
 }
 

@@ -138,6 +138,13 @@ func (m filterPickerModel) Update(msg tea.Msg) (filterPickerModel, tea.Msg) {
 			m.cursor = moveCursor(m.cursor, len(m.rows), msg.name)
 		}
 
+	case clickRowMsg:
+		m.cursor = msg.row
+		if !msg.choose {
+			return m, nil
+		}
+		return m.Update(actionMsg{name: actOpen})
+
 	case acceleratorMsg:
 		for i, row := range m.rows {
 			if row.key != "" && row.key == msg.key {
@@ -179,6 +186,11 @@ func (m filterPickerModel) View() string {
 	if m.width == 0 {
 		return "Loading..."
 	}
+	return renderPickerModal(m.modal())
+}
+
+// modal is the modal View draws.
+func (m filterPickerModel) modal() pickerModalConfig {
 	labelWidth := 0
 	for _, row := range m.rows {
 		labelWidth = max(labelWidth, lipgloss.Width(row.field.label))
@@ -195,18 +207,14 @@ func (m filterPickerModel) View() string {
 		}
 		lines[i] = cursorMark(i == m.cursor) + renderAccelerator(row.key) + label + "  " + tokens
 	}
-	return renderPickerModal(pickerModalConfig{
+	return pickerModalConfig{
 		Keys:        m.table,
 		Context:     ctxFilterPicker,
 		Title:       "Filter",
 		ListContent: strings.Join(lines, "\n"),
+		Rows:        pickerRows{count: len(lines)},
 		Width:       m.width,
-	})
-}
-
-// ModalView returns the picker centered over bgView.
-func (m filterPickerModel) ModalView(bgView string, fullWidth, fullHeight int) string {
-	return overlayModal(bgView, m.View(), fullWidth, fullHeight)
+	}
 }
 
 // filterValueRow is a value of the field, or the preset that checks the
@@ -335,6 +343,13 @@ func (m filterValuesPickerModel) Update(msg tea.Msg) (filterValuesPickerModel, t
 			m.cursor = moveCursor(m.cursor, len(m.rows), msg.name)
 		}
 
+	case clickRowMsg:
+		m.cursor = msg.row
+		if !msg.choose {
+			return m, nil
+		}
+		return m.Update(actionMsg{name: actSelect})
+
 	case acceleratorMsg:
 		for i, row := range m.rows {
 			if row.key != "" && row.key == msg.key {
@@ -355,6 +370,11 @@ func (m filterValuesPickerModel) View() string {
 	if m.width == 0 {
 		return "Loading..."
 	}
+	return renderPickerModal(m.modal())
+}
+
+// modal is the modal View draws.
+func (m filterValuesPickerModel) modal() pickerModalConfig {
 	// Each line is cut to the modal's content width, so none wraps and
 	// filterValuesChromeLines holds.
 	width := pickerModalWidth(m.width, 0, 0) - 2
@@ -368,7 +388,9 @@ func (m filterValuesPickerModel) View() string {
 	// A short terminal shows the rows around the cursor.
 	room := max(1, min(len(m.rows), m.height-filterValuesChromeLines))
 	first := max(0, min(m.cursor-room/2, len(m.rows)-room))
-	for i, row := range m.rows[first:min(len(m.rows), first+room)] {
+	shown := m.rows[first:min(len(m.rows), first+room)]
+	rows := pickerRows{top: len(lines), first: first, count: len(shown)}
+	for i, row := range shown {
 		text := "[ ] " + row.value
 		switch {
 		case row.preset:
@@ -379,16 +401,12 @@ func (m filterValuesPickerModel) View() string {
 		// The cursor and the accelerator take 4 columns.
 		lines = append(lines, cursorMark(first+i == m.cursor)+renderAccelerator(row.key)+truncateTitle(text, width-4))
 	}
-	return renderPickerModal(pickerModalConfig{
+	return pickerModalConfig{
 		Keys:        m.table,
 		Context:     ctxFilterValuesPicker,
 		Title:       "Filter by " + strings.ToLower(m.field.label),
 		ListContent: strings.Join(lines, "\n"),
+		Rows:        rows,
 		Width:       m.width,
-	})
-}
-
-// ModalView returns the picker centered over bgView.
-func (m filterValuesPickerModel) ModalView(bgView string, fullWidth, fullHeight int) string {
-	return overlayModal(bgView, m.View(), fullWidth, fullHeight)
+	}
 }

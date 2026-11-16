@@ -175,6 +175,13 @@ func (m priorityPickerModel) Update(msg tea.Msg) (priorityPickerModel, tea.Cmd) 
 		}
 		return m, nil
 
+	case clickRowMsg:
+		m.list.Select(msg.row)
+		if !msg.choose {
+			return m, nil
+		}
+		return m.Update(actionMsg{name: actOpen})
+
 	case acceleratorMsg:
 		if selectAccelerator(&m.list, nil, msg.key) {
 			return m.Update(actionMsg{name: actOpen})
@@ -196,7 +203,11 @@ func (m priorityPickerModel) View() string {
 	if m.width == 0 {
 		return "Loading..."
 	}
+	return renderPickerModal(m.modal())
+}
 
+// modal is the modal View draws.
+func (m priorityPickerModel) modal() pickerModalConfig {
 	var selected string
 	var allDescs []string
 	for _, li := range m.list.Items() {
@@ -214,20 +225,15 @@ func (m priorityPickerModel) View() string {
 		nibID = m.nibIDs[0]
 	}
 
-	return renderPickerModal(pickerModalConfig{
+	return pickerModalConfig{
 		Keys:        m.table,
 		Context:     ctxPriorityPicker,
 		Title:       "Select Priority",
 		NibTitle:    m.nibTitle,
 		NibID:       nibID,
 		ListContent: m.list.View(),
+		Rows:        listRows(m.list),
 		Description: description,
 		Width:       m.width,
-	})
-}
-
-// ModalView returns the picker centered over bgView.
-func (m priorityPickerModel) ModalView(bgView string, fullWidth, fullHeight int) string {
-	modal := m.View()
-	return overlayModal(bgView, modal, fullWidth, fullHeight)
+	}
 }

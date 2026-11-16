@@ -145,6 +145,8 @@ type App struct {
 	userSnapshot config.UserConfigSnapshot
 	width        int
 	height       int
+	// mouse is whether the terminal reports the mouse; see handleMouse.
+	mouse bool
 
 	// The keys typed so far of a sequence such as "g g", or "" when none are.
 	pendingKey string
@@ -232,6 +234,7 @@ func (a *App) applyUserLayer(user config.UserLayer) {
 	a.list.setDisplay(s.display)
 	a.list.setColumns(s.columns)
 	a.nibView = s.nibView
+	a.mouse = s.mouse
 	if user.Failure != nil {
 		a.list.statusMessage = "Warning: " + user.Failure.Message()
 		a.list.statusKind = statusWarn
@@ -593,6 +596,9 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.expanded.statusMessage = ""
 		a.expanded.statusKind = statusOK
 		return a, a.handleKey(msg)
+
+	case tea.MouseMsg:
+		return a, a.handleMouse(msg)
 
 	case cursorChangedMsg:
 		// msg names the nib under the cursor when it was sent, which a later
@@ -1147,10 +1153,14 @@ func (a *App) updateActiveView(msg tea.Msg) tea.Cmd {
 	return cmd
 }
 
-// View renders the current screen in the alt screen.
+// View renders the current screen in the alt screen. The terminal reports
+// clicks, releases, the wheel and drags while the mouse is on.
 func (a *App) View() tea.View {
 	v := tea.NewView(a.render())
 	v.AltScreen = true
+	if a.mouse {
+		v.MouseMode = tea.MouseModeCellMotion
+	}
 	return v
 }
 
@@ -1164,45 +1174,26 @@ func (a *App) render() string {
 }
 
 // renderState draws state, which is the active state or the one the palette
-// was opened from.
+// was opened from. A picker or dialog is drawn over the view under it; see
+// modalOf.
 func (a *App) renderState(state viewState) string {
 	switch state {
 	case viewList:
 		return a.renderList()
 	case viewExpanded:
 		return a.expanded.View()
-	case viewParentPicker:
-		return a.parentPicker.ModalView(a.getBackgroundView(), a.width, a.height)
-	case viewStatusPicker:
-		return a.statusPicker.ModalView(a.getBackgroundView(), a.width, a.height)
-	case viewTypePicker, viewCreateTypePicker:
-		return a.typePicker.ModalView(a.getBackgroundView(), a.width, a.height)
-	case viewPriorityPicker:
-		return a.priorityPicker.ModalView(a.getBackgroundView(), a.width, a.height)
-	case viewEstimatePicker:
-		return a.estimatePicker.ModalView(a.getBackgroundView(), a.width, a.height)
-	case viewModifyPicker:
-		return a.modifyPicker.ModalView(a.getBackgroundView(), a.width, a.height)
-	case viewAssignPicker:
-		return a.assignPicker.ModalView(a.getBackgroundView(), a.width, a.height)
-	case viewColumnPicker:
-		return a.columnPicker.ModalView(a.getBackgroundView(), a.width, a.height)
-	case viewViewPicker:
-		return a.viewPicker.ModalView(a.getBackgroundView(), a.width, a.height)
-	case viewFilterPicker:
-		return a.filterPicker.ModalView(a.getBackgroundView(), a.width, a.height)
-	case viewFilterValuesPicker:
-		return a.filterValues.ModalView(a.getBackgroundView(), a.width, a.height)
-	case viewBlockingPicker:
-		return a.blockingPicker.ModalView(a.getBackgroundView(), a.width, a.height)
-	case viewCreateModal:
-		return a.createModal.ModalView(a.getBackgroundView(), a.width, a.height)
-	case viewConfirmDialog:
-		return a.confirmDialog.ModalView(a.getBackgroundView(), a.width, a.height)
-	case viewPalette:
-		return a.palette.ModalView(a.renderState(a.palette.origin), a.width, a.height)
 	}
-	return ""
+	modal, _, ok := a.modalOf(state)
+	if !ok {
+		return ""
+	}
+	var background string
+	if state == viewPalette {
+		background = a.renderState(a.palette.origin)
+	} else {
+		background = a.getBackgroundView()
+	}
+	return overlayModal(background, modal, a.width, a.height)
 }
 
 // expandedOnScreen reports whether the expanded nib view is drawn, on its own

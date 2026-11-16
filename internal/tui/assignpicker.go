@@ -248,6 +248,13 @@ func (m assignPickerModel) Update(msg tea.Msg) (assignPickerModel, tea.Cmd) {
 		}
 		return m, nil
 
+	case clickRowMsg:
+		m.list.Select(msg.row)
+		if !msg.choose {
+			return m, nil
+		}
+		return m.Update(actionMsg{name: actOpen})
+
 	case acceleratorMsg:
 		if selectAccelerator(&m.list, m.pageKeys, msg.key) {
 			return m.Update(actionMsg{name: actOpen})
@@ -270,23 +277,24 @@ func (m assignPickerModel) View() string {
 	if m.width == 0 {
 		return "Loading..."
 	}
+	return renderPickerModal(m.modal())
+}
+
+// modal is the modal View draws.
+func (m assignPickerModel) modal() pickerModalConfig {
 	var nibID string
 	if len(m.nibIDs) == 1 {
 		nibID = m.nibIDs[0]
 	}
-	return renderPickerModal(pickerModalConfig{
+	return pickerModalConfig{
 		Keys:        m.table,
 		Context:     m.field.ctx,
 		NibTitle:    m.nibTitle,
 		NibID:       nibID,
 		ListContent: m.list.View(),
+		Rows:        listRows(m.list),
 		Width:       m.width,
 		WidthPct:    60,
 		MaxWidth:    80,
-	})
-}
-
-// ModalView returns the picker centered over bgView.
-func (m assignPickerModel) ModalView(bgView string, fullWidth, fullHeight int) string {
-	return overlayModal(bgView, m.View(), fullWidth, fullHeight)
+	}
 }

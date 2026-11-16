@@ -91,6 +91,13 @@ func (m viewPickerModel) Update(msg tea.Msg) (viewPickerModel, tea.Cmd) {
 			return m, func() tea.Msg { return closeViewPickerMsg{} }
 		}
 
+	case clickRowMsg:
+		if !msg.choose {
+			m.cursor = msg.row
+			return m, nil
+		}
+		return m, choose(levels[msg.row])
+
 	case acceleratorMsg:
 		if msg.key != "" && msg.key == m.backKey {
 			return m, choose(m.previous)
@@ -108,6 +115,11 @@ func (m viewPickerModel) View() string {
 	if m.width == 0 {
 		return "Loading..."
 	}
+	return renderPickerModal(m.modal())
+}
+
+// modal is the modal View draws.
+func (m viewPickerModel) modal() pickerModalConfig {
 	nameWidth := 0
 	for _, level := range levels {
 		nameWidth = max(nameWidth, lipgloss.Width(levelNames[level]))
@@ -128,16 +140,12 @@ func (m viewPickerModel) View() string {
 		}
 		lines = append(lines, cursor+renderAccelerator(m.keys[i])+name+"  "+note)
 	}
-	return renderPickerModal(pickerModalConfig{
+	return pickerModalConfig{
 		Keys:        m.table,
 		Context:     ctxViewPicker,
 		Title:       "View",
 		ListContent: strings.Join(lines, "\n"),
+		Rows:        pickerRows{count: len(lines)},
 		Width:       m.width,
-	})
-}
-
-// ModalView returns the picker centered over bgView.
-func (m viewPickerModel) ModalView(bgView string, fullWidth, fullHeight int) string {
-	return overlayModal(bgView, m.View(), fullWidth, fullHeight)
+	}
 }

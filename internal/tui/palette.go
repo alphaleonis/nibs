@@ -249,8 +249,3 @@ func (m paletteModel) entryLine(e paletteEntry, highlighted bool, keyWidth, desc
 	}
 	return cursor + helpKeyStyle.Render(keyCol) + "  " + descCol + paletteNameStyle.Render(nameCol)
 }
-
-// ModalView returns the palette centered over bgView.
-func (m paletteModel) ModalView(bgView string, fullWidth, fullHeight int) string {
-	return overlayModal(bgView, m.View(), fullWidth, fullHeight)
-}

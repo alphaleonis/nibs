@@ -270,26 +270,62 @@ func (a *App) saveNibViewSetting(key string, value any, saved string) tea.Cmd {
 	return a.list.loadNibs
 }
 
-// renderDocked draws the list with the nib view docked at p beside or below
-// it, above a full-width footer.
-func (a *App) renderDocked(p placement) string {
-	// The footer may be several lines tall.
-	footer := a.list.Footer()
-	contentHeight := a.height - max(1, lipgloss.Height(footer))
-	listSize, viewSize := dockSizes(p, a.width, contentHeight)
-	listPane := a.list.pane(listSize.width, listSize.height)
-	viewPane := a.docked.render(viewSize.width, viewSize.height)
-	if p == placementBelow {
-		return listPane + "\n" + viewPane + "\n" + footer
-	}
-	divider := strings.TrimSuffix(strings.Repeat(ruleStyle.Render(dividerGlyph(a.display.ascii()))+"\n", max(1, contentHeight)), "\n")
-	return lipgloss.JoinHorizontal(lipgloss.Top, listPane, divider, viewPane) + "\n" + footer
+// rect is a block of terminal cells: x and y are its top-left cell, w and h
+// its size.
+type rect struct {
+	x, y, w, h int
 }
 
-// renderList draws the list, with the nib view docked when it is.
-func (a *App) renderList() string {
-	if p := a.dockPlacement(); p != "" {
-		return a.renderDocked(p)
+// contains reports whether r holds cell (x, y).
+func (r rect) contains(x, y int) bool {
+	return x >= r.x && x < r.x+r.w && y >= r.y && y < r.y+r.h
+}
+
+// listFrame is where the list screen draws each part. renderList draws from
+// it and hitAt reads it, so a click lands on what was drawn.
+type listFrame struct {
+	placement placement // where the nib view is docked, or "" when it is not
+	list      rect
+	view      rect // empty while the nib view is not docked
+	footer    rect
+}
+
+// listFrame lays out the list screen above a footer footerHeight lines tall.
+// A view docked right sits after a one-cell divider. Docked below, the view's
+// top rule is the rule between the panes.
+func (a *App) listFrame(footerHeight int) listFrame {
+	content := a.height - max(1, footerHeight)
+	f := listFrame{placement: a.dockPlacement(), footer: rect{y: content, w: a.width, h: a.height - content}}
+	if f.placement == "" {
+		f.list = rect{w: a.width, h: content}
+		return f
 	}
-	return a.list.View()
+	list, view := dockSizes(f.placement, a.width, content)
+	f.list = rect{w: list.width, h: list.height}
+	if f.placement == placementBelow {
+		f.view = rect{y: list.height, w: view.width, h: view.height}
+	} else {
+		f.view = rect{x: list.width + 1, w: view.width, h: view.height}
+	}
+	return f
+}
+
+// renderList draws the list, with the nib view docked beside or below it when
+// it is, above a full-width footer.
+func (a *App) renderList() string {
+	if a.list.err != nil || a.list.width == 0 {
+		return a.list.View()
+	}
+	// The footer may be several lines tall.
+	footer := a.list.Footer()
+	f := a.listFrame(lipgloss.Height(footer))
+	listPane := a.list.pane(f.list.w, f.list.h)
+	switch f.placement {
+	case "":
+		return listPane + "\n" + footer
+	case placementBelow:
+		return listPane + "\n" + a.docked.render(f.view.w, f.view.h) + "\n" + footer
+	}
+	divider := strings.TrimSuffix(strings.Repeat(ruleStyle.Render(dividerGlyph(a.display.ascii()))+"\n", max(1, f.list.h)), "\n")
+	return lipgloss.JoinHorizontal(lipgloss.Top, listPane, divider, a.docked.render(f.view.w, f.view.h)) + "\n" + footer
 }

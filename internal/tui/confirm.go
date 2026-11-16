@@ -73,12 +73,6 @@ func (d confirmDialog) View(width, height int) string {
 	return modal
 }
 
-// ModalView renders the confirm dialog overlaid on the background
-func (d confirmDialog) ModalView(bgView string, width, height int) string {
-	modal := d.View(width, height)
-	return overlayModal(bgView, modal, width, height)
-}
-
 // buildConfirmDialog creates a confirmDialog for archiving or deleting nibs.
 // nibTitle is the display title for a single nib. descendantCount is the number
 // of descendants (children, grandchildren, etc.) — 0 means just the one nib.

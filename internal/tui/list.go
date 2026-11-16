@@ -1186,9 +1186,12 @@ func (m listModel) View() string {
 	return m.pane(m.width, m.height-max(1, lipgloss.Height(footer))) + "\n" + footer
 }
 
-// paneChromeLines is the lines the list pane draws around its rows: the top
-// rule, the header and the bottom rule.
-const paneChromeLines = 3
+// paneHeadLines is the lines the list pane draws above its rows: the top rule
+// and the header. paneChromeLines adds the bottom rule under them.
+const (
+	paneHeadLines   = 2
+	paneChromeLines = paneHeadLines + 1
+)
 
 // rowsHeight is the rows a list pane height lines tall shows, at least one.
 func (m listModel) rowsHeight(height int) int { return max(1, height-paneChromeLines) }
@@ -1197,10 +1200,7 @@ func (m listModel) rowsHeight(height int) int { return max(1, height-paneChromeL
 // the header, the rows and the bottom rule. It is height lines tall when that
 // leaves room for a row.
 func (m listModel) pane(width, height int) string {
-	// Size the list to this pane: the footer may have grown since the last
-	// resize, and the nib view takes part of the width.
-	m.list.SetSize(width, m.rowsHeight(height))
-	m.updateDelegate(width)
+	m.fitPane(width, height)
 	rows := m.list.View()
 	if m.filter.err != nil && len(m.list.Items()) == 0 {
 		// The server refused the query, so the list's empty state would
@@ -1213,6 +1213,45 @@ func (m listModel) pane(width, height int) string {
 		rows = overlayRows(rows, completionMenu(m.completions, m.highlight, width), width)
 	}
 	return strings.Join([]string{m.topRule(width), m.header(width), rows, m.bottomRule(width)}, "\n")
+}
+
+// fitPane sizes the rows to a pane width x height, as pane draws them. The
+// footer may have grown since the last resize, and the nib view takes part of
+// the width.
+func (m *listModel) fitPane(width, height int) {
+	m.list.SetSize(width, m.rowsHeight(height))
+	m.updateDelegate(width)
+}
+
+// hitAt says what the pane width x height, as pane draws it, shows at cell
+// (x, y) of the pane.
+func (m listModel) hitAt(width, height, x, y int) hit {
+	m.fitPane(width, height)
+	line := y - paneHeadLines
+	if m.editing {
+		// The completion menu covers the rows it is drawn over.
+		menu := completionMenu(m.completions, m.highlight, width)
+		if menu != "" && line >= 0 && line < lipgloss.Height(menu) && x < lipgloss.Width(menu) {
+			return hit{area: hitList}
+		}
+	}
+	rows := listRows(m.list)
+	i, ok := rows.at(line)
+	if !ok {
+		return hit{area: hitList}
+	}
+	base := m.list.VisibleItems()[i].(listRow).base()
+	h := hit{area: hitListRow, row: i, rowID: base.id}
+	if base.hasChildren {
+		// The tree prefix ends with the fold mark; see ui.TreePrefixes.
+		mark := ui.CollapseIndicatorExpanded(m.display.ascii())
+		if base.collapsed {
+			mark = ui.CollapseIndicatorCollapsed(m.display.ascii())
+		}
+		end := rowLeadWidth + lipgloss.Width(base.treePrefix)
+		h.fold = x < end && x >= end-lipgloss.Width(mark)
+	}
+	return h
 }
 
 // ruleGlyph returns the character horizontal rules are drawn with.

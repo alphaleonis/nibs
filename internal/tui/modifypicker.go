@@ -185,6 +185,13 @@ func (m modifyPickerModel) Update(msg tea.Msg) (modifyPickerModel, tea.Msg) {
 			return m, closeModifyPickerMsg{}
 		}
 
+	case clickRowMsg:
+		m.cursor = msg.row
+		if !msg.choose {
+			return m, nil
+		}
+		return m.Update(actionMsg{name: actOpen})
+
 	case acceleratorMsg:
 		for i, item := range m.items {
 			if item.key == msg.key {
@@ -200,6 +207,11 @@ func (m modifyPickerModel) View() string {
 	if m.width == 0 {
 		return "Loading..."
 	}
+	return renderPickerModal(m.modal())
+}
+
+// modal is the modal View draws.
+func (m modifyPickerModel) modal() pickerModalConfig {
 	labelWidth := 0
 	for _, item := range m.items {
 		labelWidth = max(labelWidth, lipgloss.Width(item.row.label))
@@ -208,6 +220,7 @@ func (m modifyPickerModel) View() string {
 	// the accelerator take 4 more.
 	valueWidth := max(1, pickerModalWidth(m.width, 0, 0)-2-4-labelWidth-2)
 	lines := []string{listTitleStyle.Render("Modify"), ""}
+	rows := pickerRows{top: len(lines), count: len(m.items)}
 	for i, item := range m.items {
 		cursor := "  "
 		if i == m.cursor {
@@ -221,17 +234,13 @@ func (m modifyPickerModel) View() string {
 	if len(m.targets.nibs) == 1 {
 		nibID = m.targets.nibs[0].ID
 	}
-	return renderPickerModal(pickerModalConfig{
+	return pickerModalConfig{
 		Keys:        m.table,
 		Context:     ctxModifyPicker,
 		NibTitle:    m.targets.title,
 		NibID:       nibID,
 		ListContent: strings.Join(lines, "\n"),
+		Rows:        rows,
 		Width:       m.width,
-	})
-}
-
-// ModalView returns the picker centered over bgView.
-func (m modifyPickerModel) ModalView(bgView string, fullWidth, fullHeight int) string {
-	return overlayModal(bgView, m.View(), fullWidth, fullHeight)
+	}
 }

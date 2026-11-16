@@ -124,9 +124,3 @@ func (m createModalModel) View() string {
 
 	return border.Render(content)
 }
-
-// ModalView returns the modal rendered as a centered overlay
-func (m createModalModel) ModalView(bgView string, fullWidth, fullHeight int) string {
-	modal := m.View()
-	return overlayModal(bgView, modal, fullWidth, fullHeight)
-}

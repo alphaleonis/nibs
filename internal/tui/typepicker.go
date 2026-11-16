@@ -148,6 +148,13 @@ func (m typePickerModel) Update(msg tea.Msg) (typePickerModel, tea.Cmd) {
 			return m, func() tea.Msg { return closeTypePickerMsg{} }
 		}
 
+	case clickRowMsg:
+		m.cursor = msg.row
+		if !msg.choose {
+			return m, nil
+		}
+		return m.Update(actionMsg{name: actOpen})
+
 	case acceleratorMsg:
 		for i, item := range m.items {
 			if item.key == msg.key {
@@ -172,7 +179,11 @@ func (m typePickerModel) View() string {
 	if m.width == 0 {
 		return "Loading..."
 	}
+	return renderPickerModal(m.modal())
+}
 
+// modal is the modal View draws.
+func (m typePickerModel) modal() pickerModalConfig {
 	var lines []string
 	for i, item := range m.items {
 		var cursor string
@@ -210,20 +221,15 @@ func (m typePickerModel) View() string {
 		nibID = m.nibIDs[0]
 	}
 
-	return renderPickerModal(pickerModalConfig{
+	return pickerModalConfig{
 		Keys:        m.table,
 		Context:     ctxTypePicker,
 		Title:       "Select Type",
 		NibTitle:    m.nibTitle,
 		NibID:       nibID,
 		ListContent: listContent,
+		Rows:        pickerRows{count: len(m.items)},
 		Description: description,
 		Width:       m.width,
-	})
-}
-
-// ModalView returns the picker centered over bgView.
-func (m typePickerModel) ModalView(bgView string, fullWidth, fullHeight int) string {
-	modal := m.View()
-	return overlayModal(bgView, modal, fullWidth, fullHeight)
+	}
 }

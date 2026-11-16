@@ -176,6 +176,13 @@ func (m statusPickerModel) Update(msg tea.Msg) (statusPickerModel, tea.Cmd) {
 		}
 		return m, nil
 
+	case clickRowMsg:
+		m.list.Select(msg.row)
+		if !msg.choose {
+			return m, nil
+		}
+		return m.Update(actionMsg{name: actOpen})
+
 	case acceleratorMsg:
 		if selectAccelerator(&m.list, nil, msg.key) {
 			return m.Update(actionMsg{name: actOpen})
@@ -197,7 +204,11 @@ func (m statusPickerModel) View() string {
 	if m.width == 0 {
 		return "Loading..."
 	}
+	return renderPickerModal(m.modal())
+}
 
+// modal is the modal View draws.
+func (m statusPickerModel) modal() pickerModalConfig {
 	var selected string
 	var allDescs []string
 	for _, li := range m.list.Items() {
@@ -215,20 +226,15 @@ func (m statusPickerModel) View() string {
 		nibID = m.nibIDs[0]
 	}
 
-	return renderPickerModal(pickerModalConfig{
+	return pickerModalConfig{
 		Keys:        m.table,
 		Context:     ctxStatusPicker,
 		Title:       "Select Status",
 		NibTitle:    m.nibTitle,
 		NibID:       nibID,
 		ListContent: m.list.View(),
+		Rows:        listRows(m.list),
 		Description: description,
 		Width:       m.width,
-	})
-}
-
-// ModalView returns the picker centered over bgView.
-func (m statusPickerModel) ModalView(bgView string, fullWidth, fullHeight int) string {
-	modal := m.View()
-	return overlayModal(bgView, modal, fullWidth, fullHeight)
+	}
 }

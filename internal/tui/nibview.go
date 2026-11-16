@@ -544,7 +544,7 @@ func (m nibViewModel) renderLayout(l nibLayout, width, height int) string {
 	if l.bodyRows > 0 {
 		body = strings.Split(m.body.View(), "\n")
 	}
-	rel := m.relationRows(l)
+	rel, _ := m.relationRows(l)
 	switch {
 	case l.rail:
 		divider := " " + ruleStyle.Render(dividerGlyph(m.display.ascii())) + " "
@@ -570,6 +570,45 @@ func (m nibViewModel) renderLayout(l nibLayout, width, height int) string {
 		lines = append(lines, "")
 	}
 	return clipToWidth(strings.Join(lines[:height], "\n"), width)
+}
+
+// hitAt says what the view drawn into width x height, as render draws it,
+// shows at cell (x, y) of the view.
+func (m nibViewModel) hitAt(width, height, x, y int) hit {
+	l := m.layout(width, height)
+	elsewhere := hit{area: hitNibView}
+	if m.nib == nil || y < len(l.head) {
+		return elsewhere
+	}
+	y -= len(l.head)
+	_, entries := m.relationRows(l)
+	relation := func(line int) hit {
+		if line < len(entries) && entries[line] >= 0 {
+			return hit{area: hitNibRelation, row: entries[line]}
+		}
+		return hit{area: hitNibRelations}
+	}
+	if l.rail {
+		switch {
+		case x < l.bodyWidth && y < l.bodyRows:
+			return hit{area: hitNibBody}
+		case x >= l.bodyWidth+railGap && y < l.relRows:
+			return relation(y)
+		}
+		return elsewhere
+	}
+	if y < len(entries) {
+		return relation(y)
+	}
+	y -= len(entries)
+	if len(entries) > 0 && l.bodyRows > 0 {
+		// The rule between the relations and the body.
+		y--
+	}
+	if y >= 0 && y < l.bodyRows {
+		return hit{area: hitNibBody}
+	}
+	return elsewhere
 }
 
 // padRight pads s with spaces to width cells.
@@ -680,37 +719,36 @@ func (m nibViewModel) metaLines(width int) []string {
 // relationLines draws the relation groups width cells wide: each a heading,
 // then up to slots[i] rows of group i. A group with more rows than its slots
 // shows a run of them, which holds the cursor when the cursor is in the group,
-// and a line counting the rest. nil slots draws every row. It also returns the
-// line the cursor is on, or -1.
-func (m nibViewModel) relationLines(width int, slots []int) ([]string, int) {
+// and a line counting the rest. nil slots draws every row. It also returns, for
+// each line, the index into m.entries() of the relation the line draws, or -1
+// for a heading and for the line that counts the rest.
+func (m nibViewModel) relationLines(width int, slots []int) (lines []string, entries []int) {
 	ascii := m.display.ascii()
 	mark := ellipsis(ascii)
 	headingStyle := helpStyle.Bold(true)
-	var lines []string
-	cursorLine := -1
 	first := 0 // the entry index of the group's first row
 	for gi, g := range m.groups {
-		entries := g.entries()
+		groupEntries := g.entries()
 		heading := g.label
-		if len(entries) > 1 {
-			heading += fmt.Sprintf(" %d", len(entries))
+		if len(groupEntries) > 1 {
+			heading += fmt.Sprintf(" %d", len(groupEntries))
 		}
 		lines = append(lines, headingStyle.Render(fitText(heading, width, mark)))
+		entries = append(entries, -1)
 
-		shown, start, more := len(entries), 0, false
-		if slots != nil && slots[gi] < len(entries) {
+		shown, start, more := len(groupEntries), 0, false
+		if slots != nil && slots[gi] < len(groupEntries) {
 			shown, more = slots[gi]-1, true
-			if cursorIn := m.cursor - first; cursorIn >= 0 && cursorIn < len(entries) {
+			if cursorIn := m.cursor - first; cursorIn >= 0 && cursorIn < len(groupEntries) {
 				if shown == 0 {
 					shown, more = 1, false
 				}
-				start = max(0, min(cursorIn-shown+1, len(entries)-shown))
+				start = max(0, min(cursorIn-shown+1, len(groupEntries)-shown))
 			}
 		}
-		for i, e := range entries[start : start+shown] {
+		for i, e := range groupEntries[start : start+shown] {
 			marker := "  "
 			if first+start+i == m.cursor {
-				cursorLine = len(lines)
 				// focus, not focused: these lines are what decide whether the
 				// relations are on screen.
 				if m.active && m.focus == regionRelations {
@@ -722,13 +760,15 @@ func (m nibViewModel) relationLines(width int, slots []int) ([]string, int) {
 				row = m.relationRow(e.nib, width-2)
 			}
 			lines = append(lines, marker+row)
+			entries = append(entries, first+start+i)
 		}
 		if more {
-			lines = append(lines, "  "+helpStyle.Render(fitText(fmt.Sprintf("+%d more", len(entries)-shown), width-2, mark)))
+			lines = append(lines, "  "+helpStyle.Render(fitText(fmt.Sprintf("+%d more", len(groupEntries)-shown), width-2, mark)))
+			entries = append(entries, -1)
 		}
-		first += len(entries)
+		first += len(groupEntries)
 	}
-	return lines, cursorLine
+	return lines, entries
 }
 
 // relationRow draws a related nib width cells wide: its status and type, its
@@ -755,21 +795,22 @@ func (m nibViewModel) relationRow(n *nib.Nib, width int) string {
 
 // relationRows is the part of the relations l has room for. When rows allow,
 // every group keeps its heading and at least one row; see relationSlots.
-// Otherwise it is a window of the relations that holds the cursor.
-func (m nibViewModel) relationRows(l nibLayout) []string {
+// Otherwise it is a window of the relations that holds the cursor. It also
+// returns the relation each line draws, as relationLines does.
+func (m nibViewModel) relationRows(l nibLayout) (lines []string, entries []int) {
 	if l.relRows <= 0 {
-		return nil
+		return nil, nil
 	}
 	if slots := m.relationSlots(l.relRows); slots != nil {
-		lines, _ := m.relationLines(l.relWidth, slots)
-		return lines
+		return m.relationLines(l.relWidth, slots)
 	}
-	lines, cursorLine := m.relationLines(l.relWidth, nil)
+	lines, entries = m.relationLines(l.relWidth, nil)
 	if len(lines) <= l.relRows {
-		return lines
+		return lines, entries
 	}
+	cursorLine := slices.Index(entries, m.cursor)
 	top := max(0, min(cursorLine-l.relRows+1, len(lines)-l.relRows))
-	return lines[top : top+l.relRows]
+	return lines[top : top+l.relRows], entries[top : top+l.relRows]
 }
 
 // relationSlots divides rows among the groups: each gets its heading and one

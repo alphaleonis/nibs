@@ -97,6 +97,13 @@ func (m columnPickerModel) Update(msg tea.Msg) (columnPickerModel, tea.Cmd) {
 			return m, func() tea.Msg { return closeColumnPickerMsg{} }
 		}
 
+	case clickRowMsg:
+		m.cursor = msg.row
+		if !msg.choose {
+			return m, nil
+		}
+		return m.Update(actionMsg{name: actSelect})
+
 	case acceleratorMsg:
 		for i, row := range m.rows {
 			if row.key != "" && row.key == msg.key {
@@ -120,6 +127,11 @@ func (m columnPickerModel) View() string {
 	if m.width == 0 {
 		return "Loading..."
 	}
+	return renderPickerModal(m.modal())
+}
+
+// modal is the modal View draws.
+func (m columnPickerModel) modal() pickerModalConfig {
 	nameWidth := 0
 	for _, row := range m.rows {
 		nameWidth = max(nameWidth, lipgloss.Width(string(row.name)))
@@ -150,17 +162,13 @@ func (m columnPickerModel) View() string {
 		}
 		lines = append(lines, cursor+renderAccelerator(row.key)+line)
 	}
-	return renderPickerModal(pickerModalConfig{
+	return pickerModalConfig{
 		Keys:        m.table,
 		Context:     ctxColumnPicker,
 		Title:       "Columns of the " + m.view + " view",
 		ListContent: strings.Join(lines, "\n"),
+		Rows:        pickerRows{first: first, count: len(lines)},
 		Width:       m.width,
 		WidthPct:    columnPickerWidthPct,
-	})
-}
-
-// ModalView returns the picker centered over bgView.
-func (m columnPickerModel) ModalView(bgView string, fullWidth, fullHeight int) string {
-	return overlayModal(bgView, m.View(), fullWidth, fullHeight)
+	}
 }

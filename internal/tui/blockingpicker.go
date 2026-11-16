@@ -244,7 +244,15 @@ func (m blockingPickerModel) Update(msg tea.Msg) (blockingPickerModel, tea.Cmd) 
 		}
 		return m, nil
 
-	// A row's accelerator marks it, as space does, since enter confirms them all.
+	// A click on a row and the row's accelerator mark it, as space does, since
+	// enter confirms them all.
+	case clickRowMsg:
+		m.list.Select(msg.row)
+		if !msg.choose {
+			return m, nil
+		}
+		return m.Update(actionMsg{name: actSelect})
+
 	case acceleratorMsg:
 		if selectAccelerator(&m.list, m.pageKeys, msg.key) {
 			return m.Update(actionMsg{name: actSelect})
@@ -266,22 +274,21 @@ func (m blockingPickerModel) View() string {
 	if m.width == 0 {
 		return "Loading..."
 	}
+	return renderPickerModal(m.modal())
+}
 
-	return renderPickerModal(pickerModalConfig{
+// modal is the modal View draws.
+func (m blockingPickerModel) modal() pickerModalConfig {
+	return pickerModalConfig{
 		Keys:        m.table,
 		Context:     ctxBlockingPicker,
 		Title:       "Manage Blocking",
 		NibTitle:    m.nibTitle,
 		NibID:       m.nibID,
 		ListContent: m.list.View(),
+		Rows:        listRows(m.list),
 		Width:       m.width,
 		WidthPct:    60,
 		MaxWidth:    80,
-	})
-}
-
-// ModalView returns the picker centered over bgView.
-func (m blockingPickerModel) ModalView(bgView string, fullWidth, fullHeight int) string {
-	modal := m.View()
-	return overlayModal(bgView, modal, fullWidth, fullHeight)
+	}
 }

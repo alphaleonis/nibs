@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -172,7 +173,14 @@ var pickerCases = []pickerCase{
 // openPicker returns an app with tc's picker open on nib-4.
 func openPicker(t *testing.T, tc pickerCase) (*App, *StubBackend) {
 	t.Helper()
+	return openPickerAt(t, tc, 120, 40)
+}
+
+// openPickerAt is openPicker in a terminal width x height.
+func openPickerAt(t *testing.T, tc pickerCase, width, height int) (*App, *StubBackend) {
+	t.Helper()
 	app, stub := setupTestApp(t, pickerNibs())
+	app.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	vocab, err := area.Parse([]byte(groupedAreas))
 	if err != nil {
 		t.Fatal(err)
