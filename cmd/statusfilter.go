@@ -38,9 +38,9 @@ type statusFilterInput struct {
 
 // resolveStatusFilter expands status groups, applies the open-by-default rule,
 // and returns the concrete (include, exclude) status lists to populate a
-// model.NibFilter's Status / ExcludeStatus fields. filterByField (include) then
-// excludeByField (exclude) in graph.ApplyFilter give the "base then subtract"
-// behavior for free.
+// model.NibFilter's Status / ExcludeStatus fields. graph.ApplyFilter matches them
+// through viewshape.Matches, which keeps a nib only when the include list admits
+// it and the exclude list does not, so the "base then subtract" behavior follows.
 //
 // Semantics ("base then subtract"):
 //   - No status token and no --all → default open: exclude the closed statuses

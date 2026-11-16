@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"strings"
 
 	"github.com/alphaleonis/nibs/internal/safetext"
 	"github.com/alphaleonis/nibs/internal/store"
@@ -81,7 +82,9 @@ func PlanSetStoredPrefix(storeDir, prefix string) (*StoredPrefixEdit, error) {
 		}
 		return nil, refusePrefixEdit("parsing %s: %v", path, err)
 	}
-	setNestedScalar(&doc, "nibs", "prefix", prefix)
+	// A section setPath cannot reach is left as it was, and the re-read below
+	// refuses it.
+	setPath(&doc, []string{"nibs", "prefix"}, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: prefix})
 
 	out, err := yaml.Marshal(&doc)
 	if err != nil {
@@ -102,44 +105,70 @@ func PlanSetStoredPrefix(storeDir, prefix string) (*StoredPrefixEdit, error) {
 	return &StoredPrefixEdit{path: path, out: out}, nil
 }
 
-// setNestedScalar sets doc's section.key to value, creating the document, the
-// section or the key when any of them is absent, and converting a section
-// written with no value into a mapping.
-func setNestedScalar(doc *yaml.Node, section, key, value string) {
+// setPath sets the value at path in doc to value. It creates the document and
+// each missing mapping on the way, and turns a key written with no value into a
+// mapping. A value it replaces goes through replaceValue.
+//
+// It returns the first node on the way that is not a mapping or a key with no
+// value, and the path to it. doc is then partly edited and must not be written.
+func setPath(doc *yaml.Node, path []string, value *yaml.Node) (blockedAt []string, blocked *yaml.Node) {
 	if doc.Kind == 0 {
 		doc.Kind = yaml.DocumentNode
 	}
 	if len(doc.Content) == 0 {
 		doc.Content = []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}
 	}
-	root := doc.Content[0]
-	nullToEmptyMapping(root)
-	sectionNode := yamlfile.MappingValue(root, section)
-	if sectionNode == nil {
-		sectionNode = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-		root.Content = append(root.Content,
-			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: section},
-			sectionNode)
-	} else {
-		nullToEmptyMapping(sectionNode)
+	parent := doc.Content[0]
+	for i, key := range path {
+		nullToEmptyMapping(parent)
+		if parent.Kind != yaml.MappingNode {
+			return path[:i], parent
+		}
+		last := i == len(path)-1
+		keyNode, child := mappingEntry(parent, key)
+		switch {
+		case child == nil:
+			child = value
+			if !last {
+				child = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+			}
+			parent.Content = append(parent.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key},
+				child)
+		case last:
+			replaceValue(keyNode, child, value)
+		}
+		parent = child
 	}
-	if existing := yamlfile.MappingValue(sectionNode, key); existing != nil {
-		existing.Kind = yaml.ScalarNode
-		existing.Tag = "!!str"
-		existing.Value = value
-		// Without this a quoted or folded old prefix keeps its rendering.
-		existing.Style = 0
-		return
+	return nil, nil
+}
+
+// mappingEntry returns the key and value nodes for key in mapping, or two nils.
+func mappingEntry(mapping *yaml.Node, key string) (keyNode, value *yaml.Node) {
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == key {
+			return mapping.Content[i], mapping.Content[i+1]
+		}
 	}
-	sectionNode.Content = append(sectionNode.Content,
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key},
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value})
+	return nil, nil
+}
+
+// replaceValue makes old, the value of keyNode, a copy of value. It keeps the
+// anchor of old, so an alias of old reads the new value, and the line comment.
+// The comments inside old are lost with its content.
+func replaceValue(keyNode, old, value *yaml.Node) {
+	anchor, line := old.Anchor, old.LineComment
+	*old = *value
+	old.Anchor = anchor
+	// The key carries the line comment, because yaml.v3 writes the line comment
+	// of a block collection after its last item, on the next key's line.
+	keyNode.LineComment = strings.TrimSpace(keyNode.LineComment + " " + line)
 }
 
 // nullToEmptyMapping turns a key written with no value — `nibs:` alone on its
 // line, `nibs: null` or `nibs: ~` — into an empty mapping the caller can append
-// to. An alias, a scalar or a sequence is left as it is: converting one would
-// delete what the project wrote, and PlanSetStoredPrefix's re-read refuses it.
+// to. An alias, a scalar or a sequence is left as it is, because converting one
+// would delete what the file holds.
 func nullToEmptyMapping(node *yaml.Node) {
 	if node == nil || node.Kind != yaml.ScalarNode || node.Tag != "!!null" {
 		return

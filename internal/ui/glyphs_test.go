@@ -6,88 +6,13 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// withASCIIGlyphs forces useASCIIGlyphs() to return the given value for the
-// duration of the test, restoring the prior state via t.Cleanup.
-func withASCIIGlyphs(t *testing.T, ascii bool) {
-	t.Helper()
-	prev := asciiGlyphsOverride
-	asciiGlyphsOverride = &ascii
-	t.Cleanup(func() {
-		asciiGlyphsOverride = prev
-	})
-}
-
-func TestGetPrioritySymbol_ASCII(t *testing.T) {
-	withASCIIGlyphs(t, true)
-
-	tests := []struct {
-		priority string
-		want     string
-	}{
-		{"critical", "!!"},
-		{"high", "!"},
-		{"low", "v"},
-		{"normal", ""},
-		{"deferred", ""}, // removed priority value falls through to the empty default
-		{"", ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.priority, func(t *testing.T) {
-			got := GetPrioritySymbol(tt.priority)
-			if got != tt.want {
-				t.Errorf("GetPrioritySymbol(%q) [ASCII] = %q, want %q", tt.priority, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestGetPrioritySymbol_UTF8(t *testing.T) {
-	withASCIIGlyphs(t, false)
-
-	tests := []struct {
-		priority string
-		want     string
-	}{
-		{"critical", "‼"}, // ‼
-		{"high", "!"},
-		{"low", "↓"}, // ↓
-		{"normal", ""},
-		{"deferred", ""}, // removed priority value falls through to the empty default
-		{"", ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.priority, func(t *testing.T) {
-			got := GetPrioritySymbol(tt.priority)
-			if got != tt.want {
-				t.Errorf("GetPrioritySymbol(%q) [UTF-8] = %q, want %q", tt.priority, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestUseASCIIGlyphs_OverrideTakesPrecedence(t *testing.T) {
-	// Force ASCII, verify useASCIIGlyphs returns true.
-	withASCIIGlyphs(t, true)
-	if !useASCIIGlyphs() {
-		t.Error("useASCIIGlyphs() = false with override=true, want true")
-	}
-
-	// Force UTF-8, verify useASCIIGlyphs returns false.
-	withASCIIGlyphs(t, false)
-	if useASCIIGlyphs() {
-		t.Error("useASCIIGlyphs() = true with override=false, want false")
-	}
-}
-
 // TestGlyphTreeConnector_3Cells enforces the invariant documented in tree.go
 // (treeIndent = 3) and glyphs.go (every tree connector occupies 3 display
-// cells). Column widths are sized from tree depth on that assumption — if a
-// future glyph change breaks it, every connector at every depth shifts
-// horizontally and alignment regresses silently.
+// cells).
 func TestGlyphTreeConnector_3Cells(t *testing.T) {
 	connectors := []struct {
 		name string
-		fn   func() string
+		fn   func(bool) string
 	}{
 		{"glyphTreeBranch", glyphTreeBranch},
 		{"glyphTreeLastBranch", glyphTreeLastBranch},
@@ -103,13 +28,37 @@ func TestGlyphTreeConnector_3Cells(t *testing.T) {
 	}
 	for _, m := range modes {
 		t.Run(m.name, func(t *testing.T) {
-			withASCIIGlyphs(t, m.ascii)
 			for _, c := range connectors {
-				got := lipgloss.Width(c.fn())
+				got := lipgloss.Width(c.fn(m.ascii))
 				if got != treeIndent {
 					t.Errorf("%s in %s mode: lipgloss.Width(%q) = %d, want %d",
-						c.name, m.name, c.fn(), got, treeIndent)
+						c.name, m.name, c.fn(m.ascii), got, treeIndent)
 				}
+			}
+		})
+	}
+}
+
+func TestLocaleUTF8(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
+		want bool
+	}{
+		{"LANG names UTF-8", map[string]string{"LANG": "en_US.UTF-8"}, true},
+		{"spelled utf8", map[string]string{"LANG": "sv_SE.utf8"}, true},
+		{"C.UTF-8", map[string]string{"LC_CTYPE": "C.UTF-8"}, true},
+		{"LANG is C", map[string]string{"LANG": "C"}, false},
+		{"Latin-1", map[string]string{"LANG": "sv_SE.ISO-8859-1"}, false},
+		{"nothing set is the C locale", map[string]string{}, false},
+		{"LC_ALL wins over LC_CTYPE and LANG", map[string]string{"LC_ALL": "C", "LC_CTYPE": "en_US.UTF-8", "LANG": "en_US.UTF-8"}, false},
+		{"LC_CTYPE wins over LANG", map[string]string{"LC_CTYPE": "en_US.UTF-8", "LANG": "C"}, true},
+		{"an empty variable is unset", map[string]string{"LC_ALL": "", "LANG": "en_US.UTF-8"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := localeUTF8(func(k string) string { return tt.env[k] }); got != tt.want {
+				t.Errorf("localeUTF8(%v) = %v, want %v", tt.env, got, tt.want)
 			}
 		})
 	}

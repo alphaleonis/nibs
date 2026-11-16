@@ -12,6 +12,7 @@ import (
 
 // confirmDialog holds the state for an archive/delete confirmation modal.
 type confirmDialog struct {
+	table   []action // the keymap in effect, which App sets when it opens the dialog
 	title   string   // e.g., "Archive nib?" or "Permanently delete nib?"
 	message string   // descriptive message shown in the dialog
 	action  string   // "archive" or "delete"
@@ -34,13 +35,13 @@ type cancelConfirmMsg struct{}
 
 func (d confirmDialog) Update(msg tea.Msg) (confirmDialog, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "y", "Y":
+	case actionMsg:
+		switch msg.name {
+		case actConfirmYes:
 			return d, func() tea.Msg {
 				return confirmActionMsg{nibIDs: d.nibIDs, action: d.action}
 			}
-		case "n", "N", "esc":
+		case actConfirmNo, actLeave:
 			return d, func() tea.Msg {
 				return cancelConfirmMsg{}
 			}
@@ -54,8 +55,7 @@ func (d confirmDialog) View(width, height int) string {
 
 	header := lipgloss.NewStyle().Bold(true).Render(d.title)
 
-	help := helpKeyStyle.Render("y") + " " + helpStyle.Render("confirm") + "  " +
-		helpKeyStyle.Render("n/esc") + " " + helpStyle.Render("cancel")
+	help := hintRowWithin(d.table, actionState{ctx: ctxConfirm}, modalWidth-2)
 
 	borderColor := ui.ColorPrimary
 	if d.action == "delete" {
@@ -71,12 +71,6 @@ func (d confirmDialog) View(width, height int) string {
 	modal := border.Render(content)
 
 	return modal
-}
-
-// ModalView renders the confirm dialog overlaid on the background
-func (d confirmDialog) ModalView(bgView string, width, height int) string {
-	modal := d.View(width, height)
-	return overlayModal(bgView, modal, width, height)
 }
 
 // buildConfirmDialog creates a confirmDialog for archiving or deleting nibs.

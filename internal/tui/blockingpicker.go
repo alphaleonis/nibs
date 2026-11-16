@@ -64,6 +64,7 @@ func (i blockingItem) FilterValue() string { return i.nib.Title + " " + i.nib.ID
 type blockingItemDelegate struct {
 	cfg             *config.Config
 	pendingBlocking *map[string]bool // read at render time, so toggles show immediately
+	pageKeys        []string
 }
 
 func (d blockingItemDelegate) Height() int                             { return 1 }
@@ -83,6 +84,8 @@ func (d blockingItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 		cursor = "  "
 	}
 
+	cursor += renderAccelerator(rowAccelerator(m, d.pageKeys, index))
+
 	isBlocking := (*d.pendingBlocking)[item.nib.ID]
 	var blockingIndicator string
 	if isBlocking {
@@ -98,24 +101,26 @@ func (d blockingItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 	if colors.IsClosed {
 		title = ui.Muted.Render(title)
 	}
-	id := ui.Muted.Render(" (" + item.nib.ID + ")")
+	id := ui.Muted.Render(" (" + displayID(item.nib.ID) + ")")
 
 	_, _ = fmt.Fprint(w, cursor+blockingIndicator+typeBadge+" "+title+id)
 }
 
 // blockingPickerModel is the model for the blocking picker view
 type blockingPickerModel struct {
+	table            []action // the keymap in effect
 	list             list.Model
 	nibID            string          // the nib we're setting blocking for
 	nibTitle         string          // the nib's title
 	originalBlocking map[string]bool // original state (for computing diff)
 	pendingBlocking  map[string]bool // pending state (toggled by space)
+	pageKeys         []string        // the accelerators of the rows on a page, in order
 	cfg              *config.Config
 	width            int
 	height           int
 }
 
-func newBlockingPickerModel(nibID, nibTitle string, currentBlocking []string, backend Backend, cfg *config.Config, width, height int) blockingPickerModel {
+func newBlockingPickerModel(table []action, nibID, nibTitle string, currentBlocking []string, backend Backend, cfg *config.Config, width, height int) blockingPickerModel {
 	allNibs, _ := backend.ListNibs(context.Background(), nil)
 
 	originalBlocking := make(map[string]bool)
@@ -159,24 +164,28 @@ func newBlockingPickerModel(nibID, nibTitle string, currentBlocking []string, ba
 	// header(1) + subtitle(1) + blank(1) + blank(1) + description(1) + blank(1) + help(1) + border(2) = 9
 	listHeight := modalHeight - 9
 
-	delegate := blockingItemDelegate{cfg: cfg, pendingBlocking: &pendingBlocking}
+	pageKeys := freeAccelerators(table, ctxBlockingPicker)
+	delegate := blockingItemDelegate{cfg: cfg, pendingBlocking: &pendingBlocking, pageKeys: pageKeys}
 
 	l := list.New(items, delegate, listWidth, listHeight)
 	l.Title = "Manage Blocking"
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
 	l.SetShowHelp(false)
+	l.KeyMap = listKeyMap()
 	l.SetShowPagination(false)
 	l.Styles.Title = listTitleStyle
 	l.Styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 0, 0)
 	applyFilterStyles(&l.Styles)
 
 	return blockingPickerModel{
+		table:            table,
 		list:             l,
 		nibID:            nibID,
 		nibTitle:         nibTitle,
 		originalBlocking: originalBlocking,
 		pendingBlocking:  pendingBlocking,
+		pageKeys:         pageKeys,
 		cfg:              cfg,
 		width:            width,
 		height:           height,
@@ -200,49 +209,60 @@ func (m blockingPickerModel) Update(msg tea.Msg) (blockingPickerModel, tea.Cmd) 
 		listHeight := modalHeight - 9
 		m.list.SetSize(listWidth, listHeight)
 
-	case tea.KeyPressMsg:
-		if m.list.FilterState() != list.Filtering {
-			switch msg.String() {
-			case "space":
-				// The delegate reads pendingBlocking directly; the items need no update.
-				if item, ok := m.list.SelectedItem().(blockingItem); ok {
-					targetID := item.nib.ID
-					if m.pendingBlocking[targetID] {
-						delete(m.pendingBlocking, targetID)
-					} else {
-						m.pendingBlocking[targetID] = true
-					}
-				}
-				return m, nil
-
-			case "enter":
-				var toAdd, toRemove []string
-
-				for id := range m.pendingBlocking {
-					if !m.originalBlocking[id] {
-						toAdd = append(toAdd, id)
-					}
-				}
-
-				for id := range m.originalBlocking {
-					if !m.pendingBlocking[id] {
-						toRemove = append(toRemove, id)
-					}
-				}
-
-				return m, func() tea.Msg {
-					return blockingConfirmedMsg{
-						nibID:    m.nibID,
-						toAdd:    toAdd,
-						toRemove: toRemove,
-					}
-				}
-
-			case "esc", "backspace":
-				return m, func() tea.Msg {
-					return closeBlockingPickerMsg{}
+	case actionMsg:
+		if cmd, ok := browseList(&m.list, msg.name); ok {
+			return m, cmd
+		}
+		switch msg.name {
+		case actSelect:
+			// The delegate reads pendingBlocking directly; the items need no update.
+			if item, ok := m.list.SelectedItem().(blockingItem); ok {
+				targetID := item.nib.ID
+				if m.pendingBlocking[targetID] {
+					delete(m.pendingBlocking, targetID)
+				} else {
+					m.pendingBlocking[targetID] = true
 				}
 			}
+		case actOpen:
+			var toAdd, toRemove []string
+			for id := range m.pendingBlocking {
+				if !m.originalBlocking[id] {
+					toAdd = append(toAdd, id)
+				}
+			}
+			for id := range m.originalBlocking {
+				if !m.pendingBlocking[id] {
+					toRemove = append(toRemove, id)
+				}
+			}
+			return m, func() tea.Msg {
+				return blockingConfirmedMsg{nibID: m.nibID, toAdd: toAdd, toRemove: toRemove}
+			}
+		case actLeave:
+			return m, func() tea.Msg { return closeBlockingPickerMsg{} }
+		}
+		return m, nil
+
+	// A click on a row and the row's accelerator mark it, as space does, since
+	// enter confirms them all.
+	case clickRowMsg:
+		m.list.Select(msg.row)
+		if !msg.choose {
+			return m, nil
+		}
+		return m.Update(actionMsg{name: actSelect})
+
+	case acceleratorMsg:
+		if selectAccelerator(&m.list, m.pageKeys, msg.key) {
+			return m.Update(actionMsg{name: actSelect})
+		}
+		return m, nil
+
+	case tea.KeyPressMsg:
+		// Only a filter being typed takes keys; actions do everything else.
+		if m.list.FilterState() != list.Filtering {
+			return m, nil
 		}
 	}
 
@@ -254,21 +274,21 @@ func (m blockingPickerModel) View() string {
 	if m.width == 0 {
 		return "Loading..."
 	}
+	return renderPickerModal(m.modal())
+}
 
-	return renderPickerModal(pickerModalConfig{
+// modal is the modal View draws.
+func (m blockingPickerModel) modal() pickerModalConfig {
+	return pickerModalConfig{
+		Keys:        m.table,
+		Context:     ctxBlockingPicker,
 		Title:       "Manage Blocking",
 		NibTitle:    m.nibTitle,
 		NibID:       m.nibID,
 		ListContent: m.list.View(),
-		Description: "space toggle, enter confirm, esc cancel",
+		Rows:        listRows(m.list),
 		Width:       m.width,
 		WidthPct:    60,
 		MaxWidth:    80,
-	})
-}
-
-// ModalView returns the picker centered over bgView.
-func (m blockingPickerModel) ModalView(bgView string, fullWidth, fullHeight int) string {
-	modal := m.View()
-	return overlayModal(bgView, modal, fullWidth, fullHeight)
+	}
 }

@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 )
@@ -12,11 +13,20 @@ type Backend interface {
 	// GetNib returns (nil, nil) when no nib has the given ID.
 	GetNib(ctx context.Context, id string) (*nib.Nib, error)
 	ListNibs(ctx context.Context, filter *model.NibFilter) ([]*nib.Nib, error)
+	// FilterIDs returns the ids of the nibs the GraphQL nibs field returns for
+	// filter. With search words that is the hits and their ancestors, which
+	// the web's table counts as matches too. A filter the server refuses, such
+	// as one naming no nib, returns its error.
+	FilterIDs(ctx context.Context, filter *model.NibFilter) (map[string]bool, error)
 
 	GetParent(ctx context.Context, obj *nib.Nib) (*nib.Nib, error)
 	GetChildren(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error)
 	GetBlockedBy(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error)
 	GetBlocking(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error)
+	// GetMentions returns the nibs obj's body mentions, and GetMentionedBy the
+	// nibs whose bodies mention obj. Both include closed nibs.
+	GetMentions(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error)
+	GetMentionedBy(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error)
 
 	// IsBlocked and IsBlocking consider only active links, and a completed or
 	// scrapped nib is neither blocked nor blocking; see nibcore.Core.IsBlocked.
@@ -32,7 +42,13 @@ type Backend interface {
 	ArchiveNib(ctx context.Context, id string) error
 	DeleteNib(ctx context.Context, id string) error
 
-	ReorderNib(ctx context.Context, id string, afterID, beforeID *string, first *bool) (*nib.Nib, error)
+	// ReorderNib moves the nib within its ordering group in scope: among its
+	// siblings, or in its milestone's queue.
+	ReorderNib(ctx context.Context, id string, afterID, beforeID *string, first *bool, scope model.OrderScope) (*nib.Nib, error)
+
+	// Areas returns the store's declared area vocabulary, which may be empty
+	// but is never nil.
+	Areas() *area.Vocabulary
 
 	Root() string
 	// ReloadAfterEdit reloads the store after an external editor save and stamps
@@ -41,5 +57,9 @@ type Backend interface {
 
 	StartWatching() error
 	StopWatching()
+	// Subscribe ticks events when nibs change, until cancel is called.
 	Subscribe() (events <-chan struct{}, cancel func())
+	// SubscribeAreas ticks events when the declared area vocabulary changes,
+	// until cancel is called.
+	SubscribeAreas() (events <-chan struct{}, cancel func())
 }

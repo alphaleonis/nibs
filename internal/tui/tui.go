@@ -7,12 +7,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/alphaleonis/nibs/internal/bodytemplate"
 	"github.com/alphaleonis/nibs/internal/config"
@@ -21,39 +23,31 @@ import (
 	"github.com/alphaleonis/nibs/internal/nibtypes"
 	"github.com/alphaleonis/nibs/internal/updatecheck"
 	"github.com/atotto/clipboard"
+	"gopkg.in/yaml.v3"
 )
 
 type viewState int
 
 const (
 	viewList viewState = iota
-	viewDetail
-	viewTagPicker
+	viewExpanded
 	viewParentPicker
 	viewStatusPicker
 	viewTypePicker
 	viewBlockingPicker
 	viewPriorityPicker
 	viewEstimatePicker
+	viewModifyPicker
+	viewAssignPicker
+	viewColumnPicker
+	viewViewPicker
+	viewFilterPicker
+	viewFilterValuesPicker
 	viewCreateModal
 	viewCreateTypePicker
 	viewConfirmDialog
+	viewPalette
 )
-
-const (
-	TwoColumnMinWidth = 120
-	RightPaneMaxWidth = 80 // the 80-column text convention
-)
-
-// calculatePaneWidths returns (leftWidth, rightWidth) for the two-column layout.
-func calculatePaneWidths(totalWidth int) (int, int) {
-	rightWidth := RightPaneMaxWidth
-	if totalWidth-rightWidth < 40 {
-		rightWidth = totalWidth - 40
-	}
-	leftWidth := totalWidth - rightWidth - 1 // 1 for separator
-	return leftWidth, rightWidth
-}
 
 // nibsChangedMsg is sent when nibs change on disk (via file watcher)
 type nibsChangedMsg struct{}
@@ -72,18 +66,10 @@ func checkForUpdateCmd(version string) tea.Cmd {
 	}
 }
 
-// cursorChangedMsg is sent when the list cursor moves to a different nib
-type cursorChangedMsg struct {
-	nibID string
-}
-
-type openTagPickerMsg struct{}
-
-type tagSelectedMsg struct {
-	tag string
-}
-
-type clearFilterMsg struct{}
+// cursorChangedMsg is sent when the list cursor moves to a different nib.
+// It carries no id: by the time it arrives the cursor may have moved again,
+// so the handler reads the cursor itself.
+type cursorChangedMsg struct{}
 
 type copyNibIDMsg struct {
 	ids []string
@@ -93,22 +79,11 @@ type copyNibIDMsg struct {
 // platform; clipboard.Unsupported only takes effect on Unix.
 var clipboardWriteAll = clipboard.WriteAll
 
-type reorderNibMsg struct {
-	nibID    string
-	afterID  *string
-	beforeID *string
-	first    *bool
-}
-
-// reorderBlockMsg moves a contiguous block of siblings by reordering the one
-// sibling it displaces: after the block's last item when moving up (afterID),
-// before its first when moving down (beforeID). focusID is the row to select
-// after the reload.
-type reorderBlockMsg struct {
-	displacedID string
-	afterID     *string
-	beforeID    *string
-	focusID     string
+// reorderMsg makes the writes of plan. focusID is the row to select after the
+// reload.
+type reorderMsg struct {
+	plan    reorderPlan
+	focusID string
 }
 
 type reorderRefusedMsg struct {
@@ -139,49 +114,180 @@ type openParentPickerMsg struct {
 type App struct {
 	state          viewState
 	list           listModel
-	detail         detailModel
-	preview        previewModel
-	tagPicker      tagPickerModel
+	expanded       nibViewModel // the nib view at full screen
+	docked         nibViewModel // the nib view beside or below the list
 	parentPicker   parentPickerModel
 	statusPicker   statusPickerModel
 	typePicker     typePickerModel
 	blockingPicker blockingPickerModel
 	priorityPicker priorityPickerModel
 	estimatePicker estimatePickerModel
+	modifyPicker   modifyPickerModel
+	assignPicker   assignPickerModel
+	columnPicker   columnPickerModel
+	viewPicker     viewPickerModel
+	filterPicker   filterPickerModel
+	filterValues   filterValuesPickerModel
 	createModal    createModalModel
 	confirmDialog  confirmDialog
-	helpExpanded   bool          // help panel expanded (non-modal, toggles with ?)
-	history        []detailModel // stack of previous detail views for back navigation
+	palette        paletteModel
+	jumps          []jump // the jump history, the latest last; see jump
+	pinned         pin    // the nib the nib view shows in place of the cursor's; see App.dockTarget
 	backend        Backend
 	config         *config.Config
-	width          int
-	height         int
-	program        *tea.Program // receives watcher events; see Run
+	keys           keymap
+	display        display
+	// ignored lists the entries of the user config's tui block that were
+	// ignored, and settingsSource the file they are in, or "" for none.
+	ignored        []ignoredEntry
+	settingsSource string
+	// userSnapshot is the user config file as the TUI last read or wrote it.
+	userSnapshot config.UserConfigSnapshot
+	width        int
+	height       int
+	// mouse is whether the terminal reports the mouse; see handleMouse.
+	mouse bool
+	// now is the clock that times double clicks.
+	now func() time.Time
+	// lastClick is the latest left click; see leftClick.
+	lastClick leftClick
 
-	// First key of a pending chord, e.g. "g" awaiting "t".
+	// The keys typed so far of a sequence such as "g g", or "" when none are.
 	pendingKey string
 
 	// The view drawn behind a modal, restored when it closes.
 	previousState viewState
+
+	// Whether the nib view is docked, and where; see dockAt for where it fits.
+	nibView nibViewSettings
 
 	// The $EDITOR session in progress: the nib, and its file's mtime at launch.
 	editingNibID      string
 	editingNibModTime time.Time
 
 	version string // running binary version, for the update check
+
+	// The state file the view and the filter query are saved to, or nil to
+	// save them nowhere.
+	memory *projectMemory
 }
 
-// New creates the TUI application. version is the running binary version, for
-// the update-available indicator.
-func New(backend Backend, cfg *config.Config, version string) *App {
-	return &App{
+// New creates the TUI application. It opens on Tree with the default query
+// (see defaultQuery), and saves neither; newSession opens it on what the store's state file holds.
+//
+// It applies the tui block of user over the default settings, as loadSettings
+// does. Icons are ascii when the terminal does not display UTF-8, whatever the
+// block sets. With ascii icons the list and the nib view draw everything but
+// nib text in ASCII too. A user config that did not load, or a tui entry
+// that was ignored, opens the TUI with a warning in the status line.
+// version is the running binary version, for the update-available indicator.
+// The App reads every nib through displayBackend, the rendering boundary for
+// nib text.
+func New(backend Backend, cfg *config.Config, user config.UserLayer, version string) *App {
+	backend = displayBackend{inner: backend}
+	a := &App{
 		state:   viewList,
 		backend: backend,
 		config:  cfg,
 		list:    newListModel(backend, cfg),
-		preview: newPreviewModel(nil, 0, 0),
 		version: version,
+		now:     time.Now,
 	}
+	a.applyUserLayer(user)
+	return a
+}
+
+// newSession is New opened on the view and the filter query that the state
+// file of backend's store remembers, or on Milestones with the default query
+// when it remembers none. The App saves both to that file each time either changes.
+// A warning from openProjectMemory is added to the status line after any
+// warning New put there.
+func newSession(backend Backend, cfg *config.Config, user config.UserLayer, version string) *App {
+	a := New(backend, cfg, user, version)
+	memory, view, warning := openProjectMemory(backend.Root(), a.list.defaultQuery)
+	a.memory = memory
+	a.list.restoreView(view)
+	if warning != "" {
+		if a.list.statusMessage != "" {
+			warning = a.list.statusMessage + "; " + lowerFirst(warning)
+		}
+		a.list.statusMessage, a.list.statusKind = warning, statusWarn
+	}
+	return a
+}
+
+// lowerFirst returns s with its first rune in lower case.
+func lowerFirst(s string) string {
+	r, size := utf8.DecodeRuneInString(s)
+	return string(unicode.ToLower(r)) + s[size:]
+}
+
+// applyUserLayer applies the tui block of user as New describes, and warns in
+// the status line when user did not load or has ignored entries.
+func (a *App) applyUserLayer(user config.UserLayer) {
+	var tui *yaml.Node
+	if user.Config != nil {
+		tui = &user.Config.TUI
+	}
+	s := loadSettings(defaultActions, tui, user.Path)
+	s.display.prefix = a.config.Nibs.Prefix
+	if !terminalUTF8() {
+		s.display.icons = iconsASCII
+	}
+	a.keys, a.display, a.ignored, a.settingsSource = s.keys, s.display, s.ignored, s.source
+	a.userSnapshot = user.Snapshot
+	a.list.setDisplay(s.display)
+	a.list.setColumns(s.columns)
+	a.nibView = s.nibView
+	a.mouse = s.mouse
+	if user.Failure != nil {
+		a.list.statusMessage = "Warning: " + user.Failure.Message()
+		a.list.statusKind = statusWarn
+	} else if n := len(s.ignored); n > 0 {
+		a.list.statusMessage = ignoredSettingsWarning(n, s.keys.firstKey(actHelp))
+		a.list.statusKind = statusWarn
+	}
+}
+
+// chooseColumns shows columns after the title in view, and saves them as
+// tui.columns.<view> in the user config. A failed save, such as one the user
+// config refuses, leaves the choice for the session, with a warning. After a save over a file
+// that changed since the TUI read it, the TUI reads the file again, and the
+// command it returns reloads the nibs.
+func (a *App) chooseColumns(view string, columns []columnName) tea.Cmd {
+	a.list.setViewColumns(view, columns)
+	if a.settingsSource == "" {
+		a.reportFailure("The columns apply until you quit: the OS gives no place for a user config")
+		return nil
+	}
+	names := []string{string(colTitle)}
+	for _, name := range columns {
+		names = append(names, string(name))
+	}
+	written, changed, err := config.SetUserSetting(a.settingsSource, a.userSnapshot, []string{"tui", "columns", view}, names)
+	if err != nil {
+		a.reportFailure("The columns apply until you quit: " + err.Error())
+		return nil
+	}
+	a.userSnapshot = written
+	a.list.statusMessage, a.list.statusKind = "Saved the columns to the user config", statusOK
+	if !changed {
+		return nil
+	}
+	a.applyUserLayer(config.LoadUserLayerFrom(a.settingsSource))
+	a.syncDock()
+	return a.list.loadNibs
+}
+
+// ignoredSettingsWarning is the status line's warning that n entries of the
+// user config's tui block were ignored. help is the key that opens the
+// palette, which lists them.
+func ignoredSettingsWarning(n int, help string) string {
+	noun, them := "settings", "them"
+	if n == 1 {
+		noun, them = "setting", "it"
+	}
+	return fmt.Sprintf("Ignored %d TUI %s in the user config; %s lists %s", n, noun, help, them)
 }
 
 // Init initializes the application
@@ -189,154 +295,329 @@ func (a *App) Init() tea.Cmd {
 	return tea.Batch(a.list.Init(), checkForUpdateCmd(a.version))
 }
 
-func (a *App) isTwoColumnMode() bool {
-	return a.width >= TwoColumnMinWidth && !a.list.wideMode
-}
-
-// activeListFiltering reports whether the active view's list is taking filter
-// input, in which case every printable key belongs to that filter.
-func (a *App) activeListFiltering() bool {
-	var l *list.Model
+// keyContext reports where a key goes now.
+func (a *App) keyContext() keyContext {
+	inList := func(l list.Model, ctx keyContext) keyContext {
+		if l.FilterState() == list.Filtering {
+			return ctxFilterInput
+		}
+		return ctx
+	}
 	switch a.state {
 	case viewList:
-		l = &a.list.list
-	case viewDetail:
-		if !a.detail.linksActive {
-			return false
+		if a.dockFocused() {
+			return nibViewContext(a.docked)
 		}
-		l = &a.detail.linkList
-	case viewTagPicker:
-		l = &a.tagPicker.list
+		switch {
+		case a.list.finding:
+			return ctxFindBox
+		case a.list.editing && len(a.list.completions) > 0:
+			return ctxFilterMenu
+		case a.list.editing:
+			return ctxFilterBox
+		}
+		return ctxList
+	case viewExpanded:
+		return nibViewContext(a.expanded)
 	case viewParentPicker:
-		l = &a.parentPicker.list
+		return inList(a.parentPicker.list, ctxParentPicker)
 	case viewStatusPicker:
-		l = &a.statusPicker.list
+		return inList(a.statusPicker.list, ctxStatusPicker)
 	case viewPriorityPicker:
-		l = &a.priorityPicker.list
+		return inList(a.priorityPicker.list, ctxPriorityPicker)
 	case viewEstimatePicker:
-		l = &a.estimatePicker.list
+		return inList(a.estimatePicker.list, ctxEstimatePicker)
 	case viewBlockingPicker:
-		l = &a.blockingPicker.list
-	default:
-		return false
+		return inList(a.blockingPicker.list, ctxBlockingPicker)
+	case viewTypePicker, viewCreateTypePicker:
+		return ctxTypePicker
+	case viewModifyPicker:
+		return ctxModifyPicker
+	case viewAssignPicker:
+		return inList(a.assignPicker.list, a.assignPicker.field.ctx)
+	case viewColumnPicker:
+		return ctxColumnPicker
+	case viewViewPicker:
+		return ctxViewPicker
+	case viewFilterPicker:
+		return ctxFilterPicker
+	case viewFilterValuesPicker:
+		return ctxFilterValuesPicker
+	case viewCreateModal:
+		return ctxTextInput
+	case viewConfirmDialog:
+		return ctxConfirm
+	case viewPalette:
+		return ctxPalette
 	}
-	return l.FilterState() == list.Filtering
+	return ctxList
 }
 
-// Update handles messages
+// nibViewContext is the context of the region of m that keys go to.
+func nibViewContext(m nibViewModel) keyContext {
+	if m.focused() == regionRelations {
+		return ctxNibRelations
+	}
+	return ctxNibBody
+}
+
+// actionState snapshots what the actions' Hint, Label and Ready read.
+func (a *App) actionState() actionState {
+	st := actionState{
+		ctx:         a.keyContext(),
+		prefix:      a.pendingKey,
+		selected:    len(a.list.selectedNibs),
+		filtered:    a.list.filtered(),
+		docked:      a.state == viewList && a.dockPlacement() != "",
+		canJumpBack: len(a.jumps) > 0,
+		findText:    a.list.find != "",
+	}
+	view := &a.expanded
+	switch {
+	case a.state == viewExpanded:
+	case a.state == viewList && a.dockFocused():
+		view = &a.docked
+	default:
+		n := a.list.focusedNib()
+		st.hasNib, st.hasParent = n != nil, n != nil && n.Parent != ""
+		return st
+	}
+	// The nib view acts on its own nib only, never on the list's marks.
+	st.selected = 0
+	st.hasNib = view.nib != nil
+	st.hasParent = st.hasNib && view.nib.Parent != ""
+	st.relationsShown = view.relationsShown()
+	st.onDocument = view.selectedRelation() == nil
+	return st
+}
+
+// handleKey runs the action the key completes, keeps a prefix pending, or hands
+// the key to a focused text box or a picker's row accelerators. Any other key
+// does nothing.
+func (a *App) handleKey(msg tea.KeyPressMsg) tea.Cmd {
+	ctx := a.keyContext()
+	pending := a.pendingKey
+	a.pendingKey = ""
+	key := msg.String()
+	act, next := resolveKey(a.keys.actions, ctx, pending, key)
+	switch {
+	case act != nil:
+		return a.runAction(act)
+	case next != "":
+		a.pendingKey = next
+		return nil
+	case pending != "":
+		// The key ended a sequence nothing is bound to.
+		return nil
+	case ctx == ctxFilterInput && (key == driveFilterAccept.String() || key == driveFilterCancel.String()):
+		// listKeyMap binds these keys so the filter actions can drive a list. A
+		// raw one would leave the filter even with input.accept or input.cancel
+		// bound to another key.
+		return nil
+	case slices.Contains(textInputs, ctx), ctx == ctxPalette:
+		return a.updateActiveView(msg)
+	case slices.Contains(allPickers, ctx):
+		return a.updateActiveView(acceleratorMsg{key: key})
+	}
+	return nil
+}
+
+// runAction runs act in the active view, unless act is not ready.
+func (a *App) runAction(act *action) tea.Cmd {
+	if act.Ready != nil {
+		if ok, _ := act.Ready(a.actionState()); !ok {
+			return nil
+		}
+	}
+	switch act.Name {
+	case actQuit, actForceQuit:
+		return tea.Quit
+	case actHelp:
+		a.palette = newPaletteModel(a.keys, a.ignored, a.settingsSource, a.state, a.actionState(), a.width, a.height)
+		a.state = viewPalette
+		return a.palette.Init()
+	case actPaletteClose:
+		a.state = a.palette.origin
+		return nil
+	case actPaletteRun:
+		return a.runPaletteEntry()
+	case actNibView:
+		return a.toggleNibView()
+	case actNibPlacement:
+		return a.cycleNibViewPlacement()
+	case actNibScrollDown, actNibScrollUp:
+		a.followCursor()
+		if act.Name == actNibScrollDown {
+			a.docked.scrollBody(actDown)
+		} else {
+			a.docked.scrollBody(actUp)
+		}
+		return nil
+	case actFocusNext, actFocusPrev:
+		if a.state == viewList {
+			a.cycleDockFocus(act.Name == actFocusNext)
+			return nil
+		}
+	case actLeave:
+		if a.state == viewList && a.dockFocused() {
+			a.docked.active = false
+			return nil
+		}
+	case actJumpBack:
+		a.jumpBack()
+		return nil
+	case actGoParent:
+		a.goToParent()
+		return nil
+	case actColumns:
+		a.columnPicker = newColumnPickerModel(a.keys.actions, levelViews[a.list.level], a.list.columns, a.width, a.height)
+		a.openModal(viewColumnPicker)
+		return nil
+	case actViewPick:
+		a.viewPicker = newViewPickerModel(a.keys, a.list.level, a.list.prevLevel, a.width, a.height)
+		a.openModal(viewViewPicker)
+		return nil
+	case actFilterPick:
+		a.filterPicker = newFilterPickerModel(a.keys.actions, a.list.query, a.list.areas, a.width)
+		a.openModal(viewFilterPicker)
+		return nil
+	}
+	if field, ok := filterFieldOf(act.Name); ok {
+		a.openFilterValues(field)
+		return nil
+	}
+	if msg := a.viewMsg(act.Name); msg != nil {
+		return a.showView(msg)
+	}
+	return a.updateActiveView(actionMsg{name: act.Name})
+}
+
+// viewMsg returns the message that shows another view for act in the list or
+// the nib view on screen, or nil when act shows none there.
+func (a *App) viewMsg(act actionName) tea.Msg {
+	switch a.state {
+	case viewList:
+		if a.dockFocused() {
+			return a.docked.viewMsg(act)
+		}
+		return a.list.viewMsg(act)
+	case viewExpanded:
+		return a.expanded.viewMsg(act)
+	}
+	return nil
+}
+
+// showView applies msg, which changes the view on screen, before Update
+// returns. A key typed right after the one that sent msg then reaches the view
+// msg shows, even when it arrives before any command's message.
+func (a *App) showView(msg tea.Msg) tea.Cmd {
+	_, cmd := a.update(msg)
+	return cmd
+}
+
+// openModal shows state, a picker or dialog, over the list or the nib view.
+// Over another modal it keeps the view under that modal, so canceling returns
+// to the list or the nib view.
+func (a *App) openModal(state viewState) {
+	if a.state == viewList || a.state == viewExpanded {
+		a.previousState = a.state
+	}
+	a.state = state
+}
+
+// openFilterValues opens field's values picker, checked from the list's query.
+func (a *App) openFilterValues(field filterField) {
+	a.filterValues = newFilterValuesPickerModel(a.keys.actions, field, a.list.query, a.list.areas, a.list.storeTags(), a.width, a.height)
+	a.openModal(viewFilterValuesPicker)
+}
+
+// runPaletteEntry closes the palette and runs its highlighted action in the
+// view the palette was opened from, as the action's key would have. An entry
+// that is not ready leaves the palette open.
+func (a *App) runPaletteEntry() tea.Cmd {
+	e, ok := a.palette.highlighted()
+	if !ok || !e.ready {
+		return nil
+	}
+	a.state = a.palette.origin
+	return a.runAction(e.act)
+}
+
+// Update handles msg, brings the pin and the nib views' notInList up to date
+// with it, settles the latest click (see App.settleClick), then saves the view
+// and the filter query when either changed.
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	before := a.state
+	model, cmd := a.update(msg)
+	a.syncPin()
+	a.noteListMembership()
+	a.settleClick(msg, before)
+	a.remember()
+	return model, cmd
+}
+
+// remember saves the view and the applied filter query to the state file when
+// they differ from what it holds. A query still being typed is not saved.
+func (a *App) remember() {
+	if a.memory == nil {
+		return
+	}
+	view, ok := a.list.shownView()
+	if !ok {
+		return
+	}
+	if err := a.memory.save(view); err != nil {
+		a.reportFailure("Could not remember the view and the filter: " + err.Error())
+	}
+}
+
+func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
+		a.syncDock()
 
-		// Sub-models size themselves around the help panel.
-		a.list.helpExpanded = a.helpExpanded
-		a.detail.helpExpanded = a.helpExpanded
-
-		if a.helpExpanded {
-			footerH := a.list.footerHeight()
-			if a.isTwoColumnMode() {
-				leftWidth, _ := calculatePaneWidths(a.width)
-				contentHeight := a.height - footerH
-				a.list.list.SetSize(leftWidth-2, contentHeight-2)
-			} else {
-				a.list.list.SetSize(a.width-2, a.height-3-footerH)
-			}
+		// The view under the palette is drawn too, so it takes the new size.
+		if a.state == viewPalette {
+			a.state = a.palette.origin
+			a.updateActiveView(msg)
+			a.state = viewPalette
 		}
 
-		if a.isTwoColumnMode() {
-			_, rightWidth := calculatePaneWidths(a.width)
-			a.preview.width = rightWidth
-			a.preview.height = a.height - 2
+		// The expanded view under a modal is drawn too. On screen, it takes the
+		// size as the active view below.
+		if a.state != viewExpanded {
+			a.expanded, _ = a.expanded.Update(msg)
 		}
 
 	case tea.KeyPressMsg:
+		// The key acts on the frame it was typed at, and clearing a status
+		// message can bring the nib view's relations back on screen.
+		a.expanded.focus = a.expanded.focused()
+		a.docked.focus = a.docked.focused()
 		// Clear status messages on any keypress
 		a.list.statusMessage = ""
 		a.list.statusKind = statusOK
-		a.detail.statusMessage = ""
-		a.detail.statusKind = statusOK
+		a.expanded.statusMessage = ""
+		a.expanded.statusKind = statusOK
+		return a, a.handleKey(msg)
 
-		// "g t" chord, unless the list filter is taking input (1 is list.Filtering).
-		if a.state == viewList && a.list.list.FilterState() != 1 {
-			if a.pendingKey == "g" {
-				a.pendingKey = ""
-				switch msg.String() {
-				case "t":
-					return a, func() tea.Msg { return openTagPickerMsg{} }
-				default:
-					// Invalid second key, ignore the chord
-				}
-				// Don't forward this key since it was part of a chord attempt
-				return a, nil
-			}
-
-			if msg.String() == "g" {
-				a.pendingKey = "g"
-				return a, nil
-			}
-		}
-
-		a.pendingKey = ""
-
-		switch msg.String() {
-		case "ctrl+c":
-			return a, tea.Quit
-		case "?":
-			// Toggle non-modal help panel (skip if user is typing in a filter)
-			if a.activeListFiltering() {
-				break // let the view's list take the keystroke
-			}
-			if a.state == viewList || a.state == viewDetail {
-				a.helpExpanded = !a.helpExpanded
-				if a.state == viewList {
-					a.list.helpExpanded = a.helpExpanded
-					footerH := a.list.footerHeight()
-					if a.isTwoColumnMode() {
-						leftWidth, _ := calculatePaneWidths(a.width)
-						contentHeight := a.height - footerH
-						a.list.list.SetSize(leftWidth-2, contentHeight-2)
-					} else {
-						a.list.list.SetSize(a.width-2, a.height-3-footerH)
-					}
-				} else { // viewDetail
-					a.detail.helpExpanded = a.helpExpanded
-					a.detail, _ = a.detail.Update(tea.WindowSizeMsg{Width: a.width, Height: a.height})
-				}
-				return a, nil
-			}
-		case "q":
-			if a.activeListFiltering() {
-				break
-			}
-			if a.state == viewList || a.state == viewDetail || a.state == viewTagPicker || a.state == viewParentPicker || a.state == viewStatusPicker || a.state == viewTypePicker || a.state == viewCreateTypePicker || a.state == viewBlockingPicker || a.state == viewPriorityPicker || a.state == viewEstimatePicker {
-				return a, tea.Quit
-			}
-		}
+	case tea.MouseMsg:
+		return a, a.handleMouse(msg)
 
 	case cursorChangedMsg:
-		_, rightWidth := calculatePaneWidths(a.width)
-		if msg.nibID != "" {
-			nib, err := a.backend.GetNib(context.Background(), msg.nibID)
-			if err == nil && nib != nil {
-				a.preview = newPreviewModel(nib, rightWidth, a.height-2)
-			}
-		} else {
-			a.preview = newPreviewModel(nil, rightWidth, a.height-2)
-		}
+		// msg names the nib under the cursor when it was sent, which a later
+		// move may have left.
+		a.followCursor()
 		return a, nil
 
 	case nibsLoadedMsg:
 		a.list, cmd = a.list.Update(msg)
-		_, rightWidth := calculatePaneWidths(a.width)
-		if len(msg.items) == 0 {
-			a.preview = newPreviewModel(nil, rightWidth, a.height-2)
-		} else if item, ok := a.list.list.SelectedItem().(nibItem); ok {
-			a.preview = newPreviewModel(item.nib, rightWidth, a.height-2)
-		}
+		a.dropDeletedJumps()
+		a.syncDocked()
 		return a, cmd
 
 	case updateCheckMsg:
@@ -347,35 +628,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case nibsChangedMsg:
-		if a.state == viewDetail {
-			updatedNib, err := a.backend.GetNib(context.Background(), a.detail.nib.ID)
+		if a.expandedOnScreen() {
+			updatedNib, err := a.backend.GetNib(context.Background(), a.expanded.nib.ID)
 			if err != nil || updatedNib == nil {
-				// The nib was deleted.
+				// The nib is gone or unreadable, so any overlay on it closes too.
 				a.state = viewList
-				a.history = nil
 			} else {
-				// Carry the footer across the rebuild: a file changing on disk
-				// does not dismiss a status message.
-				message, kind := a.detail.statusMessage, a.detail.statusKind
-				a.detail = a.initDetailModel(updatedNib)
-				a.detail.statusMessage = message
-				a.detail.statusKind = kind
+				a.expanded = a.expanded.withNib(updatedNib)
 			}
 		}
-		return a, a.list.loadNibs
-
-	case openTagPickerMsg:
-		tags := a.collectTagsWithCounts()
-		if len(tags) == 0 {
-			return a, nil
-		}
-		a.tagPicker = newTagPickerModel(tags, a.width, a.height)
-		a.state = viewTagPicker
-		return a, a.tagPicker.Init()
-
-	case tagSelectedMsg:
-		a.state = viewList
-		a.list.setTagFilter(msg.tag)
 		return a, a.list.loadNibs
 
 	case openParentPickerMsg:
@@ -385,9 +646,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return a, nil
 			}
 		}
-		a.previousState = a.state
-		a.parentPicker = newParentPickerModel(msg.nibIDs, msg.nibTitle, msg.nibTypes, msg.currentParent, a.backend, a.config, a.width, a.height)
-		a.state = viewParentPicker
+		a.parentPicker = newParentPickerModel(a.keys.actions, msg.nibIDs, msg.nibTitle, msg.nibTypes, msg.currentParent, a.backend, a.config, a.width, a.height)
+		a.openModal(viewParentPicker)
 		return a, a.parentPicker.Init()
 
 	case closeParentPickerMsg:
@@ -396,9 +656,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.list.loadNibs
 
 	case openStatusPickerMsg:
-		a.previousState = a.state
-		a.statusPicker = newStatusPickerModel(msg.nibIDs, msg.nibTitle, msg.currentStatus, a.config, a.width, a.height)
-		a.state = viewStatusPicker
+		a.statusPicker = newStatusPickerModel(a.keys.actions, msg.nibIDs, msg.nibTitle, msg.currentStatus, a.config, a.width, a.height)
+		a.openModal(viewStatusPicker)
 		return a, a.statusPicker.Init()
 
 	case closeStatusPickerMsg:
@@ -418,26 +677,24 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.state = a.previousState
 		clear(a.list.selectedNibs)
-		if a.state == viewDetail && len(msg.nibIDs) == 1 {
+		if a.state == viewExpanded && len(msg.nibIDs) == 1 {
 			updatedNib, _ := a.backend.GetNib(context.Background(), msg.nibIDs[0])
 			if updatedNib != nil {
-				a.detail = a.initDetailModel(updatedNib)
+				a.expanded = a.expanded.withNib(updatedNib)
 			}
 		}
 		a.reportMutationFailures("Status change", "nib", errs)
 		return a, a.list.loadNibs
 
 	case openCreateTypePickerMsg:
-		a.previousState = a.state
 		// For creation: no nibIDs, and every type is valid.
-		a.typePicker = newTypePickerModel(nil, "", msg.defaultType, nil, a.width, a.height)
-		a.state = viewCreateTypePicker
+		a.typePicker = newTypePickerModel(a.keys.actions, nil, "", msg.defaultType, nil, a.width, a.height)
+		a.openModal(viewCreateTypePicker)
 		return a, a.typePicker.Init()
 
 	case openTypePickerMsg:
-		a.previousState = a.state
-		a.typePicker = newTypePickerModel(msg.nibIDs, msg.nibTitle, msg.currentType, msg.validTypes, a.width, a.height)
-		a.state = viewTypePicker
+		a.typePicker = newTypePickerModel(a.keys.actions, msg.nibIDs, msg.nibTitle, msg.currentType, msg.validTypes, a.width, a.height)
+		a.openModal(viewTypePicker)
 		return a, a.typePicker.Init()
 
 	case closeTypePickerMsg:
@@ -462,24 +719,23 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.state = a.previousState
 		clear(a.list.selectedNibs)
-		if a.state == viewDetail && len(msg.nibIDs) == 1 {
+		if a.state == viewExpanded && len(msg.nibIDs) == 1 {
 			updatedNib, _ := a.backend.GetNib(context.Background(), msg.nibIDs[0])
 			if updatedNib != nil {
-				a.detail = a.initDetailModel(updatedNib)
+				a.expanded = a.expanded.withNib(updatedNib)
 			}
 		}
 		a.reportMutationFailures("Type change", "nib", errs)
 		return a, a.list.loadNibs
 
 	case createTypeSelectedMsg:
-		a.createModal = newCreateModalModel(msg.nibType, a.config, a.width, a.height)
+		a.createModal = newCreateModalModel(a.keys.actions, msg.nibType, a.config, a.width, a.height)
 		a.state = viewCreateModal
 		return a, a.createModal.Init()
 
 	case openPriorityPickerMsg:
-		a.previousState = a.state
-		a.priorityPicker = newPriorityPickerModel(msg.nibIDs, msg.nibTitle, msg.currentPriority, a.width, a.height)
-		a.state = viewPriorityPicker
+		a.priorityPicker = newPriorityPickerModel(a.keys.actions, msg.nibIDs, msg.nibTitle, msg.currentPriority, a.width, a.height)
+		a.openModal(viewPriorityPicker)
 		return a, a.priorityPicker.Init()
 
 	case closePriorityPickerMsg:
@@ -499,19 +755,95 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.state = a.previousState
 		clear(a.list.selectedNibs)
-		if a.state == viewDetail && len(msg.nibIDs) == 1 {
+		if a.state == viewExpanded && len(msg.nibIDs) == 1 {
 			updatedNib, _ := a.backend.GetNib(context.Background(), msg.nibIDs[0])
 			if updatedNib != nil {
-				a.detail = a.initDetailModel(updatedNib)
+				a.expanded = a.expanded.withNib(updatedNib)
 			}
 		}
 		a.reportMutationFailures("Priority change", "nib", errs)
 		return a, a.list.loadNibs
 
+	case openModifyPickerMsg:
+		a.modifyPicker = newModifyPickerModel(a.keys.actions, msg.targets, a.backend, a.width, a.height)
+		a.openModal(viewModifyPicker)
+		return a, nil
+
+	case closeModifyPickerMsg:
+		a.state = a.previousState
+		return a, nil
+
+	case openAssignPickerMsg:
+		a.assignPicker = newAssignPickerModel(a.keys.actions, msg.field, msg.targets, a.backend, a.config, a.width, a.height)
+		a.openModal(viewAssignPicker)
+		return a, nil
+
+	case closeAssignPickerMsg:
+		a.state = a.previousState
+		return a, a.list.loadNibs
+
+	case assignChosenMsg:
+		var errs []error
+		for _, nibID := range msg.nibIDs {
+			var input model.UpdateNibInput
+			msg.field.set(&input, msg.value)
+			if _, err := a.backend.UpdateNib(context.Background(), nibID, input); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		a.state = a.previousState
+		clear(a.list.selectedNibs)
+		if a.state == viewExpanded && len(msg.nibIDs) == 1 {
+			updatedNib, _ := a.backend.GetNib(context.Background(), msg.nibIDs[0])
+			if updatedNib != nil {
+				a.expanded = a.expanded.withNib(updatedNib)
+			}
+		}
+		a.reportMutationFailures(msg.field.title+" change", "nib", errs)
+		return a, a.list.loadNibs
+
+	case columnsChosenMsg:
+		a.state = a.previousState
+		return a, a.chooseColumns(msg.view, msg.columns)
+
+	case closeColumnPickerMsg:
+		a.state = a.previousState
+		return a, nil
+
+	case viewChosenMsg:
+		a.state = a.previousState
+		prev := a.list.focusedRowID()
+		a.list.showLevel(msg.level)
+		return a, a.list.cursorChangedCmd(prev)
+
+	case closeViewPickerMsg:
+		a.state = a.previousState
+		return a, nil
+
+	case filterFieldChosenMsg:
+		// The values picker opens over the view F was typed in, and returns there.
+		a.state = a.previousState
+		a.openFilterValues(msg.field)
+		return a, nil
+
+	case closeFilterPickerMsg:
+		a.state = a.previousState
+		return a, nil
+
+	case filterValuesChosenMsg:
+		a.state = a.previousState
+		prev := a.list.focusedRowID()
+		a.list.setQuery(withFieldValues(a.list.query, a.list.areas, msg.field, msg.values))
+		return a, a.list.cursorChangedCmd(prev)
+
+	case modifyChosenMsg:
+		// The field's picker opens over the view m was typed in, and returns there.
+		a.state = a.previousState
+		return a.Update(msg.open)
+
 	case openEstimatePickerMsg:
-		a.previousState = a.state
-		a.estimatePicker = newEstimatePickerModel(msg.nibIDs, msg.nibTitle, msg.currentEstimate, a.width, a.height)
-		a.state = viewEstimatePicker
+		a.estimatePicker = newEstimatePickerModel(a.keys.actions, msg.nibIDs, msg.nibTitle, msg.currentEstimate, a.width, a.height)
+		a.openModal(viewEstimatePicker)
 		return a, a.estimatePicker.Init()
 
 	case closeEstimatePickerMsg:
@@ -530,19 +862,18 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.state = a.previousState
 		clear(a.list.selectedNibs)
-		if a.state == viewDetail && len(msg.nibIDs) == 1 {
+		if a.state == viewExpanded && len(msg.nibIDs) == 1 {
 			updatedNib, _ := a.backend.GetNib(context.Background(), msg.nibIDs[0])
 			if updatedNib != nil {
-				a.detail = a.initDetailModel(updatedNib)
+				a.expanded = a.expanded.withNib(updatedNib)
 			}
 		}
 		a.reportMutationFailures("Estimate change", "nib", errs)
 		return a, a.list.loadNibs
 
 	case openBlockingPickerMsg:
-		a.previousState = a.state
-		a.blockingPicker = newBlockingPickerModel(msg.nibID, msg.nibTitle, msg.currentBlocking, a.backend, a.config, a.width, a.height)
-		a.state = viewBlockingPicker
+		a.blockingPicker = newBlockingPickerModel(a.keys.actions, msg.nibID, msg.nibTitle, msg.currentBlocking, a.backend, a.config, a.width, a.height)
+		a.openModal(viewBlockingPicker)
 		return a, a.blockingPicker.Init()
 
 	case closeBlockingPickerMsg:
@@ -567,37 +898,32 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		a.state = a.previousState
-		if a.state == viewDetail {
+		if a.state == viewExpanded {
 			updatedNib, _ := a.backend.GetNib(context.Background(), msg.nibID)
 			if updatedNib != nil {
-				a.detail = a.initDetailModel(updatedNib)
+				a.expanded = a.expanded.withNib(updatedNib)
 			}
 		}
 		a.reportMutationFailures("Blocking change", "link", errs)
 		return a, a.list.loadNibs
 
-	case reorderNibMsg:
-		result, err := a.backend.ReorderNib(context.Background(), msg.nibID, msg.afterID, msg.beforeID, msg.first)
-		if err != nil {
-			a.list.statusMessage = fmt.Sprintf("Reorder failed: %v", err)
-			a.list.statusKind = statusWarn
-			return a, nil
-		}
-		// Set before loadNibs runs so the reloaded list selects the moved nib.
-		if result != nil {
-			a.list.selectByID = result.ID
-		}
-		return a, a.list.loadNibs
-
-	case reorderBlockMsg:
-		_, err := a.backend.ReorderNib(context.Background(), msg.displacedID, msg.afterID, msg.beforeID, nil)
-		if err != nil {
-			a.list.statusMessage = fmt.Sprintf("Reorder failed: %v", err)
-			a.list.statusKind = statusWarn
-			return a, nil
-		}
-		// Keep focus on the user's row, not the displaced sibling.
+	case reorderMsg:
+		// Set before loadNibs runs so the reloaded list selects the row.
 		a.list.selectByID = msg.focusID
+		for i, w := range msg.plan.writes {
+			// A later write is placed against an earlier one, so a failure stops
+			// the rest.
+			if _, err := a.backend.ReorderNib(context.Background(), w.id, w.afterID, w.beforeID, nil, msg.plan.scope); err != nil {
+				a.list.statusKind = statusWarn
+				a.list.selectByID = ""
+				if i == 0 {
+					a.list.statusMessage = fmt.Sprintf("Reorder failed: %v", err)
+					return a, nil
+				}
+				a.list.statusMessage = fmt.Sprintf("Reorder partly applied (%d of %d nibs moved), list reloaded: %v", i, len(msg.plan.writes), err)
+				return a, a.list.loadNibs
+			}
+		}
 		return a, a.list.loadNibs
 
 	case reorderRefusedMsg:
@@ -606,9 +932,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case openConfirmMsg:
-		a.previousState = a.state
 		a.confirmDialog = msg.dialog
-		a.state = viewConfirmDialog
+		a.confirmDialog.table = a.keys.actions
+		a.openModal(viewConfirmDialog)
 		return a, nil
 
 	case confirmActionMsg:
@@ -727,17 +1053,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.state = a.previousState
 		clear(a.list.selectedNibs)
-		if a.state == viewDetail && len(msg.nibIDs) == 1 {
+		if a.state == viewExpanded && len(msg.nibIDs) == 1 {
 			updatedNib, _ := a.backend.GetNib(context.Background(), msg.nibIDs[0])
 			if updatedNib != nil {
-				a.detail = a.initDetailModel(updatedNib)
+				a.expanded = a.expanded.withNib(updatedNib)
 			}
 		}
 		a.reportMutationFailures("Parent change", "nib", errs)
-		return a, a.list.loadNibs
-
-	case clearFilterMsg:
-		a.list.clearFilter()
 		return a, a.list.loadNibs
 
 	case copyNibIDMsg:
@@ -757,45 +1079,46 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case viewList:
 			a.list.statusMessage = statusMsg
 			a.list.statusKind = statusMsgKind
-		case viewDetail:
-			a.detail.statusMessage = statusMsg
-			a.detail.statusKind = statusMsgKind
+		case viewExpanded:
+			a.expanded.statusMessage = statusMsg
+			a.expanded.statusKind = statusMsgKind
 		}
 
 		return a, nil
 
 	case selectNibMsg:
-		if a.state == viewDetail {
-			a.history = append(a.history, a.detail)
-		}
-		a.state = viewDetail
-		a.detail = a.initDetailModel(msg.nib)
-		return a, a.detail.Init()
-
-	case backToListMsg:
-		if len(a.history) > 0 {
-			a.detail = a.history[len(a.history)-1]
-			a.history = a.history[:len(a.history)-1]
-			// Help may have been toggled since this view was pushed.
-			a.detail.helpExpanded = a.helpExpanded
-			a.detail, _ = a.detail.Update(tea.WindowSizeMsg{Width: a.width, Height: a.height})
-		} else {
-			a.state = viewList
-			// The list missed any resize that happened in the detail view.
-			a.list, cmd = a.list.Update(tea.WindowSizeMsg{Width: a.width, Height: a.height})
-			return a, cmd
-		}
+		a.state = viewExpanded
+		a.expanded = a.newNibView(msg.nib)
 		return a, nil
+
+	case followNibMsg:
+		a.follow(msg.id)
+		return a, nil
+
+	case returnToListMsg:
+		// Leaving the expanded view lands in the list even when it was opened
+		// from the docked view, which ends any pin; see pin.
+		a.docked.active = false
+		return a, a.returnToList()
 	}
 
 	// Everything not handled above goes to the active view.
+	return a, a.updateActiveView(msg)
+}
+
+// updateActiveView hands msg to the view on screen.
+func (a *App) updateActiveView(msg tea.Msg) tea.Cmd {
+	var cmd tea.Cmd
 	switch a.state {
 	case viewList:
+		if _, ok := msg.(actionMsg); ok && a.dockFocused() {
+			a.docked, cmd = a.docked.Update(msg)
+			break
+		}
 		a.list, cmd = a.list.Update(msg)
-	case viewDetail:
-		a.detail, cmd = a.detail.Update(msg)
-	case viewTagPicker:
-		a.tagPicker, cmd = a.tagPicker.Update(msg)
+		a.followCursor()
+	case viewExpanded:
+		a.expanded, cmd = a.expanded.Update(msg)
 	case viewParentPicker:
 		a.parentPicker, cmd = a.parentPicker.Update(msg)
 	case viewStatusPicker:
@@ -806,122 +1129,125 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.priorityPicker, cmd = a.priorityPicker.Update(msg)
 	case viewEstimatePicker:
 		a.estimatePicker, cmd = a.estimatePicker.Update(msg)
+	case viewModifyPicker:
+		var chosen tea.Msg
+		a.modifyPicker, chosen = a.modifyPicker.Update(msg)
+		if chosen != nil {
+			cmd = a.showView(chosen)
+		}
+	case viewAssignPicker:
+		a.assignPicker, cmd = a.assignPicker.Update(msg)
+	case viewColumnPicker:
+		a.columnPicker, cmd = a.columnPicker.Update(msg)
+	case viewViewPicker:
+		a.viewPicker, cmd = a.viewPicker.Update(msg)
+	case viewFilterPicker:
+		var chosen tea.Msg
+		a.filterPicker, chosen = a.filterPicker.Update(msg)
+		if chosen != nil {
+			cmd = a.showView(chosen)
+		}
+	case viewFilterValuesPicker:
+		a.filterValues, cmd = a.filterValues.Update(msg)
 	case viewBlockingPicker:
 		a.blockingPicker, cmd = a.blockingPicker.Update(msg)
 	case viewCreateModal:
 		a.createModal, cmd = a.createModal.Update(msg)
 	case viewConfirmDialog:
 		a.confirmDialog, cmd = a.confirmDialog.Update(msg)
+	case viewPalette:
+		a.palette, cmd = a.palette.Update(msg)
 	}
-
-	return a, cmd
+	return cmd
 }
 
-func (a *App) collectTagsWithCounts() []tagWithCount {
-	nibs, _ := a.backend.ListNibs(context.Background(), nil)
-	tagCounts := make(map[string]int)
-	for _, b := range nibs {
-		for _, tag := range b.Tags {
-			tagCounts[tag]++
-		}
-	}
-
-	tags := make([]tagWithCount, 0, len(tagCounts))
-	for tag, count := range tagCounts {
-		tags = append(tags, tagWithCount{tag: tag, count: count})
-	}
-
-	return tags
-}
-
-// renderTwoColumnView renders the list and preview side by side above a
-// full-width footer.
-func (a *App) renderTwoColumnView() string {
-	leftWidth, rightWidth := calculatePaneWidths(a.width)
-
-	// The footer may be several lines tall.
-	footer := a.list.footerRegion()
-	contentHeight := a.height - max(1, lipgloss.Height(footer))
-
-	leftPane := a.list.ViewConstrained(leftWidth, contentHeight)
-
-	a.preview.width = rightWidth
-	a.preview.height = contentHeight
-	rightPane := a.preview.View()
-
-	columns := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
-
-	return columns + "\n" + footer
-}
-
-// View renders the current screen in the alt screen.
+// View renders the current screen in the alt screen. The terminal reports
+// clicks, releases, the wheel and drags while the mouse is on.
 func (a *App) View() tea.View {
 	v := tea.NewView(a.render())
 	v.AltScreen = true
+	if a.mouse {
+		v.MouseMode = tea.MouseModeCellMotion
+	}
 	return v
 }
 
 // render produces the screen content for the active state.
 func (a *App) render() string {
-	switch a.state {
+	hints := hintRow(a.keys.actions, a.actionState())
+	a.list.hints = hints
+	a.list.dockNote = a.dockNote()
+	a.expanded.hints = hints
+	return a.renderState(a.state)
+}
+
+// renderState draws state, which is the active state or the one the palette
+// was opened from. A picker or dialog is drawn over the view under it; see
+// modalOf.
+func (a *App) renderState(state viewState) string {
+	switch state {
 	case viewList:
-		if a.isTwoColumnMode() {
-			return a.renderTwoColumnView()
-		}
-		return a.list.View()
-	case viewDetail:
-		return a.detail.View()
-	case viewTagPicker:
-		return a.tagPicker.View()
-	case viewParentPicker:
-		return a.parentPicker.ModalView(a.getBackgroundView(), a.width, a.height)
-	case viewStatusPicker:
-		return a.statusPicker.ModalView(a.getBackgroundView(), a.width, a.height)
-	case viewTypePicker, viewCreateTypePicker:
-		return a.typePicker.ModalView(a.getBackgroundView(), a.width, a.height)
-	case viewPriorityPicker:
-		return a.priorityPicker.ModalView(a.getBackgroundView(), a.width, a.height)
-	case viewEstimatePicker:
-		return a.estimatePicker.ModalView(a.getBackgroundView(), a.width, a.height)
-	case viewBlockingPicker:
-		return a.blockingPicker.ModalView(a.getBackgroundView(), a.width, a.height)
-	case viewCreateModal:
-		return a.createModal.ModalView(a.getBackgroundView(), a.width, a.height)
-	case viewConfirmDialog:
-		return a.confirmDialog.ModalView(a.getBackgroundView(), a.width, a.height)
+		return a.renderList()
+	case viewExpanded:
+		return a.expanded.View()
 	}
-	return ""
+	modal, _, ok := a.modalOf(state)
+	if !ok {
+		return ""
+	}
+	var background string
+	if state == viewPalette {
+		background = a.renderState(a.palette.origin)
+	} else {
+		background = a.getBackgroundView()
+	}
+	return overlayModal(background, modal, a.width, a.height)
+}
+
+// expandedOnScreen reports whether the expanded nib view is drawn, on its own
+// or under the palette or a modal, the same way render finds the view
+// underneath.
+func (a *App) expandedOnScreen() bool {
+	state := a.state
+	if state == viewPalette {
+		state = a.palette.origin
+	}
+	switch state {
+	case viewList, viewExpanded:
+		return state == viewExpanded
+	}
+	return a.previousState == viewExpanded
 }
 
 // getBackgroundView returns the view to show behind modal pickers
 func (a *App) getBackgroundView() string {
 	switch a.previousState {
 	case viewList:
-		if a.isTwoColumnMode() {
-			return a.renderTwoColumnView()
-		}
-		return a.list.View()
-	case viewDetail:
-		return a.detail.View()
+		return a.renderList()
+	case viewExpanded:
+		return a.expanded.View()
 	default:
 		return a.list.View()
 	}
 }
 
-// initDetailModel creates a detail model with the current help state and an
-// empty footer.
-func (a *App) initDetailModel(n *nib.Nib) detailModel {
-	m := newDetailModel(n, a.backend, a.config, a.width, a.height)
-	m.helpExpanded = a.helpExpanded
-	if a.helpExpanded {
-		m, _ = m.Update(tea.WindowSizeMsg{Width: a.width, Height: a.height})
-	}
-	return m
+// newNibView returns the expanded view of n, with an empty footer.
+func (a *App) newNibView(n *nib.Nib) nibViewModel {
+	return newNibViewModel(n, a.backend, a.config, a.display, a.width, a.height)
+}
+
+// returnToList shows the list, which missed any resize while it was not on
+// screen.
+func (a *App) returnToList() tea.Cmd {
+	a.state = viewList
+	var cmd tea.Cmd
+	a.list, cmd = a.list.Update(tea.WindowSizeMsg{Width: a.width, Height: a.height})
+	return cmd
 }
 
 // reportMutationFailures reports a picker's failed mutations in the footer of
-// the view the app returned to. Call it after any detail-model rebuild, which
-// empties the footer.
+// the view the app returned to. Call it after any rebuild of the expanded
+// view, because a new view starts with an empty footer.
 //
 // One failure is shown with its reason, several as a count. unit names what one
 // error is about: "nib", or "link" for the blocking picker, which collects one
@@ -938,14 +1264,14 @@ func (a *App) reportMutationFailures(action, unit string, errs []error) {
 }
 
 // reportFailure shows an already-composed failure message in the footer of the
-// view on screen. Call it after any detail-model rebuild.
+// view on screen. Call it after any rebuild of the expanded view.
 //
 // Report every failed write. Do not report a failed read that only refreshes
 // what is on screen.
 func (a *App) reportFailure(message string) {
-	if a.state == viewDetail {
-		a.detail.statusMessage = message
-		a.detail.statusKind = statusWarn
+	if a.state == viewExpanded {
+		a.expanded.statusMessage = message
+		a.expanded.statusKind = statusWarn
 		return
 	}
 	a.list.statusMessage = message
@@ -1037,30 +1363,38 @@ func getEditor() string {
 	return "nano"
 }
 
-// Run starts the TUI and forwards store changes to it until it exits. version is
-// as for New.
-func Run(backend Backend, cfg *config.Config, version string) error {
-	app := New(backend, cfg, version)
+// Run starts the TUI as newSession does, and forwards store changes to it
+// until it exits. The parameters are as for New.
+func Run(backend Backend, cfg *config.Config, user config.UserLayer, version string) error {
+	app := newSession(backend, cfg, user, version)
 	p := tea.NewProgram(app)
-
-	app.program = p
 
 	if err := backend.StartWatching(); err != nil {
 		return err
 	}
 	defer backend.StopWatching()
 
-	eventCh, unsubscribe := backend.Subscribe()
-	defer unsubscribe()
-
-	go func() {
-		for range eventCh {
-			if app.program != nil {
-				app.program.Send(nibsChangedMsg{})
-			}
-		}
-	}()
+	stop := forwardStoreChanges(backend, func(msg tea.Msg) { p.Send(msg) })
+	defer stop()
 
 	_, err := p.Run()
 	return err
+}
+
+// forwardStoreChanges sends a nibsChangedMsg through send each time backend
+// reports a change to the nibs or to the declared areas, until stop is called.
+func forwardStoreChanges(backend Backend, send func(tea.Msg)) (stop func()) {
+	nibEvents, stopNibs := backend.Subscribe()
+	areaEvents, stopAreas := backend.SubscribeAreas()
+	for _, events := range []<-chan struct{}{nibEvents, areaEvents} {
+		go func() {
+			for range events {
+				send(nibsChangedMsg{})
+			}
+		}()
+	}
+	return func() {
+		stopNibs()
+		stopAreas()
+	}
 }

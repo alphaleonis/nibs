@@ -4,7 +4,6 @@ import (
 	"slices"
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/alphaleonis/nibs/internal/config"
@@ -21,6 +20,7 @@ func TestStatusPickerModel(t *testing.T) {
 	// that helper returned.
 	t.Run("lists statuses in transition order", func(t *testing.T) {
 		m := newStatusPickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "todo",
 			cfg, 80, 24,
 		)
@@ -39,6 +39,7 @@ func TestStatusPickerModel(t *testing.T) {
 
 	t.Run("shows all config statuses", func(t *testing.T) {
 		m := newStatusPickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "todo",
 			cfg, 80, 24,
 		)
@@ -67,6 +68,7 @@ func TestStatusPickerModel(t *testing.T) {
 
 	t.Run("offers deferred as a selectable option", func(t *testing.T) {
 		m := newStatusPickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "todo",
 			cfg, 80, 24,
 		)
@@ -96,6 +98,7 @@ func TestStatusPickerModel(t *testing.T) {
 
 	t.Run("pre-selects current status when deferred", func(t *testing.T) {
 		m := newStatusPickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "deferred",
 			cfg, 80, 24,
 		)
@@ -125,6 +128,7 @@ func TestStatusPickerModel(t *testing.T) {
 		heightByStatus := make(map[string]int, len(config.DefaultStatuses))
 		for _, s := range config.DefaultStatuses {
 			m := newStatusPickerModel(
+				defaultActions,
 				[]string{"nib-1"}, "Test Nib", s.Name,
 				cfg, w, h,
 			)
@@ -151,12 +155,13 @@ func TestStatusPickerModel(t *testing.T) {
 
 	t.Run("enter sends statusSelectedMsg for deferred", func(t *testing.T) {
 		m := newStatusPickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "deferred",
 			cfg, 80, 24,
 		)
 
 		// Pre-selected item is "deferred"; press enter.
-		_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		_, cmd := m.Update(actionMsg{name: actOpen})
 		if cmd == nil {
 			t.Fatal("expected a command from enter key")
 		}

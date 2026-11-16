@@ -200,3 +200,51 @@ func TestStripBoundedStripsAndCuts(t *testing.T) {
 		})
 	}
 }
+
+func TestStripLineKeepsBackticksAndStripsTheRest(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"a backtick", "use `nibs list`", "use `nibs list`"},
+		{"an ESC sequence", "a\x1b[2Jb", "a [2Jb"},
+		{"an OSC 8 link", "\x1b]8;;http://x\x1b\\y", " ]8;;http://x \\y"},
+		{"a newline", "a\nb", "a b"},
+		{"a tab", "a\tb", "a b"},
+		{"a blank-rendering rune", "a\u2800b", "a b"},
+		{"ordinary text is untouched", "höger エピック", "höger エピック"},
+		{"a ZWJ emoji sequence", "\U0001f469\u200d\U0001f4bb dev", "\U0001f469\u200d\U0001f4bb dev"},
+		{"a ZWNJ inside a word", "\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645", "\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645"},
+		{"a bidi control", "a\u2066b\u200fc", "a b c"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := StripLine(tt.in); got != tt.want {
+				t.Errorf("StripLine(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStripTextKeepsNewlinesTabsAndBackticks(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"markdown with a fence and a tab", "# H\n\n```\n\tcode\n```\n", "# H\n\n```\n\tcode\n```\n"},
+		{"an ESC sequence", "a\x1b[2Jb\n", "a [2Jb\n"},
+		{"an OSC 8 link", "\x1b]8;;http://x\x1b\\y", " ]8;;http://x \\y"},
+		{"a carriage return", "a\r\nb", "a \nb"},
+		{"a bidi override", "a\u202eb", "a b"},
+		{"a ZWJ emoji sequence and a ZWNJ", "\U0001f469\u200d\U0001f4bb\n\u06cc\u200c\u062e", "\U0001f469\u200d\U0001f4bb\n\u06cc\u200c\u062e"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := StripText(tt.in); got != tt.want {
+				t.Errorf("StripText(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}

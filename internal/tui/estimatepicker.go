@@ -33,8 +33,10 @@ type estimateItem struct {
 	description string
 	color       string
 	isCurrent   bool
+	key         string
 }
 
+func (i estimateItem) accelerator() string { return i.key }
 func (i estimateItem) Title() string       { return i.name }
 func (i estimateItem) Description() string { return i.description }
 func (i estimateItem) FilterValue() string { return i.name + " " + i.description }
@@ -67,11 +69,12 @@ func (d estimateItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 		currentIndicator = ui.Muted.Render(" (current)")
 	}
 
-	_, _ = fmt.Fprint(w, cursor+estimateText+currentIndicator)
+	_, _ = fmt.Fprint(w, cursor+renderAccelerator(item.key)+estimateText+currentIndicator)
 }
 
 // estimatePickerModel is the model for the estimate picker view
 type estimatePickerModel struct {
+	table           []action // the keymap in effect
 	list            list.Model
 	nibIDs          []string
 	nibTitle        string
@@ -80,10 +83,16 @@ type estimatePickerModel struct {
 	height          int
 }
 
-func newEstimatePickerModel(nibIDs []string, nibTitle, currentEstimate string, width, height int) estimatePickerModel {
+func newEstimatePickerModel(table []action, nibIDs []string, nibTitle, currentEstimate string, width, height int) estimatePickerModel {
 	estimates := config.DefaultEstimates
 
 	delegate := estimateItemDelegate{}
+
+	hints := make([]string, len(estimates))
+	for i, e := range estimates {
+		hints[i] = e.Name
+	}
+	keys := assignAccelerators(table, ctxEstimatePicker, hints)
 
 	items := make([]list.Item, 0, len(estimates))
 	selectedIndex := 0
@@ -98,6 +107,7 @@ func newEstimatePickerModel(nibIDs []string, nibTitle, currentEstimate string, w
 			description: e.Description,
 			color:       e.Color,
 			isCurrent:   isCurrent,
+			key:         keys[i],
 		})
 	}
 
@@ -111,6 +121,7 @@ func newEstimatePickerModel(nibIDs []string, nibTitle, currentEstimate string, w
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
 	l.SetShowHelp(false)
+	l.KeyMap = listKeyMap()
 	l.SetShowPagination(false)
 	l.Styles.Title = listTitleStyle
 	l.Styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 0, 0)
@@ -121,6 +132,7 @@ func newEstimatePickerModel(nibIDs []string, nibTitle, currentEstimate string, w
 	}
 
 	return estimatePickerModel{
+		table:           table,
 		list:            l,
 		nibIDs:          nibIDs,
 		nibTitle:        nibTitle,
@@ -147,20 +159,39 @@ func (m estimatePickerModel) Update(msg tea.Msg) (estimatePickerModel, tea.Cmd) 
 		listHeight := modalHeight - 7
 		m.list.SetSize(listWidth, listHeight)
 
-	case tea.KeyPressMsg:
-		if m.list.FilterState() != list.Filtering {
-			switch msg.String() {
-			case "enter":
-				if item, ok := m.list.SelectedItem().(estimateItem); ok {
-					return m, func() tea.Msg {
-						return estimateSelectedMsg{nibIDs: m.nibIDs, estimate: item.name}
-					}
-				}
-			case "esc", "backspace":
+	case actionMsg:
+		if cmd, ok := browseList(&m.list, msg.name); ok {
+			return m, cmd
+		}
+		switch msg.name {
+		case actOpen:
+			if item, ok := m.list.SelectedItem().(estimateItem); ok {
 				return m, func() tea.Msg {
-					return closeEstimatePickerMsg{}
+					return estimateSelectedMsg{nibIDs: m.nibIDs, estimate: item.name}
 				}
 			}
+		case actLeave:
+			return m, func() tea.Msg { return closeEstimatePickerMsg{} }
+		}
+		return m, nil
+
+	case clickRowMsg:
+		m.list.Select(msg.row)
+		if !msg.choose {
+			return m, nil
+		}
+		return m.Update(actionMsg{name: actOpen})
+
+	case acceleratorMsg:
+		if selectAccelerator(&m.list, nil, msg.key) {
+			return m.Update(actionMsg{name: actOpen})
+		}
+		return m, nil
+
+	case tea.KeyPressMsg:
+		// Only a filter being typed takes keys; actions do everything else.
+		if m.list.FilterState() != list.Filtering {
+			return m, nil
 		}
 	}
 
@@ -172,7 +203,11 @@ func (m estimatePickerModel) View() string {
 	if m.width == 0 {
 		return "Loading..."
 	}
+	return renderPickerModal(m.modal())
+}
 
+// modal is the modal View draws.
+func (m estimatePickerModel) modal() pickerModalConfig {
 	var selected string
 	var allDescs []string
 	for _, li := range m.list.Items() {
@@ -190,18 +225,15 @@ func (m estimatePickerModel) View() string {
 		nibID = m.nibIDs[0]
 	}
 
-	return renderPickerModal(pickerModalConfig{
+	return pickerModalConfig{
+		Keys:        m.table,
+		Context:     ctxEstimatePicker,
 		Title:       "Select Estimate",
 		NibTitle:    m.nibTitle,
 		NibID:       nibID,
 		ListContent: m.list.View(),
+		Rows:        listRows(m.list),
 		Description: description,
 		Width:       m.width,
-	})
-}
-
-// ModalView returns the picker centered over bgView.
-func (m estimatePickerModel) ModalView(bgView string, fullWidth, fullHeight int) string {
-	modal := m.View()
-	return overlayModal(bgView, modal, fullWidth, fullHeight)
+	}
 }

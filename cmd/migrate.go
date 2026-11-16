@@ -134,8 +134,12 @@ func (e migrateEnv) config() (*config.Config, error) { return e.loadCfg() }
 // A store with no config at all resolves to the defaults, which is the normal
 // state of a pre-layout store and must not be an error: the refusal gate has to
 // work before the config has moved into the store.
+//
+// A user config that did not load is ignored here, because reporting it is the
+// command's job, not each migration step's.
 func migrateConfig(nibsRoot string) (*config.Config, error) {
-	return config.LoadStoreWithUserConfig(nibsRoot)
+	cfg, _, err := config.LoadStoreWithUserConfig(nibsRoot)
+	return cfg, err
 }
 
 // logf is the migration engine's progress sink, so runMigrations stays
@@ -2690,6 +2694,7 @@ applied without modifying anything.`,
 		if err != nil {
 			return err
 		}
+		warnUserConfigFailure(cmd.ErrOrStderr(), config.LoadUserLayer().Failure)
 		env := newMigrateEnv(nibsRoot)
 
 		// One shared scan serves both the pending decision and --dry-run's

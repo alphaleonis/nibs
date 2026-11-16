@@ -3,7 +3,6 @@ package tui
 import (
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/alphaleonis/nibs/internal/config"
@@ -13,6 +12,7 @@ import (
 func TestEstimatePickerModel(t *testing.T) {
 	t.Run("pre-selects current estimate", func(t *testing.T) {
 		m := newEstimatePickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "l",
 			80, 24,
 		)
@@ -31,6 +31,7 @@ func TestEstimatePickerModel(t *testing.T) {
 
 	t.Run("shows all estimate options", func(t *testing.T) {
 		m := newEstimatePickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "",
 			80, 24,
 		)
@@ -64,6 +65,7 @@ func TestEstimatePickerModel(t *testing.T) {
 		heightByEstimate := make(map[string]int, len(config.DefaultEstimates))
 		for _, e := range config.DefaultEstimates {
 			m := newEstimatePickerModel(
+				defaultActions,
 				[]string{"nib-1"}, "Test Nib", e.Name,
 				w, h,
 			)
@@ -84,12 +86,13 @@ func TestEstimatePickerModel(t *testing.T) {
 
 	t.Run("enter sends estimateSelectedMsg", func(t *testing.T) {
 		m := newEstimatePickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "m",
 			80, 24,
 		)
 
 		// Press enter on the pre-selected item ("m")
-		_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		_, cmd := m.Update(actionMsg{name: actOpen})
 		if cmd == nil {
 			t.Fatal("expected a command from enter key")
 		}
@@ -109,11 +112,12 @@ func TestEstimatePickerModel(t *testing.T) {
 
 	t.Run("esc sends closeEstimatePickerMsg", func(t *testing.T) {
 		m := newEstimatePickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "",
 			80, 24,
 		)
 
-		_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+		_, cmd := m.Update(actionMsg{name: actLeave})
 		if cmd == nil {
 			t.Fatal("expected a command from esc key")
 		}
@@ -135,7 +139,7 @@ func TestAppEstimatePickerWiring(t *testing.T) {
 				{ID: "nib-1", Title: "Test", Status: "todo", Type: "task", Estimate: "m"},
 			},
 		}
-		return New(stub, config.Default(), "dev"), stub
+		return New(stub, config.Default(), config.UserLayer{}, "dev"), stub
 	}
 
 	t.Run("openEstimatePickerMsg transitions to picker state", func(t *testing.T) {
@@ -181,28 +185,22 @@ func TestAppEstimatePickerWiring(t *testing.T) {
 		}
 	})
 
-	t.Run("detail view E key triggers openEstimatePickerMsg", func(t *testing.T) {
+	t.Run("detail view estimate action opens the estimate picker", func(t *testing.T) {
 		app, stub := newTestApp()
 		cfg := config.Default()
-		app.state = viewDetail
+		app.state = viewExpanded
 		testNib := &nib.Nib{ID: "nib-1", Title: "Test", Status: "todo", Type: "task", Estimate: "m"}
-		app.detail = newDetailModel(testNib, stub, cfg, 80, 24)
+		app.expanded = newNibViewModel(testNib, stub, cfg, display{icons: iconsUnicode}, 80, 24)
 
-		_, cmd := app.Update(tea.KeyPressMsg{Code: 'E', Text: "E"})
-		if cmd == nil {
-			t.Fatal("expected a command from E key in detail view")
+		app.runAction(findAction(defaultActions, actEstimate))
+		if app.state != viewEstimatePicker {
+			t.Fatalf("state = %d after the estimate action, want the estimate picker", app.state)
 		}
-
-		msg := cmd()
-		openMsg, ok := msg.(openEstimatePickerMsg)
-		if !ok {
-			t.Fatalf("expected openEstimatePickerMsg, got %T", msg)
+		if ids := app.estimatePicker.nibIDs; len(ids) != 1 || ids[0] != "nib-1" {
+			t.Errorf("got nibIDs %v, want [nib-1]", ids)
 		}
-		if len(openMsg.nibIDs) != 1 || openMsg.nibIDs[0] != "nib-1" {
-			t.Errorf("got nibIDs %v, want [nib-1]", openMsg.nibIDs)
-		}
-		if openMsg.currentEstimate != "m" {
-			t.Errorf("got currentEstimate %q, want %q", openMsg.currentEstimate, "m")
+		if got := app.estimatePicker.currentEstimate; got != "m" {
+			t.Errorf("got currentEstimate %q, want %q", got, "m")
 		}
 	})
 

@@ -20,6 +20,7 @@ type closeCreateModalMsg struct{}
 
 // createModalModel is the model for the create nib modal
 type createModalModel struct {
+	table     []action // the keymap in effect
 	textInput textinput.Model
 	nibType   string // chosen type from create flow type picker
 	typeColor string // color for the type from config
@@ -27,7 +28,7 @@ type createModalModel struct {
 	height    int
 }
 
-func newCreateModalModel(nibType string, cfg *config.Config, width, height int) createModalModel {
+func newCreateModalModel(table []action, nibType string, cfg *config.Config, width, height int) createModalModel {
 	ti := textinput.New()
 	ti.Placeholder = "Enter nib title..."
 	ti.CharLimit = 200
@@ -47,6 +48,7 @@ func newCreateModalModel(nibType string, cfg *config.Config, width, height int) 
 	}
 
 	return createModalModel{
+		table:     table,
 		textInput: ti,
 		nibType:   nibType,
 		typeColor: typeColor,
@@ -67,9 +69,9 @@ func (m createModalModel) Update(msg tea.Msg) (createModalModel, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-	case tea.KeyPressMsg:
-		switch msg.Code {
-		case tea.KeyEnter:
+	case actionMsg:
+		switch msg.name {
+		case actInputAccept:
 			title := m.textInput.Value()
 			if title != "" {
 				nibType := m.nibType
@@ -82,11 +84,12 @@ func (m createModalModel) Update(msg tea.Msg) (createModalModel, tea.Cmd) {
 				return closeCreateModalMsg{}
 			}
 
-		case tea.KeyEsc:
+		case actInputCancel:
 			return m, func() tea.Msg {
 				return closeCreateModalMsg{}
 			}
 		}
+		return m, nil
 	}
 
 	m.textInput, cmd = m.textInput.Update(msg)
@@ -109,8 +112,7 @@ func (m createModalModel) View() string {
 		Width(withBorder(modalWidth - 6)).
 		Render(m.textInput.View())
 
-	help := helpKeyStyle.Render("enter") + " " + helpStyle.Render("create") + "  " +
-		helpKeyStyle.Render("esc") + " " + helpStyle.Render("cancel")
+	help := hintRowWithin(m.table, actionState{ctx: ctxTextInput}, modalWidth-4)
 
 	content := header + "\n\n" + inputBox + "\n\n" + help
 
@@ -121,10 +123,4 @@ func (m createModalModel) View() string {
 		Width(withBorder(modalWidth))
 
 	return border.Render(content)
-}
-
-// ModalView returns the modal rendered as a centered overlay
-func (m createModalModel) ModalView(bgView string, fullWidth, fullHeight int) string {
-	modal := m.View()
-	return overlayModal(bgView, modal, fullWidth, fullHeight)
 }

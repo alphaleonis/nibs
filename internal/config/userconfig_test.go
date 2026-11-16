@@ -8,6 +8,7 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/store"
 	"github.com/alphaleonis/nibs/internal/yamlfile"
+	"gopkg.in/yaml.v3"
 )
 
 // storeDirFor creates the store directory under projectDir and returns it.
@@ -59,9 +60,6 @@ func TestLoadUserConfig(t *testing.T) {
 		if cfg.Nibs.HideCompleted != nil {
 			t.Errorf("HideCompleted = %v, want nil", cfg.Nibs.HideCompleted)
 		}
-		if cfg.Nibs.WideMode != nil {
-			t.Errorf("WideMode = %v, want nil", cfg.Nibs.WideMode)
-		}
 	})
 
 	t.Run("parses valid YAML with all fields", func(t *testing.T) {
@@ -87,9 +85,6 @@ func TestLoadUserConfig(t *testing.T) {
 		if cfg.Nibs.HideCompleted == nil || *cfg.Nibs.HideCompleted != false {
 			t.Errorf("HideCompleted = %v, want ptr(false)", cfg.Nibs.HideCompleted)
 		}
-		if cfg.Nibs.WideMode == nil || *cfg.Nibs.WideMode != true {
-			t.Errorf("WideMode = %v, want ptr(true)", cfg.Nibs.WideMode)
-		}
 	})
 
 	t.Run("handles partial config with only some fields", func(t *testing.T) {
@@ -114,9 +109,6 @@ func TestLoadUserConfig(t *testing.T) {
 		if cfg.Nibs.HideCompleted != nil {
 			t.Errorf("HideCompleted = %v, want nil (unset)", cfg.Nibs.HideCompleted)
 		}
-		if cfg.Nibs.WideMode != nil {
-			t.Errorf("WideMode = %v, want nil (unset)", cfg.Nibs.WideMode)
-		}
 	})
 }
 
@@ -129,26 +121,11 @@ func TestBoolAccessors(t *testing.T) {
 		}
 	})
 
-	t.Run("nil WideMode defaults to true", func(t *testing.T) {
-		cfg := &Config{}
-		if !cfg.WideMode() {
-			t.Error("WideMode() = false, want true (nil defaults to true)")
-		}
-	})
-
 	t.Run("explicit false HideCompleted returns false", func(t *testing.T) {
 		f := false
 		cfg := &Config{Nibs: NibsConfig{HideCompleted: &f}}
 		if cfg.HideCompleted() {
 			t.Error("HideCompleted() = true, want false (explicitly set to false)")
-		}
-	})
-
-	t.Run("explicit false WideMode returns false", func(t *testing.T) {
-		f := false
-		cfg := &Config{Nibs: NibsConfig{WideMode: &f}}
-		if cfg.WideMode() {
-			t.Error("WideMode() = true, want false (explicitly set to false)")
 		}
 	})
 
@@ -165,9 +142,6 @@ func TestBoolAccessors(t *testing.T) {
 		if !cfg.HideCompleted() {
 			t.Error("Default().HideCompleted() = false, want true")
 		}
-		if !cfg.WideMode() {
-			t.Error("Default().WideMode() = false, want true")
-		}
 	})
 }
 
@@ -177,7 +151,6 @@ func TestBoolFieldsRoundTrip(t *testing.T) {
 
 		cfg := Default()
 		cfg.Nibs.HideCompleted = boolPtr(false)
-		cfg.Nibs.WideMode = boolPtr(false)
 		cfg.SetStoreDir(tmpDir)
 
 		if _, err := cfg.Save(tmpDir); err != nil {
@@ -192,15 +165,9 @@ func TestBoolFieldsRoundTrip(t *testing.T) {
 		if loaded.HideCompleted() {
 			t.Error("HideCompleted() = true after round-trip, want false")
 		}
-		if loaded.WideMode() {
-			t.Error("WideMode() = true after round-trip, want false")
-		}
 		// Verify the pointers are non-nil (not relying on default)
 		if loaded.Nibs.HideCompleted == nil {
 			t.Error("HideCompleted pointer is nil after round-trip, want non-nil")
-		}
-		if loaded.Nibs.WideMode == nil {
-			t.Error("WideMode pointer is nil after round-trip, want non-nil")
 		}
 	})
 
@@ -211,7 +178,7 @@ func TestBoolFieldsRoundTrip(t *testing.T) {
 			Nibs: NibsConfig{
 				Prefix:   "test-",
 				IDLength: 4,
-				// HideCompleted and WideMode intentionally nil
+				// HideCompleted intentionally nil
 			},
 		}
 		cfg.SetStoreDir(tmpDir)
@@ -228,9 +195,6 @@ func TestBoolFieldsRoundTrip(t *testing.T) {
 		// nil fields should use defaults via accessor
 		if !loaded.HideCompleted() {
 			t.Error("HideCompleted() = false, want true (nil -> default)")
-		}
-		if !loaded.WideMode() {
-			t.Error("WideMode() = false, want true (nil -> default)")
 		}
 	})
 }
@@ -263,7 +227,7 @@ func TestLoadStoreWithUserConfigPath(t *testing.T) {
 			t.Fatalf("WriteFile error = %v", err)
 		}
 
-		cfg, err := LoadStoreWithUserConfigPath(storeDirFor(t, projectDir), userCfgPath)
+		cfg, _, err := LoadStoreWithUserConfigPath(storeDirFor(t, projectDir), userCfgPath)
 		if err != nil {
 			t.Fatalf("LoadStoreWithUserConfigPath() error = %v", err)
 		}
@@ -284,7 +248,7 @@ func TestLoadStoreWithUserConfigPath(t *testing.T) {
 		projectDir := t.TempDir()
 		userCfgDir := t.TempDir()
 
-		// User config: hide_completed=false, wide_mode=false
+		// User config: hide_completed=false
 		userYAML := `nibs:
   hide_completed: false
   wide_mode: false
@@ -303,7 +267,7 @@ func TestLoadStoreWithUserConfigPath(t *testing.T) {
 			t.Fatalf("WriteFile error = %v", err)
 		}
 
-		cfg, err := LoadStoreWithUserConfigPath(filepath.Join(projectDir, store.DirName), userCfgPath)
+		cfg, _, err := LoadStoreWithUserConfigPath(filepath.Join(projectDir, store.DirName), userCfgPath)
 		if err != nil {
 			t.Fatalf("LoadStoreWithUserConfigPath() error = %v", err)
 		}
@@ -311,9 +275,6 @@ func TestLoadStoreWithUserConfigPath(t *testing.T) {
 		// User config values should apply for unset project fields
 		if cfg.HideCompleted() {
 			t.Error("HideCompleted() = true, want false (user config fallthrough)")
-		}
-		if cfg.WideMode() {
-			t.Error("WideMode() = true, want false (user config fallthrough)")
 		}
 	})
 
@@ -339,7 +300,7 @@ func TestLoadStoreWithUserConfigPath(t *testing.T) {
 			t.Fatalf("WriteFile error = %v", err)
 		}
 
-		cfg, err := LoadStoreWithUserConfigPath(storeDirFor(t, projectDir), userCfgPath)
+		cfg, _, err := LoadStoreWithUserConfigPath(storeDirFor(t, projectDir), userCfgPath)
 		if err != nil {
 			t.Fatalf("LoadStoreWithUserConfigPath() error = %v", err)
 		}
@@ -364,7 +325,7 @@ func TestLoadStoreWithUserConfigPath(t *testing.T) {
 		}
 
 		// Non-existent user config path
-		cfg, err := LoadStoreWithUserConfigPath(storeDirFor(t, projectDir), "/nonexistent/user/nibs.yml")
+		cfg, _, err := LoadStoreWithUserConfigPath(storeDirFor(t, projectDir), "/nonexistent/user/nibs.yml")
 		if err != nil {
 			t.Fatalf("LoadStoreWithUserConfigPath() error = %v", err)
 		}
@@ -378,10 +339,6 @@ func TestLoadStoreWithUserConfigPath(t *testing.T) {
 		}
 		if cfg.HideCompleted() {
 			t.Error("HideCompleted() = true, want false")
-		}
-		// WideMode not set in project -> system default true
-		if !cfg.WideMode() {
-			t.Error("WideMode() = false, want true (system default)")
 		}
 	})
 
@@ -401,7 +358,7 @@ func TestLoadStoreWithUserConfigPath(t *testing.T) {
 			t.Fatalf("WriteFile error = %v", err)
 		}
 
-		cfg, err := LoadStoreWithUserConfigPath(filepath.Join(projectDir, store.DirName), userCfgPath)
+		cfg, _, err := LoadStoreWithUserConfigPath(filepath.Join(projectDir, store.DirName), userCfgPath)
 		if err != nil {
 			t.Fatalf("LoadStoreWithUserConfigPath() error = %v", err)
 		}
@@ -412,9 +369,6 @@ func TestLoadStoreWithUserConfigPath(t *testing.T) {
 		}
 		if cfg.HideCompleted() {
 			t.Error("HideCompleted() = true, want false (from user config)")
-		}
-		if cfg.WideMode() {
-			t.Error("WideMode() = true, want false (from user config)")
 		}
 		// System defaults should fill in the rest
 		if cfg.Nibs.DefaultStatus != "todo" {
@@ -468,9 +422,6 @@ func TestDefaultWithPrefixFromUserConfig(t *testing.T) {
 		if !cfg.HideCompleted() {
 			t.Error("HideCompleted() = false, want true (system default)")
 		}
-		if !cfg.WideMode() {
-			t.Error("WideMode() = false, want true (system default)")
-		}
 	})
 
 	t.Run("nil user config uses all system defaults", func(t *testing.T) {
@@ -522,5 +473,85 @@ func TestLoadUserConfigFromIsBounded(t *testing.T) {
 	}
 	if missing.Nibs.IDLength != 0 {
 		t.Errorf("absent config = %+v, want the zero value", missing.Nibs)
+	}
+}
+
+func TestLoadUserConfigKeepsTheTUINode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nibs.yml")
+	body := "nibs:\n  id_length: 6\ntui:\n  keys:\n    nib.priority: P\n"
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadUserConfigFrom(path)
+	if err != nil {
+		t.Fatalf("LoadUserConfigFrom() error = %v", err)
+	}
+	if cfg.TUI.Kind != yaml.MappingNode || cfg.TUI.Line != 4 {
+		t.Errorf("tui = kind %v on line %d, want a mapping on line 4", cfg.TUI.Kind, cfg.TUI.Line)
+	}
+	if cfg.Nibs.IDLength != 6 {
+		t.Errorf("IDLength = %d, want 6", cfg.Nibs.IDLength)
+	}
+}
+
+// A malformed tui block is the TUI's to report, so it must not cost the rest of
+// the user config.
+func TestLoadUserConfigAcceptsAnyTUIShape(t *testing.T) {
+	for _, tui := range []string{"tui: keys", "tui: [1]", "tui: {keys: 3}", "tui:\n  keys: [not, a, map]"} {
+		path := filepath.Join(t.TempDir(), "nibs.yml")
+		body := "nibs:\n  id_length: 6\n" + tui + "\n"
+		if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		cfg, err := LoadUserConfigFrom(path)
+		if err != nil {
+			t.Errorf("%q: LoadUserConfigFrom() error = %v", tui, err)
+			continue
+		}
+		if cfg.Nibs.IDLength != 6 {
+			t.Errorf("%q: IDLength = %d, want 6", tui, cfg.Nibs.IDLength)
+		}
+	}
+}
+
+// The tui block belongs to the user config. A project config that carries one
+// still loads, and Config has nowhere to hold it.
+func TestProjectConfigWithATUIBlockLoads(t *testing.T) {
+	storeDir := storeDirFor(t, t.TempDir())
+	body := "nibs:\n  prefix: proj\ntui:\n  keys:\n    nib.priority: P\n"
+	if err := os.WriteFile(filepath.Join(storeDir, store.ConfigFileName), []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadFromStore(storeDir)
+	if err != nil {
+		t.Fatalf("LoadFromStore() error = %v", err)
+	}
+	if cfg.Nibs.Prefix != "proj" {
+		t.Errorf("prefix = %q, want proj", cfg.Nibs.Prefix)
+	}
+}
+
+// wide_mode is a setting nibs no longer reads. A project or user config that
+// still carries it loads, with every other setting applied.
+func TestARetiredWideModeKeyStillLoads(t *testing.T) {
+	storeDir := storeDirFor(t, t.TempDir())
+	project := "nibs:\n  prefix: proj-\n  wide_mode: true\n"
+	if err := os.WriteFile(filepath.Join(storeDir, store.ConfigFileName), []byte(project), 0644); err != nil {
+		t.Fatal(err)
+	}
+	userPath := filepath.Join(t.TempDir(), "nibs.yml")
+	if err := os.WriteFile(userPath, []byte("nibs:\n  hide_completed: false\n  wide_mode: false\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, _, err := LoadStoreWithUserConfigPath(storeDir, userPath)
+	if err != nil {
+		t.Fatalf("LoadStoreWithUserConfigPath() error = %v", err)
+	}
+	if cfg.Nibs.Prefix != "proj-" || cfg.HideCompleted() {
+		t.Errorf("prefix = %q, hide completed = %v; want proj- and false", cfg.Nibs.Prefix, cfg.HideCompleted())
 	}
 }

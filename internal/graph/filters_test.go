@@ -1331,33 +1331,6 @@ func TestFilterBySliceField(t *testing.T) {
 	})
 }
 
-func TestExcludeBySliceField(t *testing.T) {
-	nibs := []*nib.Nib{
-		{ID: "a", Tags: []string{"frontend", "urgent"}},
-		{ID: "b", Tags: []string{"backend"}},
-		{ID: "c", Tags: nil},
-	}
-
-	getTags := func(b *nib.Nib) []string { return b.Tags }
-
-	t.Run("excludes matching", func(t *testing.T) {
-		got := excludeBySliceField(nibs, []string{"frontend"}, getTags)
-		if len(got) != 2 {
-			t.Fatalf("got %d nibs, want 2", len(got))
-		}
-		if got[0].ID != "b" || got[1].ID != "c" {
-			t.Errorf("got IDs %s, %s, want b, c", got[0].ID, got[1].ID)
-		}
-	})
-
-	t.Run("nil values is no-op", func(t *testing.T) {
-		got := excludeBySliceField(nibs, nil, getTags)
-		if len(got) != len(nibs) {
-			t.Errorf("got %d nibs, want %d (no-op)", len(got), len(nibs))
-		}
-	})
-}
-
 func TestFilterByEstimate(t *testing.T) {
 	nibs := []*nib.Nib{
 		{ID: "a", Estimate: "s"},
@@ -1375,19 +1348,6 @@ func TestFilterByEstimate(t *testing.T) {
 		}
 		if got[0].ID != "a" || got[1].ID != "c" {
 			t.Errorf("got IDs %s, %s, want a, c", got[0].ID, got[1].ID)
-		}
-	})
-
-	t.Run("exclude by estimate", func(t *testing.T) {
-		got := excludeByField(nibs, []string{"m"}, getEstimate)
-		if len(got) != 3 {
-			t.Fatalf("got %d nibs, want 3", len(got))
-		}
-		wantIDs := []string{"a", "c", "d"}
-		for i, id := range wantIDs {
-			if got[i].ID != id {
-				t.Errorf("got[%d].ID = %q, want %q", i, got[i].ID, id)
-			}
 		}
 	})
 

@@ -66,11 +66,11 @@ func TestRenderNibRow_IndicatorsDontShiftTitle(t *testing.T) {
 	}{
 		{"blocked", NibRowConfig{IsBlocked: true}},
 		{"blocking", NibRowConfig{IsBlocking: true}},
-		{"priority high", NibRowConfig{Priority: "high", PriorityColor: "red"}},
-		{"priority critical", NibRowConfig{Priority: "critical", PriorityColor: "red"}},
-		{"priority low", NibRowConfig{Priority: "low", PriorityColor: "blue"}},
-		{"blocked + priority", NibRowConfig{IsBlocked: true, Priority: "high", PriorityColor: "red"}},
-		{"blocking + priority", NibRowConfig{IsBlocking: true, Priority: "critical", PriorityColor: "red"}},
+		{"priority high", NibRowConfig{PriorityGlyph: "!"}},
+		{"priority critical", NibRowConfig{PriorityGlyph: "‼"}},
+		{"priority low", NibRowConfig{PriorityGlyph: "↓"}},
+		{"blocked + priority", NibRowConfig{IsBlocked: true, PriorityGlyph: "!"}},
+		{"blocking + priority", NibRowConfig{IsBlocking: true, PriorityGlyph: "‼"}},
 		{"dimmed", NibRowConfig{Dimmed: true}},
 		{"dimmed blocked", NibRowConfig{Dimmed: true, IsBlocked: true}},
 	}
@@ -80,8 +80,7 @@ func TestRenderNibRow_IndicatorsDontShiftTitle(t *testing.T) {
 			cfg := baseCfg
 			cfg.IsBlocked = tt.cfg.IsBlocked
 			cfg.IsBlocking = tt.cfg.IsBlocking
-			cfg.Priority = tt.cfg.Priority
-			cfg.PriorityColor = tt.cfg.PriorityColor
+			cfg.PriorityGlyph = tt.cfg.PriorityGlyph
 			cfg.Dimmed = tt.cfg.Dimmed
 
 			row := RenderNibRow("abc123", "todo", "task", "My Title", cfg)
@@ -141,11 +140,11 @@ func TestRenderNibRow_IndicatorsRightAligned(t *testing.T) {
 		wantCol string // expected 4-rune indicator column
 	}{
 		{"no indicators", NibRowConfig{}, "    "},
-		{"priority only", NibRowConfig{Priority: "low", PriorityColor: "blue"}, "  ↓ "},
+		{"priority only", NibRowConfig{PriorityGlyph: "↓"}, "  ↓ "},
 		{"blocked only", NibRowConfig{IsBlocked: true}, "  ● "},
 		{"blocking only", NibRowConfig{IsBlocking: true}, "  ◆ "},
-		{"blocking + priority", NibRowConfig{IsBlocking: true, Priority: "low", PriorityColor: "blue"}, "◆ ↓ "},
-		{"blocked + priority", NibRowConfig{IsBlocked: true, Priority: "high", PriorityColor: "red"}, "● ! "},
+		{"blocking + priority", NibRowConfig{IsBlocking: true, PriorityGlyph: "↓"}, "◆ ↓ "},
+		{"blocked + priority", NibRowConfig{IsBlocked: true, PriorityGlyph: "!"}, "● ! "},
 	}
 
 	for _, tt := range tests {
@@ -153,8 +152,7 @@ func TestRenderNibRow_IndicatorsRightAligned(t *testing.T) {
 			cfg := baseCfg
 			cfg.IsBlocked = tt.cfg.IsBlocked
 			cfg.IsBlocking = tt.cfg.IsBlocking
-			cfg.Priority = tt.cfg.Priority
-			cfg.PriorityColor = tt.cfg.PriorityColor
+			cfg.PriorityGlyph = tt.cfg.PriorityGlyph
 
 			row := RenderNibRow("abc123", "todo", "task", "My Title", cfg)
 			got := indicatorColumn(row, "My Title")
@@ -167,17 +165,16 @@ func TestRenderNibRow_IndicatorsRightAligned(t *testing.T) {
 
 func TestRenderNibRow_IndicatorsRightAligned_ASCII(t *testing.T) {
 	// Same alignment contract as the UTF-8 variant, but with ASCII fallbacks
-	// forced via the test hook. Each indicator slot is 2 cells wide:
+	// forced via ASCIIGlyphs. Each indicator slot is 2 cells wide:
 	//   no indicators:        "    |Title"
 	//   priority low only:    "  v |Title"
 	//   blocked only:         "  * |Title"
 	//   blocking only:        "  # |Title"
 	//   blocking + priority:  "# v |Title"
-	//   blocked + crit:       "* !!|Title"   ("!!" fills slot 2)
-	//   blocked + high:       "* ! |Title"
-	withASCIIGlyphs(t, true)
-
+	//   blocked + crit:       "* ! |Title"
+	//   blocked + high:       "* ^ |Title"
 	baseCfg := NibRowConfig{
+		ASCIIGlyphs:   true,
 		MaxTitleWidth: 60,
 		StatusColor:   "green",
 		TypeColor:     "blue",
@@ -210,12 +207,12 @@ func TestRenderNibRow_IndicatorsRightAligned_ASCII(t *testing.T) {
 		wantCol string
 	}{
 		{"no indicators", NibRowConfig{}, "    "},
-		{"priority low only", NibRowConfig{Priority: "low", PriorityColor: "blue"}, "  v "},
+		{"priority low only", NibRowConfig{PriorityGlyph: "v"}, "  v "},
 		{"blocked only", NibRowConfig{IsBlocked: true}, "  * "},
 		{"blocking only", NibRowConfig{IsBlocking: true}, "  # "},
-		{"blocking + priority low", NibRowConfig{IsBlocking: true, Priority: "low", PriorityColor: "blue"}, "# v "},
-		{"blocked + high", NibRowConfig{IsBlocked: true, Priority: "high", PriorityColor: "red"}, "* ! "},
-		{"blocked + critical", NibRowConfig{IsBlocked: true, Priority: "critical", PriorityColor: "red"}, "* !!"},
+		{"blocking + priority low", NibRowConfig{IsBlocking: true, PriorityGlyph: "v"}, "# v "},
+		{"blocked + high", NibRowConfig{IsBlocked: true, PriorityGlyph: "^"}, "* ^ "},
+		{"blocked + critical", NibRowConfig{IsBlocked: true, PriorityGlyph: "!"}, "* ! "},
 	}
 
 	for _, tt := range tests {
@@ -223,8 +220,7 @@ func TestRenderNibRow_IndicatorsRightAligned_ASCII(t *testing.T) {
 			cfg := baseCfg
 			cfg.IsBlocked = tt.cfg.IsBlocked
 			cfg.IsBlocking = tt.cfg.IsBlocking
-			cfg.Priority = tt.cfg.Priority
-			cfg.PriorityColor = tt.cfg.PriorityColor
+			cfg.PriorityGlyph = tt.cfg.PriorityGlyph
 
 			row := RenderNibRow("abc123", "todo", "task", "My Title", cfg)
 			got := indicatorColumn(row, "My Title")
@@ -287,11 +283,11 @@ func TestRenderNibRow_NarrowWidthWithPriority(t *testing.T) {
 		maxTitleWidth int
 		priority      string
 	}{
-		{"width 1 with priority", 1, "high"},
-		{"width 2 with priority", 2, "high"},
-		{"width 3 with priority", 3, "critical"},
-		{"width 4 with priority", 4, "high"},
-		{"width 5 with priority", 5, "low"},
+		{"width 1 with priority", 1, "!"},
+		{"width 2 with priority", 2, "!"},
+		{"width 3 with priority", 3, "‼"},
+		{"width 4 with priority", 4, "!"},
+		{"width 5 with priority", 5, "↓"},
 	}
 
 	for _, tt := range tests {
@@ -305,8 +301,7 @@ func TestRenderNibRow_NarrowWidthWithPriority(t *testing.T) {
 
 			cfg := NibRowConfig{
 				MaxTitleWidth: tt.maxTitleWidth,
-				Priority:      tt.priority,
-				PriorityColor: "red",
+				PriorityGlyph: tt.priority,
 				StatusColor:   "green",
 				TypeColor:     "blue",
 			}
@@ -330,10 +325,10 @@ func TestRenderNibRow_NarrowWidthWithBlocked(t *testing.T) {
 	}{
 		{"width 1 blocked", 1, ""},
 		{"width 2 blocked", 2, ""},
-		{"width 3 blocked with priority", 3, "high"},
-		{"width 4 blocked with priority", 4, "critical"},
+		{"width 3 blocked with priority", 3, "!"},
+		{"width 4 blocked with priority", 4, "‼"},
 		{"width 5 blocked", 5, ""},
-		{"width 10 blocked with priority", 10, "high"},
+		{"width 10 blocked with priority", 10, "!"},
 	}
 
 	for _, tt := range tests {
@@ -347,8 +342,7 @@ func TestRenderNibRow_NarrowWidthWithBlocked(t *testing.T) {
 
 			cfg := NibRowConfig{
 				MaxTitleWidth: tt.maxTitleWidth,
-				Priority:      tt.priority,
-				PriorityColor: "red",
+				PriorityGlyph: tt.priority,
 				StatusColor:   "green",
 				TypeColor:     "blue",
 				IsBlocked:     true,

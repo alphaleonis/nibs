@@ -10,7 +10,7 @@ import (
 
 func TestCreateModalHeaderIncludesTypeName(t *testing.T) {
 	cfg := config.Default()
-	m := newCreateModalModel("bug", cfg, 80, 40)
+	m := newCreateModalModel(defaultActions, "bug", cfg, 80, 40)
 
 	view := m.View()
 
@@ -28,7 +28,7 @@ func TestCreateModalHeaderIncludesTypeName(t *testing.T) {
 
 func TestCreateModalHeaderTypeIsColored(t *testing.T) {
 	cfg := config.Default()
-	m := newCreateModalModel("bug", cfg, 80, 40)
+	m := newCreateModalModel(defaultActions, "bug", cfg, 80, 40)
 
 	view := m.View()
 
@@ -47,7 +47,7 @@ func TestCreateModalHeaderTypeIsColored(t *testing.T) {
 
 func TestCreateModalHeaderUnknownTypeFallsBackToMuted(t *testing.T) {
 	cfg := config.Default()
-	m := newCreateModalModel("unknown-type", cfg, 80, 40)
+	m := newCreateModalModel(defaultActions, "unknown-type", cfg, 80, 40)
 
 	view := m.View()
 

@@ -3,7 +3,6 @@ package tui
 import (
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/alphaleonis/nibs/internal/config"
@@ -12,6 +11,7 @@ import (
 func TestPriorityPickerModel(t *testing.T) {
 	t.Run("pre-selects current priority", func(t *testing.T) {
 		m := newPriorityPickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "high",
 			80, 24,
 		)
@@ -30,6 +30,7 @@ func TestPriorityPickerModel(t *testing.T) {
 
 	t.Run("shows all priority options", func(t *testing.T) {
 		m := newPriorityPickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "",
 			80, 24,
 		)
@@ -64,6 +65,7 @@ func TestPriorityPickerModel(t *testing.T) {
 		heightByPriority := make(map[string]int, len(config.DefaultPriorities))
 		for _, p := range config.DefaultPriorities {
 			m := newPriorityPickerModel(
+				defaultActions,
 				[]string{"nib-1"}, "Test Nib", p.Name,
 				w, h,
 			)
@@ -84,12 +86,13 @@ func TestPriorityPickerModel(t *testing.T) {
 
 	t.Run("enter sends prioritySelectedMsg", func(t *testing.T) {
 		m := newPriorityPickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "high",
 			80, 24,
 		)
 
 		// Press enter on the pre-selected item ("high").
-		_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		_, cmd := m.Update(actionMsg{name: actOpen})
 		if cmd == nil {
 			t.Fatal("expected a command from enter key")
 		}
@@ -109,11 +112,12 @@ func TestPriorityPickerModel(t *testing.T) {
 
 	t.Run("esc sends closePriorityPickerMsg", func(t *testing.T) {
 		m := newPriorityPickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "",
 			80, 24,
 		)
 
-		_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+		_, cmd := m.Update(actionMsg{name: actLeave})
 		if cmd == nil {
 			t.Fatal("expected a command from esc key")
 		}

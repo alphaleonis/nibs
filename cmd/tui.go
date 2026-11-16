@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/tui"
 	"github.com/spf13/cobra"
@@ -18,7 +19,9 @@ var tuiCmd = &cobra.Command{
 		app := getApp(cmd)
 		return runTUISession(app, func() error {
 			backend := tui.NewRealBackend(app.Core, app.newResolver())
-			return tui.Run(backend, app.Config(), version)
+			// The TUI reads its keys from the user config alone, never from
+			// the project config.
+			return tui.Run(backend, app.Config(), config.LoadUserLayer(), version)
 		})
 	},
 }

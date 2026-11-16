@@ -1,0 +1,24 @@
+── Nibs - sample-project ───────────────────────────────────────────────────────────────────────────
+Areas  -status:closed                                                                        70 nibs
+▌       ▾ api                                                                                       
+      ● ├─ ▾ webhooks                                                                               
+  ○   ✦ │  └─   Webhook delivery system                                                         f011
+  ○!  ✱ └─   API returns 500 on malformed JSON body                                             b011
+      ● ▾ auth                                                                                      
+  ◐   ✦ ├─   OAuth2 social login                                                                f002
+  ○‼  ✱ └─   Session tokens not invalidated on passw… security                                  b002
+          docs                                                                                      
+        ▾ infra                                                                                     
+  ○↓  ▣ └─   Optimize Docker image size               devops                                    t039
+      ● ▾ web                                                                                       
+        ├─ ▾ dashboard                                                                              
+  ○   ✦ │  └─   Team velocity chart                                                             f008
+  ○   ✱ └─   Date picker shows wrong timezone for re…                                           b005
+        ▾ No area                                                                                   
+  ○   ▣ ├─   Build webhook registration endpoint                                                t023
+  ○   ▣ ├─   Integrate charting library                                                         t019
+  ◐‼  ⚑ ├─   v1.0 MVP Launch                                                                    m001
+  ○   ▣ ├─   Build sprint data aggregation query                                                t020
+  ◐   ▣ ├─   GitHub OAuth provider integration                                                  t005
+─────────────────────────────────────────────────────────────────────────────────────────── 1 / 79 ─
+n create  / filter  ? help  q quit

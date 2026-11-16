@@ -1,4 +1,5 @@
 import type { AreaVocabulary } from "../areas";
+import { AREA_TOKENS } from "../generated/filterTokens";
 
 // The ownership tokens, `area:<path>` and `area-exact:<path>`, kept out of the
 // other two token tables:
@@ -28,19 +29,10 @@ export interface AreaTokenSpec {
 }
 
 /** The ownership vocabulary in canonical serialization order, the broad reading
- *  first. `as const` keeps the literal `field` types the guards below read. */
-export const AREA_TOKEN_ORDER = [
-  {
-    name: "area",
-    field: "area",
-    description: "Nibs in this area, and in every area beneath it",
-  },
-  {
-    name: "area-exact",
-    field: "areaExact",
-    description: "Nibs in exactly this area, and in no area beneath it",
-  },
-] as const satisfies readonly AreaTokenSpec[];
+ *  first, generated from internal/filterlang. The generated `as const` gives the
+ *  literal `field` types the guards below read; `satisfies` checks each entry
+ *  without widening them. */
+export const AREA_TOKEN_ORDER = AREA_TOKENS satisfies readonly AreaTokenSpec[];
 
 /** The scalar `NibFilter` keys the ownership tokens write. */
 export type AreaKey = (typeof AREA_TOKEN_ORDER)[number]["field"];

@@ -44,7 +44,8 @@ func (i clearParentItem) FilterValue() string { return "no parent clear none" }
 
 // parentItemDelegate handles rendering of parent picker items
 type parentItemDelegate struct {
-	cfg *config.Config
+	cfg      *config.Config
+	pageKeys []string
 }
 
 func (d parentItemDelegate) Height() int                             { return 1 }
@@ -59,6 +60,8 @@ func (d parentItemDelegate) Render(w io.Writer, m list.Model, index int, listIte
 		cursor = "  "
 	}
 
+	cursor += renderAccelerator(rowAccelerator(m, d.pageKeys, index))
+
 	switch item := listItem.(type) {
 	case clearParentItem:
 		text := ui.Muted.Render(item.Title())
@@ -72,7 +75,7 @@ func (d parentItemDelegate) Render(w io.Writer, m list.Model, index int, listIte
 		if colors.IsClosed {
 			title = ui.Muted.Render(title)
 		}
-		id := ui.Muted.Render(" (" + item.nib.ID + ")")
+		id := ui.Muted.Render(" (" + displayID(item.nib.ID) + ")")
 
 		_, _ = fmt.Fprint(w, cursor+typeBadge+" "+title+id)
 	}
@@ -80,6 +83,7 @@ func (d parentItemDelegate) Render(w io.Writer, m list.Model, index int, listIte
 
 // parentPickerModel is the model for the parent picker view
 type parentPickerModel struct {
+	table         []action // the keymap in effect
 	list          list.Model
 	nibIDs        []string   // the nibs we're setting the parent for
 	nibTitle      string     // display title (single title or "N selected nibs")
@@ -87,12 +91,13 @@ type parentPickerModel struct {
 	currentParent string     // preselected parent ID; empty for a multi-selection
 	hideCompleted bool       // whether to hide nibs in a closed status
 	allEligible   []*nib.Nib // all eligible nibs before status filtering
+	pageKeys      []string   // the accelerators of the rows on a page, in order
 	width         int
 	height        int
 	cfg           *config.Config
 }
 
-func newParentPickerModel(nibIDs []string, nibTitle string, nibTypes []string, currentParent string, backend Backend, cfg *config.Config, width, height int) parentPickerModel {
+func newParentPickerModel(table []action, nibIDs []string, nibTitle string, nibTypes []string, currentParent string, backend Backend, cfg *config.Config, width, height int) parentPickerModel {
 	// The parent types valid for every selected nib.
 	var validParentTypes []string
 	for i, nibType := range nibTypes {
@@ -155,7 +160,8 @@ func newParentPickerModel(nibIDs []string, nibTitle string, nibTypes []string, c
 	})
 
 	// rebuildList populates the items.
-	delegate := parentItemDelegate{cfg: cfg}
+	pageKeys := freeAccelerators(table, ctxParentPicker)
+	delegate := parentItemDelegate{cfg: cfg, pageKeys: pageKeys}
 	modalWidth := pickerModalWidth(width, 60, 80)
 	modalHeight := pickerModalHeight(height, 60, 20)
 	listWidth := modalWidth - 6
@@ -165,12 +171,14 @@ func newParentPickerModel(nibIDs []string, nibTitle string, nibTypes []string, c
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
 	l.SetShowHelp(false)
+	l.KeyMap = listKeyMap()
 	l.SetShowPagination(false)
 	l.Styles.Title = listTitleStyle
 	l.Styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 0, 0)
 	applyFilterStyles(&l.Styles)
 
 	m := parentPickerModel{
+		table:         table,
 		list:          l,
 		nibIDs:        nibIDs,
 		nibTitle:      nibTitle,
@@ -178,6 +186,7 @@ func newParentPickerModel(nibIDs []string, nibTitle string, nibTypes []string, c
 		currentParent: currentParent,
 		hideCompleted: true,
 		allEligible:   eligibleNibs,
+		pageKeys:      pageKeys,
 		width:         width,
 		height:        height,
 		cfg:           cfg,
@@ -191,13 +200,6 @@ func newParentPickerModel(nibIDs []string, nibTitle string, nibTypes []string, c
 func (m *parentPickerModel) toggleHideCompleted() tea.Cmd {
 	m.hideCompleted = !m.hideCompleted
 	return m.rebuildList()
-}
-
-func hideCompletedHelpText(hiding bool) string {
-	if hiding {
-		return "show completed"
-	}
-	return "hide completed"
 }
 
 // rebuildList rebuilds the list items from allEligible, applying hideCompleted.
@@ -293,27 +295,47 @@ func (m parentPickerModel) Update(msg tea.Msg) (parentPickerModel, tea.Cmd) {
 		listHeight := modalHeight - 7
 		m.list.SetSize(listWidth, listHeight)
 
-	case tea.KeyPressMsg:
-		if m.list.FilterState() != list.Filtering {
-			switch msg.String() {
-			case "enter":
-				switch item := m.list.SelectedItem().(type) {
-				case clearParentItem:
-					return m, func() tea.Msg {
-						return parentSelectedMsg{nibIDs: m.nibIDs, parentID: ""}
-					}
-				case parentItem:
-					return m, func() tea.Msg {
-						return parentSelectedMsg{nibIDs: m.nibIDs, parentID: item.nib.ID}
-					}
-				}
-			case "H":
-				return m, m.toggleHideCompleted()
-			case "esc", "backspace":
+	case actionMsg:
+		if cmd, ok := browseList(&m.list, msg.name); ok {
+			return m, cmd
+		}
+		switch msg.name {
+		case actOpen:
+			switch item := m.list.SelectedItem().(type) {
+			case clearParentItem:
 				return m, func() tea.Msg {
-					return closeParentPickerMsg{}
+					return parentSelectedMsg{nibIDs: m.nibIDs, parentID: ""}
+				}
+			case parentItem:
+				return m, func() tea.Msg {
+					return parentSelectedMsg{nibIDs: m.nibIDs, parentID: item.nib.ID}
 				}
 			}
+		case actHideClosed:
+			cmd := m.toggleHideCompleted()
+			return m, cmd
+		case actLeave:
+			return m, func() tea.Msg { return closeParentPickerMsg{} }
+		}
+		return m, nil
+
+	case clickRowMsg:
+		m.list.Select(msg.row)
+		if !msg.choose {
+			return m, nil
+		}
+		return m.Update(actionMsg{name: actOpen})
+
+	case acceleratorMsg:
+		if selectAccelerator(&m.list, m.pageKeys, msg.key) {
+			return m.Update(actionMsg{name: actOpen})
+		}
+		return m, nil
+
+	case tea.KeyPressMsg:
+		// Only a filter being typed takes keys; actions do everything else.
+		if m.list.FilterState() != list.Filtering {
+			return m, nil
 		}
 	}
 
@@ -325,25 +347,25 @@ func (m parentPickerModel) View() string {
 	if m.width == 0 {
 		return "Loading..."
 	}
+	return renderPickerModal(m.modal())
+}
 
+// modal is the modal View draws.
+func (m parentPickerModel) modal() pickerModalConfig {
 	var nibID string
 	if len(m.nibIDs) == 1 {
 		nibID = m.nibIDs[0]
 	}
 
-	return renderPickerModal(pickerModalConfig{
+	return pickerModalConfig{
+		Keys:        m.table,
+		Context:     ctxParentPicker,
 		NibTitle:    m.nibTitle,
 		NibID:       nibID,
 		ListContent: m.list.View(),
-		ExtraHelp:   []helpEntry{{"H", hideCompletedHelpText(m.hideCompleted)}},
+		Rows:        listRows(m.list),
 		Width:       m.width,
 		WidthPct:    60,
 		MaxWidth:    80,
-	})
-}
-
-// ModalView returns the picker centered over bgView.
-func (m parentPickerModel) ModalView(bgView string, fullWidth, fullHeight int) string {
-	modal := m.View()
-	return overlayModal(bgView, modal, fullWidth, fullHeight)
+	}
 }

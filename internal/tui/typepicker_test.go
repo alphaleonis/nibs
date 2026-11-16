@@ -3,7 +3,6 @@ package tui
 import (
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/alphaleonis/nibs/internal/config"
@@ -12,6 +11,7 @@ import (
 func TestTypePickerModel(t *testing.T) {
 	t.Run("pre-selects current type", func(t *testing.T) {
 		m := newTypePickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "bug", nil,
 			80, 24,
 		)
@@ -30,6 +30,7 @@ func TestTypePickerModel(t *testing.T) {
 
 	t.Run("shows all type options", func(t *testing.T) {
 		m := newTypePickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "", nil,
 			80, 24,
 		)
@@ -60,6 +61,7 @@ func TestTypePickerModel(t *testing.T) {
 		heightByType := make(map[string]int, len(config.DefaultTypes))
 		for _, ty := range config.DefaultTypes {
 			m := newTypePickerModel(
+				defaultActions,
 				[]string{"nib-1"}, "Test Nib", ty.Name, nil,
 				w, h,
 			)
@@ -80,12 +82,13 @@ func TestTypePickerModel(t *testing.T) {
 
 	t.Run("enter sends typeSelectedMsg", func(t *testing.T) {
 		m := newTypePickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "bug", nil,
 			80, 24,
 		)
 
 		// Press enter on the pre-selected item ("bug").
-		_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		_, cmd := m.Update(actionMsg{name: actOpen})
 		if cmd == nil {
 			t.Fatal("expected a command from enter key")
 		}
@@ -105,11 +108,12 @@ func TestTypePickerModel(t *testing.T) {
 
 	t.Run("esc sends closeTypePickerMsg", func(t *testing.T) {
 		m := newTypePickerModel(
+			defaultActions,
 			[]string{"nib-1"}, "Test Nib", "", nil,
 			80, 24,
 		)
 
-		_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+		_, cmd := m.Update(actionMsg{name: actLeave})
 		if cmd == nil {
 			t.Fatal("expected a command from esc key")
 		}

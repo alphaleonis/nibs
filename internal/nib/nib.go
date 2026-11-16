@@ -21,7 +21,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var tagPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$`)
+// TagPattern is the regular expression a valid tag matches in full.
+const TagPattern = `^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$`
+
+var tagPattern = regexp.MustCompile(TagPattern)
 
 // ValidateTag checks if a tag is valid (lowercase, URL-safe, single word).
 func ValidateTag(tag string) error {

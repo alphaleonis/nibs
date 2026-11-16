@@ -97,15 +97,12 @@ var initCmd = &cobra.Command{
 		}
 
 		// Load user config to seed preferences into the new project
-		userCfg, err := config.LoadUserConfig()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not load user config: %v\n", err)
-			userCfg = &config.UserConfig{}
-		}
+		user := config.LoadUserLayer()
+		warnUserConfigFailure(cmd.ErrOrStderr(), user.Failure)
 
 		// Create default config file with the computed prefix,
 		// seeding values from user config where available
-		defaultCfg := config.DefaultWithPrefixFromUserConfig(prefix, userCfg)
+		defaultCfg := config.DefaultWithPrefixFromUserConfig(prefix, user.Config)
 		defaultCfg.SetStoreDir(nibsDir)
 		if _, err := defaultCfg.Save(nibsDir); err != nil {
 			if initJSON {

@@ -82,8 +82,8 @@ func TestCreateFlowOpensTypePickerOnC(t *testing.T) {
 	}
 	app, _ := setupTestApp(t, testNibs)
 
-	// Press 'c' to start creation flow
-	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: 'c', Text: "c"})
+	// Press 'n' to start creation flow
+	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: 'n', Text: "n"})
 
 	// Should be in type picker state (for creation), not create modal
 	if app.state != viewCreateTypePicker {
@@ -97,8 +97,8 @@ func TestCreateFlowFullCycle(t *testing.T) {
 	}
 	app, stub := setupTestApp(t, testNibs)
 
-	// Press 'c' to start creation flow
-	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: 'c', Text: "c"})
+	// Press 'n' to start creation flow
+	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: 'n', Text: "n"})
 
 	if app.state != viewCreateTypePicker {
 		t.Fatalf("expected viewCreateTypePicker state, got %d", app.state)
@@ -145,8 +145,8 @@ func TestCreateFlowSiblingInference(t *testing.T) {
 	// Move to task-1
 	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: tea.KeyDown})
 
-	// Press 'c' to start creation
-	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: 'c', Text: "c"})
+	// Press 'n' to start creation
+	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: 'n', Text: "n"})
 
 	if app.state != viewCreateTypePicker {
 		t.Fatalf("expected viewCreateTypePicker, got %d", app.state)
@@ -187,8 +187,8 @@ func TestCreateFlowHigherLevelNoParent(t *testing.T) {
 	}
 	app, stub := setupTestApp(t, testNibs)
 
-	// Press 'c', then navigate to select "milestone"
-	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: 'c', Text: "c"})
+	// Press 'n', then navigate to select "milestone"
+	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: 'n', Text: "n"})
 
 	if app.state != viewCreateTypePicker {
 		t.Fatalf("expected viewCreateTypePicker, got %d", app.state)
@@ -232,7 +232,7 @@ func TestCreateFlowCancelTypePicker(t *testing.T) {
 	}
 	app, stub := setupTestApp(t, testNibs)
 
-	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: 'c', Text: "c"})
+	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: 'n', Text: "n"})
 
 	if app.state != viewCreateTypePicker {
 		t.Fatalf("expected viewCreateTypePicker, got %d", app.state)
@@ -257,7 +257,7 @@ func TestCreateFlowCancelTitleInput(t *testing.T) {
 	app, stub := setupTestApp(t, testNibs)
 
 	// Open type picker, select type, then cancel title input
-	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: 'c', Text: "c"})
+	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: 'n', Text: "n"})
 	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: tea.KeyEnter}) // select default type
 
 	if app.state != viewCreateModal {

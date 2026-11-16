@@ -1,114 +1,92 @@
 package ui
 
-import "sync"
+import "strings"
 
-// Glyphs used in CLI and TUI rendering: UTF-8 by default, ASCII when the
-// terminal cannot display UTF-8 (e.g. a Windows console on a non-UTF-8
-// codepage). Each fallback fits the cells its caller lays out.
+// Glyphs the TUI draws, in UTF-8 or ASCII. Each function takes that choice as
+// ascii, which callers set for a terminal without UTF-8 or for icons: ascii.
+// Each ASCII fallback fits the cells its caller lays out.
 
-// asciiGlyphsOverride, when non-nil, decides useASCIIGlyphs' answer; tests set
-// it through withASCIIGlyphs. It is unsynchronized, so a test that sets it must
-// not run in parallel.
-var asciiGlyphsOverride *bool
+// TerminalUTF8 reports whether the terminal displays UTF-8. Outside Windows the
+// locale decides, as localeUTF8 reads it. On Windows the console's output
+// codepage decides.
+func TerminalUTF8() bool {
+	return terminalUTF8()
+}
 
-// asciiOnce caches detectASCIIRequired, a syscall on Windows, since
-// useASCIIGlyphs is asked for every glyph drawn.
-var (
-	asciiOnce     sync.Once
-	asciiDetected bool
-)
-
-// useASCIIGlyphs reports whether to draw ASCII fallbacks. asciiGlyphsOverride
-// takes precedence and bypasses the cache.
-func useASCIIGlyphs() bool {
-	if asciiGlyphsOverride != nil {
-		return *asciiGlyphsOverride
+// localeUTF8 reports whether the locale in getenv's environment names UTF-8 as
+// its encoding. The first of LC_ALL, LC_CTYPE and LANG that is not empty names
+// the locale, the order POSIX gives them. With none of them set the C locale
+// applies, which is not UTF-8.
+func localeUTF8(getenv func(string) string) bool {
+	for _, name := range []string{"LC_ALL", "LC_CTYPE", "LANG"} {
+		if v := getenv(name); v != "" {
+			v = strings.ToLower(v)
+			return strings.Contains(v, "utf-8") || strings.Contains(v, "utf8")
+		}
 	}
-	asciiOnce.Do(func() {
-		asciiDetected = detectASCIIRequired()
-	})
-	return asciiDetected
+	return false
 }
 
-// Priority symbols. The ASCII critical glyph "!!" is two cells where "‼" is
-// one; RenderNibRow's 2-cell indicator slot holds either.
-func glyphCritical() string {
-	if useASCIIGlyphs() {
-		return "!!"
-	}
-	return "‼"
-}
-
-func glyphHigh() string {
-	return "!"
-}
-
-func glyphLow() string {
-	if useASCIIGlyphs() {
-		return "v"
-	}
-	return "↓"
-}
-
-// Blocked and blocking indicators.
-func glyphBlocked() string {
-	if useASCIIGlyphs() {
+// GlyphBlocked returns the mark of a nib that something blocks.
+func GlyphBlocked(ascii bool) string {
+	if ascii {
 		return "*"
 	}
 	return "●"
 }
 
-func glyphBlocking() string {
-	if useASCIIGlyphs() {
+// GlyphBlocking returns the mark of a nib that blocks something.
+func GlyphBlocking(ascii bool) string {
+	if ascii {
 		return "#"
 	}
 	return "◆"
 }
 
-// Selection cursor for RenderNibRow.
-func glyphCursor() string {
-	if useASCIIGlyphs() {
+// GlyphCursor returns the mark of the row under the cursor.
+func GlyphCursor(ascii bool) string {
+	if ascii {
 		return ">"
 	}
 	return "▌"
 }
 
 // Tree connectors, treeIndent cells wide in both modes.
-func glyphTreeBranch() string {
-	if useASCIIGlyphs() {
+func glyphTreeBranch(ascii bool) string {
+	if ascii {
 		return "+- "
 	}
 	return "├─ "
 }
 
-func glyphTreeLastBranch() string {
-	if useASCIIGlyphs() {
+func glyphTreeLastBranch(ascii bool) string {
+	if ascii {
 		return "\\- "
 	}
 	return "└─ "
 }
 
-func glyphTreePipe() string {
-	if useASCIIGlyphs() {
+func glyphTreePipe(ascii bool) string {
+	if ascii {
 		return "|  "
 	}
 	return "│  "
 }
 
-func glyphTreeSpace() string {
+func glyphTreeSpace(_ bool) string {
 	return "   "
 }
 
 // Collapse/expand indicators for the tree view.
-func glyphCollapseCollapsed() string {
-	if useASCIIGlyphs() {
+func glyphCollapseCollapsed(ascii bool) string {
+	if ascii {
 		return "> "
 	}
 	return "▸ "
 }
 
-func glyphCollapseExpanded() string {
-	if useASCIIGlyphs() {
+func glyphCollapseExpanded(ascii bool) string {
+	if ascii {
 		return "v "
 	}
 	return "▾ "
@@ -116,6 +94,6 @@ func glyphCollapseExpanded() string {
 
 // GlyphSectionCursor returns a row cursor: the collapsed-node indicator, with
 // its ASCII fallback.
-func GlyphSectionCursor() string {
-	return glyphCollapseCollapsed()
+func GlyphSectionCursor(ascii bool) string {
+	return glyphCollapseCollapsed(ascii)
 }

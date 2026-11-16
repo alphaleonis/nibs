@@ -3,7 +3,8 @@
 // is shown in.
 //
 // Strip is for one scalar inside a message, and StripBounded for one whose length
-// nothing else bounds. Writer wraps a sink that carries only messages, and keeps
+// nothing else bounds. StripLine and StripText are for text drawn as itself,
+// outside any message. Writer wraps a sink that carries only messages, and keeps
 // their newlines and backticks. Do not wrap a sink that also carries styled
 // (lipgloss) output; sanitize the field at the call site instead.
 //
@@ -13,6 +14,7 @@ package safetext
 
 import (
 	"io"
+	"strings"
 	"sync"
 	"unicode"
 	"unicode/utf8"
@@ -24,13 +26,27 @@ import (
 // which would close a code span the message put around the scalar. It neither
 // collapses whitespace nor bounds length. strconv.Quote (%q) keeps backticks and
 // blank-rendering runes, so it is not a substitute.
-func Strip(s string) string {
-	if !needsStripping(s) {
+func Strip(s string) string { return replaceUnsafe(s, scalarSafe) }
+
+// StripLine is Strip for a scalar drawn as itself rather than quoted in a
+// message, such as a nib's title in a TUI row. It keeps the backtick, which only
+// a message's code span needs replaced, and the zero-width joiners (U+200C and
+// U+200D).
+func StripLine(s string) string { return replaceUnsafe(s, lineSafe) }
+
+// StripText is StripLine for multi-line text drawn as itself, such as a nib's
+// body. It also keeps newlines and tabs.
+func StripText(s string) string { return replaceUnsafe(s, textSafe) }
+
+// replaceUnsafe replaces with a space every rune of s that safe rejects, and
+// returns s itself when safe accepts them all.
+func replaceUnsafe(s string, safe func(rune) bool) string {
+	if !strings.ContainsFunc(s, func(r rune) bool { return !safe(r) }) {
 		return s
 	}
 	out := make([]rune, 0, len(s))
 	for _, r := range s {
-		if scalarSafe(r) {
+		if safe(r) {
 			out = append(out, r)
 			continue
 		}
@@ -53,18 +69,17 @@ func StripBounded(s string) string {
 	return string([]rune(s)[:MaxBoundedRunes]) + "…"
 }
 
-func needsStripping(s string) bool {
-	for _, r := range s {
-		if !scalarSafe(r) {
-			return true
-		}
-	}
-	return false
-}
-
 // scalarSafe is keep without the newline and the backtick, which only a whole
 // message may carry.
 func scalarSafe(r rune) bool { return keep(r) && r != '\n' && r != '`' }
+
+func lineSafe(r rune) bool { return (keep(r) || joiner(r)) && r != '\n' }
+
+func textSafe(r rune) bool { return keep(r) || joiner(r) || r == '\t' }
+
+// joiner reports whether r is ZWNJ or ZWJ, which emoji sequences and scripts
+// such as Persian need inside words.
+func joiner(r rune) bool { return r == '\u200c' || r == '\u200d' }
 
 // keep reports whether r may reach a Writer's sink as itself.
 func keep(r rune) bool {

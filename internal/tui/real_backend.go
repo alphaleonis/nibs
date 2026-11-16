@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -28,6 +29,18 @@ func (b *RealBackend) ListNibs(ctx context.Context, filter *model.NibFilter) ([]
 	return b.resolver.Query().Nibs(ctx, filter, nil)
 }
 
+func (b *RealBackend) FilterIDs(ctx context.Context, filter *model.NibFilter) (map[string]bool, error) {
+	nibs, err := b.resolver.Query().Nibs(ctx, filter, nil)
+	if err != nil {
+		return nil, err
+	}
+	ids := make(map[string]bool, len(nibs))
+	for _, n := range nibs {
+		ids[n.ID] = true
+	}
+	return ids, nil
+}
+
 func (b *RealBackend) GetParent(ctx context.Context, obj *nib.Nib) (*nib.Nib, error) {
 	return b.resolver.Nib().Parent(ctx, obj)
 }
@@ -42,6 +55,14 @@ func (b *RealBackend) GetBlockedBy(ctx context.Context, obj *nib.Nib, filter *mo
 
 func (b *RealBackend) GetBlocking(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error) {
 	return b.resolver.Nib().Blocking(ctx, obj, filter)
+}
+
+func (b *RealBackend) GetMentions(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error) {
+	return b.resolver.Nib().Mentions(ctx, obj, filter)
+}
+
+func (b *RealBackend) GetMentionedBy(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error) {
+	return b.resolver.Nib().MentionedBy(ctx, obj, filter)
 }
 
 func (b *RealBackend) IsBlocked(nibID string) bool {
@@ -82,8 +103,12 @@ func (b *RealBackend) DeleteNib(ctx context.Context, id string) error {
 	return err
 }
 
-func (b *RealBackend) ReorderNib(ctx context.Context, id string, afterID, beforeID *string, first *bool) (*nib.Nib, error) {
-	return b.resolver.Mutation().ReorderNib(ctx, id, afterID, beforeID, first, nil, nil, model.OrderScopeParent)
+func (b *RealBackend) ReorderNib(ctx context.Context, id string, afterID, beforeID *string, first *bool, scope model.OrderScope) (*nib.Nib, error) {
+	return b.resolver.Mutation().ReorderNib(ctx, id, afterID, beforeID, first, nil, nil, scope)
+}
+
+func (b *RealBackend) Areas() *area.Vocabulary {
+	return b.core.Areas()
 }
 
 func (b *RealBackend) Root() string {
@@ -113,4 +138,8 @@ func (b *RealBackend) StopWatching() {
 // Subscribe uses the signal-only subscription: the TUI never reads a payload.
 func (b *RealBackend) Subscribe() (events <-chan struct{}, cancel func()) {
 	return b.core.SubscribeSignal()
+}
+
+func (b *RealBackend) SubscribeAreas() (events <-chan struct{}, cancel func()) {
+	return b.core.SubscribeAreas()
 }

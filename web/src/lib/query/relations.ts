@@ -1,5 +1,6 @@
 import type { QueryFilter } from "./fields";
 import type { MilestoneOption } from "../milestones";
+import { REL_TOKENS } from "../generated/filterTokens";
 
 // Relationship and existence tokens, recognized separately from the metadata
 // grammar. `FIELD_TOKEN`'s `[A-Za-z]+` name group cannot match the hyphenated
@@ -9,13 +10,13 @@ import type { MilestoneOption } from "../milestones";
 //   any non-empty lowercased value; the id is not checked.
 // - Existence tokens (`has:parent`, `no:parent`, `is:blocked`) set a boolean
 //   field. Only spellings in `REL_TOKEN_ORDER` are recognized; the rest
-//   (`has:mentions`, `is:foo`) fall through to free text. Add a spelling only
-//   where the server has a matching predicate.
+//   (`has:mentions`, `is:foo`) fall through to free text.
 // - A negated token is parked as invalid (see `recognizeRelationship`).
 //
-// `REL_TOKEN_ORDER` is the only list of spellings: the lookups derive from it,
-// `serializeQuery` emits only what it lists, and the guards at the foot of this
-// file fail compilation when a field is missing from it.
+// `REL_TOKEN_ORDER` is the only list of spellings, generated from
+// internal/filterlang: the lookups derive from it, `serializeQuery` emits only
+// what it lists, and the guards at the foot of this file fail compilation when a
+// field is missing from it.
 
 /** Scalar id-valued fields. `milestone` and `inMilestone` are assignments rather
  *  than links, but take a nib id and the same typeahead. */
@@ -70,45 +71,10 @@ export type RelTokenSpec =
       description: string;
     };
 
-// The rel/existence vocabulary in canonical serialization order: grouped by
-// dimension, each dimension's id token before its existence tokens. Moving an
-// entry changes which strings are canonical.
-//
-// `as const` keeps the literal field types the guards at the foot of this file
-// read; `satisfies` checks each entry against `RelTokenSpec`.
-export const REL_TOKEN_ORDER = [
-  { kind: "id", field: "parentId", name: "parent", description: "Direct children of this nib" },
-  { kind: "bool", field: "hasParent", token: "has:parent", value: true, description: "Nibs that have a parent" },
-  { kind: "bool", field: "hasParent", token: "no:parent", value: false, description: "Root nibs, with no parent" },
-  // No has/no spellings: the server has no existence predicate for these.
-  { kind: "id", field: "ancestorId", name: "ancestor", description: "Everything under this nib, at any depth" },
-  { kind: "id", field: "descendantId", name: "descendant", description: "This nib's ancestor chain, up to the root" },
-  { kind: "id", field: "siblingId", name: "sibling", description: "Nibs sharing this nib's parent" },
-  { kind: "id", field: "blockingId", name: "blocking", description: "Nibs that block this one" },
-  { kind: "bool", field: "hasBlocking", token: "has:blocking", value: true, description: "Nibs that block something" },
-  { kind: "bool", field: "hasBlocking", token: "no:blocking", value: false, description: "Nibs that block nothing" },
-  { kind: "id", field: "blockedById", name: "blocked-by", description: "Nibs this one blocks" },
-  { kind: "bool", field: "hasBlockedBy", token: "has:blocked-by", value: true, description: "Nibs listing a blocker" },
-  { kind: "bool", field: "hasBlockedBy", token: "no:blocked-by", value: false, description: "Nibs listing no blocker" },
-  { kind: "bool", field: "isBlocked", token: "is:blocked", value: true, description: "Nibs held up by an unmet blocker" },
-  { kind: "id", field: "mentionsId", name: "mentions", description: "Nibs whose body mentions this nib" },
-  { kind: "id", field: "mentionedById", name: "mentioned-by", description: "Nibs mentioned in this nib's body" },
-  // The assignment axis, broad reading first: `milestone:<id>` matches DERIVED
-  // membership (the milestone's whole plan) and `milestone-exact:<id>` the direct
-  // assignment alone (its queue). `is:backlog` is the complement of the derived
-  // reading, so a child of an assigned epic is not backlog.
-  //
-  // Backlog is one `is:` token, not a `has:`/`no:milestone` pair: on a field named
-  // `noMilestone` a pair would write true for `no:`, while the `_PairsKeep*`
-  // guards read an entry's value as its polarity.
-  //
-  // The server refuses a query whose target is not a milestone on either field, so
-  // both typeaheads offer milestones alone: a candidate it cannot accept is a
-  // broken filter.
-  { kind: "id", field: "inMilestone", name: "milestone", description: "Nibs in this milestone's plan, assigned to it or riding along under something that is", searchTypes: ["milestone"] },
-  { kind: "id", field: "milestone", name: "milestone-exact", description: "Nibs assigned to this milestone itself — its queue", searchTypes: ["milestone"] },
-  { kind: "bool", field: "noMilestone", token: "is:backlog", value: true, description: "Nibs in no milestone's plan, their own or an inherited one" },
-] as const satisfies readonly RelTokenSpec[];
+// The rel/existence vocabulary in canonical serialization order. The generated
+// `as const` gives the literal field types the guards at the foot of this file
+// read; `satisfies` checks each entry against `RelTokenSpec` without widening.
+export const REL_TOKEN_ORDER = REL_TOKENS satisfies readonly RelTokenSpec[];
 
 /** A `REL_TOKEN_ORDER` entry with its literal types, narrowed to one kind. */
 type OrderedSpec<K extends RelTokenSpec["kind"]> = Extract<

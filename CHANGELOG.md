@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`nibs body --section "<heading>" --append` and `--clear`** add to the end of one section and empty it, where `--set` could only replace it.
 - **`nibs body --check`, `--uncheck` and `--remove` edit checklist items by number**, and `--checklist` prints the numbered list.
 - **A linked git worktree with no store of its own uses the main clone's**, so nibs works in a worktree created outside the main checkout.
+- **The TUI offers the web's four views and its filter language** — Tree, Flat, Milestones and Areas, a filter box with completion and highlighting, quick-filter pickers, and a find that jumps between matches without filtering.
+- **Every TUI action can be rebound** under `tui.keys` in the user config, and `?` opens a palette that lists each action with its keys and runs it.
+- **The TUI takes the mouse** — wheel scrolling, click to select or focus, and double click to expand — unless `tui.mouse` is false.
 
 ### Changed
 - **The web's Tree view no longer lists milestones** — a milestone is a waypoint outside the parent graph, so a view spined on parentage had nothing to nest under it; Flat still shows every nib, and the Milestone column shows the assignment.
@@ -50,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **The web opens on the milestone-grouped view** — the Milestones view groups work by its milestone assignment instead of by type, each queue in its own order with a Backlog tail for whatever is in none, a nib's milestone is set from the detail panel or the row context menu, and a drag reorders within a queue or assigns into one; a stored view preference still wins, and the hierarchical view is still there as Tree.
 - **An invalid combination of `nibs body` flags exits 2**, like every other validation failure, where some combinations exited 1, and `--create=false` now means the same as leaving the flag out.
 - **nibs keeps its lock files in a private per-user directory** under the system temp directory, readable only by you, instead of loose and world-readable in the temp directory, so a nibs older than this release takes a different lock and must not run against the same store at the same time.
+- **The TUI is redesigned around one nib view, docked beside the list or expanded to full screen**, with rows that show status and type as icons and the id last, columns chosen per view, and new default keys.
 
 ### Fixed
 - **`nibs config` refuses a subcommand it does not recognize** (exit 2, naming it and suggesting the nearest match) instead of printing the group help and exiting 0, which reported success to any script checking the status.
@@ -95,6 +99,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **The TUI now reports a failed save after an external editor session**, instead of returning to the list as though the edit had been stored when the store had refused it.
 - **A link repair or a nib deletion can no longer recreate a file `nibs config set-prefix` renamed away**, where the two whole-store link sweeps took no cross-process lock and wrote through a creating writer, leaving a second copy of the nib under its retired name.
 - **The TUI now says when an editor could not be started**, instead of returning to the list with no explanation when `$VISUAL` or `$EDITOR` names something that does not exist.
+- **The TUI says when it ignores part of your user config**, instead of silently resetting your preferences.
 - **The TUI's detail view no longer draws past the bottom of a short terminal**, where a status message pushed the frame to ten rows on an eight-row one, and a nib with links reserved five rows for a list of one.
 - **A nib body ending in a blank line no longer loses one on every save**, where each re-render discarded another — a whole-store pass like `nibs config set-prefix` costing every affected body one at once.
 - **`nibs check --fix --json` now reports a failed repair in its error envelope**, instead of printing nothing on stdout and a plain line to stderr.
@@ -120,7 +125,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Typing `q` or `?` into a TUI filter adds it to the filter**, instead of quitting nibs or toggling help.
 - **TUI markdown wraps to the pane's width** instead of a fixed 80 columns.
 - **The TUI cuts non-ASCII titles and tags by display width**, where they were cut too early and could end mid-character.
-- **A long title in the TUI detail view's link list ends in "..."** instead of being clipped at the box edge.
+- **A long title in the TUI's link list ends in an ellipsis** instead of being clipped at the box edge.
 - **A failed copy in the TUI detail view is shown as a warning**, not in the success color.
 - **The TUI no longer stalls collapsing or navigating a large, deep tree.**
 - **A deleted row in the web table finishes fading out** when another change arrives during the fade, where the table refetched at once and dropped it mid-fade.

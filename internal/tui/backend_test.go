@@ -2,12 +2,19 @@ package tui
 
 import (
 	"context"
+	"fmt"
+	"maps"
+	"reflect"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/viewshape"
 )
 
 // Compile-time checks: both implementations must satisfy Backend.
@@ -21,6 +28,11 @@ type StubBackend struct {
 	Nibs    map[string]*nib.Nib
 	AllNibs []*nib.Nib
 	RootDir string
+	// AreaVocab is what Areas returns; nil stands for the empty vocabulary.
+	AreaVocab *area.Vocabulary
+	// AreaEvents is the channel the last SubscribeAreas returned, for a test
+	// to tick.
+	AreaEvents chan struct{}
 
 	// Call recording
 	UpdateCalls         []stubUpdateCall
@@ -33,9 +45,19 @@ type StubBackend struct {
 	DeleteCalls         []string
 	ReloadCalls         []string
 
+	// ApplyAssignments makes UpdateNib write an update's milestone and area to
+	// the stored nib, so a reload shows the nib in its new section.
+	ApplyAssignments bool
+
 	// Blocking status
 	Blocked  map[string]bool
 	Blocking map[string]bool
+
+	// FilterIDsFn, when set, answers FilterIDs in place of the stub's own
+	// evaluation; see FilterIDs.
+	FilterIDsFn func(filter *model.NibFilter) (map[string]bool, error)
+	// FilterCalls records the filter of each FilterIDs call.
+	FilterCalls []model.NibFilter
 
 	// Error injection
 	ListErr   error
@@ -46,8 +68,10 @@ type StubBackend struct {
 	UpdateErrByID map[string]error
 	CreateErr     error
 	ReorderErr    error
-	ArchiveErr    error
-	DeleteErr     error
+	// ReorderErrByID fails only the reorders of the named nibs.
+	ReorderErrByID map[string]error
+	ArchiveErr     error
+	DeleteErr      error
 	// The link mutations refuse independently of UpdateErr, which only the
 	// pickers writing through UpdateNib route through.
 	SetParentErr error
@@ -101,6 +125,45 @@ func (s *StubBackend) ListNibs(_ context.Context, _ *model.NibFilter) ([]*nib.Ni
 	return s.AllNibs, nil
 }
 
+// FilterIDs evaluates the metadata fields as viewshape.Matches does, and a
+// search as words that must each be in the title or the id, in any letter
+// case. A search adds the hits' ancestors, as the GraphQL nibs field does. Any
+// other field fails, so a test of one sets FilterIDsFn or uses the real
+// backend.
+func (s *StubBackend) FilterIDs(_ context.Context, filter *model.NibFilter) (map[string]bool, error) {
+	s.FilterCalls = append(s.FilterCalls, *filter)
+	if s.FilterIDsFn != nil {
+		return s.FilterIDsFn(filter)
+	}
+	meta, rest := splitFilter(*filter)
+	var words []string
+	if rest != nil && rest.Search != nil {
+		words = strings.Fields(strings.ToLower(*rest.Search))
+		rest.Search = nil
+		if reflect.ValueOf(*rest).IsZero() {
+			rest = nil
+		}
+	}
+	if rest != nil {
+		return nil, fmt.Errorf("stub backend: FilterIDs does not evaluate %+v", *rest)
+	}
+	ids := make(map[string]bool)
+	for _, n := range s.AllNibs {
+		text := strings.ToLower(n.Title + " " + n.ID)
+		if viewshape.Matches(n, meta) && !slices.ContainsFunc(words, func(w string) bool { return !strings.Contains(text, w) }) {
+			ids[n.ID] = true
+		}
+	}
+	if len(words) > 0 {
+		for id := range maps.Clone(ids) {
+			for p := s.Nibs[id]; p != nil && p.Parent != "" && !ids[p.Parent]; p = s.Nibs[p.Parent] {
+				ids[p.Parent] = true
+			}
+		}
+	}
+	return ids, nil
+}
+
 func (s *StubBackend) GetParent(_ context.Context, obj *nib.Nib) (*nib.Nib, error) {
 	if obj.Parent == "" {
 		return nil, nil
@@ -129,6 +192,14 @@ func (s *StubBackend) GetBlocking(_ context.Context, _ *nib.Nib, _ *model.NibFil
 	return nil, nil
 }
 
+func (s *StubBackend) GetMentions(_ context.Context, _ *nib.Nib, _ *model.NibFilter) ([]*nib.Nib, error) {
+	return nil, nil
+}
+
+func (s *StubBackend) GetMentionedBy(_ context.Context, _ *nib.Nib, _ *model.NibFilter) ([]*nib.Nib, error) {
+	return nil, nil
+}
+
 func (s *StubBackend) IsBlocked(nibID string) bool {
 	return s.Blocked[nibID]
 }
@@ -154,10 +225,41 @@ func (s *StubBackend) UpdateNib(_ context.Context, id string, input model.Update
 		return nil, err
 	}
 	s.UpdateCalls = append(s.UpdateCalls, stubUpdateCall{ID: id, Input: input})
+	if s.ApplyAssignments {
+		s.applyAssignments(id, input)
+	}
 	if n, ok := s.Nibs[id]; ok {
 		return n, nil
 	}
 	return &nib.Nib{ID: id}, nil
+}
+
+// applyAssignments replaces the stored nib id with a clone carrying input's
+// milestone and area, leaving the nib the test built untouched.
+func (s *StubBackend) applyAssignments(id string, input model.UpdateNibInput) {
+	n, ok := s.Nibs[id]
+	if !ok {
+		return
+	}
+	c := n.Clone()
+	if input.Milestone.IsSet() {
+		c.Milestone = ""
+		if v := input.Milestone.Value(); v != nil {
+			c.Milestone = *v
+		}
+	}
+	if input.Area.IsSet() {
+		c.Area = ""
+		if v := input.Area.Value(); v != nil {
+			c.Area = *v
+		}
+	}
+	s.Nibs[id] = c
+	for i, m := range s.AllNibs {
+		if m.ID == id {
+			s.AllNibs[i] = c
+		}
+	}
 }
 
 func (s *StubBackend) SetParent(_ context.Context, id string, parentID *string, ifMatch *string) (*nib.Nib, error) {
@@ -217,17 +319,29 @@ type stubReorderCall struct {
 	AfterID  *string
 	BeforeID *string
 	First    *bool
+	Scope    model.OrderScope
 }
 
-func (s *StubBackend) ReorderNib(_ context.Context, id string, afterID, beforeID *string, first *bool) (*nib.Nib, error) {
+// ReorderNib records every call, a failed one included.
+func (s *StubBackend) ReorderNib(_ context.Context, id string, afterID, beforeID *string, first *bool, scope model.OrderScope) (*nib.Nib, error) {
+	s.ReorderCalls = append(s.ReorderCalls, stubReorderCall{ID: id, AfterID: afterID, BeforeID: beforeID, First: first, Scope: scope})
 	if s.ReorderErr != nil {
 		return nil, s.ReorderErr
 	}
-	s.ReorderCalls = append(s.ReorderCalls, stubReorderCall{ID: id, AfterID: afterID, BeforeID: beforeID, First: first})
+	if err := s.ReorderErrByID[id]; err != nil {
+		return nil, err
+	}
 	if n, ok := s.Nibs[id]; ok {
 		return n, nil
 	}
 	return &nib.Nib{ID: id}, nil
+}
+
+func (s *StubBackend) Areas() *area.Vocabulary {
+	if s.AreaVocab == nil {
+		return &area.Vocabulary{}
+	}
+	return s.AreaVocab
 }
 
 func (s *StubBackend) Root() string {
@@ -248,6 +362,13 @@ func (s *StubBackend) StartWatching() error {
 
 func (s *StubBackend) StopWatching() {}
 
+func (s *StubBackend) SubscribeAreas() (events <-chan struct{}, cancel func()) {
+	ch := make(chan struct{}, 1)
+	s.AreaEvents = ch
+	var once sync.Once
+	return ch, func() { once.Do(func() { close(ch) }) }
+}
+
 func (s *StubBackend) Subscribe() (events <-chan struct{}, cancel func()) {
 	ch := make(chan struct{})
 	var once sync.Once
@@ -266,7 +387,7 @@ func TestNewAppWithBackend(t *testing.T) {
 	}
 
 	cfg := config.Default()
-	app := New(stub, cfg, "dev")
+	app := New(stub, cfg, config.UserLayer{}, "dev")
 
 	if app == nil {
 		t.Fatal("New() returned nil")

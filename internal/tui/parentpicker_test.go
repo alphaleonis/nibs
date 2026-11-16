@@ -35,6 +35,7 @@ func TestParentPicker_HidesCompletedByDefault(t *testing.T) {
 	cfg := makeTestConfig()
 
 	m := newParentPickerModel(
+		defaultActions,
 		[]string{"nib-child"}, "Child Task", []string{"task"}, "",
 		backend, cfg, 80, 24,
 	)
@@ -84,6 +85,7 @@ func TestParentPicker_ToggleShowsCompleted(t *testing.T) {
 	cfg := makeTestConfig()
 
 	m := newParentPickerModel(
+		defaultActions,
 		[]string{"nib-child"}, "Child Task", []string{"task"}, "",
 		backend, cfg, 80, 24,
 	)
@@ -123,21 +125,22 @@ func TestParentPicker_ToggleKeepsAnAppliedFilter(t *testing.T) {
 		},
 	}
 	m := newParentPickerModel(
+		defaultActions,
 		[]string{"nib-child"}, "Child Task", []string{"task"}, "",
 		backend, makeTestConfig(), 80, 24,
 	)
 	m.list.SetFilterText("Alpha")
 	if got := len(m.list.VisibleItems()); got != 1 {
-		t.Fatalf("before H: %d visible items, want 1", got)
+		t.Fatalf("before z h: %d visible items, want 1", got)
 	}
 
-	m, cmd := m.Update(tea.KeyPressMsg{Code: 'H', Text: "H"})
+	m, cmd := m.Update(actionMsg{name: actHideClosed})
 	if cmd != nil {
 		m, _ = m.Update(cmd())
 	}
 
 	if got := len(m.list.VisibleItems()); got != 2 {
-		t.Errorf("after H with filter %q applied: %d visible items, want 2", m.list.FilterValue(), got)
+		t.Errorf("after z h with filter %q applied: %d visible items, want 2", m.list.FilterValue(), got)
 	}
 }
 
@@ -150,6 +153,7 @@ func TestParentPicker_ClearParentAlwaysPresent(t *testing.T) {
 	cfg := makeTestConfig()
 
 	m := newParentPickerModel(
+		defaultActions,
 		[]string{"nib-child"}, "Child Task", []string{"task"}, "",
 		backend, cfg, 80, 24,
 	)

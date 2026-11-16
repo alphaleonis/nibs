@@ -34,8 +34,10 @@ type statusItem struct {
 	color       string
 	isClosed    bool
 	isCurrent   bool
+	key         string
 }
 
+func (i statusItem) accelerator() string { return i.key }
 func (i statusItem) Title() string       { return i.name }
 func (i statusItem) Description() string { return i.description }
 func (i statusItem) FilterValue() string { return i.name + " " + i.description }
@@ -67,11 +69,12 @@ func (d statusItemDelegate) Render(w io.Writer, m list.Model, index int, listIte
 		currentIndicator = ui.Muted.Render(" (current)")
 	}
 
-	_, _ = fmt.Fprint(w, cursor+statusText+currentIndicator)
+	_, _ = fmt.Fprint(w, cursor+renderAccelerator(item.key)+statusText+currentIndicator)
 }
 
 // statusPickerModel is the model for the status picker view
 type statusPickerModel struct {
+	table         []action // the keymap in effect
 	list          list.Model
 	nibIDs        []string
 	nibTitle      string
@@ -80,10 +83,16 @@ type statusPickerModel struct {
 	height        int
 }
 
-func newStatusPickerModel(nibIDs []string, nibTitle, currentStatus string, cfg *config.Config, width, height int) statusPickerModel {
+func newStatusPickerModel(table []action, nibIDs []string, nibTitle, currentStatus string, cfg *config.Config, width, height int) statusPickerModel {
 	statuses := cfg.WorkflowStatuses()
 
 	delegate := statusItemDelegate{}
+
+	hints := make([]string, len(statuses))
+	for i, s := range statuses {
+		hints[i] = s.Name
+	}
+	keys := assignAccelerators(table, ctxStatusPicker, hints)
 
 	items := make([]list.Item, 0, len(statuses))
 	selectedIndex := 0
@@ -99,6 +108,7 @@ func newStatusPickerModel(nibIDs []string, nibTitle, currentStatus string, cfg *
 			color:       s.Color,
 			isClosed:    s.Role.Closed(),
 			isCurrent:   isCurrent,
+			key:         keys[i],
 		})
 	}
 
@@ -112,6 +122,7 @@ func newStatusPickerModel(nibIDs []string, nibTitle, currentStatus string, cfg *
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
 	l.SetShowHelp(false)
+	l.KeyMap = listKeyMap()
 	l.SetShowPagination(false)
 	l.Styles.Title = listTitleStyle
 	l.Styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 0, 0)
@@ -122,6 +133,7 @@ func newStatusPickerModel(nibIDs []string, nibTitle, currentStatus string, cfg *
 	}
 
 	return statusPickerModel{
+		table:         table,
 		list:          l,
 		nibIDs:        nibIDs,
 		nibTitle:      nibTitle,
@@ -148,20 +160,39 @@ func (m statusPickerModel) Update(msg tea.Msg) (statusPickerModel, tea.Cmd) {
 		listHeight := modalHeight - 7
 		m.list.SetSize(listWidth, listHeight)
 
-	case tea.KeyPressMsg:
-		if m.list.FilterState() != list.Filtering {
-			switch msg.String() {
-			case "enter":
-				if item, ok := m.list.SelectedItem().(statusItem); ok {
-					return m, func() tea.Msg {
-						return statusSelectedMsg{nibIDs: m.nibIDs, status: item.name}
-					}
-				}
-			case "esc", "backspace":
+	case actionMsg:
+		if cmd, ok := browseList(&m.list, msg.name); ok {
+			return m, cmd
+		}
+		switch msg.name {
+		case actOpen:
+			if item, ok := m.list.SelectedItem().(statusItem); ok {
 				return m, func() tea.Msg {
-					return closeStatusPickerMsg{}
+					return statusSelectedMsg{nibIDs: m.nibIDs, status: item.name}
 				}
 			}
+		case actLeave:
+			return m, func() tea.Msg { return closeStatusPickerMsg{} }
+		}
+		return m, nil
+
+	case clickRowMsg:
+		m.list.Select(msg.row)
+		if !msg.choose {
+			return m, nil
+		}
+		return m.Update(actionMsg{name: actOpen})
+
+	case acceleratorMsg:
+		if selectAccelerator(&m.list, nil, msg.key) {
+			return m.Update(actionMsg{name: actOpen})
+		}
+		return m, nil
+
+	case tea.KeyPressMsg:
+		// Only a filter being typed takes keys; actions do everything else.
+		if m.list.FilterState() != list.Filtering {
+			return m, nil
 		}
 	}
 
@@ -173,7 +204,11 @@ func (m statusPickerModel) View() string {
 	if m.width == 0 {
 		return "Loading..."
 	}
+	return renderPickerModal(m.modal())
+}
 
+// modal is the modal View draws.
+func (m statusPickerModel) modal() pickerModalConfig {
 	var selected string
 	var allDescs []string
 	for _, li := range m.list.Items() {
@@ -191,18 +226,15 @@ func (m statusPickerModel) View() string {
 		nibID = m.nibIDs[0]
 	}
 
-	return renderPickerModal(pickerModalConfig{
+	return pickerModalConfig{
+		Keys:        m.table,
+		Context:     ctxStatusPicker,
 		Title:       "Select Status",
 		NibTitle:    m.nibTitle,
 		NibID:       nibID,
 		ListContent: m.list.View(),
+		Rows:        listRows(m.list),
 		Description: description,
 		Width:       m.width,
-	})
-}
-
-// ModalView returns the picker centered over bgView.
-func (m statusPickerModel) ModalView(bgView string, fullWidth, fullHeight int) string {
-	modal := m.View()
-	return overlayModal(bgView, modal, fullWidth, fullHeight)
+	}
 }

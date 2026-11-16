@@ -1381,7 +1381,9 @@ func (c *Core) mintingVocabulary() (string, int, error) {
 	}
 
 	configPath := c.layout.ConfigPath()
-	stored, err := config.LoadStoreWithUserConfig(c.root)
+	// A user config that does not load only drops its layer, and the prefix
+	// this guards comes from the project config alone.
+	stored, _, err := config.LoadStoreWithUserConfig(c.root)
 	if err != nil {
 		// A failed read is evidence of nothing, least of all that the prefix
 		// changed; a silent fallback would look like the misnaming this catches.

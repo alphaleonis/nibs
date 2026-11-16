@@ -56,11 +56,12 @@ type typeItem struct {
 	description string
 	color       string
 	isCurrent   bool
+	key         string
 }
 
-// typePickerModel is the model for the type picker view: a cursor over items,
-// with first-letter shortcuts.
+// typePickerModel is the model for the type picker view: a cursor over items.
 type typePickerModel struct {
+	table       []action // the keymap in effect
 	items       []typeItem
 	cursor      int
 	nibIDs      []string
@@ -70,7 +71,7 @@ type typePickerModel struct {
 	height      int
 }
 
-func newTypePickerModel(nibIDs []string, nibTitle, currentType string, validTypes []string, width, height int) typePickerModel {
+func newTypePickerModel(table []action, nibIDs []string, nibTitle, currentType string, validTypes []string, width, height int) typePickerModel {
 	types := config.DefaultTypes
 
 	var validSet map[string]bool
@@ -82,6 +83,7 @@ func newTypePickerModel(nibIDs []string, nibTitle, currentType string, validType
 	}
 
 	items := make([]typeItem, 0, len(types))
+	var hints []string
 	cursor := 0
 
 	for _, t := range types {
@@ -98,9 +100,14 @@ func newTypePickerModel(nibIDs []string, nibTitle, currentType string, validType
 			color:       t.Color,
 			isCurrent:   isCurrent,
 		})
+		hints = append(hints, t.Name)
+	}
+	for i, key := range assignAccelerators(table, ctxTypePicker, hints) {
+		items[i].key = key
 	}
 
 	return typePickerModel{
+		table:       table,
 		items:       items,
 		cursor:      cursor,
 		nibIDs:      nibIDs,
@@ -121,39 +128,38 @@ func (m typePickerModel) Update(msg tea.Msg) (typePickerModel, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-			}
-		case "down", "j":
-			if m.cursor < len(m.items)-1 {
-				m.cursor++
-			}
-		case "enter":
-			if m.cursor < len(m.items) {
-				item := m.items[m.cursor]
+	case actionMsg:
+		switch msg.name {
+		case actUp:
+			m.cursor = max(0, m.cursor-1)
+		case actDown:
+			m.cursor = max(0, min(len(m.items)-1, m.cursor+1))
+		case actTop, actPageUp:
+			m.cursor = 0
+		case actBottom, actPageDown:
+			m.cursor = max(0, len(m.items)-1)
+		case actOpen:
+			if item, ok := m.SelectedItem(); ok {
 				return m, func() tea.Msg {
 					return typeSelectedMsg{nibIDs: m.nibIDs, nibType: item.name}
 				}
 			}
-		case "esc", "backspace":
-			return m, func() tea.Msg {
-				return closeTypePickerMsg{}
-			}
-		default:
-			// Single-key shortcut: first letter of type name selects it
-			key := msg.String()
-			if len(key) == 1 {
-				for _, item := range m.items {
-					if strings.HasPrefix(item.name, key) {
-						nibType := item.name
-						return m, func() tea.Msg {
-							return typeSelectedMsg{nibIDs: m.nibIDs, nibType: nibType}
-						}
-					}
-				}
+		case actLeave:
+			return m, func() tea.Msg { return closeTypePickerMsg{} }
+		}
+
+	case clickRowMsg:
+		m.cursor = msg.row
+		if !msg.choose {
+			return m, nil
+		}
+		return m.Update(actionMsg{name: actOpen})
+
+	case acceleratorMsg:
+		for i, item := range m.items {
+			if item.key == msg.key {
+				m.cursor = i
+				return m.Update(actionMsg{name: actOpen})
 			}
 		}
 	}
@@ -173,7 +179,11 @@ func (m typePickerModel) View() string {
 	if m.width == 0 {
 		return "Loading..."
 	}
+	return renderPickerModal(m.modal())
+}
 
+// modal is the modal View draws.
+func (m typePickerModel) modal() pickerModalConfig {
 	var lines []string
 	for i, item := range m.items {
 		var cursor string
@@ -190,7 +200,7 @@ func (m typePickerModel) View() string {
 			currentIndicator = ui.Muted.Render(" (current)")
 		}
 
-		lines = append(lines, cursor+typeText+currentIndicator)
+		lines = append(lines, cursor+renderAccelerator(item.key)+typeText+currentIndicator)
 	}
 	listContent := strings.Join(lines, "\n")
 
@@ -211,18 +221,15 @@ func (m typePickerModel) View() string {
 		nibID = m.nibIDs[0]
 	}
 
-	return renderPickerModal(pickerModalConfig{
+	return pickerModalConfig{
+		Keys:        m.table,
+		Context:     ctxTypePicker,
 		Title:       "Select Type",
 		NibTitle:    m.nibTitle,
 		NibID:       nibID,
 		ListContent: listContent,
+		Rows:        pickerRows{count: len(m.items)},
 		Description: description,
 		Width:       m.width,
-	})
-}
-
-// ModalView returns the picker centered over bgView.
-func (m typePickerModel) ModalView(bgView string, fullWidth, fullHeight int) string {
-	modal := m.View()
-	return overlayModal(bgView, modal, fullWidth, fullHeight)
+	}
 }

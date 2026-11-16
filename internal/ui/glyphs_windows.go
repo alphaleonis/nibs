@@ -9,16 +9,15 @@ import (
 	"golang.org/x/term"
 )
 
-// detectASCIIRequired reports whether stdout is a console whose output codepage
-// is not UTF-8 (65001). Redirected output and a failed codepage query both get
-// UTF-8.
-func detectASCIIRequired() bool {
+// terminalUTF8 reports whether stdout is not a console, or is one whose output
+// codepage is UTF-8 (65001). A failed codepage query also counts as UTF-8.
+func terminalUTF8() bool {
 	if !term.IsTerminal(int(os.Stdout.Fd())) {
-		return false
+		return true
 	}
 	cp, err := windows.GetConsoleOutputCP()
 	if err != nil {
-		return false
+		return true
 	}
-	return cp != 65001
+	return cp == 65001
 }

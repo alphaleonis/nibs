@@ -670,7 +670,7 @@ func storeResolutionRefusalCases() []refusalCase {
 		t.Setenv("NIBS_PATH", "")
 		resetRootPersistentFlags()
 		apply(t)
-		_, _, err := resolveCLIStore()
+		_, _, _, err := resolveCLIStore()
 		resetRootPersistentFlags()
 		if err == nil {
 			t.Fatal("resolveCLIStore accepted the shape this row exists to see refused")

@@ -1,7 +1,10 @@
 package ui
 
 import (
+	"strings"
+
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/viewshape"
 )
 
 // TreeNode represents a node in the nib tree hierarchy.
@@ -43,7 +46,7 @@ func BuildTree(matchedNibs []*nib.Nib, allNibs []*nib.Nib, sortFn func([]*nib.Ni
 
 	// No member of a cycle meets the root rule below, so without a promoted
 	// member the whole cycle is dropped.
-	promoted := promotedCycleRoots(neededNibs)
+	promoted := viewshape.PromotedCycleRoots(neededNibs)
 
 	children := make(map[string][]*nib.Nib)
 	for _, b := range neededNibs {
@@ -73,73 +76,6 @@ func BuildTree(matchedNibs []*nib.Nib, allNibs []*nib.Nib, sortFn func([]*nib.Ni
 	sortFn(roots)
 
 	return buildNodes(roots, children, matchedSet)
-}
-
-// promotedCycleRoots picks the lowest-id member of every parent cycle lying
-// wholly inside nibs, for BuildTree to promote to a root.
-//
-// web/src/lib/tree.ts applies the same rule; keep the two in agreement. Go
-// compares bytes and TypeScript UTF-16 code units, so ids holding
-// supplementary-plane characters can promote different members.
-//
-// Each nib is walked once: unseen -> onPath -> settled.
-func promotedCycleRoots(nibs map[string]*nib.Nib) map[string]bool {
-	const (
-		unseen = iota
-		onPath
-		settled
-	)
-	state := make(map[string]int, len(nibs))
-	promoted := make(map[string]bool)
-
-	for id := range nibs {
-		if state[id] != unseen {
-			continue
-		}
-		// Follow the parent chain until it leaves the set, ends, or revisits
-		// the path.
-		var path []string
-		for cur := id; ; {
-			if state[cur] == onPath {
-				// The cycle is the path from cur onward; entries before it lead
-				// into the cycle.
-				start := 0
-				for i, m := range path {
-					if m == cur {
-						start = i
-						break
-					}
-				}
-				lowest := path[start]
-				for _, m := range path[start+1:] {
-					if m < lowest {
-						lowest = m
-					}
-				}
-				promoted[lowest] = true
-				break
-			}
-			if state[cur] == settled {
-				// Explored already, along with any cycle beyond it.
-				break
-			}
-			state[cur] = onPath
-			path = append(path, cur)
-			b := nibs[cur]
-			if b.Parent == "" {
-				break
-			}
-			if _, ok := nibs[b.Parent]; !ok {
-				break
-			}
-			cur = b.Parent
-		}
-		for _, m := range path {
-			state[m] = settled
-		}
-	}
-
-	return promoted
 }
 
 // addAncestors recursively adds all ancestors of a nib to the needed set.
@@ -174,120 +110,64 @@ func buildNodes(nibs []*nib.Nib, children map[string][]*nib.Nib, matchedSet map[
 // treeIndent is the cell width of one tree connector.
 const treeIndent = 3
 
-func treeBranch() string     { return glyphTreeBranch() }
-func treeLastBranch() string { return glyphTreeLastBranch() }
-func treePipe() string       { return glyphTreePipe() }
-func treeSpace() string      { return glyphTreeSpace() }
-
-// FlatItem represents a flattened tree node with rendering context.
-// Used by TUI to render tree structure in a flat list.
-type FlatItem struct {
-	Nib         *nib.Nib
-	Depth       int    // 0 = root, 1+ = nested
-	IsLast      bool   // last child at this level
-	Matched     bool   // true if nib matched filter (vs. shown for context)
-	TreePrefix  string // pre-computed tree prefix
-	HasChildren bool   // true if this node has children in the tree
-	Collapsed   bool   // true if this node is collapsed (children hidden)
-}
-
-// MaxTreeDepth returns the maximum depth of the flattened tree.
-func MaxTreeDepth(items []FlatItem) int {
-	maxDepth := 0
-	for _, item := range items {
-		if item.Depth > maxDepth {
-			maxDepth = item.Depth
-		}
-	}
-	return maxDepth
-}
-
 // CollapseIndicatorLeaf pads a leaf to the width of the collapse indicators.
 const CollapseIndicatorLeaf = "  "
 
-func CollapseIndicatorCollapsed() string { return glyphCollapseCollapsed() }
-func CollapseIndicatorExpanded() string  { return glyphCollapseExpanded() }
+func CollapseIndicatorCollapsed(ascii bool) string { return glyphCollapseCollapsed(ascii) }
+func CollapseIndicatorExpanded(ascii bool) string  { return glyphCollapseExpanded(ascii) }
 
-// FlattenTreeFiltered converts a tree into a flat slice, skipping children of collapsed nodes.
-// collapsedIDs is the set of node IDs whose children should be hidden.
-func FlattenTreeFiltered(nodes []*TreeNode, collapsedIDs map[string]bool) []FlatItem {
-	var items []FlatItem
-	flattenNodesFiltered(nodes, 0, nil, collapsedIDs, &items)
-	return items
-}
+// TreePrefixes returns the tree connectors and the fold mark each of rows is
+// drawn with, in display order. A row is folded when it has children and
+// folded reports it. ascii draws them in ASCII.
+//
+// rows are the rows a view shows, so a row's siblings are the rows at its depth
+// up to the next shallower row.
+func TreePrefixes(rows []viewshape.Row, folded func(viewshape.Row) bool, ascii bool) []string {
+	// last[i] reports whether no sibling follows rows[i]. Scanning upward,
+	// laterAt[d] holds whether a row at depth d follows before a shallower one.
+	last := make([]bool, len(rows))
+	var laterAt []bool
+	for i := len(rows) - 1; i >= 0; i-- {
+		d := rows[i].Depth
+		for len(laterAt) <= d {
+			laterAt = append(laterAt, false)
+		}
+		last[i] = !laterAt[d]
+		laterAt[d] = true
+		clear(laterAt[d+1:])
+	}
 
-// flattenNodesFiltered recursively flattens tree nodes, skipping children of collapsed nodes.
-func flattenNodesFiltered(nodes []*TreeNode, depth int, ancestry []bool, collapsedIDs map[string]bool, items *[]FlatItem) {
-	for i, node := range nodes {
-		isLast := i == len(nodes)-1
-		hasChildren := len(node.Children) > 0
-		isCollapsed := hasChildren && collapsedIDs[node.Nib.ID]
-
-		var prefix string
-		if depth > 0 {
-			for _, wasLast := range ancestry {
-				if wasLast {
-					prefix += treeSpace()
+	prefixes := make([]string, len(rows))
+	// lastAt[d] is last for the nearest row above at depth d.
+	var lastAt []bool
+	for i, r := range rows {
+		lastAt = append(lastAt[:min(r.Depth, len(lastAt))], last[i])
+		var b strings.Builder
+		if r.Depth > 0 {
+			for _, ancestorLast := range lastAt[1:r.Depth] {
+				if ancestorLast {
+					b.WriteString(glyphTreeSpace(ascii))
 				} else {
-					prefix += treePipe()
+					b.WriteString(glyphTreePipe(ascii))
 				}
 			}
-			if isLast {
-				prefix += treeLastBranch()
+			if last[i] {
+				b.WriteString(glyphTreeLastBranch(ascii))
 			} else {
-				prefix += treeBranch()
+				b.WriteString(glyphTreeBranch(ascii))
 			}
 		}
-
-		if isCollapsed {
-			prefix += CollapseIndicatorCollapsed()
-		} else if hasChildren {
-			prefix += CollapseIndicatorExpanded()
-		} else {
-			prefix += CollapseIndicatorLeaf
+		switch {
+		case r.HasChildren && folded(r):
+			b.WriteString(CollapseIndicatorCollapsed(ascii))
+		case r.HasChildren:
+			b.WriteString(CollapseIndicatorExpanded(ascii))
+		default:
+			b.WriteString(CollapseIndicatorLeaf)
 		}
-
-		*items = append(*items, FlatItem{
-			Nib:         node.Nib,
-			Depth:       depth,
-			IsLast:      isLast,
-			Matched:     node.Matched,
-			TreePrefix:  prefix,
-			HasChildren: hasChildren,
-			Collapsed:   isCollapsed,
-		})
-
-		if hasChildren && !isCollapsed {
-			var newAncestry []bool
-			if depth > 0 {
-				newAncestry = append(ancestry, isLast)
-			}
-			flattenNodesFiltered(node.Children, depth+1, newAncestry, collapsedIDs, items)
-		}
+		prefixes[i] = b.String()
 	}
-}
-
-// HasAnyChildren returns true if any node in the tree has children.
-func HasAnyChildren(nodes []*TreeNode) bool {
-	for _, node := range nodes {
-		if len(node.Children) > 0 {
-			return true
-		}
-		if HasAnyChildren(node.Children) {
-			return true
-		}
-	}
-	return false
-}
-
-// CollectParentIDs collects IDs of all nodes that have children into the provided map.
-func CollectParentIDs(nodes []*TreeNode, ids map[string]bool) {
-	for _, node := range nodes {
-		if len(node.Children) > 0 {
-			ids[node.Nib.ID] = true
-			CollectParentIDs(node.Children, ids)
-		}
-	}
+	return prefixes
 }
 
 // FindNode searches the tree for a node with the given nib ID.

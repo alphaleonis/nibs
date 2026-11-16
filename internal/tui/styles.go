@@ -6,6 +6,7 @@ import (
 	"charm.land/bubbles/v2/list"
 	"charm.land/lipgloss/v2"
 
+	"github.com/alphaleonis/nibs/internal/safetext"
 	"github.com/alphaleonis/nibs/internal/ui"
 )
 
@@ -34,12 +35,16 @@ func clipToWidth(s string, width int) string {
 func maxStatusFooterLines(height int) int { return max(1, height/3) }
 
 // renderStatusMessage colors a footer status message by kind and wraps it to
-// width, cut off after maxLines with an ellipsis. It wraps so that a refusal
+// width, cut off after maxLines with an ellipsis, in ASCII when ascii is set. It wraps so that a refusal
 // wider than the terminal keeps its remedy, at the end, on screen.
 //
 // Lines are trimmed, not padded to width: the list footer appends its update
 // indicator to the last line.
-func renderStatusMessage(msg string, kind statusKind, width, maxLines int) string {
+//
+// It strips msg with safetext.StripText, because a backend error in it can quote
+// a stored id or path.
+func renderStatusMessage(msg string, kind statusKind, width, maxLines int, ascii bool) string {
+	msg = safetext.StripText(msg)
 	wrapWidth := max(minStatusWrapWidth, width)
 	lines := strings.Split(lipgloss.NewStyle().Width(wrapWidth).Render(msg), "\n")
 	for i, line := range lines {
@@ -48,7 +53,8 @@ func renderStatusMessage(msg string, kind statusKind, width, maxLines int) strin
 	if maxLines > 0 && len(lines) > maxLines {
 		lines = lines[:maxLines]
 		last := len(lines) - 1
-		lines[last] = lipgloss.NewStyle().MaxWidth(wrapWidth-1).Render(lines[last]) + "…"
+		mark := ellipsis(ascii)
+		lines[last] = lipgloss.NewStyle().MaxWidth(wrapWidth-lipgloss.Width(mark)).Render(lines[last]) + mark
 	}
 
 	color := ui.ColorSuccess
@@ -62,33 +68,12 @@ func renderStatusMessage(msg string, kind statusKind, width, maxLines int) strin
 	return strings.Join(lines, "\n")
 }
 
-// statusBlock renders a footer status message in at most maxLines rows, or ""
-// when there is none.
-func statusBlock(msg string, kind statusKind, width, maxLines int) string {
-	if msg == "" {
-		return ""
+// ellipsis returns the mark that ends cut text, in ASCII when ascii is set.
+func ellipsis(ascii bool) string {
+	if ascii {
+		return "..."
 	}
-	return renderStatusMessage(msg, kind, width, maxLines)
-}
-
-// blockLines is lipgloss.Height, except that an absent block takes zero rows
-// (lipgloss.Height("") is 1).
-func blockLines(block string) int {
-	if block == "" {
-		return 0
-	}
-	return lipgloss.Height(block)
-}
-
-// helpRowBudget is how many rows the expanded help panel may take on a
-// height-row terminal after holdBack rows for the view above and statusLines
-// rows for the status block.
-//
-// holdBack is that view's floor: the fewest rows it occupies at any height,
-// which differs between the list box and the detail header. Zero or less means
-// no room for the panel; the status message keeps its rows.
-func helpRowBudget(height, holdBack, statusLines int) int {
-	return max(1, height-holdBack) - statusLines
+	return "…"
 }
 
 // applyFilterStyles paints a list's filter prompt and cursor in the primary color.
@@ -104,21 +89,14 @@ var (
 			Foreground(ui.ColorPrimary).
 			Bold(true)
 
-	detailTitleStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("#fff")).
-				Background(ui.ColorPrimary).
-				Padding(0, 1)
-
 	helpStyle = lipgloss.NewStyle().
 			Foreground(ui.ColorMuted)
-
-	// Marks the keybindings the help panel's row budget could not hold.
-	helpHiddenStyle = lipgloss.NewStyle().
-			Foreground(ui.ColorWarning).
-			Italic(true)
 
 	helpKeyStyle = lipgloss.NewStyle().
 			Foreground(ui.ColorPrimary).
 			Bold(true)
+
+	// noteStyle draws a note about what a view shows, such as notInListNote.
+	noteStyle = lipgloss.NewStyle().
+			Foreground(ui.ColorWarning)
 )

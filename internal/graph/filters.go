@@ -7,6 +7,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/viewshape"
 )
 
 // resolveFilterID resolves one id-valued filter argument through the reader,
@@ -131,22 +132,7 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 
 	result := nibs
 
-	result = filterByField(result, filter.Status, func(b *nib.Nib) string { return b.Status })
-	result = excludeByField(result, filter.ExcludeStatus, func(b *nib.Nib) string { return b.Status })
-
-	// Type and Priority filter on the EFFECTIVE value, so a nib that omitted the
-	// field matches as though nib.DefaultType / nib.DefaultPriority were on disk.
-	result = filterByField(result, filter.Type, func(b *nib.Nib) string { return b.EffectiveType() })
-	result = excludeByField(result, filter.ExcludeType, func(b *nib.Nib) string { return b.EffectiveType() })
-
-	result = filterByField(result, filter.Priority, func(b *nib.Nib) string { return b.EffectivePriority() })
-	result = excludeByField(result, filter.ExcludePriority, func(b *nib.Nib) string { return b.EffectivePriority() })
-
-	result = filterByField(result, filter.Estimate, func(b *nib.Nib) string { return b.Estimate })
-	result = excludeByField(result, filter.ExcludeEstimate, func(b *nib.Nib) string { return b.Estimate })
-
-	result = filterBySliceField(result, filter.Tags, func(b *nib.Nib) []string { return b.Tags })
-	result = excludeBySliceField(result, filter.ExcludeTags, func(b *nib.Nib) []string { return b.Tags })
+	result = filterByMetadata(result, metadataFilter(filter))
 
 	// Parent-ness is "the link resolves", not "the field is non-empty" — see
 	// resolvedParent.
@@ -532,6 +518,39 @@ func filterBySiblingID(nibs []*nib.Nib, targetID string, reader NibReader) ([]*n
 	return result, nil
 }
 
+// metadataFilter returns the metadata fields of filter, the ones
+// viewshape.Matches decides.
+func metadataFilter(filter *model.NibFilter) viewshape.Filter {
+	return viewshape.Filter{
+		Type:            filter.Type,
+		ExcludeType:     filter.ExcludeType,
+		Priority:        filter.Priority,
+		ExcludePriority: filter.ExcludePriority,
+		Status:          filter.Status,
+		ExcludeStatus:   filter.ExcludeStatus,
+		Estimate:        filter.Estimate,
+		ExcludeEstimate: filter.ExcludeEstimate,
+		Tags:            filter.Tags,
+		ExcludeTags:     filter.ExcludeTags,
+	}
+}
+
+// filterByMetadata keeps the nibs viewshape.Matches admits, the view shaping's
+// own match, so the server and the views filter these fields alike. An empty
+// filter returns nibs unchanged.
+func filterByMetadata(nibs []*nib.Nib, f viewshape.Filter) []*nib.Nib {
+	if f.IsEmpty() {
+		return nibs
+	}
+	var result []*nib.Nib
+	for _, b := range nibs {
+		if viewshape.Matches(b, f) {
+			result = append(result, b)
+		}
+	}
+	return result
+}
+
 // filterByField keeps nibs whose getter value is any of values.
 func filterByField(nibs []*nib.Nib, values []string, getter func(*nib.Nib) string) []*nib.Nib {
 	if len(values) == 0 {
@@ -546,26 +565,6 @@ func filterByField(nibs []*nib.Nib, values []string, getter func(*nib.Nib) strin
 	var result []*nib.Nib
 	for _, b := range nibs {
 		if valueSet[getter(b)] {
-			result = append(result, b)
-		}
-	}
-	return result
-}
-
-// excludeByField drops nibs whose getter value is any of values.
-func excludeByField(nibs []*nib.Nib, values []string, getter func(*nib.Nib) string) []*nib.Nib {
-	if len(values) == 0 {
-		return nibs
-	}
-
-	valueSet := make(map[string]bool, len(values))
-	for _, v := range values {
-		valueSet[v] = true
-	}
-
-	var result []*nib.Nib
-	for _, b := range nibs {
-		if !valueSet[getter(b)] {
 			result = append(result, b)
 		}
 	}
@@ -636,30 +635,6 @@ func filterBySliceField(nibs []*nib.Nib, values []string, getter func(*nib.Nib) 
 				break
 			}
 		}
-	}
-	return result
-}
-
-// excludeBySliceField drops nibs whose slice field shares ANY value with values.
-func excludeBySliceField(nibs []*nib.Nib, values []string, getter func(*nib.Nib) []string) []*nib.Nib {
-	if len(values) == 0 {
-		return nibs
-	}
-
-	valueSet := make(map[string]bool, len(values))
-	for _, v := range values {
-		valueSet[v] = true
-	}
-
-	var result []*nib.Nib
-outer:
-	for _, b := range nibs {
-		for _, v := range getter(b) {
-			if valueSet[v] {
-				continue outer
-			}
-		}
-		result = append(result, b)
 	}
 	return result
 }
