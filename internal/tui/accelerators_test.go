@@ -140,6 +140,33 @@ var pickerCases = []pickerCase{
 		view: func(a *App) string { return a.viewPicker.View() },
 		rows: func(*App) []string { return []string{"Tree", "Flat", "Milestones", "Areas"} },
 	},
+	{
+		name: "filter", ctx: ctxFilterPicker, open: "F", choose: "enter",
+		view: func(a *App) string { return a.filterPicker.View() },
+		rows: func(*App) []string { return []string{"Status", "Type", "Priority", "Estimate", "Tags"} },
+	},
+	{
+		name: "filter status", ctx: ctxFilterValuesPicker, open: "F s", choose: "space",
+		view: func(a *App) string { return a.filterValues.View() },
+		rows: func(*App) []string {
+			rows := []string{"Open"}
+			for _, s := range []string{"draft", "todo", "in-progress", "deferred", "completed", "scrapped"} {
+				rows = append(rows, "[ ] "+s)
+			}
+			return rows
+		},
+	},
+	{
+		name: "filter tags", ctx: ctxFilterValuesPicker, open: "F a", choose: "space",
+		view: func(a *App) string { return a.filterValues.View() },
+		rows: func(*App) []string {
+			rows := []string{"[ ] quux"}
+			for i := range 20 {
+				rows = append(rows, fmt.Sprintf("[ ] tag%02d", i))
+			}
+			return rows
+		},
+	},
 }
 
 // openPicker returns an app with tc's picker open on nib-4.
@@ -272,6 +299,10 @@ func openedState(tc pickerCase) viewState {
 		return viewViewPicker
 	case ctxMilestonePicker, ctxAreaPicker:
 		return viewAssignPicker
+	case ctxFilterPicker:
+		return viewFilterPicker
+	case ctxFilterValuesPicker:
+		return viewFilterValuesPicker
 	}
 	return viewTypePicker
 }

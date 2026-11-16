@@ -41,6 +41,8 @@ const (
 	viewAssignPicker
 	viewColumnPicker
 	viewViewPicker
+	viewFilterPicker
+	viewFilterValuesPicker
 	viewCreateModal
 	viewCreateTypePicker
 	viewConfirmDialog
@@ -124,6 +126,8 @@ type App struct {
 	assignPicker   assignPickerModel
 	columnPicker   columnPickerModel
 	viewPicker     viewPickerModel
+	filterPicker   filterPickerModel
+	filterValues   filterValuesPickerModel
 	createModal    createModalModel
 	confirmDialog  confirmDialog
 	palette        paletteModel
@@ -325,6 +329,10 @@ func (a *App) keyContext() keyContext {
 		return ctxColumnPicker
 	case viewViewPicker:
 		return ctxViewPicker
+	case viewFilterPicker:
+		return ctxFilterPicker
+	case viewFilterValuesPicker:
+		return ctxFilterValuesPicker
 	case viewCreateModal:
 		return ctxTextInput
 	case viewConfirmDialog:
@@ -458,6 +466,14 @@ func (a *App) runAction(act *action) tea.Cmd {
 		a.viewPicker = newViewPickerModel(a.keys, a.list.level, a.list.prevLevel, a.width, a.height)
 		a.openModal(viewViewPicker)
 		return nil
+	case actFilterPick:
+		a.filterPicker = newFilterPickerModel(a.keys.actions, a.list.query, a.list.areas, a.width)
+		a.openModal(viewFilterPicker)
+		return nil
+	}
+	if field, ok := filterFieldOf(act.Name); ok {
+		a.openFilterValues(field)
+		return nil
 	}
 	if msg := a.viewMsg(act.Name); msg != nil {
 		return a.showView(msg)
@@ -496,6 +512,12 @@ func (a *App) openModal(state viewState) {
 		a.previousState = a.state
 	}
 	a.state = state
+}
+
+// openFilterValues opens field's values picker, checked from the list's query.
+func (a *App) openFilterValues(field filterField) {
+	a.filterValues = newFilterValuesPickerModel(a.keys.actions, field, a.list.query, a.list.areas, a.list.storeTags(), a.width, a.height)
+	a.openModal(viewFilterValuesPicker)
 }
 
 // runPaletteEntry closes the palette and runs its highlighted action in the
@@ -780,6 +802,22 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case closeViewPickerMsg:
 		a.state = a.previousState
 		return a, nil
+
+	case filterFieldChosenMsg:
+		// The values picker opens over the view F was typed in, and returns there.
+		a.state = a.previousState
+		a.openFilterValues(msg.field)
+		return a, nil
+
+	case closeFilterPickerMsg:
+		a.state = a.previousState
+		return a, nil
+
+	case filterValuesChosenMsg:
+		a.state = a.previousState
+		prev := a.list.focusedRowID()
+		a.list.setQuery(withFieldValues(a.list.query, a.list.areas, msg.field, msg.values))
+		return a, a.list.cursorChangedCmd(prev)
 
 	case modifyChosenMsg:
 		// The field's picker opens over the view m was typed in, and returns there.
@@ -1086,6 +1124,14 @@ func (a *App) updateActiveView(msg tea.Msg) tea.Cmd {
 		a.columnPicker, cmd = a.columnPicker.Update(msg)
 	case viewViewPicker:
 		a.viewPicker, cmd = a.viewPicker.Update(msg)
+	case viewFilterPicker:
+		var chosen tea.Msg
+		a.filterPicker, chosen = a.filterPicker.Update(msg)
+		if chosen != nil {
+			cmd = a.showView(chosen)
+		}
+	case viewFilterValuesPicker:
+		a.filterValues, cmd = a.filterValues.Update(msg)
 	case viewBlockingPicker:
 		a.blockingPicker, cmd = a.blockingPicker.Update(msg)
 	case viewCreateModal:
@@ -1140,6 +1186,10 @@ func (a *App) renderState(state viewState) string {
 		return a.columnPicker.ModalView(a.getBackgroundView(), a.width, a.height)
 	case viewViewPicker:
 		return a.viewPicker.ModalView(a.getBackgroundView(), a.width, a.height)
+	case viewFilterPicker:
+		return a.filterPicker.ModalView(a.getBackgroundView(), a.width, a.height)
+	case viewFilterValuesPicker:
+		return a.filterValues.ModalView(a.getBackgroundView(), a.width, a.height)
 	case viewBlockingPicker:
 		return a.blockingPicker.ModalView(a.getBackgroundView(), a.width, a.height)
 	case viewCreateModal:

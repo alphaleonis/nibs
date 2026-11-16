@@ -203,18 +203,23 @@ func byteOffset(s string, i int) int {
 // as the web's NIB_SEARCH_LIMIT caps them.
 const nibSearchLimit = 8
 
-// completionVocabulary returns what completion offers beside the token
-// tables: the tags of the nibs, the declared areas, and nibs from a search of
-// the store.
-func (m listModel) completionVocabulary() filterlang.Vocabulary {
+// storeTags returns the distinct tags of the nibs, sorted.
+func (m listModel) storeTags() []string {
 	var tags []string
 	for _, n := range m.nibs {
 		tags = append(tags, n.Tags...)
 	}
 	slices.Sort(tags)
+	return slices.Compact(tags)
+}
+
+// completionVocabulary returns what completion offers beside the token
+// tables: the tags of the nibs, the declared areas, and nibs from a search of
+// the store.
+func (m listModel) completionVocabulary() filterlang.Vocabulary {
 	backend := m.backend
 	return filterlang.Vocabulary{
-		Tags:  slices.Compact(tags),
+		Tags:  m.storeTags(),
 		Areas: m.areas,
 		SearchNibs: func(fragment string, types []string) []filterlang.NibSuggestion {
 			nibs, err := backend.ListNibs(context.Background(), &model.NibFilter{Search: &fragment, Type: types})

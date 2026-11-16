@@ -63,3 +63,20 @@ func expandValue(f Field, value string) []string {
 	}
 	return []string{value}
 }
+
+// Values returns the values of an enumerated value set in canonical order, or
+// nil for TagValues.
+func Values(set ValueSet) []string {
+	return slices.Clone(valueOrder[set])
+}
+
+// GroupMembers returns the values the group name stands for in set, or nil
+// when set has no group of that name.
+func GroupMembers(set ValueSet, name string) []string {
+	for _, g := range valueGroups[set] {
+		if g.name == name {
+			return slices.Clone(g.members)
+		}
+	}
+	return nil
+}

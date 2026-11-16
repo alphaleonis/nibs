@@ -29,6 +29,10 @@ const (
 	ctxModifyPicker
 	ctxColumnPicker
 	ctxViewPicker
+	// ctxFilterPicker lists the fields a quick filter sets, and
+	// ctxFilterValuesPicker checks the values of one of them.
+	ctxFilterPicker
+	ctxFilterValuesPicker
 	ctxConfirm
 	// ctxFilterInput is a picker's filter while it is being typed.
 	ctxFilterInput
@@ -45,26 +49,28 @@ const (
 )
 
 var keyContextNames = [numKeyContexts]string{
-	ctxList:            "list",
-	ctxNibRelations:    "nib view relations",
-	ctxNibBody:         "nib view body",
-	ctxStatusPicker:    "status picker",
-	ctxTypePicker:      "type picker",
-	ctxParentPicker:    "parent picker",
-	ctxBlockingPicker:  "blocking picker",
-	ctxPriorityPicker:  "priority picker",
-	ctxEstimatePicker:  "estimate picker",
-	ctxMilestonePicker: "milestone picker",
-	ctxAreaPicker:      "area picker",
-	ctxModifyPicker:    "modify picker",
-	ctxColumnPicker:    "column picker",
-	ctxViewPicker:      "view picker",
-	ctxConfirm:         "confirm dialog",
-	ctxFilterInput:     "filter input",
-	ctxFilterBox:       "filter box",
-	ctxFilterMenu:      "filter completions",
-	ctxTextInput:       "text input",
-	ctxPalette:         "action palette",
+	ctxList:               "list",
+	ctxNibRelations:       "nib view relations",
+	ctxNibBody:            "nib view body",
+	ctxStatusPicker:       "status picker",
+	ctxTypePicker:         "type picker",
+	ctxParentPicker:       "parent picker",
+	ctxBlockingPicker:     "blocking picker",
+	ctxPriorityPicker:     "priority picker",
+	ctxEstimatePicker:     "estimate picker",
+	ctxMilestonePicker:    "milestone picker",
+	ctxAreaPicker:         "area picker",
+	ctxModifyPicker:       "modify picker",
+	ctxColumnPicker:       "column picker",
+	ctxViewPicker:         "view picker",
+	ctxFilterPicker:       "filter picker",
+	ctxFilterValuesPicker: "filter values picker",
+	ctxConfirm:            "confirm dialog",
+	ctxFilterInput:        "filter input",
+	ctxFilterBox:          "filter box",
+	ctxFilterMenu:         "filter completions",
+	ctxTextInput:          "text input",
+	ctxPalette:            "action palette",
 }
 
 func (c keyContext) String() string {
@@ -125,6 +131,12 @@ const (
 	actViewNext         actionName = "view.next"
 	actViewPrevious     actionName = "view.previous"
 	actFilter           actionName = "filter.text"
+	actFilterPick       actionName = "filter.pick"
+	actFilterStatus     actionName = "filter.status"
+	actFilterType       actionName = "filter.type"
+	actFilterPriority   actionName = "filter.priority"
+	actFilterEstimate   actionName = "filter.estimate"
+	actFilterTags       actionName = "filter.tags"
 	actFilterApply      actionName = "filter.apply"
 	actComplete         actionName = "filter.complete"
 	actCompleteNext     actionName = "filter.complete_next"
@@ -179,7 +191,7 @@ var (
 	nibContexts   = []keyContext{ctxList, ctxNibRelations, ctxNibBody}
 	nibViewCtx    = []keyContext{ctxNibRelations, ctxNibBody}
 	listPickers   = []keyContext{ctxStatusPicker, ctxParentPicker, ctxBlockingPicker, ctxPriorityPicker, ctxEstimatePicker, ctxMilestonePicker, ctxAreaPicker}
-	allPickers    = append([]keyContext{ctxTypePicker, ctxModifyPicker, ctxColumnPicker, ctxViewPicker}, listPickers...)
+	allPickers    = append([]keyContext{ctxTypePicker, ctxModifyPicker, ctxColumnPicker, ctxViewPicker, ctxFilterPicker, ctxFilterValuesPicker}, listPickers...)
 	browsing      = slices.Concat(nibContexts, allPickers)
 	everyContext  = allKeyContexts()
 	filterTargets = slices.Concat([]keyContext{ctxList}, listPickers)
@@ -244,7 +256,7 @@ func labelOpen(st actionState) string {
 		return "follow"
 	case ctxNibBody:
 		return "open"
-	case ctxBlockingPicker, ctxColumnPicker:
+	case ctxBlockingPicker, ctxColumnPicker, ctxFilterValuesPicker:
 		return "apply"
 	}
 	return "choose"
@@ -387,7 +399,7 @@ var defaultActions = []action{
 	{Name: actPaletteClose, Group: "Go", Desc: "close the palette", Contexts: []keyContext{ctxPalette}, Keys: []string{"esc"},
 		Hint: hintAlways, Label: label("close")},
 
-	{Name: actSelect, Group: "Edit", Desc: "select", Contexts: []keyContext{ctxList, ctxBlockingPicker, ctxColumnPicker}, Keys: []string{"space"},
+	{Name: actSelect, Group: "Edit", Desc: "select", Contexts: []keyContext{ctxList, ctxBlockingPicker, ctxColumnPicker, ctxFilterValuesPicker}, Keys: []string{"space"},
 		Hint: func(st actionState) bool { return st.ctx != ctxList }, Label: label("toggle")},
 	{Name: actCreate, Group: "Edit", Desc: "create", Contexts: []keyContext{ctxList}, Keys: []string{"n"}, Hint: hintOnFocused},
 	{Name: actEdit, Group: "Edit", Desc: "edit in $EDITOR", Contexts: nibContexts, Keys: []string{"e"},
@@ -423,6 +435,12 @@ var defaultActions = []action{
 	{Name: actViewPrevious, Group: "View", Desc: "show the previous view", Contexts: []keyContext{ctxList}},
 
 	{Name: actFilter, Group: "Find", Desc: "filter", Contexts: filterTargets, Keys: []string{"/"}, Hint: hintFilter},
+	{Name: actFilterPick, Group: "Find", Desc: "filter by a field", Contexts: []keyContext{ctxList}, Keys: []string{"F"}},
+	{Name: actFilterStatus, Group: "Find", Desc: "filter by status", Contexts: []keyContext{ctxList}},
+	{Name: actFilterType, Group: "Find", Desc: "filter by type", Contexts: []keyContext{ctxList}},
+	{Name: actFilterPriority, Group: "Find", Desc: "filter by priority", Contexts: []keyContext{ctxList}},
+	{Name: actFilterEstimate, Group: "Find", Desc: "filter by estimate", Contexts: []keyContext{ctxList}},
+	{Name: actFilterTags, Group: "Find", Desc: "filter by tags", Contexts: []keyContext{ctxList}},
 	{Name: actFilterApply, Group: "Find", Desc: "apply the filter", Contexts: []keyContext{ctxFilterInput, ctxFilterBox}, Keys: []string{"up", "down"}},
 	{Name: actInputAccept, Group: "Find", Desc: "accept", Contexts: textInputs, Keys: []string{"enter"}, Hint: hintAlways, Label: labelAccept},
 	{Name: actInputCancel, Group: "Find", Desc: "cancel, or clear the filter box", Contexts: []keyContext{ctxFilterInput, ctxFilterBox, ctxTextInput}, Keys: []string{"esc"},

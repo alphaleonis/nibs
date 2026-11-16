@@ -35,6 +35,7 @@ var pickerOpeners = map[keyContext][]actionName{
 	ctxBlockingPicker: {actBlocking},
 	ctxPriorityPicker: {actPriority},
 	ctxEstimatePicker: {actEstimate},
+	ctxFilterPicker:   {actFilterPick},
 }
 
 // modifyRowFields are the pickers the modify picker's rows open, by row label.
@@ -52,17 +53,23 @@ var modifyRowFields = map[keyContext]string{
 func openerKeys(table []action, ctx keyContext) map[string]bool {
 	keys := map[string]bool{}
 	for _, name := range pickerOpeners[ctx] {
-		if a := findAction(table, name); a != nil {
-			for _, binding := range a.Keys {
-				fields := strings.Fields(binding)
-				keys[fields[len(fields)-1]] = true
-			}
-		}
+		addBindingEnds(keys, table, name)
 	}
 	if label, ok := modifyRowFields[ctx]; ok {
 		keys[modifyRowKey(table, label)] = true
 	}
 	return keys
+}
+
+// addBindingEnds adds the last key of each of name's bindings under table to
+// keys.
+func addBindingEnds(keys map[string]bool, table []action, name actionName) {
+	if a := findAction(table, name); a != nil {
+		for _, binding := range a.Keys {
+			fields := strings.Fields(binding)
+			keys[fields[len(fields)-1]] = true
+		}
+	}
 }
 
 // modifyRowKey returns the modify picker's accelerator for the row labeled
@@ -100,7 +107,13 @@ func freeAccelerators(table []action, ctx keyContext) []string {
 // first free letter of its hint, else the first free key left in the pool. A
 // row gets "" once the free keys run out.
 func assignAccelerators(table []action, ctx keyContext, hints []string) []string {
-	free := freeAccelerators(table, ctx)
+	return assignFrom(freeAccelerators(table, ctx), hints)
+}
+
+// assignFrom gives each row a distinct key of free: the first one among the
+// letters of its hint, else the first one left. A row gets "" once the keys
+// run out.
+func assignFrom(free, hints []string) []string {
 	used := map[string]bool{}
 	keys := make([]string, len(hints))
 	for i, hint := range hints {

@@ -224,3 +224,21 @@ func moduleRoot(t *testing.T) string {
 		dir = parent
 	}
 }
+
+// The exported value lists are what a token parses to and serializes from.
+func TestValuesAndGroupMembersAgreeWithParse(t *testing.T) {
+	all, _ := Parse("status:open,closed")
+	if got := Values(StatusValues); !slices.Equal(got, all.Status) {
+		t.Errorf("Values(StatusValues) = %v, want %v", got, all.Status)
+	}
+	open, _ := Parse("status:open")
+	if got := GroupMembers(StatusValues, config.StatusGroupOpen); !slices.Equal(got, open.Status) {
+		t.Errorf("GroupMembers(open) = %v, want %v", got, open.Status)
+	}
+	if got := Serialize(model.NibFilter{Status: GroupMembers(StatusValues, config.StatusGroupOpen)}, nil); got != "status:open" {
+		t.Errorf("the open members serialize as %q, want status:open", got)
+	}
+	if Values(TagValues) != nil || GroupMembers(TypeValues, "open") != nil {
+		t.Error("a set without values or groups returns some")
+	}
+}
