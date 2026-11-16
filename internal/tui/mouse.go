@@ -2,9 +2,44 @@ package tui
 
 import (
 	"slices"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 )
+
+// doubleClickInterval is the longest time between the two clicks of a double
+// click.
+const doubleClickInterval = 500 * time.Millisecond
+
+// leftClick is a left click that a second one can pair with into a double
+// click; see App.pairClick. The zero leftClick is no click.
+type leftClick struct {
+	at   time.Time
+	x, y int
+	// pre is what the cell showed when the click came, and target what it
+	// showed once the click had acted. settled is false until then; see
+	// App.settleClick.
+	pre     clickTarget
+	target  clickTarget
+	settled bool
+	// swallow is whether a quick second click on this cell is ignored, because
+	// it would act on something the user did not aim at. It is set once the
+	// click changed what its cell shows, or up front for a picker row, which
+	// closes on a later message.
+	swallow bool
+}
+
+// clickTarget is what a cell shows, as far as a double click tells one thing
+// on screen from another.
+type clickTarget struct {
+	state  viewState
+	area   hitArea
+	docked bool   // see hit.docked
+	row    int    // see hit.row; zero for a list row, which rowID names
+	rowID  string // a list row's id; see rowIDOf
+	fold   bool   // see hit.fold
+	nib    string // the id of the nib a nib view there shows
+}
 
 // hitArea is the part of the screen a cell belongs to.
 type hitArea uint8
@@ -133,9 +168,11 @@ func (a *App) modalOf(state viewState) (view string, rowAt func(line int) (int, 
 	return p.View(), func(line int) (int, bool) { return pickerModalRowAt(p.modal(), line) }, true
 }
 
-// handleMouse acts on a left click or a turn of the wheel at the cell hitAt
-// reads. Other buttons, releases and motion do nothing, and so does any mouse
-// message while the mouse is off.
+// handleMouse acts on a left click, a double click or a turn of the wheel at
+// the cell hitAt reads. A second click that makes no double click, or whose
+// double click finds its target no longer current, acts as a single click.
+// Other buttons, releases and motion do nothing, and so does any mouse message
+// while the mouse is off.
 func (a *App) handleMouse(msg tea.MouseMsg) tea.Cmd {
 	if !a.mouse {
 		return nil
@@ -143,9 +180,22 @@ func (a *App) handleMouse(msg tea.MouseMsg) tea.Cmd {
 	m := msg.Mouse()
 	switch msg.(type) {
 	case tea.MouseClickMsg:
-		if m.Button == tea.MouseLeft {
-			return a.click(a.hitAt(m.X, m.Y))
+		if m.Button != tea.MouseLeft {
+			a.lastClick = leftClick{}
+			return nil
 		}
+		at, h := a.now(), a.hitAt(m.X, m.Y)
+		target := a.targetOf(h)
+		switch first, pair := a.pairClick(at, m.X, m.Y, target); pair {
+		case pairSwallowed:
+			return nil
+		case pairDouble:
+			if cmd, acted := a.doubleClick(first); acted {
+				return cmd
+			}
+		}
+		a.lastClick = leftClick{at: at, x: m.X, y: m.Y, pre: target, swallow: h.area == hitModalRow}
+		return a.click(h)
 	case tea.MouseWheelMsg:
 		switch m.Button {
 		case tea.MouseWheelDown:
@@ -157,19 +207,153 @@ func (a *App) handleMouse(msg tea.MouseMsg) tea.Cmd {
 	return nil
 }
 
-// click moves the list cursor to a clicked row, focuses a clicked pane or
-// region, and chooses a clicked picker row. A click anywhere else, outside
-// an open modal included, does nothing.
+// targetOf returns what the cell of h shows now.
+func (a *App) targetOf(h hit) clickTarget {
+	t := clickTarget{state: a.state, area: h.area, docked: h.docked, row: h.row, fold: h.fold}
+	if h.area == hitListRow {
+		t.row, t.rowID = 0, h.rowID
+	}
+	if h.onNibView() {
+		view := &a.expanded
+		if h.docked {
+			view = &a.docked
+		}
+		if view.nib != nil {
+			t.nib = view.nib.ID
+		}
+	}
+	return t
+}
+
+// settleClick runs after each message. A key, a wheel turn or a resize ends
+// the latest click's chance to pair. So does a later change of the view state,
+// unless the click swallows. After the click's own message, it stores what the
+// cell shows, and the click swallows when its action changed that, the view
+// state included.
+func (a *App) settleClick(msg tea.Msg, before viewState) {
+	c := &a.lastClick
+	if c.at.IsZero() {
+		return
+	}
+	switch msg.(type) {
+	case tea.KeyPressMsg, tea.MouseWheelMsg, tea.WindowSizeMsg:
+		a.lastClick = leftClick{}
+		return
+	}
+	if c.settled {
+		if a.state != before && !c.swallow {
+			a.lastClick = leftClick{}
+		}
+		return
+	}
+	c.target, c.settled = a.targetOf(a.hitAt(c.x, c.y)), true
+	if c.target != c.pre {
+		c.swallow = true
+	}
+}
+
+// clickPair is how a left click pairs with the click before it.
+type clickPair uint8
+
+const (
+	pairNone      clickPair = iota // a single click
+	pairDouble                     // the second click of a double click
+	pairSwallowed                  // a second click that does nothing; see leftClick.swallow
+)
+
+// pairClick returns how a left click at time at on cell (x, y), which shows
+// target, pairs with the latest click, and that click's target. Two left
+// clicks within doubleClickInterval pair when the first swallows and they
+// share a cell, or when they hit one target: the same cell, or two cells of
+// one list row. A click never makes a double click while a box being typed in
+// takes the keys. pairClick ends the latest click's chance to pair.
+func (a *App) pairClick(at time.Time, x, y int, target clickTarget) (clickTarget, clickPair) {
+	first := a.lastClick
+	a.lastClick = leftClick{}
+	if !first.settled {
+		return clickTarget{}, pairNone
+	}
+	if gap := at.Sub(first.at); gap < 0 || gap > doubleClickInterval {
+		return clickTarget{}, pairNone
+	}
+	sameCell := x == first.x && y == first.y
+	switch {
+	case first.swallow && sameCell:
+		return clickTarget{}, pairSwallowed
+	case slices.Contains(textInputs, a.keyContext()):
+		return clickTarget{}, pairNone
+	case target != first.target || !sameCell && target.area != hitListRow:
+		return clickTarget{}, pairNone
+	}
+	return first.target, pairDouble
+}
+
+// doubleClick acts on a double click on target, what the first click's cell
+// showed once that click had acted as a single one. On a list row off its
+// fold mark, or on the docked view, it expands the nib view as the open action
+// does there. Anywhere else, a fold mark included, it does nothing more, so
+// the second click repeats nothing.
+//
+// It reports false, and does nothing, when target is no longer current: the
+// view state changed, the list cursor left the row, or the nib view shows
+// another nib or is gone.
+func (a *App) doubleClick(target clickTarget) (tea.Cmd, bool) {
+	if a.state != target.state {
+		return nil, false
+	}
+	var msg tea.Msg
+	switch {
+	case target.area == hitListRow && !target.fold:
+		if a.list.focusedRowID() != target.rowID {
+			return nil, false
+		}
+		msg = a.list.viewMsg(actOpen)
+	case target.docked && isNibViewArea(target.area):
+		if a.dockPlacement() == "" || a.docked.nib == nil || a.docked.nib.ID != target.nib {
+			return nil, false
+		}
+		msg = a.docked.expandMsg()
+	case isNibViewArea(target.area):
+		if a.expanded.nib == nil || a.expanded.nib.ID != target.nib {
+			return nil, false
+		}
+	}
+	if msg == nil {
+		return nil, true
+	}
+	return a.showView(msg), true
+}
+
+// onNibView reports whether h is in a nib view.
+func (h hit) onNibView() bool { return isNibViewArea(h.area) }
+
+// isNibViewArea reports whether area is part of a nib view.
+func isNibViewArea(area hitArea) bool {
+	switch area {
+	case hitNibView, hitNibBody, hitNibRelations, hitNibRelation:
+		return true
+	}
+	return false
+}
+
+// click moves the list cursor to a clicked row, folds or unfolds a row whose
+// fold mark is clicked, focuses a clicked pane or region, follows a clicked
+// relation as the open action does, and chooses a clicked picker row. A
+// click anywhere else, outside an open modal included, does nothing.
 //
 // While a box being typed in takes the keys, a click leaves them there: it
 // moves the list or picker cursor to a clicked row without choosing it, and a
-// click on the docked view does nothing.
+// click on the docked view does nothing. A fold mark still folds then.
 func (a *App) click(h hit) tea.Cmd {
 	typing := slices.Contains(textInputs, a.keyContext())
 	switch h.area {
 	case hitListRow:
 		a.docked.active = false
-		a.list.list.Select(h.row)
+		if h.fold {
+			a.list.toggleFold(h.rowID)
+		} else {
+			a.list.list.Select(h.row)
+		}
 		a.followCursor()
 	case hitList:
 		a.docked.active = false
@@ -189,6 +373,9 @@ func (a *App) click(h hit) tea.Cmd {
 			view.focus = regionRelations
 		case hitNibRelation:
 			view.focus, view.cursor = regionRelations, h.row
+			if msg := view.viewMsg(actOpen); msg != nil {
+				return a.showView(msg)
+			}
 		}
 	case hitModalRow:
 		return a.updateActiveView(clickRowMsg{row: h.row, choose: !typing})

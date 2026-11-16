@@ -273,17 +273,32 @@ func (m listModel) folded(r viewshape.Row) bool {
 	return m.state().collapsedSections[r.Section]
 }
 
+// foldsOf returns the current view's folds that hold the row of id, and the
+// key id has there.
+func (m listModel) foldsOf(id string) (folds map[string]bool, key string) {
+	if section, ok := strings.CutPrefix(id, sectionRowPrefix); ok {
+		return m.state().collapsedSections, section
+	}
+	return m.collapsed(), id
+}
+
 // setFold folds or unfolds the row of id in the current view.
 func (m listModel) setFold(id string, fold bool) {
-	folds, key := m.collapsed(), id
-	if section, ok := strings.CutPrefix(id, sectionRowPrefix); ok {
-		folds, key = m.state().collapsedSections, section
-	}
+	folds, key := m.foldsOf(id)
 	if fold {
 		folds[key] = true
 	} else {
 		delete(folds, key)
 	}
+}
+
+// toggleFold folds the row of id when it is unfolded, and unfolds it
+// otherwise. The cursor stays on its row, or moves to the folded row when the
+// fold hides the cursor's row.
+func (m *listModel) toggleFold(id string) {
+	folds, key := m.foldsOf(id)
+	m.setFold(id, !folds[key])
+	m.reshape(m.focusedRowID())
 }
 
 // queryText is the query being typed, or else the applied query.

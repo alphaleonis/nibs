@@ -428,10 +428,7 @@ func (m *nibViewModel) viewMsg(name actionName) tea.Msg {
 		return returnToListMsg{}
 	case actOpen:
 		if m.focused() == regionBody {
-			if m.docked && m.nib != nil {
-				return selectNibMsg{nib: m.nib}
-			}
-			return nil
+			return m.expandMsg()
 		}
 		if r := m.selectedRelation(); r != nil {
 			return followNibMsg{id: r.ID}
@@ -457,6 +454,15 @@ func (m *nibViewModel) viewMsg(name actionName) tea.Msg {
 		return openModifyPickerMsg{targets: modifyTargets{nibs: []*nib.Nib{n}, title: n.Title}}
 	case actBlocking:
 		return openBlockingPickerMsg{nibID: n.ID, nibTitle: n.Title, currentBlocking: computeCurrentBlocking(m.backend, n.ID)}
+	}
+	return nil
+}
+
+// expandMsg returns the message that expands a docked view's nib, or nil for
+// the expanded view or a view without a nib.
+func (m *nibViewModel) expandMsg() tea.Msg {
+	if m.docked && m.nib != nil {
+		return selectNibMsg{nib: m.nib}
 	}
 	return nil
 }

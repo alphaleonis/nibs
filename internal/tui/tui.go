@@ -147,6 +147,10 @@ type App struct {
 	height       int
 	// mouse is whether the terminal reports the mouse; see handleMouse.
 	mouse bool
+	// now is the clock that times double clicks.
+	now func() time.Time
+	// lastClick is the latest left click; see leftClick.
+	lastClick leftClick
 
 	// The keys typed so far of a sequence such as "g g", or "" when none are.
 	pendingKey string
@@ -187,6 +191,7 @@ func New(backend Backend, cfg *config.Config, user config.UserLayer, version str
 		config:  cfg,
 		list:    newListModel(backend, cfg),
 		version: version,
+		now:     time.Now,
 	}
 	a.applyUserLayer(user)
 	return a
@@ -539,11 +544,14 @@ func (a *App) runPaletteEntry() tea.Cmd {
 }
 
 // Update handles msg, brings the pin and the nib views' notInList up to date
-// with it, then saves the view and the filter query when either changed.
+// with it, settles the latest click (see App.settleClick), then saves the view
+// and the filter query when either changed.
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	before := a.state
 	model, cmd := a.update(msg)
 	a.syncPin()
 	a.noteListMembership()
+	a.settleClick(msg, before)
 	a.remember()
 	return model, cmd
 }
