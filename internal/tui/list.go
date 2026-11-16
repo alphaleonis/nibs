@@ -525,6 +525,28 @@ func (m *listModel) showLevel(level viewshape.Level) {
 	m.pruneMarks()
 }
 
+// restoreView shows view's level and applies view's query, before the first
+// load shapes any rows.
+func (m *listModel) restoreView(view rememberedView) {
+	m.level, m.prevLevel = view.level, view.level
+	m.columns = m.columnsByView[levelViews[view.level]]
+	if view.query != "" {
+		m.list.SetFilterText(view.query)
+	}
+}
+
+// shownView returns the view shown and its applied text query, and false
+// while a query is being typed.
+func (m listModel) shownView() (rememberedView, bool) {
+	switch m.list.FilterState() {
+	case list.Filtering:
+		return rememberedView{}, false
+	case list.FilterApplied:
+		return rememberedView{level: m.level, query: m.list.FilterValue()}, true
+	}
+	return rememberedView{level: m.level}, true
+}
+
 // stepLevel shows the view step places after the current one in levels,
 // wrapping around at either end.
 func (m *listModel) stepLevel(step int) {

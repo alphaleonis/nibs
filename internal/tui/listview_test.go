@@ -34,10 +34,29 @@ func sampleApp(t *testing.T, width int) *App {
 // sampleAppWithUser is sampleApp with user as the user config.
 func sampleAppWithUser(t *testing.T, width int, user config.UserLayer) *App {
 	t.Helper()
+	backend, cfg := sampleBackend(t, sampleProject(t))
+	app := New(backend, cfg, user, "dev")
+	initCmd := app.Init()
+	app.Update(tea.WindowSizeMsg{Width: width, Height: listHeight})
+	processCmd(app, initCmd)
+	return app
+}
+
+// sampleProject returns a copy of the sample fixture's project, in a
+// directory named sample-project.
+func sampleProject(t *testing.T) string {
+	t.Helper()
 	project := filepath.Join(t.TempDir(), "sample-project")
 	if err := os.Rename(fixtures.CopySampleProject(t), project); err != nil {
 		t.Fatalf("moving the fixture copy: %v", err)
 	}
+	return project
+}
+
+// sampleBackend returns a loaded backend on the store of project, and the
+// store's config.
+func sampleBackend(t *testing.T, project string) (Backend, *config.Config) {
+	t.Helper()
 	storeDir := fixtures.NibsPath(project)
 	cfg, err := config.LoadFromStore(storeDir)
 	if err != nil {
@@ -49,11 +68,7 @@ func sampleAppWithUser(t *testing.T, width int, user config.UserLayer) *App {
 		t.Fatalf("load core: %v", err)
 	}
 	resolver := &graph.Resolver{Reader: core, Writer: core, Validator: core, Blocking: core, Orderer: graph.NewOrderer(core, core)}
-	app := New(NewRealBackend(core, resolver), cfg, user, "dev")
-	initCmd := app.Init()
-	app.Update(tea.WindowSizeMsg{Width: width, Height: listHeight})
-	processCmd(app, initCmd)
-	return app
+	return NewRealBackend(core, resolver), cfg
 }
 
 // plainView is the screen as text, with every color escape removed.

@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
@@ -192,9 +194,14 @@ type App struct {
 	editingNibModTime time.Time
 
 	version string // running binary version, for the update check
+
+	// The state file the view and the filter query are saved to, or nil to
+	// save them nowhere.
+	memory *projectMemory
 }
 
-// New creates the TUI application.
+// New creates the TUI application. It opens on Tree with no filter query, and
+// saves neither; newSession opens it on what the store's state file holds.
 //
 // It applies the tui block of user over the default settings, as loadSettings
 // does. Icons are ascii when the terminal does not display UTF-8, whatever the
@@ -213,6 +220,31 @@ func New(backend Backend, cfg *config.Config, user config.UserLayer, version str
 	}
 	a.applyUserLayer(user)
 	return a
+}
+
+// newSession is New opened on the view and the filter query that the state
+// file of backend's store remembers, or on Milestones with no query when it
+// remembers none. The App saves both to that file each time either changes.
+// A warning from openProjectMemory is added to the status line after any
+// warning New put there.
+func newSession(backend Backend, cfg *config.Config, user config.UserLayer, version string) *App {
+	a := New(backend, cfg, user, version)
+	memory, view, warning := openProjectMemory(backend.Root())
+	a.memory = memory
+	a.list.restoreView(view)
+	if warning != "" {
+		if a.list.statusMessage != "" {
+			warning = a.list.statusMessage + "; " + lowerFirst(warning)
+		}
+		a.list.statusMessage, a.list.statusKind = warning, statusWarn
+	}
+	return a
+}
+
+// lowerFirst returns s with its first rune in lower case.
+func lowerFirst(s string) string {
+	r, size := utf8.DecodeRuneInString(s)
+	return string(unicode.ToLower(r)) + s[size:]
 }
 
 // applyUserLayer applies the tui block of user as New describes, and warns in
@@ -453,8 +485,30 @@ func (a *App) runPaletteEntry() tea.Cmd {
 	return a.runAction(e.act)
 }
 
-// Update handles messages
+// Update handles msg, then saves the view and the filter query when either
+// changed.
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	model, cmd := a.update(msg)
+	a.remember()
+	return model, cmd
+}
+
+// remember saves the view and the applied filter query to the state file when
+// they differ from what it holds. A query still being typed is not saved.
+func (a *App) remember() {
+	if a.memory == nil {
+		return
+	}
+	view, ok := a.list.shownView()
+	if !ok {
+		return
+	}
+	if err := a.memory.save(view); err != nil {
+		a.reportFailure("Could not remember the view and the filter: " + err.Error())
+	}
+}
+
+func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	switch msg := msg.(type) {
@@ -1275,10 +1329,10 @@ func getEditor() string {
 	return "nano"
 }
 
-// Run starts the TUI and forwards store changes to it until it exits. The
-// parameters are as for New.
+// Run starts the TUI as newSession does, and forwards store changes to it
+// until it exits. The parameters are as for New.
 func Run(backend Backend, cfg *config.Config, user config.UserLayer, version string) error {
-	app := New(backend, cfg, user, version)
+	app := newSession(backend, cfg, user, version)
 	p := tea.NewProgram(app)
 
 	if err := backend.StartWatching(); err != nil {
