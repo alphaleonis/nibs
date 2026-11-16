@@ -278,8 +278,22 @@ func TestAnIDFromAFileNameIsDrawnStripped(t *testing.T) {
 	requireNoInjectedEscape(t, "the nib view's header", app.View().Content, "Hostile body.")
 	pressKeys(app, "esc")
 
+	// tnib-e001's body has Markdown links, which glamour draws as OSC 8
+	// hyperlinks, so only the child's own row is checked.
 	openOn(t, app, "tnib-e001", "enter", viewExpanded)
-	requireNoInjectedEscape(t, "the nib view's child link", app.View().Content, "Aaa hostile id")
+	requireNoInjectedEscape(t, "the nib view's child link", linesWith(app.View().Content, "Aaa hostile id"), "Aaa hostile id")
+}
+
+// linesWith returns the lines of view whose text, without SGR sequences,
+// contains want.
+func linesWith(view, want string) string {
+	var lines []string
+	for line := range strings.SplitSeq(view, "\n") {
+		if strings.Contains(sgr.ReplaceAllString(line, ""), want) {
+			lines = append(lines, line)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // The tags column draws each tag whole, without fitText.

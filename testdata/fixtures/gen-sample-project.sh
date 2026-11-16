@@ -139,6 +139,87 @@ milestone: tnib-m001
 milestone_order: a
 ---
 
+## Summary
+
+Every other feature in v1.0 assumes we know who the user is, so authentication is the first thing a new team touches and the last thing they should ever have to think about. This epic covers the full lifecycle of an account: creating it, signing in with a password or a social provider, staying signed in across devices, and recovering access when a password is forgotten. It also sets the security baseline the rest of the product inherits, which is why it carries `high` priority even though most of the work is unglamorous.
+
+The design follows the [OWASP Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html) wherever it gives a concrete rule, and the architecture is written up in `docs/auth-architecture.md`. When the two disagree, this document wins and the architecture doc gets a correction.
+
+## Problem
+
+Early users signed up through a temporary invite flow that stored passwords with a fast hash and kept sessions alive forever. Support tickets show three recurring pains:
+
+1. **People forget passwords** and have no way back in except emailing support, which takes a day on average.
+2. **Teams want single sign-on** with the accounts they already have; roughly 60% of trial teams asked for Google or GitHub login in the first week.
+3. **Sessions never end.** A password change does not sign out other devices, which [[tnib-b002]] tracks as a security bug.
+
+> "I changed my password because I thought someone had my laptop, and the laptop was still logged in the next morning."
+> — trial user, support ticket
+
+## Goals and non-goals
+
+**Goals**
+
+- Email and password sign-in that meets the OWASP baseline (#tnib-f001), with hashing done by #tnib-t001 and brute-force protection by #tnib-t002.
+- Social sign-in through Google and GitHub using OAuth 2.0 with PKCE ([[tnib-f002]]); the library choice is the subject of #tnib-r001.
+- Self-service password reset by email ([[tnib-f003]]).
+- Sessions that end when they should: on sign-out, on password change, and after 30 days of inactivity.
+
+**Non-goals**
+
+- Multi-factor authentication. It is planned, but not for v1.0.
+- SAML or enterprise SSO, which belongs to the enterprise tier.
+- Passwordless magic links. Worth revisiting once reset emails prove deliverable.
+
+## User stories
+
+- As a new user, I can create an account with my email and a password, and I am told immediately if the password is too weak, so I do not find out at the next sign-in.
+- As a returning user, I can sign in with Google or GitHub, so I do not need another password.
+- As someone who forgot their password, I can request a reset link that works once and expires after an hour.
+- As a security-conscious user, changing my password signs out every other session, so a lost device stops working.
+
+## Requirements
+
+| Area | Requirement | Owner | Notes |
+|---|---|---|---|
+| Passwords | bcrypt, cost 12, rehash on sign-in when the cost rises | #tnib-t001 | Cost is reviewed yearly against login latency |
+| Rate limiting | 5 failed attempts per account per 15 minutes, then exponential backoff | #tnib-t002 | Limit per account and per IP, never only per IP |
+| OAuth | Authorization code flow with PKCE; state and nonce checked | #tnib-t004, #tnib-t005 | Callback URL mismatch is #tnib-b001 |
+| Tokens | Access token 15 minutes, refresh token 30 days, rotated on use | #tnib-t007 | See the token shape below |
+| Reset | Single-use link, 1 hour expiry, does not reveal whether the email exists | #tnib-t006 | Template copy reviewed by support |
+| Docs | Public API reference for every auth endpoint | #tnib-t008 | Published with the v1.0 API docs |
+
+Non-functional: sign-in completes within 300 ms at the 95th percentile excluding the provider round trip, and no endpoint returns a different error for "unknown email" and "wrong password". Integration coverage for the whole flow lives in #tnib-t003.
+
+## Design notes
+
+Access tokens are short-lived JWTs signed with a rotating key; refresh tokens are opaque, stored hashed, and bound to a session row so that revoking the session revokes the token. The claims follow [RFC 7519](https://datatracker.ietf.org/doc/html/rfc7519) and the OAuth flow follows [RFC 6749](https://datatracker.ietf.org/doc/html/rfc6749) with the [PKCE extension](https://datatracker.ietf.org/doc/html/rfc7636).
+
+```json
+{
+  "sub": "user_8f3a",
+  "sid": "sess_41c2",
+  "iat": 1774353600,
+  "exp": 1774354500,
+  "scope": ["tasks:read", "tasks:write"]
+}
+```
+
+Revocation is by session id (`sid`): a password change deletes every session row for the user except the current one, and the next refresh with a deleted `sid` fails. That closes #tnib-b002 without a token denylist.
+
+## Rollout
+
+1. Ship email and password sign-in behind the existing invite gate, and migrate old hashes on first sign-in.
+2. Enable Google, then GitHub, one week apart, watching the callback error rate.
+3. Turn on password reset once delivery to the three largest mail providers is confirmed.
+4. Expire every pre-migration session at the end of the rollout window.
+
+## Risks
+
+- **Provider outages** block social sign-in entirely; users who only ever used Google cannot fall back to a password. Mitigation: offer to set a password after the first social sign-in.
+- **Email deliverability** decides whether reset works at all. We do not control spam filters, so the reset page says where to look and how long to wait.
+- **Clock skew** between services can reject fresh tokens; allow 30 seconds of leeway.
+
 ## Objective
 
 Implement a complete authentication system supporting email/password, OAuth2 social providers, and secure session management.
@@ -155,6 +236,11 @@ Implement a complete authentication system supporting email/password, OAuth2 soc
 
 - MFA is out of scope for v1.0
 - SAML/SSO deferred to enterprise tier
+
+## Open questions
+
+- Should a social-only account be able to add a password later, or only the reverse?
+- Do we keep the 30-day refresh window for mobile, where re-entering a password is more painful?
 ENDNIB
 
 cat > "$DIR/tnib-e002--task-management-core.md" << 'ENDNIB'
@@ -267,6 +353,88 @@ milestone: tnib-m002
 milestone_order: a
 ---
 
+## Summary
+
+Today two people looking at the same board see two different boards until one of them reloads. That was acceptable while teams were small, but the median team now has seven members, and the most common complaint in the v1.0 beta is "someone moved my task and I didn't see it happen". This epic makes the board live: changes made by anyone appear for everyone within a second, edits to the same task do not silently overwrite each other, and an activity feed explains who changed what.
+
+It is deliberately the first epic of v1.1 ([[tnib-m002]]), because the dashboard's real-time updates in #tnib-e003 and the notification fan-out in #tnib-e006 both reuse the same event stream. The transport is specified in `docs/websocket-rfc.md`.
+
+## Problem
+
+Collaboration breaks down in three places:
+
+1. **Stale views.** A board is fetched once and never refreshed, so people act on information that is minutes old.
+2. **Lost updates.** Two people editing the same task both save, and the second save wins without either of them knowing.
+3. **No history.** When a task changes unexpectedly there is no way to see who changed it, or what it looked like before.
+
+> Beta survey, open question "What slows your team down?": 41 of 112 answers mention seeing out-of-date tasks or edits disappearing.
+
+## Goals and non-goals
+
+**Goals**
+
+- Push every task change to connected clients over a WebSocket ([[tnib-f014]]), with automatic reconnect and catch-up after a dropped connection.
+- Detect conflicting edits with per-task version numbers, and show the losing editor what changed instead of discarding their work.
+- An activity feed per project and per task, built from the same events ([[tnib-f015]]).
+
+**Non-goals**
+
+- Character-by-character co-editing of descriptions. That needs operational transforms or CRDTs, which is a project of its own.
+- Presence indicators ("Alex is viewing this task"). Cheap to add on top, but not needed to fix the problems above.
+- Voice or video.
+
+## User stories
+
+- As a team member, when a colleague moves a task to "Done", I see it move on my screen without reloading.
+- As someone editing a task, if a colleague saves a change to the same task first, I am shown their change next to mine and choose what to keep.
+- As a team lead, I can open a task and read what happened to it, newest first, with who did it and when.
+- As a user on a flaky train connection, my board catches up by itself when the connection returns, without duplicating anything.
+
+## Requirements
+
+| Area | Requirement | Notes |
+|---|---|---|
+| Transport | WebSocket with JSON frames; fall back to long polling where WebSockets are blocked | Protocol per [RFC 6455](https://datatracker.ietf.org/doc/html/rfc6455) |
+| Delivery | At-least-once, de-duplicated on the client by event id | Ordering guaranteed per task, not globally |
+| Latency | Change visible to other clients within 1 s at the 95th percentile | Measured from commit to render |
+| Reconnect | Resume from the last event id within a 24 h retention window; full refetch beyond it | Backoff 1 s doubling to 30 s |
+| Conflicts | Every task carries a version; a save with a stale version is rejected with the current state | The client shows a merge view |
+| Feed | Events retained for 90 days; feed pages of 50 | Feed rows link to the task and the actor |
+| Scale | 5,000 concurrent connections per node; horizontal scaling through a shared pub/sub | Load test before beta |
+
+## Design notes
+
+Every mutation already passes through one service layer, so it writes an event row in the same transaction as the change ("transactional outbox"). A relay reads the outbox and publishes to the pub/sub channel for the project; each WebSocket node subscribes to the projects its clients have open. The pattern is described in [Microservices.io: Transactional outbox](https://microservices.io/patterns/data/transactional-outbox.html).
+
+```text
+client ──save──▶ API ──tx──▶ tasks + outbox
+                              │
+                       relay ─┴─▶ pub/sub (project:42) ──▶ ws node ──▶ clients
+```
+
+A frame on the wire looks like this:
+
+```json
+{"id": 90231, "type": "task.moved", "task": "tsk_7d1", "version": 14,
+ "actor": "user_8f3a", "at": "2026-05-04T09:12:44Z",
+ "change": {"status": ["in-progress", "done"]}}
+```
+
+Conflict handling is optimistic: the client applies its own change at once and keeps the previous state; if the server rejects the save because the version moved, the client rolls back, applies the server's state, and opens the merge view with both versions side by side.
+
+## Rollout
+
+1. Run the event outbox and relay in production with no consumers for two weeks, to measure volume.
+2. Enable live updates for internal teams, then for 10% of projects, watching connection counts and reconnect storms.
+3. Ship conflict detection and the merge view together; neither is useful alone.
+4. Turn on the activity feed last, once 90 days of events have accumulated for internal projects.
+
+## Risks
+
+- **Reconnect storms** after a deploy can overwhelm the nodes. Mitigation: randomized backoff and a drain period before restart.
+- **Proxies that kill idle connections** cause silent staleness; send a heartbeat every 25 seconds.
+- **Event volume** from bulk operations (#tnib-f020 lets one action touch hundreds of tasks) could flood clients; coalesce bulk changes into one event per batch.
+
 ## Objective
 
 Enable live multi-user editing with WebSocket-based updates and conflict resolution.
@@ -281,6 +449,11 @@ Enable live multi-user editing with WebSocket-based updates and conflict resolut
 
 - Operational transform / CRDT for rich text editing deferred
 - Voice/video collaboration out of scope
+
+## Open questions
+
+- Is long polling worth building, or do we tell blocked networks to use reload?
+- Should the merge view also appear when the conflicting change came from the same user on another device?
 ENDNIB
 
 cat > "$DIR/tnib-e006--notifications-system.md" << 'ENDNIB'
