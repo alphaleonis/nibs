@@ -1,7 +1,12 @@
-// Package filterlang defines the token tables of the filter language that the
-// web's filter box reads, and renders them as a TypeScript module the web's
-// parser imports. `task codegen` writes the module through go:generate, and
-// TestGeneratedFilterTokensAreFresh fails until the committed file matches.
+// Package filterlang reads and writes the web filter box's query language:
+// Parse turns filter text into a NibFilter, and Serialize turns one back into
+// canonical text. The cases in internal/filterlangcontract hold both to the
+// web's parser.
+//
+// The package also defines the language's token tables and renders them as a
+// TypeScript module the web's parser imports. `task codegen` writes the module
+// through go:generate, and TestGeneratedFilterTokensAreFresh fails until the
+// committed file matches.
 //
 // The tables name the vocabulary a field's values come from instead of listing
 // the values. The web reads those values from its generated vocabulary
