@@ -104,22 +104,11 @@ type copyNibIDMsg struct {
 // platform; clipboard.Unsupported only takes effect on Unix.
 var clipboardWriteAll = clipboard.WriteAll
 
-type reorderNibMsg struct {
-	nibID    string
-	afterID  *string
-	beforeID *string
-	first    *bool
-}
-
-// reorderBlockMsg moves a contiguous block of siblings by reordering the one
-// sibling it displaces: after the block's last item when moving up (afterID),
-// before its first when moving down (beforeID). focusID is the row to select
-// after the reload.
-type reorderBlockMsg struct {
-	displacedID string
-	afterID     *string
-	beforeID    *string
-	focusID     string
+// reorderMsg makes the writes of plan. focusID is the row to select after the
+// reload.
+type reorderMsg struct {
+	plan    reorderPlan
+	focusID string
 }
 
 type reorderRefusedMsg struct {
@@ -833,28 +822,23 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.reportMutationFailures("Blocking change", "link", errs)
 		return a, a.list.loadNibs
 
-	case reorderNibMsg:
-		result, err := a.backend.ReorderNib(context.Background(), msg.nibID, msg.afterID, msg.beforeID, msg.first)
-		if err != nil {
-			a.list.statusMessage = fmt.Sprintf("Reorder failed: %v", err)
-			a.list.statusKind = statusWarn
-			return a, nil
-		}
-		// Set before loadNibs runs so the reloaded list selects the moved nib.
-		if result != nil {
-			a.list.selectByID = result.ID
-		}
-		return a, a.list.loadNibs
-
-	case reorderBlockMsg:
-		_, err := a.backend.ReorderNib(context.Background(), msg.displacedID, msg.afterID, msg.beforeID, nil)
-		if err != nil {
-			a.list.statusMessage = fmt.Sprintf("Reorder failed: %v", err)
-			a.list.statusKind = statusWarn
-			return a, nil
-		}
-		// Keep focus on the user's row, not the displaced sibling.
+	case reorderMsg:
+		// Set before loadNibs runs so the reloaded list selects the row.
 		a.list.selectByID = msg.focusID
+		for i, w := range msg.plan.writes {
+			// A later write is placed against an earlier one, so a failure stops
+			// the rest.
+			if _, err := a.backend.ReorderNib(context.Background(), w.id, w.afterID, w.beforeID, nil, msg.plan.scope); err != nil {
+				a.list.statusKind = statusWarn
+				a.list.selectByID = ""
+				if i == 0 {
+					a.list.statusMessage = fmt.Sprintf("Reorder failed: %v", err)
+					return a, nil
+				}
+				a.list.statusMessage = fmt.Sprintf("Reorder partly applied (%d of %d nibs moved), list reloaded: %v", i, len(msg.plan.writes), err)
+				return a, a.list.loadNibs
+			}
+		}
 		return a, a.list.loadNibs
 
 	case reorderRefusedMsg:

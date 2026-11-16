@@ -322,23 +322,6 @@ func TestASectionRowIsNotANib(t *testing.T) {
 	}
 }
 
-// A grouped view's rows follow sections that a move in parent order does not
-// keep, so a move there is refused.
-func TestGroupedViewsRefuseToReorder(t *testing.T) {
-	for _, key := range []string{"m", "a"} {
-		app, stub := setupGroupedApp(t)
-		pressKeys(app, "v "+key)
-		if !focusOn(app, "t4") {
-			t.Fatalf("premise failed: could not focus t4 in view %s", key)
-		}
-		pressKeys(app, "ctrl+up")
-		if len(stub.ReorderCalls) != 0 || app.list.statusMessage != reorderReasonGrouped {
-			t.Errorf("ctrl+up in %q wrote %+v and said %q, want nothing written and %q",
-				app.list.level, stub.ReorderCalls, app.list.statusMessage, reorderReasonGrouped)
-		}
-	}
-}
-
 func TestViewNextAndPreviousHaveNoKeyAndStepThroughTheViews(t *testing.T) {
 	for _, name := range []actionName{actViewNext, actViewPrevious} {
 		if keys := findAction(defaultActions, name).Keys; len(keys) != 0 {

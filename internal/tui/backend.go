@@ -33,7 +33,9 @@ type Backend interface {
 	ArchiveNib(ctx context.Context, id string) error
 	DeleteNib(ctx context.Context, id string) error
 
-	ReorderNib(ctx context.Context, id string, afterID, beforeID *string, first *bool) (*nib.Nib, error)
+	// ReorderNib moves the nib within its ordering group in scope: among its
+	// siblings, or in its milestone's queue.
+	ReorderNib(ctx context.Context, id string, afterID, beforeID *string, first *bool, scope model.OrderScope) (*nib.Nib, error)
 
 	// Areas returns the store's declared area vocabulary, which may be empty
 	// but is never nil.

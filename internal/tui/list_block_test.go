@@ -1,11 +1,12 @@
 package tui
 
 import (
+	"fmt"
+	"slices"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/alphaleonis/nibs/internal/nib"
-	"github.com/alphaleonis/nibs/internal/ui"
 )
 
 // blockTestNibs returns a flat set of root-level nibs A, B, C, D for block-move
@@ -67,7 +68,7 @@ func TestCtrlUp_NoSelection_FocusedRowReorders(t *testing.T) {
 }
 
 // Behavior 11: 1 marked ≠ focused → Ctrl-Up moves the MARKED item, not the
-// focused row. Uses the single-item reorderNibMsg path.
+// focused row, as a single-nib move.
 func TestCtrlUp_OneMarkedDifferentFromFocus_MovesMarked(t *testing.T) {
 	app, stub := setupTestApp(t, blockTestNibs())
 	// Focus D, but mark C.
@@ -349,23 +350,21 @@ func danglingParentNibs() []*nib.Nib {
 	}
 }
 
-// assertDanglingRootShape fails unless the loaded tree really is three roots
-// with G still carrying its unresolvable parent link. Without this the reorder
-// assertions could pass on a fixture where G is trivially parentless.
+// assertDanglingRootShape fails unless the view draws three roots with G still
+// carrying its unresolvable parent link. Without this the reorder assertions
+// could pass on a fixture where G is trivially parentless.
 func assertDanglingRootShape(t *testing.T, app *App) {
 	t.Helper()
-	if got := len(app.list.tree); got != 3 {
-		t.Fatalf("expected 3 root nodes, got %d", got)
+	for _, r := range app.list.unfolded {
+		if r.Depth != 0 {
+			t.Fatalf("expected only roots, got %+v", r)
+		}
 	}
-	node := ui.FindNode(app.list.tree, "G")
-	if node == nil {
-		t.Fatal("G not present in tree")
+	if got := rowIDs(app); !slices.Equal(got, []string{"A", "G", "C"}) {
+		t.Fatalf("rows = %v, want [A G C]", got)
 	}
-	if node.Nib.Parent != "ghost" {
-		t.Fatalf("expected G to keep parent %q, got %q", "ghost", node.Nib.Parent)
-	}
-	if ui.FindNode(app.list.tree, "ghost") != nil {
-		t.Fatal("expected G's parent to be absent from the tree")
+	if got := app.list.byID["G"].Parent; got != "ghost" {
+		t.Fatalf("expected G to keep parent %q, got %q", "ghost", got)
 	}
 }
 
@@ -380,28 +379,20 @@ func cycleParentNibs() []*nib.Nib {
 	}
 }
 
-// assertPromotedCycleShape fails unless the loaded tree really is the promoted
-// shape the refusal is about: X at root level, still carrying its parent link,
-// with that parent rendered as its own child.
+// assertPromotedCycleShape fails unless the view draws the promoted shape the
+// refusal is about: X as a root beside A, still carrying its parent link, with
+// that parent drawn as its child.
 func assertPromotedCycleShape(t *testing.T, app *App) {
 	t.Helper()
-	if got := len(app.list.tree); got != 2 {
-		t.Fatalf("expected 2 root nodes (A and the promoted X), got %d", got)
+	var shape []string
+	for _, r := range app.list.unfolded {
+		shape = append(shape, fmt.Sprintf("%s@%d", r.NibID, r.Depth))
 	}
-	var x *ui.TreeNode
-	for _, node := range app.list.tree {
-		if node.Nib.ID == "X" {
-			x = node
-		}
+	if want := []string{"A@0", "X@0", "Y@1"}; !slices.Equal(shape, want) {
+		t.Fatalf("rows = %v, want %v", shape, want)
 	}
-	if x == nil {
-		t.Fatal("expected X promoted to root level")
-	}
-	if x.Nib.Parent != "Y" {
-		t.Fatalf("expected X to keep parent %q, got %q", "Y", x.Nib.Parent)
-	}
-	if len(x.Children) != 1 || x.Children[0].Nib.ID != "Y" {
-		t.Fatalf("expected X's stored parent Y to render as its child, got %v", x.Children)
+	if got := app.list.byID["X"].Parent; got != "Y" {
+		t.Fatalf("expected X to keep parent %q, got %q", "Y", got)
 	}
 }
 

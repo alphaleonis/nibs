@@ -7,8 +7,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
-	"github.com/alphaleonis/nibs/internal/ui"
-	"github.com/alphaleonis/nibs/internal/viewshape"
 )
 
 // makeTestNibs creates n nibs with sequential IDs and titles, all todo/task.
@@ -429,48 +427,6 @@ func TestLessByStatusPriorityAndType(t *testing.T) {
 		}
 		if !less(b, a) {
 			t.Error("task should sort before unknown")
-		}
-	})
-}
-
-func TestFindSiblings(t *testing.T) {
-	// Build a tree: parent -> [child1, child2, child3]
-	cfg := config.Default()
-	m := newListModel(&StubBackend{Nibs: map[string]*nib.Nib{}}, cfg)
-	m.tree = []*ui.TreeNode{
-		{
-			Nib: &nib.Nib{ID: "parent", Title: "Parent"},
-			Children: []*ui.TreeNode{
-				{Nib: &nib.Nib{ID: "c1", Title: "First", Parent: "parent"}},
-				{Nib: &nib.Nib{ID: "c2", Title: "Second", Parent: "parent"}},
-				{Nib: &nib.Nib{ID: "c3", Title: "Third", Parent: "parent"}},
-			},
-		},
-	}
-	m.unfolded = []viewshape.Row{{NibID: "parent"}, {NibID: "c1", Depth: 1}, {NibID: "c2", Depth: 1}, {NibID: "c3", Depth: 1}}
-
-	t.Run("findSiblings returns all children of parent", func(t *testing.T) {
-		sibs := m.findSiblings(&nib.Nib{ID: "c2", Parent: "parent"})
-		if len(sibs) != 3 {
-			t.Fatalf("expected 3 siblings, got %d", len(sibs))
-		}
-	})
-
-	t.Run("findSiblings returns root siblings for root nib", func(t *testing.T) {
-		sibs := m.findSiblings(&nib.Nib{ID: "parent"})
-		if len(sibs) != 1 {
-			t.Fatalf("expected 1 root sibling, got %d", len(sibs))
-		}
-		if sibs[0].ID != "parent" {
-			t.Errorf("expected root sibling 'parent', got %q", sibs[0].ID)
-		}
-	})
-
-	t.Run("findSiblings returns nil when tree is nil", func(t *testing.T) {
-		m2 := newListModel(&StubBackend{Nibs: map[string]*nib.Nib{}}, cfg)
-		sibs := m2.findSiblings(&nib.Nib{ID: "c1", Parent: "parent"})
-		if sibs != nil {
-			t.Errorf("expected nil with nil tree, got %v", sibs)
 		}
 	})
 }

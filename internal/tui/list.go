@@ -165,11 +165,6 @@ type listModel struct {
 	// unqueriedCount is the nibs that match the view without the text query.
 	unqueriedCount int
 
-	// tree holds the nibs the tag and closed filters match, and their
-	// ancestors. Reorders move a nib among its siblings in it that the view
-	// has a row for.
-	tree []*ui.TreeNode
-
 	display display // how rows show a nib; set through setDisplay
 
 	selectedNibs map[string]bool // IDs marked for multi-select
@@ -336,15 +331,6 @@ func (m *listModel) load(msg nibsLoadedMsg, focus string) {
 	m.facts = msg.facts
 	m.idWidth = msg.idWidth
 
-	f := m.filter()
-	var matched []*nib.Nib
-	for _, b := range msg.nibs {
-		if viewshape.Matches(b, f) {
-			matched = append(matched, b)
-		}
-	}
-	m.tree = ui.BuildTree(matched, msg.nibs, nib.SortByOrder)
-
 	if err := m.pruneFolds(); err != nil {
 		m.err = err
 		return
@@ -385,16 +371,6 @@ func (m *listModel) pruneMarks() {
 		}
 	}
 	maps.DeleteFunc(m.selectedNibs, func(id string, _ bool) bool { return !keep[id] })
-}
-
-// inView returns the test a nib passes when the view has a row for it, folded
-// or not.
-func (m listModel) inView() func(*nib.Nib) bool {
-	ids := make(map[string]bool, len(m.unfolded))
-	for _, r := range m.unfolded {
-		ids[r.NibID] = true
-	}
-	return func(n *nib.Nib) bool { return ids[n.ID] }
 }
 
 // reshape shapes the rows again and keeps the cursor on the row of focus, or
@@ -847,9 +823,13 @@ func (m *listModel) runAction(name actionName) tea.Cmd {
 			}
 		}
 	case actMoveUp:
-		return m.dispatchBlockMove(true)
+		return m.reorder(moveUp)
 	case actMoveDown:
-		return m.dispatchBlockMove(false)
+		return m.reorder(moveDown)
+	case actMoveTop:
+		return m.reorder(moveTop)
+	case actMoveBottom:
+		return m.reorder(moveBottom)
 	case actArchive:
 		return m.confirm("archive")
 	case actDelete:
@@ -1316,139 +1296,47 @@ func (m listModel) updateIndicator() string {
 	return "  " + style.Render(text)
 }
 
-// findSiblings returns the children of n's parent that the view has a row for,
-// in tree order, or those roots when n has no parent the tree can resolve.
-func (m *listModel) findSiblings(n *nib.Nib) []*nib.Nib {
-	if m.tree == nil {
-		return nil
-	}
-	return siblingsFromTree(m.tree, treeResolvedParentID(n, m.tree), m.inView())
-}
-
-// dispatchBlockMove moves the effective selection one sibling up or down:
-//
-//   - no effective items: the focused row moves.
-//   - one: that item moves.
-//   - two or more, contiguous under one parent: a reorderBlockMsg.
-//   - otherwise: a refusal shown in the footer.
-//
-// No path returns nil, so a refusal is never a silent keypress.
-func (m listModel) dispatchBlockMove(up bool) tea.Cmd {
-	// Flat orders every nib by an order key that ranks only siblings, so the
-	// row a move passes there is rarely the sibling it passes.
-	if m.level == viewshape.LevelFlat {
+// reorder moves the marked nibs, or else the nib under the cursor, within
+// their ordering group; see planReorder. Every refusal is reported in the
+// footer, so no path returns nil.
+func (m listModel) reorder(dir moveDir) tea.Cmd {
+	switch m.level {
+	// Flat orders every nib by an order key that ranks only within a group, so
+	// the row a move passes there is rarely in the moved nib's group.
+	case viewshape.LevelFlat:
 		return refuseReorderCmd(reorderReasonFlat)
-	}
-	// A move writes the parent order, and a grouped view draws its rows in
-	// sections that order does not follow.
-	if m.level == viewshape.LevelMilestones || m.level == viewshape.LevelAreas {
-		return refuseReorderCmd(reorderReasonGrouped)
+	// The server keeps no order per area.
+	case viewshape.LevelAreas:
+		return refuseReorderCmd(reorderReasonAreas)
 	}
 	// A text filter can hide the rows a move passes, so the web refuses it too.
 	if m.textQuery() != "" {
 		return refuseReorderCmd(reorderReasonTextFilter)
 	}
-	focused, _ := m.list.SelectedItem().(nibItem)
-
-	effective := effectiveSelection(m.selectedNibs, m.tree)
-
-	if len(effective) == 0 {
-		if focused.nib == nil {
-			return refuseReorderCmd(reorderReasonNothingSelected)
+	subjects := effectiveRows(m.unfolded, m.selectedNibs)
+	focusID := m.focusedRowID()
+	if focused := m.focusedID(); len(subjects) == 0 && focused != "" {
+		if i := slices.IndexFunc(m.unfolded, func(r viewshape.Row) bool { return r.NibID == focused }); i >= 0 {
+			subjects = []int{i}
 		}
-		return singleReorderCmd(focused.nib, m.findSiblings(focused.nib), m.tree, up)
 	}
-
-	if len(effective) == 1 {
-		target := effective[0]
-		return singleReorderCmd(target, m.findSiblings(target), m.tree, up)
+	if len(subjects) == 1 {
+		focusID = m.unfolded[subjects[0]].NibID
 	}
-
-	siblings, startIdx, endIdx, reason := blockMovable(effective, m.tree, m.inView())
+	unfiltered, err := viewshape.Shape(m.nibs, viewshape.View{Level: m.level, Sort: viewshape.SortOrder, Areas: m.areas})
+	if err != nil {
+		return refuseReorderCmd(fmt.Sprintf("Can't move: %v", err))
+	}
+	plan, reason := planReorder(m.nibs, m.unfolded, unfiltered, subjects, dir)
 	if reason != "" {
 		return refuseReorderCmd(reason)
 	}
-
-	if up {
-		if startIdx == 0 {
-			return refuseReorderCmd(reorderReasonAtTop)
-		}
-		displaced := siblings[startIdx-1]
-		after := siblings[endIdx].ID
-		focusID := ""
-		if focused.nib != nil {
-			focusID = focused.nib.ID
-		}
-		return func() tea.Msg {
-			return reorderBlockMsg{
-				displacedID: displaced.ID,
-				afterID:     &after,
-				focusID:     focusID,
-			}
-		}
-	}
-
-	if endIdx == len(siblings)-1 {
-		return refuseReorderCmd(reorderReasonAtBottom)
-	}
-	displaced := siblings[endIdx+1]
-	before := siblings[startIdx].ID
-	focusID := ""
-	if focused.nib != nil {
-		focusID = focused.nib.ID
-	}
-	return func() tea.Msg {
-		return reorderBlockMsg{
-			displacedID: displaced.ID,
-			beforeID:    &before,
-			focusID:     focusID,
-		}
-	}
+	return func() tea.Msg { return reorderMsg{plan: plan, focusID: focusID} }
 }
 
 // refuseReorderCmd reports a refused reorder so the footer can explain it.
 func refuseReorderCmd(reason string) tea.Cmd {
 	return func() tea.Msg {
 		return reorderRefusedMsg{reason: reason}
-	}
-}
-
-// singleReorderCmd emits a reorderNibMsg moving target one place up or down
-// among siblings, or a refusal when it cannot move. tree is the tree siblings
-// came from; it lets the refusal name a parent cycle, and may be nil.
-func singleReorderCmd(target *nib.Nib, siblings []*nib.Nib, tree []*ui.TreeNode, up bool) tea.Cmd {
-	if target == nil {
-		return refuseReorderCmd(reorderReasonNothingSelected)
-	}
-	idx := -1
-	for i, s := range siblings {
-		if s.ID == target.ID {
-			idx = i
-			break
-		}
-	}
-	if idx < 0 {
-		if inParentCycle(target, tree) {
-			// BuildTree severed this nib's parent edge to break a cycle.
-			return refuseReorderCmd(reorderReasonInParentCycle)
-		}
-		// Defensive: the tree and the sibling lookup disagree.
-		return refuseReorderCmd(reorderReasonNotInList)
-	}
-	if up {
-		if idx == 0 {
-			return refuseReorderCmd(reorderReasonAtTop)
-		}
-		before := siblings[idx-1].ID
-		return func() tea.Msg {
-			return reorderNibMsg{nibID: target.ID, beforeID: &before}
-		}
-	}
-	if idx == len(siblings)-1 {
-		return refuseReorderCmd(reorderReasonAtBottom)
-	}
-	after := siblings[idx+1].ID
-	return func() tea.Msg {
-		return reorderNibMsg{nibID: target.ID, afterID: &after}
 	}
 }

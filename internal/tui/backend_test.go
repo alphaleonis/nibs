@@ -52,8 +52,10 @@ type StubBackend struct {
 	UpdateErrByID map[string]error
 	CreateErr     error
 	ReorderErr    error
-	ArchiveErr    error
-	DeleteErr     error
+	// ReorderErrByID fails only the reorders of the named nibs.
+	ReorderErrByID map[string]error
+	ArchiveErr     error
+	DeleteErr      error
 	// The link mutations refuse independently of UpdateErr, which only the
 	// pickers writing through UpdateNib route through.
 	SetParentErr error
@@ -223,13 +225,18 @@ type stubReorderCall struct {
 	AfterID  *string
 	BeforeID *string
 	First    *bool
+	Scope    model.OrderScope
 }
 
-func (s *StubBackend) ReorderNib(_ context.Context, id string, afterID, beforeID *string, first *bool) (*nib.Nib, error) {
+// ReorderNib records every call, a failed one included.
+func (s *StubBackend) ReorderNib(_ context.Context, id string, afterID, beforeID *string, first *bool, scope model.OrderScope) (*nib.Nib, error) {
+	s.ReorderCalls = append(s.ReorderCalls, stubReorderCall{ID: id, AfterID: afterID, BeforeID: beforeID, First: first, Scope: scope})
 	if s.ReorderErr != nil {
 		return nil, s.ReorderErr
 	}
-	s.ReorderCalls = append(s.ReorderCalls, stubReorderCall{ID: id, AfterID: afterID, BeforeID: beforeID, First: first})
+	if err := s.ReorderErrByID[id]; err != nil {
+		return nil, err
+	}
 	if n, ok := s.Nibs[id]; ok {
 		return n, nil
 	}

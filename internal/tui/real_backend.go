@@ -83,8 +83,8 @@ func (b *RealBackend) DeleteNib(ctx context.Context, id string) error {
 	return err
 }
 
-func (b *RealBackend) ReorderNib(ctx context.Context, id string, afterID, beforeID *string, first *bool) (*nib.Nib, error) {
-	return b.resolver.Mutation().ReorderNib(ctx, id, afterID, beforeID, first, nil, nil, model.OrderScopeParent)
+func (b *RealBackend) ReorderNib(ctx context.Context, id string, afterID, beforeID *string, first *bool, scope model.OrderScope) (*nib.Nib, error) {
+	return b.resolver.Mutation().ReorderNib(ctx, id, afterID, beforeID, first, nil, nil, scope)
 }
 
 func (b *RealBackend) Areas() *area.Vocabulary {

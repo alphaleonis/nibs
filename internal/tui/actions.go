@@ -99,6 +99,8 @@ const (
 	actModify        actionName = "nib.modify"
 	actMoveUp        actionName = "nib.move_up"
 	actMoveDown      actionName = "nib.move_down"
+	actMoveTop       actionName = "nib.move_top"
+	actMoveBottom    actionName = "nib.move_bottom"
 	actArchive       actionName = "nib.archive"
 	actDelete        actionName = "nib.delete"
 	actCopyID        actionName = "nib.copy_id"
@@ -325,8 +327,10 @@ var defaultActions = []action{
 	{Name: actEstimate, Group: "Edit", Desc: "change estimate", Contexts: nibContexts, Ready: readyOnTargets},
 	{Name: actModify, Group: "Edit", Desc: "modify a field", Contexts: nibContexts, Keys: []string{"m"},
 		Hint: marking, Label: label("modify"), Ready: readyOnTargets},
-	{Name: actMoveUp, Group: "Edit", Desc: "move up among siblings", Contexts: []keyContext{ctxList}, Keys: []string{"ctrl+up"}},
-	{Name: actMoveDown, Group: "Edit", Desc: "move down among siblings", Contexts: []keyContext{ctxList}, Keys: []string{"ctrl+down"}},
+	{Name: actMoveUp, Group: "Edit", Desc: "move up in its group", Contexts: []keyContext{ctxList}, Keys: []string{"ctrl+up"}},
+	{Name: actMoveDown, Group: "Edit", Desc: "move down in its group", Contexts: []keyContext{ctxList}, Keys: []string{"ctrl+down"}},
+	{Name: actMoveTop, Group: "Edit", Desc: "move to the top of its group", Contexts: []keyContext{ctxList}, Keys: []string{"ctrl+home"}},
+	{Name: actMoveBottom, Group: "Edit", Desc: "move to the bottom of its group", Contexts: []keyContext{ctxList}, Keys: []string{"ctrl+end"}},
 	{Name: actArchive, Group: "Edit", Desc: "archive", Contexts: []keyContext{ctxList}, Keys: []string{"a"}, Ready: readyOnNib},
 	{Name: actDelete, Group: "Edit", Desc: "delete", Contexts: []keyContext{ctxList}, Keys: []string{"delete"}, Ready: readyOnNib},
 	{Name: actCopyID, Group: "Edit", Desc: "copy ID", Contexts: nibContexts, Keys: []string{"y"}, Ready: readyOnTargets},

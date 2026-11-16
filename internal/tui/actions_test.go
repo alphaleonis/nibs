@@ -31,6 +31,8 @@ func keyPress(k string) tea.KeyPressMsg {
 		"pgdown":     {Code: tea.KeyPgDown},
 		"home":       {Code: tea.KeyHome},
 		"end":        {Code: tea.KeyEnd},
+		"ctrl+home":  {Code: tea.KeyHome, Mod: tea.ModCtrl},
+		"ctrl+end":   {Code: tea.KeyEnd, Mod: tea.ModCtrl},
 		"delete":     {Code: tea.KeyDelete},
 		"ctrl+c":     {Code: 'c', Mod: tea.ModCtrl},
 	}

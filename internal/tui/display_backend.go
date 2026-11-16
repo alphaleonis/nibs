@@ -140,8 +140,8 @@ func (d displayBackend) DeleteNib(ctx context.Context, id string) error {
 	return d.inner.DeleteNib(ctx, id)
 }
 
-func (d displayBackend) ReorderNib(ctx context.Context, id string, afterID, beforeID *string, first *bool) (*nib.Nib, error) {
-	return displayOne(d.inner.ReorderNib(ctx, id, afterID, beforeID, first))
+func (d displayBackend) ReorderNib(ctx context.Context, id string, afterID, beforeID *string, first *bool, scope model.OrderScope) (*nib.Nib, error) {
+	return displayOne(d.inner.ReorderNib(ctx, id, afterID, beforeID, first, scope))
 }
 
 func (d displayBackend) Areas() *area.Vocabulary              { return d.inner.Areas() }
