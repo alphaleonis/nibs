@@ -462,7 +462,7 @@ func newGraphQLHandler(app *App, wsPingPong time.Duration) http.Handler {
 	srv.AddTransport(transport.Websocket{
 		PingPongInterval: wsPingPong,
 	})
-	srv.SetErrorPresenter(servedErrorPresenter(app.Core.Root(), app.Core.LockDir()))
+	srv.SetErrorPresenter(servedErrorPresenter(app.Core.Root(), app.Core.LockTempDir()))
 	srv.AroundOperations(recursionBoundAroundOperations(recursiveTypeNames(es.Schema())))
 	srv.AroundOperations(requestCacheAroundOperations)
 	srv.AroundOperations(queueInversionAroundOperations)

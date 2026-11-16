@@ -14,13 +14,21 @@ import (
 	"github.com/alphaleonis/nibs/internal/store"
 )
 
+// testLockPath returns a lock file path in a directory the lock layer creates
+// itself, because it refuses a directory other users can read, as t.TempDir's
+// are.
+func testLockPath(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(t.TempDir(), "locks", "test.lock")
+}
+
 // TestAcquireFileLockSerializesHolders proves the advisory lock actually
 // serializes concurrent holders: with the lock, at most one goroutine is ever
 // inside the critical section. Each goroutine opens its own descriptor on the
 // same path, so flock/LockFileEx must mutually exclude them. Remove the locking
 // and maxConcurrent jumps above 1 — the guard bites.
 func TestAcquireFileLockSerializesHolders(t *testing.T) {
-	lockPath := filepath.Join(t.TempDir(), "test.lock")
+	lockPath := testLockPath(t)
 
 	var mu sync.Mutex // guards the observation counters, NOT the lock under test
 	active, maxConcurrent := 0, 0
@@ -61,7 +69,7 @@ func TestAcquireFileLockSerializesHolders(t *testing.T) {
 // TestAcquireFileLockReleaseAllowsReacquire confirms a released lock can be taken
 // again (no permanent leak of the descriptor/lock).
 func TestAcquireFileLockReleaseAllowsReacquire(t *testing.T) {
-	lockPath := filepath.Join(t.TempDir(), "test.lock")
+	lockPath := testLockPath(t)
 
 	release, err := acquireFileLock(lockPath)
 	if err != nil {
@@ -192,7 +200,7 @@ func TestUpdateAcquiresWriteLock(t *testing.T) {
 // serve interlock reads as ErrStoreServed; map contention to anything else and
 // the first select below fires with that error instead.
 func TestAcquireFileLockWaitingWaitsForTheHolderToRelease(t *testing.T) {
-	lockPath := filepath.Join(t.TempDir(), "test.lock")
+	lockPath := testLockPath(t)
 	held, err := acquireFileLock(lockPath)
 	if err != nil {
 		t.Fatalf("holding the lock: %v", err)
@@ -268,7 +276,7 @@ func TestAcquireFileLockWaitingEndsWithItsContext(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			lockPath := filepath.Join(t.TempDir(), "test.lock")
+			lockPath := testLockPath(t)
 			held, err := acquireFileLock(lockPath)
 			if err != nil {
 				t.Fatalf("holding the lock: %v", err)

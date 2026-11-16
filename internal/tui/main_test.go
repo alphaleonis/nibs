@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/testskip"
+	"github.com/alphaleonis/nibs/internal/testsupport/tempdirtest"
 )
 
 // TestMain makes every App a test builds see a UTF-8 terminal, whatever the
@@ -14,8 +15,9 @@ import (
 //
 // It also points the user state directory at a temp directory, so a session
 // that a test starts without isolateStateDir never reads or writes the real
-// state files. Before it exits it reports the guards that did not run; see
-// internal/testskip.
+// state files, and keeps the lock files of the stores these tests open out of
+// the system temp dir (see tempdirtest). Before it exits it reports the guards
+// that did not run; see internal/testskip.
 func TestMain(m *testing.M) {
 	// A bad flag exits here, before there is a temp directory to leave behind.
 	flag.Parse()
@@ -28,7 +30,7 @@ func TestMain(m *testing.M) {
 	if err := os.Setenv(name, stateDir); err != nil {
 		panic(err)
 	}
-	code := m.Run()
+	code := tempdirtest.Run(m)
 	_ = os.RemoveAll(stateDir)
 	testskip.Report()
 	os.Exit(code)

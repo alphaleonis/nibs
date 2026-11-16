@@ -27,7 +27,7 @@ import (
 const storeSentinelSegment = "ue2s-disclosure-sentinel"
 
 // lockDirSentinelSegment names the directory the fixture points the OS temp dir
-// at. The lock file every mutation opens goes there — outside the store and
+// at. The lock file every mutation opens goes under it — outside the store and
 // outside the project, which is why it needs coverage of its own — and a
 // sentinel name is what lets the assertions look for it the same way.
 const lockDirSentinelSegment = "ue2s-lockdir-sentinel"
@@ -105,7 +105,7 @@ func newDisclosureFixture(t *testing.T) *disclosureFixture {
 	}
 
 	core := nibcore.New(nibsDir, config.Default())
-	if got := core.LockDir(); filepath.Clean(got) != filepath.Clean(lockDir) {
+	if got := core.LockTempDir(); filepath.Clean(got) != filepath.Clean(lockDir) {
 		t.Fatalf("the store locks in %s, not the redirected %s, so this fixture's lock needles prove nothing", got, lockDir)
 	}
 	if err := core.Load(); err != nil {
@@ -272,7 +272,7 @@ func TestServedMutationsDiscloseNoStorePath(t *testing.T) {
 		},
 		{
 			// Every mutation opens the cross-process write lock before it
-			// touches the store, and nibcore puts that file in the OS temp
+			// touches the store, and nibcore puts that file under the OS temp
 			// directory — which is neither the store nor the project, so it is
 			// covered separately. Removing the directory is the portable way to
 			// make that open fail; the message it renders carries the whole
