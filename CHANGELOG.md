@@ -49,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **A drop beside a row whose real parent the view has hidden now moves the row there**, where it was refused before because the drag read the row's position on screen rather than the group it orders in.
 - **The web opens on the milestone-grouped view** — the Milestones view groups work by its milestone assignment instead of by type, each queue in its own order with a Backlog tail for whatever is in none, a nib's milestone is set from the detail panel or the row context menu, and a drag reorders within a queue or assigns into one; a stored view preference still wins, and the hierarchical view is still there as Tree.
 - **An invalid combination of `nibs body` flags exits 2**, like every other validation failure, where some combinations exited 1, and `--create=false` now means the same as leaving the flag out.
+- **nibs keeps its lock files in a private per-user directory** under the system temp directory, readable only by you, instead of loose and world-readable in the temp directory, so a nibs older than this release takes a different lock and must not run against the same store at the same time.
 
 ### Fixed
 - **`nibs config` refuses a subcommand it does not recognize** (exit 2, naming it and suggesting the nearest match) instead of printing the group help and exiting 0, which reported success to any script checking the status.

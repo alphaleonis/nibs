@@ -12,10 +12,11 @@ import (
 )
 
 // writeLockPath returns a stable, per-machine path for the advisory write lock
-// guarding the .nibs data directory at root. It lives in the OS temp dir, keyed
-// by a hash of the absolute root, so every process targeting the same .nibs
-// shares one lock file without placing anything inside either git repo.
-// Per-machine only: it does not coordinate across hosts.
+// guarding the .nibs data directory at root. It lives in lockDir, keyed by a
+// hash of the absolute root, so every process of one user targeting the same
+// .nibs shares one lock file without placing anything inside either git repo.
+// Per user and per machine only: processes of different users, `sudo nibs`
+// included, take separate locks, and it does not coordinate across hosts.
 func writeLockPath(root string) string {
 	abs, err := filepath.Abs(root)
 	if err != nil {
@@ -26,9 +27,26 @@ func writeLockPath(root string) string {
 }
 
 // lockDir is the directory every nibs lock file goes in — this one and
-// servelock.go's.
+// servelock.go's. It derives from os.TempDir and the user alone, because every
+// process of that user targeting a store must compute the same directory. The
+// lock files are never deleted: unlinking one while a waiter has it open splits
+// the lock in two.
 func lockDir() string {
-	return os.TempDir()
+	return filepath.Join(os.TempDir(), lockDirName())
+}
+
+// openLockFile opens the lock file at path, creating it and its directory as
+// needed. Every acquisition opens its file here, so none can skip
+// prepareLockDir's check of the directory.
+func openLockFile(path string) (*os.File, error) {
+	if err := prepareLockDir(filepath.Dir(path)); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("opening lock file: %w", err)
+	}
+	return f, nil
 }
 
 // StoreLock is proof of holding the store-wide advisory write lock returned by

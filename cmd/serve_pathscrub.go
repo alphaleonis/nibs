@@ -59,9 +59,9 @@ func servedErrorPresenter(storeRoot, lockDir string) graphql.ErrorPresenterFunc 
 // restate it.
 //
 // Replaced: the store directory, the project directory holding it, and lockDir —
-// the OS temp directory nibcore keeps this store's lock file in
-// (nibcore.Core.LockDir), which every store mutation opens before it touches the
-// store. Each is covered under every spelling this process can derive — as
+// the OS temp directory nibcore keeps this store's lock file under
+// (nibcore.Core.LockTempDir), which every store mutation opens before it touches
+// the store. Each is covered under every spelling this process can derive — as
 // given, absolute, resolved through symlinks, and with forward slashes — because
 // which one a message carries depends on which the code that rendered it held.
 // Every other path survives verbatim: a home-directory config, a document link
