@@ -454,9 +454,10 @@ func (m *listModel) reshape(focus string) {
 
 // newSectionItem returns the row of the section key, which no nib heads. An
 // area's row is labeled with the area's own name, because it is drawn inside
-// its parent's. The label is stripped, because areas.yml can hold any text.
+// its parent's. The label is stripped as an area cell is, because areas.yml can
+// hold any text.
 func (m listModel) newSectionItem(base rowBase, key string) sectionItem {
-	item := sectionItem{rowBase: base, key: key, label: safetext.StripBounded(key)}
+	item := sectionItem{rowBase: base, key: key, label: safetext.StripLine(key)}
 	switch key {
 	case viewshape.BacklogSection:
 		item.label = "Backlog"
@@ -464,7 +465,7 @@ func (m listModel) newSectionItem(base rowBase, key string) sectionItem {
 		item.label = "No area"
 	default:
 		if node := m.areas.Get(key); node != nil {
-			item.label, item.color = safetext.StripBounded(node.Name), node.Color
+			item.label, item.color = safetext.StripLine(node.Name), node.Color
 		}
 	}
 	return item
@@ -1064,7 +1065,7 @@ func (m listModel) ancestors(id string) []string {
 
 func (m listModel) View() string {
 	if m.err != nil {
-		return fmt.Sprintf("Error: %v\n\nPress q to quit.", m.err)
+		return safetext.StripText(fmt.Sprintf("Error: %v\n\nPress q to quit.", m.err))
 	}
 
 	if m.width == 0 {
@@ -1109,8 +1110,10 @@ var (
 )
 
 // fitText fits s into budget cells, ending a cut with mark. Spaces left before
-// mark are dropped.
+// mark are dropped. It strips s with safetext.StripLine first, because row
+// titles and cells pass through it, so s must be plain text, not styled.
 func fitText(s string, budget int, mark string) string {
+	s = safetext.StripLine(s)
 	if budget <= 0 {
 		return ""
 	}

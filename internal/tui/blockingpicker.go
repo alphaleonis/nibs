@@ -101,7 +101,7 @@ func (d blockingItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 	if colors.IsClosed {
 		title = ui.Muted.Render(title)
 	}
-	id := ui.Muted.Render(" (" + item.nib.ID + ")")
+	id := ui.Muted.Render(" (" + displayID(item.nib.ID) + ")")
 
 	_, _ = fmt.Fprint(w, cursor+blockingIndicator+typeBadge+" "+title+id)
 }

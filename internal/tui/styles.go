@@ -6,6 +6,7 @@ import (
 	"charm.land/bubbles/v2/list"
 	"charm.land/lipgloss/v2"
 
+	"github.com/alphaleonis/nibs/internal/safetext"
 	"github.com/alphaleonis/nibs/internal/ui"
 )
 
@@ -39,7 +40,11 @@ func maxStatusFooterLines(height int) int { return max(1, height/3) }
 //
 // Lines are trimmed, not padded to width: the list footer appends its update
 // indicator to the last line.
+//
+// It strips msg with safetext.StripText, because a backend error in it can quote
+// a stored id or path.
 func renderStatusMessage(msg string, kind statusKind, width, maxLines int, ascii bool) string {
+	msg = safetext.StripText(msg)
 	wrapWidth := max(minStatusWrapWidth, width)
 	lines := strings.Split(lipgloss.NewStyle().Width(wrapWidth).Render(msg), "\n")
 	for i, line := range lines {

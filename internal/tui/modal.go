@@ -86,7 +86,7 @@ func renderPickerModal(cfg pickerModalConfig) string {
 	}
 	header := lipgloss.NewStyle().Bold(true).Render(truncateTitle(nibTitle, modalWidth-4))
 
-	subtitle := ui.Muted.Render(cfg.NibID)
+	subtitle := ui.Muted.Render(displayID(cfg.NibID))
 
 	// The padding leaves modalWidth-2 columns, and a hint row does not wrap.
 	help := hintRowWithin(cfg.Keys, actionState{ctx: cfg.Context}, modalWidth-2)

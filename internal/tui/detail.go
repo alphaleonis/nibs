@@ -104,7 +104,7 @@ func (d linkDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	maxTitleWidth := max(10, d.width-baseWidth-8) // 8 for border padding
 
 	row := ui.RenderNibRow(
-		link.nib.ID,
+		displayID(link.nib.ID),
 		link.nib.Status,
 		link.nib.EffectiveType(),
 		link.nib.Title,
@@ -575,7 +575,7 @@ func (m detailModel) calculateHeaderHeight() int {
 func (m detailModel) renderHeader() string {
 	title := detailTitleStyle.Render(m.nib.Title)
 
-	id := ui.ID.Render(m.nib.ID)
+	id := ui.ID.Render(displayID(m.nib.ID))
 
 	statusCfg := m.config.GetStatus(m.nib.Status)
 	statusColor := "gray"

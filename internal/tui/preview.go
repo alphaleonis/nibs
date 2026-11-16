@@ -44,7 +44,7 @@ func (m previewModel) renderNib() string {
 	idStyle := lipgloss.NewStyle().Foreground(ui.ColorPrimary).Bold(true)
 	titleStyle := lipgloss.NewStyle().Bold(true)
 
-	header := idStyle.Render(m.nib.ID) + "\n" + titleStyle.Render(m.nib.Title)
+	header := idStyle.Render(displayID(m.nib.ID)) + "\n" + titleStyle.Render(m.nib.Title)
 
 	metaStyle := lipgloss.NewStyle().Foreground(ui.ColorMuted)
 	meta := metaStyle.Render("Status: " + m.nib.Status + "  Type: " + m.nib.EffectiveType())

@@ -47,12 +47,12 @@ func (d display) ascii() bool {
 }
 
 // id returns id as rows show it: without the store's own prefix while short
-// IDs are on, and whole otherwise.
+// IDs are on, and whole otherwise, stripped by displayID.
 func (d display) id(id string) string {
 	if !d.shortIDs {
-		return id
+		return displayID(id)
 	}
-	return shortID(id, d.prefix)
+	return displayID(shortID(id, d.prefix))
 }
 
 // tuiBlock is the user config's tui block. Each setting stays a node, so a

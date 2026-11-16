@@ -209,7 +209,10 @@ type App struct {
 // link rows, are ASCII too. A user config that did not load, or a tui entry
 // that was ignored, opens the TUI with a warning in the status line.
 // version is the running binary version, for the update-available indicator.
+// The App reads every nib through displayBackend, the rendering boundary for
+// nib text.
 func New(backend Backend, cfg *config.Config, user config.UserLayer, version string) *App {
+	backend = displayBackend{inner: backend}
 	a := &App{
 		state:   viewList,
 		backend: backend,

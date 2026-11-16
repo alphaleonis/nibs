@@ -75,7 +75,7 @@ func (d parentItemDelegate) Render(w io.Writer, m list.Model, index int, listIte
 		if colors.IsClosed {
 			title = ui.Muted.Render(title)
 		}
-		id := ui.Muted.Render(" (" + item.nib.ID + ")")
+		id := ui.Muted.Render(" (" + displayID(item.nib.ID) + ")")
 
 		_, _ = fmt.Fprint(w, cursor+typeBadge+" "+title+id)
 	}

@@ -210,6 +210,7 @@ func (d itemDelegate) cell(c shownColumn, item nibItem, context bool) string {
 // style, then "+N" for the rest. A first tag that does not fit is cut, ending
 // with mark.
 func tagsCell(tags []string, width int, style lipgloss.Style, mark string) string {
+	tags, _ = stripEach(tags)
 	more := func(hidden int) string {
 		if hidden == 0 {
 			return ""
