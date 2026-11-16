@@ -21,8 +21,23 @@ func TestCasesPassInGo(t *testing.T) {
 			if !slices.Equal(got, c.Want) {
 				t.Errorf("rows differ\n got: %+v\nwant: %+v", got, c.Want)
 			}
+			for _, r := range c.Reorders {
+				from, to := rowOf(t, got, r.From), rowOf(t, got, r.To)
+				if stays := viewshape.StaysInGroup(c.Nibs, got, from, to); stays != r.Stays {
+					t.Errorf("StaysInGroup(%s, %s) = %t, want %t", r.From, r.To, stays, r.Stays)
+				}
+			}
 		})
 	}
+}
+
+func rowOf(t *testing.T, rows []viewshape.Row, id string) int {
+	t.Helper()
+	i := slices.IndexFunc(rows, func(r viewshape.Row) bool { return r.NibID == id })
+	if i < 0 {
+		t.Fatalf("no row shows %s", id)
+	}
+	return i
 }
 
 // TestGeneratedViewShapeContractIsFresh holds the committed module

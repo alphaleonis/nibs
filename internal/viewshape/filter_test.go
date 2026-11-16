@@ -45,7 +45,7 @@ func TestMatches(t *testing.T) {
 }
 
 func TestShapeRefusesWhatItDoesNotImplement(t *testing.T) {
-	if _, err := Shape(nil, View{Level: "milestones", Sort: SortOrder}); err == nil {
+	if _, err := Shape(nil, View{Level: "epics", Sort: SortOrder}); err == nil {
 		t.Error("Shape accepted an unimplemented level")
 	}
 	if _, err := Shape(nil, View{Level: LevelTree, Sort: "title"}); err == nil {

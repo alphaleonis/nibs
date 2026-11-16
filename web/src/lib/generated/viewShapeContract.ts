@@ -3,7 +3,7 @@
 //
 // View-shaping cases that Go's viewshape.Shape and the web's table shaping must
 // both pass. viewShapeContract.test.ts runs each case through the web's
-// shaping and requires these rows.
+// shaping and requires these rows, and asks its drop planning each reorder.
 //
 // `nibs` are listed as the server sends them to the table: in the order of
 // `nibs(sort: { field: ORDER })`, with the effective type and priority and the
@@ -46,6 +46,15 @@ export interface ShapeCaseGroup {
   readonly id: string;
 }
 
+/** One declared area as `Config.areas` delivers it. */
+export interface ShapeCaseArea {
+  readonly path: string;
+  readonly name: string;
+  readonly description: string;
+  readonly color: string;
+  readonly depth: number;
+}
+
 /** One expected row. */
 export interface ShapeCaseRow {
   /** The nib the row shows, or null for a section row that no nib heads. */
@@ -68,10 +77,23 @@ export interface ShapeCase {
   /** A `ViewLevel`. */
   readonly level: string;
   readonly nibs: readonly ShapeCaseNib[];
+  /** The areas vocabulary the view is bound to. */
+  readonly areas: readonly ShapeCaseArea[];
   readonly filter: { readonly [K in ShapeCaseFilterKey]?: readonly string[] };
-  /** The ids of the collapsed rows. */
+  /** The ids of the collapsed rows, a section no nib heads by the web's row id for it. */
   readonly collapsed: readonly string[];
   readonly rows: readonly ShapeCaseRow[];
+  readonly reorders: readonly ShapeCaseReorder[];
+}
+
+/**
+ * Whether moving the row of nib `from` to the position of the row of nib `to`
+ * keeps it in its ordering group, as viewshape.StaysInGroup answers.
+ */
+export interface ShapeCaseReorder {
+  readonly from: string;
+  readonly to: string;
+  readonly stays: boolean;
 }
 
 export const VIEW_SHAPE_CONTRACT: readonly ShapeCase[] = [
@@ -90,6 +112,8 @@ export const VIEW_SHAPE_CONTRACT: readonly ShapeCase[] = [
       { id: "h1", title: "Under a milestone", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: "m1", milestone: "", milestoneOrder: "", area: "" },
       { id: "u1", title: "Unordered root", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
     ],
+    areas: [
+    ],
     filter: {},
     collapsed: [],
     rows: [
@@ -101,6 +125,12 @@ export const VIEW_SHAPE_CONTRACT: readonly ShapeCase[] = [
       { id: "d1", depth: 0, section: null, header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "" } },
       { id: "h1", depth: 0, section: null, header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "m1" } },
       { id: "u1", depth: 0, section: null, header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "" } },
+    ],
+    reorders: [
+      { from: "t2", to: "t1", stays: true },
+      { from: "d1", to: "r1", stays: true },
+      { from: "f1", to: "r1", stays: false },
+      { from: "h1", to: "r1", stays: false },
     ],
   },
   {
@@ -118,6 +148,8 @@ export const VIEW_SHAPE_CONTRACT: readonly ShapeCase[] = [
       { id: "h1", title: "Under a milestone", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: "m1", milestone: "", milestoneOrder: "", area: "" },
       { id: "u1", title: "Unordered root", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
     ],
+    areas: [
+    ],
     filter: {},
     collapsed: [],
     rows: [
@@ -130,6 +162,8 @@ export const VIEW_SHAPE_CONTRACT: readonly ShapeCase[] = [
       { id: "m1", depth: 0, section: null, header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "" } },
       { id: "h1", depth: 0, section: null, header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "m1" } },
       { id: "u1", depth: 0, section: null, header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "" } },
+    ],
+    reorders: [
     ],
   },
   {
@@ -147,6 +181,8 @@ export const VIEW_SHAPE_CONTRACT: readonly ShapeCase[] = [
       { id: "h1", title: "Under a milestone", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: "m1", milestone: "", milestoneOrder: "", area: "" },
       { id: "u1", title: "Unordered root", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
     ],
+    areas: [
+    ],
     filter: {},
     collapsed: ["f1", "u1"],
     rows: [
@@ -156,6 +192,8 @@ export const VIEW_SHAPE_CONTRACT: readonly ShapeCase[] = [
       { id: "d1", depth: 0, section: null, header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "" } },
       { id: "h1", depth: 0, section: null, header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "m1" } },
       { id: "u1", depth: 0, section: null, header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "" } },
+    ],
+    reorders: [
     ],
   },
   {
@@ -171,12 +209,16 @@ export const VIEW_SHAPE_CONTRACT: readonly ShapeCase[] = [
       { id: "f2", title: "Payment", status: "todo", type: "feature", priority: "normal", estimate: "", tags: [], parentId: "e1", milestone: "", milestoneOrder: "", area: "" },
       { id: "r1", title: "Unrelated root", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
     ],
+    areas: [
+    ],
     filter: { type: ["bug"] },
     collapsed: [],
     rows: [
       { id: "e1", depth: 0, section: null, header: false, dimmed: true, hasChildren: true, group: { axis: "parent", id: "" } },
       { id: "f1", depth: 1, section: null, header: false, dimmed: true, hasChildren: true, group: { axis: "parent", id: "e1" } },
       { id: "b1", depth: 2, section: null, header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "f1" } },
+    ],
+    reorders: [
     ],
   },
   {
@@ -192,10 +234,14 @@ export const VIEW_SHAPE_CONTRACT: readonly ShapeCase[] = [
       { id: "f2", title: "Payment", status: "todo", type: "feature", priority: "normal", estimate: "", tags: [], parentId: "e1", milestone: "", milestoneOrder: "", area: "" },
       { id: "r1", title: "Unrelated root", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
     ],
+    areas: [
+    ],
     filter: { type: ["bug"] },
     collapsed: [],
     rows: [
       { id: "b1", depth: 0, section: null, header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "f1" } },
+    ],
+    reorders: [
     ],
   },
   {
@@ -211,11 +257,15 @@ export const VIEW_SHAPE_CONTRACT: readonly ShapeCase[] = [
       { id: "f2", title: "Payment", status: "todo", type: "feature", priority: "normal", estimate: "", tags: [], parentId: "e1", milestone: "", milestoneOrder: "", area: "" },
       { id: "r1", title: "Unrelated root", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
     ],
+    areas: [
+    ],
     filter: { type: ["bug"] },
     collapsed: ["f1"],
     rows: [
       { id: "e1", depth: 0, section: null, header: false, dimmed: true, hasChildren: true, group: { axis: "parent", id: "" } },
       { id: "f1", depth: 1, section: null, header: false, dimmed: true, hasChildren: true, group: { axis: "parent", id: "e1" } },
+    ],
+    reorders: [
     ],
   },
   {
@@ -231,6 +281,8 @@ export const VIEW_SHAPE_CONTRACT: readonly ShapeCase[] = [
       { id: "f2", title: "Payment", status: "todo", type: "feature", priority: "normal", estimate: "", tags: [], parentId: "e1", milestone: "", milestoneOrder: "", area: "" },
       { id: "r1", title: "Unrelated root", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
     ],
+    areas: [
+    ],
     filter: { excludeType: ["epic"] },
     collapsed: [],
     rows: [
@@ -241,6 +293,8 @@ export const VIEW_SHAPE_CONTRACT: readonly ShapeCase[] = [
       { id: "f2", depth: 1, section: null, header: false, dimmed: false, hasChildren: true, group: { axis: "parent", id: "e1" } },
       { id: "t2", depth: 2, section: null, header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "f2" } },
       { id: "r1", depth: 0, section: null, header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "" } },
+    ],
+    reorders: [
     ],
   },
   {
@@ -254,11 +308,15 @@ export const VIEW_SHAPE_CONTRACT: readonly ShapeCase[] = [
       { id: "n3", title: "Will not fix", status: "in-progress", type: "task", priority: "normal", estimate: "", tags: ["wontfix"], parentId: null, milestone: "", milestoneOrder: "", area: "" },
       { id: "n4", title: "Parked feature", status: "draft", type: "feature", priority: "normal", estimate: "", tags: ["ui", "wontfix"], parentId: null, milestone: "", milestoneOrder: "", area: "" },
     ],
+    areas: [
+    ],
     filter: { excludeStatus: ["completed"], excludeTags: ["wontfix"] },
     collapsed: [],
     rows: [
       { id: "n5", depth: 0, section: null, header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "n4" } },
       { id: "n1", depth: 0, section: null, header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "" } },
+    ],
+    reorders: [
     ],
   },
   {
@@ -272,12 +330,16 @@ export const VIEW_SHAPE_CONTRACT: readonly ShapeCase[] = [
       { id: "n3", title: "Will not fix", status: "in-progress", type: "task", priority: "normal", estimate: "", tags: ["wontfix"], parentId: null, milestone: "", milestoneOrder: "", area: "" },
       { id: "n4", title: "Parked feature", status: "draft", type: "feature", priority: "normal", estimate: "", tags: ["ui", "wontfix"], parentId: null, milestone: "", milestoneOrder: "", area: "" },
     ],
+    areas: [
+    ],
     filter: { excludeStatus: ["completed"], excludeTags: ["wontfix"] },
     collapsed: [],
     rows: [
       { id: "n1", depth: 0, section: null, header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "" } },
       { id: "n4", depth: 0, section: null, header: false, dimmed: true, hasChildren: true, group: { axis: "parent", id: "" } },
       { id: "n5", depth: 1, section: null, header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "n4" } },
+    ],
+    reorders: [
     ],
   },
   {
@@ -292,6 +354,8 @@ export const VIEW_SHAPE_CONTRACT: readonly ShapeCase[] = [
       { id: "r1", title: "Open root", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
       { id: "t3", title: "Scrapped", status: "scrapped", type: "task", priority: "normal", estimate: "", tags: [], parentId: "e1", milestone: "", milestoneOrder: "", area: "" },
     ],
+    areas: [
+    ],
     filter: { status: ["deferred", "completed", "scrapped"] },
     collapsed: [],
     rows: [
@@ -299,6 +363,8 @@ export const VIEW_SHAPE_CONTRACT: readonly ShapeCase[] = [
       { id: "t1", depth: 1, section: null, header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "e1" } },
       { id: "t3", depth: 1, section: null, header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "e1" } },
       { id: "e2", depth: 0, section: null, header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "" } },
+    ],
+    reorders: [
     ],
   },
   {
@@ -313,12 +379,16 @@ export const VIEW_SHAPE_CONTRACT: readonly ShapeCase[] = [
       { id: "f1", title: "Medium feature", status: "todo", type: "feature", priority: "normal", estimate: "m", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
       { id: "r1", title: "Unestimated root", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
     ],
+    areas: [
+    ],
     filter: { estimate: ["s", "m"] },
     collapsed: [],
     rows: [
       { id: "e1", depth: 0, section: null, header: false, dimmed: true, hasChildren: true, group: { axis: "parent", id: "" } },
       { id: "t1", depth: 1, section: null, header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "e1" } },
       { id: "f1", depth: 0, section: null, header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "" } },
+    ],
+    reorders: [
     ],
   },
   {
@@ -331,11 +401,15 @@ export const VIEW_SHAPE_CONTRACT: readonly ShapeCase[] = [
       { id: "n3", title: "Urgent task", status: "todo", type: "task", priority: "high", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
       { id: "n4", title: "Explicit defaults", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
     ],
+    areas: [
+    ],
     filter: { type: ["task"], priority: ["normal"] },
     collapsed: [],
     rows: [
       { id: "n1", depth: 0, section: null, header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "" } },
       { id: "n4", depth: 0, section: null, header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "" } },
+    ],
+    reorders: [
     ],
   },
   {
@@ -351,9 +425,13 @@ export const VIEW_SHAPE_CONTRACT: readonly ShapeCase[] = [
       { id: "f2", title: "Payment", status: "todo", type: "feature", priority: "normal", estimate: "", tags: [], parentId: "e1", milestone: "", milestoneOrder: "", area: "" },
       { id: "r1", title: "Unrelated root", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
     ],
+    areas: [
+    ],
     filter: { tags: ["no-such-tag"] },
     collapsed: [],
     rows: [
+    ],
+    reorders: [
     ],
   },
   {
@@ -365,12 +443,18 @@ export const VIEW_SHAPE_CONTRACT: readonly ShapeCase[] = [
       { id: "k1", title: "Hangs off the cycle", status: "todo", type: "bug", priority: "normal", estimate: "", tags: [], parentId: "c2", milestone: "", milestoneOrder: "", area: "" },
       { id: "c2", title: "Cycle member", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: "c1", milestone: "", milestoneOrder: "", area: "" },
     ],
+    areas: [
+    ],
     filter: {},
     collapsed: [],
     rows: [
       { id: "c1", depth: 0, section: null, header: false, dimmed: false, hasChildren: true, group: { axis: "parent", id: "c2" } },
       { id: "c2", depth: 1, section: null, header: false, dimmed: false, hasChildren: true, group: { axis: "parent", id: "c1" } },
       { id: "k1", depth: 2, section: null, header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "c2" } },
+    ],
+    reorders: [
+      { from: "k1", to: "c1", stays: true },
+      { from: "c1", to: "k1", stays: false },
     ],
   },
   {
@@ -382,12 +466,299 @@ export const VIEW_SHAPE_CONTRACT: readonly ShapeCase[] = [
       { id: "k1", title: "Hangs off the cycle", status: "todo", type: "bug", priority: "normal", estimate: "", tags: [], parentId: "c2", milestone: "", milestoneOrder: "", area: "" },
       { id: "c2", title: "Cycle member", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: "c1", milestone: "", milestoneOrder: "", area: "" },
     ],
+    areas: [
+    ],
     filter: { type: ["bug"] },
     collapsed: [],
     rows: [
       { id: "c1", depth: 0, section: null, header: false, dimmed: true, hasChildren: true, group: { axis: "parent", id: "c2" } },
       { id: "c2", depth: 1, section: null, header: false, dimmed: true, hasChildren: true, group: { axis: "parent", id: "c1" } },
       { id: "k1", depth: 2, section: null, header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "c2" } },
+    ],
+    reorders: [
+    ],
+  },
+  {
+    name: "milestones gives each milestone a section and the rest the Backlog",
+    note: "membership is derived up the parent chain; a queue's direct members are in queue order with unkeyed ones last; an empty milestone keeps its row; a dangling assignment and work with no milestone fall into the Backlog, last",
+    level: "milestones",
+    nibs: [
+      { id: "m1", title: "Alpha", status: "todo", type: "milestone", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
+      { id: "f1", title: "Cart", status: "todo", type: "feature", priority: "normal", estimate: "", tags: [], parentId: "e1", milestone: "", milestoneOrder: "", area: "" },
+      { id: "t1", title: "Cart total", status: "todo", type: "task", priority: "normal", estimate: "", tags: ["money"], parentId: "f1", milestone: "", milestoneOrder: "", area: "" },
+      { id: "m2", title: "Beta", status: "todo", type: "milestone", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
+      { id: "r2", title: "Someday step", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: "r1", milestone: "", milestoneOrder: "", area: "" },
+      { id: "m3", title: "Empty", status: "todo", type: "milestone", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
+      { id: "c1", title: "Scheduled step", status: "todo", type: "task", priority: "normal", estimate: "", tags: ["sched"], parentId: "r1", milestone: "m2", milestoneOrder: "a1", area: "" },
+      { id: "e1", title: "Checkout", status: "todo", type: "epic", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "m1", milestoneOrder: "a1", area: "" },
+      { id: "t3", title: "Unqueued", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "m1", milestoneOrder: "", area: "" },
+      { id: "t2", title: "Release notes", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "m1", milestoneOrder: "a0", area: "" },
+      { id: "b1", title: "Crash", status: "todo", type: "bug", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "m2", milestoneOrder: "a0", area: "" },
+      { id: "r1", title: "Someday", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
+      { id: "d1", title: "Dangling milestone", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "ghost", milestoneOrder: "", area: "" },
+    ],
+    areas: [
+    ],
+    filter: {},
+    collapsed: [],
+    rows: [
+      { id: "m1", depth: 0, section: "m1", header: true, dimmed: false, hasChildren: true, group: { axis: "parent", id: "" } },
+      { id: "t2", depth: 1, section: "m1", header: false, dimmed: false, hasChildren: false, group: { axis: "milestone", id: "m1" } },
+      { id: "e1", depth: 1, section: "m1", header: false, dimmed: false, hasChildren: true, group: { axis: "milestone", id: "m1" } },
+      { id: "f1", depth: 2, section: "m1", header: false, dimmed: false, hasChildren: true, group: { axis: "parent", id: "e1" } },
+      { id: "t1", depth: 3, section: "m1", header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "f1" } },
+      { id: "t3", depth: 1, section: "m1", header: false, dimmed: false, hasChildren: false, group: { axis: "milestone", id: "m1" } },
+      { id: "m2", depth: 0, section: "m2", header: true, dimmed: false, hasChildren: true, group: { axis: "parent", id: "" } },
+      { id: "b1", depth: 1, section: "m2", header: false, dimmed: false, hasChildren: false, group: { axis: "milestone", id: "m2" } },
+      { id: "c1", depth: 1, section: "m2", header: false, dimmed: false, hasChildren: false, group: { axis: "milestone", id: "m2" } },
+      { id: "m3", depth: 0, section: "m3", header: true, dimmed: false, hasChildren: false, group: { axis: "parent", id: "" } },
+      { id: null, depth: 0, section: "/__backlog__", header: true, dimmed: false, hasChildren: true, group: null },
+      { id: "r1", depth: 1, section: "/__backlog__", header: false, dimmed: false, hasChildren: true, group: { axis: "parent", id: "" } },
+      { id: "r2", depth: 2, section: "/__backlog__", header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "r1" } },
+      { id: "d1", depth: 1, section: "/__backlog__", header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "" } },
+    ],
+    reorders: [
+      { from: "t3", to: "t2", stays: true },
+      { from: "t2", to: "e1", stays: true },
+      { from: "c1", to: "b1", stays: true },
+      { from: "m1", to: "m2", stays: true },
+      { from: "d1", to: "r1", stays: true },
+      { from: "t2", to: "t2", stays: false },
+      { from: "f1", to: "t3", stays: false },
+      { from: "b1", to: "t2", stays: false },
+      { from: "r1", to: "m3", stays: false },
+    ],
+  },
+  {
+    name: "milestones keeps a nested match's ancestors as dimmed context in its section",
+    note: "the ancestor-context rule in a milestone section: the heading milestone dims, and sections with nothing shown are dropped",
+    level: "milestones",
+    nibs: [
+      { id: "m1", title: "Alpha", status: "todo", type: "milestone", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
+      { id: "f1", title: "Cart", status: "todo", type: "feature", priority: "normal", estimate: "", tags: [], parentId: "e1", milestone: "", milestoneOrder: "", area: "" },
+      { id: "t1", title: "Cart total", status: "todo", type: "task", priority: "normal", estimate: "", tags: ["money"], parentId: "f1", milestone: "", milestoneOrder: "", area: "" },
+      { id: "m2", title: "Beta", status: "todo", type: "milestone", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
+      { id: "r2", title: "Someday step", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: "r1", milestone: "", milestoneOrder: "", area: "" },
+      { id: "m3", title: "Empty", status: "todo", type: "milestone", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
+      { id: "c1", title: "Scheduled step", status: "todo", type: "task", priority: "normal", estimate: "", tags: ["sched"], parentId: "r1", milestone: "m2", milestoneOrder: "a1", area: "" },
+      { id: "e1", title: "Checkout", status: "todo", type: "epic", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "m1", milestoneOrder: "a1", area: "" },
+      { id: "t3", title: "Unqueued", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "m1", milestoneOrder: "", area: "" },
+      { id: "t2", title: "Release notes", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "m1", milestoneOrder: "a0", area: "" },
+      { id: "b1", title: "Crash", status: "todo", type: "bug", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "m2", milestoneOrder: "a0", area: "" },
+      { id: "r1", title: "Someday", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
+      { id: "d1", title: "Dangling milestone", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "ghost", milestoneOrder: "", area: "" },
+    ],
+    areas: [
+    ],
+    filter: { tags: ["money"] },
+    collapsed: [],
+    rows: [
+      { id: "m1", depth: 0, section: "m1", header: true, dimmed: true, hasChildren: true, group: { axis: "parent", id: "" } },
+      { id: "e1", depth: 1, section: "m1", header: false, dimmed: true, hasChildren: true, group: { axis: "milestone", id: "m1" } },
+      { id: "f1", depth: 2, section: "m1", header: false, dimmed: true, hasChildren: true, group: { axis: "parent", id: "e1" } },
+      { id: "t1", depth: 3, section: "m1", header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "f1" } },
+    ],
+    reorders: [
+    ],
+  },
+  {
+    name: "milestones keeps a match's ancestor in the section the ancestor is in",
+    note: "c1 is queued on m2 while its parent r1 is in the Backlog, so r1 shows there as context; the Backlog's own row never dims",
+    level: "milestones",
+    nibs: [
+      { id: "m1", title: "Alpha", status: "todo", type: "milestone", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
+      { id: "f1", title: "Cart", status: "todo", type: "feature", priority: "normal", estimate: "", tags: [], parentId: "e1", milestone: "", milestoneOrder: "", area: "" },
+      { id: "t1", title: "Cart total", status: "todo", type: "task", priority: "normal", estimate: "", tags: ["money"], parentId: "f1", milestone: "", milestoneOrder: "", area: "" },
+      { id: "m2", title: "Beta", status: "todo", type: "milestone", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
+      { id: "r2", title: "Someday step", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: "r1", milestone: "", milestoneOrder: "", area: "" },
+      { id: "m3", title: "Empty", status: "todo", type: "milestone", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
+      { id: "c1", title: "Scheduled step", status: "todo", type: "task", priority: "normal", estimate: "", tags: ["sched"], parentId: "r1", milestone: "m2", milestoneOrder: "a1", area: "" },
+      { id: "e1", title: "Checkout", status: "todo", type: "epic", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "m1", milestoneOrder: "a1", area: "" },
+      { id: "t3", title: "Unqueued", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "m1", milestoneOrder: "", area: "" },
+      { id: "t2", title: "Release notes", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "m1", milestoneOrder: "a0", area: "" },
+      { id: "b1", title: "Crash", status: "todo", type: "bug", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "m2", milestoneOrder: "a0", area: "" },
+      { id: "r1", title: "Someday", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
+      { id: "d1", title: "Dangling milestone", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "ghost", milestoneOrder: "", area: "" },
+    ],
+    areas: [
+    ],
+    filter: { tags: ["sched"] },
+    collapsed: [],
+    rows: [
+      { id: "m2", depth: 0, section: "m2", header: true, dimmed: true, hasChildren: true, group: { axis: "parent", id: "" } },
+      { id: "c1", depth: 1, section: "m2", header: false, dimmed: false, hasChildren: false, group: { axis: "milestone", id: "m2" } },
+      { id: null, depth: 0, section: "/__backlog__", header: true, dimmed: false, hasChildren: true, group: null },
+      { id: "r1", depth: 1, section: "/__backlog__", header: false, dimmed: true, hasChildren: false, group: { axis: "parent", id: "" } },
+    ],
+    reorders: [
+    ],
+  },
+  {
+    name: "a collapsed milestone or Backlog hides its section's rows",
+    note: "a milestone section collapses by the milestone's id and the Backlog by its section key; both keep hasChildren",
+    level: "milestones",
+    nibs: [
+      { id: "m1", title: "Alpha", status: "todo", type: "milestone", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
+      { id: "f1", title: "Cart", status: "todo", type: "feature", priority: "normal", estimate: "", tags: [], parentId: "e1", milestone: "", milestoneOrder: "", area: "" },
+      { id: "t1", title: "Cart total", status: "todo", type: "task", priority: "normal", estimate: "", tags: ["money"], parentId: "f1", milestone: "", milestoneOrder: "", area: "" },
+      { id: "m2", title: "Beta", status: "todo", type: "milestone", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
+      { id: "r2", title: "Someday step", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: "r1", milestone: "", milestoneOrder: "", area: "" },
+      { id: "m3", title: "Empty", status: "todo", type: "milestone", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
+      { id: "c1", title: "Scheduled step", status: "todo", type: "task", priority: "normal", estimate: "", tags: ["sched"], parentId: "r1", milestone: "m2", milestoneOrder: "a1", area: "" },
+      { id: "e1", title: "Checkout", status: "todo", type: "epic", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "m1", milestoneOrder: "a1", area: "" },
+      { id: "t3", title: "Unqueued", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "m1", milestoneOrder: "", area: "" },
+      { id: "t2", title: "Release notes", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "m1", milestoneOrder: "a0", area: "" },
+      { id: "b1", title: "Crash", status: "todo", type: "bug", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "m2", milestoneOrder: "a0", area: "" },
+      { id: "r1", title: "Someday", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
+      { id: "d1", title: "Dangling milestone", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "ghost", milestoneOrder: "", area: "" },
+    ],
+    areas: [
+    ],
+    filter: {},
+    collapsed: ["/__backlog__", "m1"],
+    rows: [
+      { id: "m1", depth: 0, section: "m1", header: true, dimmed: false, hasChildren: true, group: { axis: "parent", id: "" } },
+      { id: "m2", depth: 0, section: "m2", header: true, dimmed: false, hasChildren: true, group: { axis: "parent", id: "" } },
+      { id: "b1", depth: 1, section: "m2", header: false, dimmed: false, hasChildren: false, group: { axis: "milestone", id: "m2" } },
+      { id: "c1", depth: 1, section: "m2", header: false, dimmed: false, hasChildren: false, group: { axis: "milestone", id: "m2" } },
+      { id: "m3", depth: 0, section: "m3", header: true, dimmed: false, hasChildren: false, group: { axis: "parent", id: "" } },
+      { id: null, depth: 0, section: "/__backlog__", header: true, dimmed: false, hasChildren: true, group: null },
+    ],
+    reorders: [
+    ],
+  },
+  {
+    name: "a reorder before the moved nib's own descendant leaves its group",
+    note: "e1 and b1 share m1's queue, but b1 descends from e1 through m2, a milestone parented under e1",
+    level: "milestones",
+    nibs: [
+      { id: "m1", title: "Release", status: "todo", type: "milestone", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
+      { id: "m2", title: "Nested", status: "todo", type: "milestone", priority: "normal", estimate: "", tags: [], parentId: "e1", milestone: "", milestoneOrder: "", area: "" },
+      { id: "e1", title: "Epic", status: "todo", type: "epic", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "m1", milestoneOrder: "a0", area: "" },
+      { id: "b1", title: "Bug", status: "todo", type: "bug", priority: "normal", estimate: "", tags: [], parentId: "m2", milestone: "m1", milestoneOrder: "a1", area: "" },
+      { id: "t1", title: "Task", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "m1", milestoneOrder: "a2", area: "" },
+    ],
+    areas: [
+    ],
+    filter: {},
+    collapsed: [],
+    rows: [
+      { id: "m1", depth: 0, section: "m1", header: true, dimmed: false, hasChildren: true, group: { axis: "parent", id: "" } },
+      { id: "e1", depth: 1, section: "m1", header: false, dimmed: false, hasChildren: false, group: { axis: "milestone", id: "m1" } },
+      { id: "b1", depth: 1, section: "m1", header: false, dimmed: false, hasChildren: false, group: { axis: "milestone", id: "m1" } },
+      { id: "t1", depth: 1, section: "m1", header: false, dimmed: false, hasChildren: false, group: { axis: "milestone", id: "m1" } },
+      { id: "m2", depth: 0, section: "m2", header: true, dimmed: false, hasChildren: false, group: { axis: "parent", id: "e1" } },
+    ],
+    reorders: [
+      { from: "e1", to: "b1", stays: false },
+      { from: "b1", to: "e1", stays: true },
+      { from: "e1", to: "t1", stays: true },
+    ],
+  },
+  {
+    name: "areas gives each declared area a section and the rest No area",
+    note: "sections follow the vocabulary's name order with a nested area inside its parent, ahead of the parent's nibs; an empty declared area keeps its row; an undeclared area falls into No area, last; a nib whose parent is in another section is a root in its own; area rows keep their parent groups",
+    level: "areas",
+    nibs: [
+      { id: "a4", title: "Login form", status: "todo", type: "task", priority: "normal", estimate: "", tags: ["form"], parentId: "a3", milestone: "", milestoneOrder: "", area: "auth" },
+      { id: "a1", title: "Rate limits", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "api" },
+      { id: "a2", title: "Retry hooks", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "api/webhooks" },
+      { id: "a5", title: "Session cookie", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: "a3", milestone: "", milestoneOrder: "", area: "" },
+      { id: "a3", title: "Login", status: "todo", type: "feature", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "auth" },
+      { id: "a6", title: "Legacy", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "billing" },
+      { id: "a7", title: "Unsorted", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
+    ],
+    areas: [
+      { path: "api", name: "api", description: "", color: "", depth: 0 },
+      { path: "api/webhooks", name: "webhooks", description: "", color: "", depth: 1 },
+      { path: "auth", name: "auth", description: "Sign-in", color: "teal", depth: 0 },
+      { path: "web", name: "web", description: "", color: "", depth: 0 },
+    ],
+    filter: {},
+    collapsed: [],
+    rows: [
+      { id: null, depth: 0, section: "api", header: true, dimmed: false, hasChildren: true, group: null },
+      { id: null, depth: 1, section: "api/webhooks", header: true, dimmed: false, hasChildren: true, group: null },
+      { id: "a2", depth: 2, section: "api/webhooks", header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "" } },
+      { id: "a1", depth: 1, section: "api", header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "" } },
+      { id: null, depth: 0, section: "auth", header: true, dimmed: false, hasChildren: true, group: null },
+      { id: "a3", depth: 1, section: "auth", header: false, dimmed: false, hasChildren: true, group: { axis: "parent", id: "" } },
+      { id: "a4", depth: 2, section: "auth", header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "a3" } },
+      { id: null, depth: 0, section: "web", header: true, dimmed: false, hasChildren: false, group: null },
+      { id: null, depth: 0, section: "/__no_area__", header: true, dimmed: false, hasChildren: true, group: null },
+      { id: "a5", depth: 1, section: "/__no_area__", header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "a3" } },
+      { id: "a6", depth: 1, section: "/__no_area__", header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "" } },
+      { id: "a7", depth: 1, section: "/__no_area__", header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "" } },
+    ],
+    reorders: [
+      { from: "a7", to: "a6", stays: true },
+      { from: "a1", to: "a2", stays: false },
+      { from: "a1", to: "a3", stays: false },
+      { from: "a5", to: "a6", stays: false },
+    ],
+  },
+  {
+    name: "areas keeps every declared area while filtered",
+    note: "a declared area's row survives a filter that empties it, No area does not, and the ancestor-context rule applies within a section",
+    level: "areas",
+    nibs: [
+      { id: "a4", title: "Login form", status: "todo", type: "task", priority: "normal", estimate: "", tags: ["form"], parentId: "a3", milestone: "", milestoneOrder: "", area: "auth" },
+      { id: "a1", title: "Rate limits", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "api" },
+      { id: "a2", title: "Retry hooks", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "api/webhooks" },
+      { id: "a5", title: "Session cookie", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: "a3", milestone: "", milestoneOrder: "", area: "" },
+      { id: "a3", title: "Login", status: "todo", type: "feature", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "auth" },
+      { id: "a6", title: "Legacy", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "billing" },
+      { id: "a7", title: "Unsorted", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
+    ],
+    areas: [
+      { path: "api", name: "api", description: "", color: "", depth: 0 },
+      { path: "api/webhooks", name: "webhooks", description: "", color: "", depth: 1 },
+      { path: "auth", name: "auth", description: "Sign-in", color: "teal", depth: 0 },
+      { path: "web", name: "web", description: "", color: "", depth: 0 },
+    ],
+    filter: { tags: ["form"] },
+    collapsed: [],
+    rows: [
+      { id: null, depth: 0, section: "api", header: true, dimmed: false, hasChildren: true, group: null },
+      { id: null, depth: 1, section: "api/webhooks", header: true, dimmed: false, hasChildren: false, group: null },
+      { id: null, depth: 0, section: "auth", header: true, dimmed: false, hasChildren: true, group: null },
+      { id: "a3", depth: 1, section: "auth", header: false, dimmed: true, hasChildren: true, group: { axis: "parent", id: "" } },
+      { id: "a4", depth: 2, section: "auth", header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "a3" } },
+      { id: null, depth: 0, section: "web", header: true, dimmed: false, hasChildren: false, group: null },
+    ],
+    reorders: [
+    ],
+  },
+  {
+    name: "a collapsed area or No area hides its section's rows",
+    note: "area sections collapse by their section keys, and a collapsed area hides the areas declared inside it",
+    level: "areas",
+    nibs: [
+      { id: "a4", title: "Login form", status: "todo", type: "task", priority: "normal", estimate: "", tags: ["form"], parentId: "a3", milestone: "", milestoneOrder: "", area: "auth" },
+      { id: "a1", title: "Rate limits", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "api" },
+      { id: "a2", title: "Retry hooks", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "api/webhooks" },
+      { id: "a5", title: "Session cookie", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: "a3", milestone: "", milestoneOrder: "", area: "" },
+      { id: "a3", title: "Login", status: "todo", type: "feature", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "auth" },
+      { id: "a6", title: "Legacy", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "billing" },
+      { id: "a7", title: "Unsorted", status: "todo", type: "task", priority: "normal", estimate: "", tags: [], parentId: null, milestone: "", milestoneOrder: "", area: "" },
+    ],
+    areas: [
+      { path: "api", name: "api", description: "", color: "", depth: 0 },
+      { path: "api/webhooks", name: "webhooks", description: "", color: "", depth: 1 },
+      { path: "auth", name: "auth", description: "Sign-in", color: "teal", depth: 0 },
+      { path: "web", name: "web", description: "", color: "", depth: 0 },
+    ],
+    filter: {},
+    collapsed: ["/__no_area__", "/section:api_"],
+    rows: [
+      { id: null, depth: 0, section: "api", header: true, dimmed: false, hasChildren: true, group: null },
+      { id: null, depth: 0, section: "auth", header: true, dimmed: false, hasChildren: true, group: null },
+      { id: "a3", depth: 1, section: "auth", header: false, dimmed: false, hasChildren: true, group: { axis: "parent", id: "" } },
+      { id: "a4", depth: 2, section: "auth", header: false, dimmed: false, hasChildren: false, group: { axis: "parent", id: "a3" } },
+      { id: null, depth: 0, section: "web", header: true, dimmed: false, hasChildren: false, group: null },
+      { id: null, depth: 0, section: "/__no_area__", header: true, dimmed: false, hasChildren: true, group: null },
+    ],
+    reorders: [
     ],
   },
 ];

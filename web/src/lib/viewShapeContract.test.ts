@@ -1,10 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { VIEW_SHAPE_CONTRACT } from "./generated/viewShapeContract";
 import type { ShapeCase, ShapeCaseGroup, ShapeCaseNib, ShapeCaseRow } from "./generated/viewShapeContract";
-import { EMPTY_SPINE } from "./viewSpine";
+import { makeViewSpine } from "./viewSpine";
+import { createAreaVocabulary } from "./areas";
 import { isSyntheticRowId } from "./tree";
-import type { RowData } from "./tableData";
+import type { RowData, TableData } from "./tableData";
+import { sameRegion } from "./ordering/region";
 import type { Region } from "./ordering/region";
+import { planDrop } from "./ordering/dropPlan";
+import { collectDescendantIds } from "./dropZone";
 import { VIEW_LEVELS } from "./types";
 import type { NibFilter, TreeTableNib, ViewLevel } from "./types";
 
@@ -58,12 +62,34 @@ function caseRow(row: RowData): ShapeCaseRow {
 }
 
 /**
+ * Whether a drop of `from` before `to` is a position write within `from`'s own
+ * ordering group. The cases' `reorders` hold viewshape.StaysInGroup to these
+ * answers for the pairs they list.
+ */
+function staysInGroup(data: TableData, fromId: string, toId: string): boolean {
+  const rowsById = new Map(data.rows.map((r) => [r.nib.id, r] as const));
+  const from = rowsById.get(fromId);
+  const to = rowsById.get(toId);
+  if (from === undefined || to === undefined) throw new Error(`no row shows ${from === undefined ? fromId : toId}`);
+  const plan = planDrop({
+    draggedIds: [fromId],
+    rowsById,
+    draggedRowsById: rowsById,
+    target: to,
+    zone: "before",
+    descendantIds: collectDescendantIds([fromId], data.rows),
+    containment: data.containment,
+  });
+  return plan.ok && plan.kind === "position" && sameRegion(plan.region, from.region);
+}
+
+/**
  * The web half of the view-shaping parity table; the Go half is
  * internal/viewshapecontract. It is the only consumer of the generated cases.
  */
 describe("Go↔TS parity for view shaping", () => {
   it.each(VIEW_SHAPE_CONTRACT.map((c) => [c.name, c] as const))("%s", (_name, c) => {
-    const data = EMPTY_SPINE.buildTableData(
+    const data = makeViewSpine(createAreaVocabulary(c.areas)).buildTableData(
       c.nibs.map(tableNib),
       nibFilter(c),
       levelOf(c),
@@ -71,5 +97,6 @@ describe("Go↔TS parity for view shaping", () => {
       null,
     );
     expect(data.rows.map(caseRow)).toEqual(c.rows);
+    expect(c.reorders.map((r) => ({ ...r, stays: staysInGroup(data, r.from, r.to) }))).toEqual(c.reorders);
   });
 });
