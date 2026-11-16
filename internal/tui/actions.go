@@ -482,7 +482,7 @@ var defaultActions = []action{
 // actionGroups is the order the palette and the hint row list the groups in.
 // Edit comes before Go so a hint row clipped to a narrow terminal keeps the
 // edit keys.
-var actionGroups = []string{"Move", "Edit", "Go", "View", "Find", "App"}
+var actionGroups = []string{"Move", "Edit", "View", "Go", "Find", "App"}
 
 // findAction returns the action in table named name, or nil when it has none.
 func findAction(table []action, name actionName) *action {
