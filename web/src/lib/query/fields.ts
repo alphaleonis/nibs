@@ -1,5 +1,6 @@
 import type { NibFilter } from "../types";
 import { TYPES, STATUSES, PRIORITIES, ESTIMATES, STATUS_GROUPS } from "../constants";
+import { FILTER_FIELDS, TAG_VALUE_PATTERN, type FilterValueSet } from "../generated/filterTokens";
 
 // The slice of NibFilter the query box reads and writes. A full NibFilter is
 // assignable to it. Add a new key to Toolbar's `BOX_FIELD_KEYS` too; that is the
@@ -54,19 +55,24 @@ export interface FieldSpec {
   groups?: ReadonlyMap<string, readonly string[]>;
 }
 
-// Same pattern as TAG_REGEX in markdown.ts, copied so this module does not pull
-// in marked and DOMPurify.
-const TAG_VALUE_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
+// The values and groups behind each generated value set. A Record, so a value set
+// added in Go fails type-checking until it is mapped here.
+const VALUE_SETS: Record<FilterValueSet, Pick<FieldSpec, "values" | "groups">> = {
+  types: { values: TYPES },
+  priorities: { values: PRIORITIES },
+  statuses: { values: STATUSES, groups: STATUS_GROUPS },
+  estimates: { values: ESTIMATES },
+  tags: { values: null },
+};
 
 // Canonical field order, also the serialization order; matches the toolbar's
-// facet dropdowns.
-export const FIELD_SPECS: readonly FieldSpec[] = [
-  { name: "type", filterKey: "type", excludeKey: "excludeType", values: TYPES },
-  { name: "priority", filterKey: "priority", excludeKey: "excludePriority", values: PRIORITIES },
-  { name: "status", filterKey: "status", excludeKey: "excludeStatus", values: STATUSES, groups: STATUS_GROUPS },
-  { name: "estimate", filterKey: "estimate", excludeKey: "excludeEstimate", values: ESTIMATES },
-  { name: "tags", filterKey: "tags", excludeKey: "excludeTags", values: null },
-];
+// facet dropdowns. The fields are generated from internal/filterlang.
+export const FIELD_SPECS: readonly FieldSpec[] = FILTER_FIELDS.map((field) => ({
+  name: field.name,
+  filterKey: field.filterKey,
+  excludeKey: field.excludeKey,
+  ...VALUE_SETS[field.valueSet],
+}));
 
 const SPEC_BY_NAME = new Map(FIELD_SPECS.map((spec) => [spec.name, spec]));
 

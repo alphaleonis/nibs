@@ -1,11 +1,12 @@
 import { FIELD_SPECS, completionValues } from "./fields";
 import { REL_TOKEN_ORDER } from "./relations";
 import { AREA_TOKEN_ORDER } from "./area";
+import { HELP_EXAMPLES, HELP_OPERATORS } from "../generated/filterTokens";
 
 // The in-UI syntax reference for the filter box. Token rows are generated from
 // `FIELD_SPECS`, `REL_TOKEN_ORDER` and `AREA_TOKEN_ORDER`, the structures the
-// parser reads; do not hand-list tokens. Only the operator rows and examples are
-// written by hand.
+// parser reads; do not hand-list tokens. The operator rows and examples come from
+// internal/filterlang.
 
 export interface HelpRow {
   /** The token pattern, rendered in code style (`type:<value>`, `has:parent`). */
@@ -58,24 +59,11 @@ export function queryHelpSections(): HelpSection[] {
     },
     {
       title: "Operators",
-      rows: [
-        { token: "a b", description: "Space is AND — every condition must hold" },
-        { token: "-type:bug", description: "A leading minus excludes (metadata fields only)" },
-        { token: "status:todo,in-progress", description: "A comma is OR within one field" },
-        { token: "login flow", description: "Bare words search id, title and body" },
-      ],
+      rows: HELP_OPERATORS.map((row) => ({ ...row })),
     },
     {
       title: "Examples",
-      rows: [
-        { token: "type:bug status:open", description: "Open bugs" },
-        { token: "-status:closed -tags:wip", description: "Everything unfinished that is not parked as work-in-progress" },
-        { token: "ancestor:nibs-a1b2 type:task", description: "Tasks anywhere under one epic" },
-        { token: "is:blocked priority:high", description: "High-priority work that is stuck" },
-        { token: "no:parent type:milestone", description: "Top-level milestones" },
-        { token: "is:backlog type:epic", description: "Epics no milestone plan covers" },
-        { token: "area:web status:open", description: "Open work in web or any area beneath it" },
-      ],
+      rows: HELP_EXAMPLES.map((row) => ({ ...row })),
     },
   ];
 }
