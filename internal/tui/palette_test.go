@@ -63,8 +63,8 @@ func TestThePaletteListsTheActionsActiveWhereItOpened(t *testing.T) {
 	}{
 		{
 			name:    "list",
-			want:    []actionName{actArchive, actCreate, actHideClosed, actQuit},
-			notWant: []actionName{actFocusNext, actConfirmYes, actInputAccept, actPaletteRun},
+			want:    []actionName{actArchive, actCreate, actHideClosed, actQuit, actFocusNext},
+			notWant: []actionName{actConfirmYes, actInputAccept, actPaletteRun},
 		},
 		{
 			name:    "nib view",

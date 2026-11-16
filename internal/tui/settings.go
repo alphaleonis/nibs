@@ -19,6 +19,7 @@ type settings struct {
 	display display
 	// columns are the columns each view shows after the title, by view name.
 	columns map[string][]columnName
+	nibView nibViewSettings
 	// ignored lists the entries of the block that the TUI ignored, by line.
 	ignored []ignoredEntry
 	// source is the path of the file the block came from, or "" for none.
@@ -62,6 +63,7 @@ type tuiBlock struct {
 	Icons    yaml.Node `yaml:"icons"`
 	ShortIDs yaml.Node `yaml:"short_ids"`
 	Columns  yaml.Node `yaml:"columns"`
+	NibView  yaml.Node `yaml:"nib_view"`
 
 	keyLines map[string]int // the line of each key written in the block itself
 }
@@ -77,10 +79,11 @@ func (b *tuiBlock) line(name string, value *yaml.Node) int {
 
 // loadSettings applies tui, the user config's tui block, over the defaults:
 // the keys of defaults, which must have no key conflicts, unicode icons, short
-// IDs and defaultColumns. A setting whose value cannot be used is ignored and
-// keeps its default. A block that is not a mapping or does not decode is one ignored
-// entry, and every setting keeps its default. A nil or empty block gives the
-// defaults. source is the file tui came from.
+// IDs, defaultColumns and a hidden nib view placed auto. A setting whose value
+// cannot be used is ignored and keeps its default. A block that is not a
+// mapping or does not decode is one ignored entry, and every setting keeps its
+// default. A nil or empty block gives the defaults. source is the file tui came
+// from.
 //
 // The display it returns has no store prefix, and its icons are the configured
 // set whatever the terminal can show.
@@ -89,6 +92,7 @@ func loadSettings(defaults []action, tui *yaml.Node, source string) settings {
 		keys:    keymap{actions: defaults},
 		display: display{icons: iconsUnicode, shortIDs: true},
 		columns: maps.Clone(defaultColumns),
+		nibView: nibViewSettings{placement: placementAuto},
 		source:  source,
 	}
 	block, bad := decodeTUIBlock(tui)
@@ -101,7 +105,7 @@ func loadSettings(defaults []action, tui *yaml.Node, source string) settings {
 	}
 	keys, ignoredKeys := buildKeymap(defaults, &block.Keys, block.line("keys", &block.Keys))
 	s.keys = keys
-	s.ignored = slices.Concat(ignoredKeys, s.applyDisplay(block), s.applyColumns(block))
+	s.ignored = slices.Concat(ignoredKeys, s.applyDisplay(block), s.applyColumns(block), s.applyNibView(block))
 	slices.SortStableFunc(s.ignored, func(a, b ignoredEntry) int { return cmp.Compare(a.line, b.line) })
 	return s
 }
@@ -182,6 +186,53 @@ func (s *settings) applyColumns(block *tuiBlock) []ignoredEntry {
 			}
 		}
 		s.columns[view] = shown
+	}
+	return ignored
+}
+
+// applyNibView sets the nib view settings of block on s.nibView, and returns
+// the entries it ignored.
+func (s *settings) applyNibView(block *tuiBlock) []ignoredEntry {
+	nibView := resolveAlias(&block.NibView)
+	if absentNode(nibView) {
+		return nil
+	}
+	if nibView.Kind != yaml.MappingNode {
+		return []ignoredEntry{{
+			entry:  safetext.StripBounded("tui.nib_view: " + nodeText(nibView)),
+			line:   block.line("nib_view", &block.NibView),
+			reason: "is not a map of shown and placement",
+		}}
+	}
+	var ignored []ignoredEntry
+	ignore := func(key, value *yaml.Node, reason string) {
+		ignored = append(ignored, ignoredEntry{entry: safetext.StripBounded("nib_view." + key.Value + ": " + nodeText(value)), line: key.Line, reason: reason})
+	}
+	named := map[string]bool{}
+	for i := 0; i+1 < len(nibView.Content); i += 2 {
+		key, value := nibView.Content[i], resolveAlias(nibView.Content[i+1])
+		if named[key.Value] {
+			ignore(key, value, "repeats an earlier entry")
+			continue
+		}
+		named[key.Value] = true
+		switch key.Value {
+		case "shown":
+			var on bool
+			if value.Kind == yaml.ScalarNode && value.Tag == "!!bool" && value.Decode(&on) == nil {
+				s.nibView.shown = on
+			} else {
+				ignore(key, value, "is not true or false")
+			}
+		case "placement":
+			if p := placement(value.Value); value.Kind == yaml.ScalarNode && slices.Contains(placements, p) {
+				s.nibView.placement = p
+			} else {
+				ignore(key, value, "is not auto, right or below")
+			}
+		default:
+			ignore(key, value, "no nib view setting has this name")
+		}
 	}
 	return ignored
 }

@@ -115,13 +115,13 @@ func frameViews() []frameView {
 			},
 		},
 		{
-			// z p puts the nib view beside the list — a different
+			// z p docks the nib view beside or below the list — a different
 			// composition, with its own footer arithmetic.
-			name: "two-column",
-			enter: func(t *testing.T, app *App, width int) {
+			name: "docked",
+			enter: func(t *testing.T, app *App, _ int) {
 				pressKeys(app, "z p")
-				if want := width >= nibViewMinWidth; app.isTwoColumnMode() != want {
-					t.Fatalf("premise failed: two-column mode = %v at width %d, want %v", app.isTwoColumnMode(), width, want)
+				if want, _ := dockAt(placementAuto, app.width, app.height); app.dockPlacement() != want {
+					t.Fatalf("premise failed: docked %q at %dx%d, want %q", app.dockPlacement(), app.width, app.height, want)
 				}
 			},
 		},

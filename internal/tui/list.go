@@ -142,9 +142,10 @@ type listModel struct {
 	columns       []columnName
 	columnsByView map[string][]columnName
 
-	// paneWidth is the width the list pane is drawn at, or 0 for the whole
-	// terminal. The App sets it while the nib view takes part of the width.
-	paneWidth int
+	// paneWidth and paneHeight are the size the list pane is drawn at, or 0
+	// for the whole terminal above the footer. The App sets them through
+	// setPane while the docked nib view takes part of the screen.
+	paneWidth, paneHeight int
 
 	tagFilter     string
 	hideCompleted bool // hides every closed status, not only completed
@@ -178,8 +179,10 @@ type listModel struct {
 	selectByID string
 
 	// Set by App. hints is the rendered hint row, which the footer shows when it
-	// has no status message.
+	// has no status message, after dockNote, which says why a shown nib view
+	// is not docked.
 	hints           string
+	dockNote        string
 	updateAvailable bool
 	updateLatest    string
 }
@@ -559,7 +562,7 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.list.SetSize(msg.Width, m.rowsHeight(msg.Height-m.footerHeight()))
+		m.list.SetSize(msg.Width, m.rowsHeight(m.drawnHeight()))
 		m.updateDelegate(msg.Width)
 
 	case nibsLoadedMsg:
@@ -636,8 +639,7 @@ func (m listModel) cursorChangedCmd(prev string) tea.Cmd {
 	if row == "" || row == prev {
 		return nil
 	}
-	id := m.focusedID()
-	return func() tea.Msg { return cursorChangedMsg{nibID: id} }
+	return func() tea.Msg { return cursorChangedMsg{} }
 }
 
 // targets returns the marked nibs' IDs, or the ID of the nib under the cursor
@@ -1093,6 +1095,7 @@ func ruleGlyph(ascii bool) string {
 }
 
 var (
+	dockNoteStyle    = lipgloss.NewStyle().Foreground(ui.ColorWarning)
 	ruleStyle        = lipgloss.NewStyle().Foreground(ui.ColorMuted)
 	viewNameStyle    = lipgloss.NewStyle().Bold(true)
 	filterTokenStyle = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
@@ -1201,6 +1204,22 @@ func (m *listModel) sizeFilterInput(width int) {
 	m.list.FilterInput.SetWidth(m.headerParts(width).input)
 }
 
+// setPane sets the size the list pane is drawn at, or 0 and 0 for the whole
+// terminal above the footer, and fits the rows to it, so a page move goes by
+// the rows on screen.
+func (m *listModel) setPane(width, height int) {
+	m.paneWidth, m.paneHeight = width, height
+	m.list.SetSize(m.list.Width(), m.rowsHeight(m.drawnHeight()))
+}
+
+// drawnHeight is the height the list pane is drawn at.
+func (m listModel) drawnHeight() int {
+	if m.paneHeight > 0 {
+		return m.paneHeight
+	}
+	return m.height - m.footerHeight()
+}
+
 // drawnWidth is the width the list pane is drawn at.
 func (m listModel) drawnWidth() int {
 	if m.paneWidth > 0 {
@@ -1265,7 +1284,7 @@ func (m listModel) filterTokens() []string {
 func (m listModel) matchCount() int { return countMatches(m.unfolded) }
 
 // Footer renders the list footer: the selection count, the status message or
-// else the hint row, and the update indicator.
+// else the dock note and the hint row, and the update indicator.
 func (m listModel) Footer() string {
 	var selectionPrefix string
 	if len(m.selectedNibs) > 0 {
@@ -1277,6 +1296,9 @@ func (m listModel) Footer() string {
 	if m.statusMessage != "" {
 		footer += renderStatusMessage(m.statusMessage, m.statusKind, m.width-lipgloss.Width(selectionPrefix), maxStatusFooterLines(m.height), m.display.ascii())
 	} else {
+		if m.dockNote != "" {
+			footer += dockNoteStyle.Render(m.dockNote) + "  "
+		}
 		footer += m.hints
 	}
 

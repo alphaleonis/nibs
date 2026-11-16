@@ -147,20 +147,22 @@ func resolveRelations(backend Backend, cfg *config.Config, n *nib.Nib) []relatio
 
 // nibViewModel draws one nib as the web's panel does: a top rule with the id,
 // the title, a meta band, the relations grouped by kind, and the body. It
-// renders at any size, docked beside the list as a pane or expanded to the
-// whole screen with a footer of its own.
+// renders at any size, docked beside or below the list as a pane or expanded
+// to the whole screen with a footer of its own.
 //
 // It has two focus regions, the relations and the body. Only an active view
-// marks the selected relation. The docked view is not active, because the list
-// takes the keys.
+// marks the selected relation. The docked view is active while it has the
+// focus, and the list takes the keys otherwise.
 type nibViewModel struct {
 	nib       *nib.Nib // nil draws a placeholder
 	milestone *nib.Nib // the nib's milestone, or nil when it has none or it does not resolve
 	backend   Backend
 	config    *config.Config
 	display   display
-	// The size of the expanded view, its footer included.
+	// The size of the view: for the expanded view its footer included, and
+	// for the docked view, which has no footer, its pane.
 	width, height int
+	docked        bool // whether the view is the pane beside or below the list
 
 	groups []relationGroup
 	active bool      // whether the view takes keys
@@ -313,8 +315,12 @@ func (m nibViewModel) layout(width, height int) nibLayout {
 	return l
 }
 
-// contentHeight is the rows the expanded view's footer leaves.
+// contentHeight is the rows the expanded view's footer leaves, or the docked
+// view's whole height.
 func (m nibViewModel) contentHeight() int {
+	if m.docked {
+		return m.height
+	}
 	return max(0, m.height-lipgloss.Height(m.renderFooter(paintedFrame{})))
 }
 
@@ -327,13 +333,13 @@ func (m nibViewModel) focused() nibRegion {
 	return regionBody
 }
 
-// relationsShown reports whether the expanded view draws the relations, which
-// the relations focus needs.
+// relationsShown reports whether the view draws the relations, which the
+// relations focus needs.
 func (m nibViewModel) relationsShown() bool {
 	return len(m.groups) > 0 && m.layout(m.width, m.contentHeight()).relRows > 0
 }
 
-// syncBody fits the body to the rows and columns the expanded view gives it.
+// syncBody fits the body to the rows and columns the view gives it.
 func (m *nibViewModel) syncBody() {
 	m.fitBody(m.layout(m.width, m.contentHeight()))
 }
@@ -377,6 +383,10 @@ func (m *nibViewModel) runAction(name actionName) tea.Cmd {
 		return nil
 	}
 	n := m.nib
+	if n == nil {
+		// The placeholder has no nib to act on.
+		return nil
+	}
 	switch name {
 	case actFocusNext, actFocusPrev:
 		if m.focused() == regionBody && m.relationsShown() {

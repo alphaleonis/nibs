@@ -15,7 +15,6 @@ import (
 
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/alphaleonis/nibs/internal/bodytemplate"
 	"github.com/alphaleonis/nibs/internal/config"
@@ -49,24 +48,6 @@ const (
 	viewPalette
 )
 
-const (
-	// nibViewMinWidth is the narrowest terminal the nib view is docked beside
-	// the list in: calculatePaneWidths then leaves the list 39 cells and the
-	// view 40.
-	nibViewMinWidth   = 80
-	RightPaneMaxWidth = 80 // the 80-column text convention
-)
-
-// calculatePaneWidths returns (leftWidth, rightWidth) for the two-column layout.
-func calculatePaneWidths(totalWidth int) (int, int) {
-	rightWidth := RightPaneMaxWidth
-	if totalWidth-rightWidth < 40 {
-		rightWidth = totalWidth - 40
-	}
-	leftWidth := totalWidth - rightWidth - 1 // 1 for separator
-	return leftWidth, rightWidth
-}
-
 // nibsChangedMsg is sent when nibs change on disk (via file watcher)
 type nibsChangedMsg struct{}
 
@@ -84,10 +65,10 @@ func checkForUpdateCmd(version string) tea.Cmd {
 	}
 }
 
-// cursorChangedMsg is sent when the list cursor moves to a different nib
-type cursorChangedMsg struct {
-	nibID string
-}
+// cursorChangedMsg is sent when the list cursor moves to a different nib.
+// It carries no id: by the time it arrives the cursor may have moved again,
+// so the handler reads the cursor itself.
+type cursorChangedMsg struct{}
 
 type openTagPickerMsg struct{}
 
@@ -141,7 +122,7 @@ type App struct {
 	state          viewState
 	list           listModel
 	expanded       nibViewModel // the nib view at full screen
-	docked         nibViewModel // the nib view beside the list
+	docked         nibViewModel // the nib view beside or below the list
 	tagPicker      tagPickerModel
 	parentPicker   parentPickerModel
 	statusPicker   statusPickerModel
@@ -176,9 +157,8 @@ type App struct {
 	// The view drawn behind a modal, restored when it closes.
 	previousState viewState
 
-	// Whether the nib view is shown beside the list. It is drawn only while the
-	// terminal is at least nibViewMinWidth wide.
-	nibViewShown bool
+	// Whether the nib view is docked, and where; see dockAt for where it fits.
+	nibView nibViewSettings
 
 	// The $EDITOR session in progress: the nib, and its file's mtime at launch.
 	editingNibID      string
@@ -256,6 +236,7 @@ func (a *App) applyUserLayer(user config.UserLayer) {
 	a.userSnapshot = user.Snapshot
 	a.list.setDisplay(s.display)
 	a.list.setColumns(s.columns)
+	a.nibView = s.nibView
 	if user.Failure != nil {
 		a.list.statusMessage = "Warning: " + user.Failure.Message()
 		a.list.statusKind = statusWarn
@@ -291,6 +272,7 @@ func (a *App) chooseColumns(view string, columns []columnName) tea.Cmd {
 		return nil
 	}
 	a.applyUserLayer(config.LoadUserLayerFrom(a.settingsSource))
+	a.syncDock()
 	return a.list.loadNibs
 }
 
@@ -310,31 +292,6 @@ func (a *App) Init() tea.Cmd {
 	return tea.Batch(a.list.Init(), checkForUpdateCmd(a.version))
 }
 
-// isTwoColumnMode reports whether the nib view is drawn beside the list.
-func (a *App) isTwoColumnMode() bool {
-	return a.nibViewShown && a.width >= nibViewMinWidth
-}
-
-// toggleNibView shows or hides the nib view beside the list. Shown in a
-// terminal too narrow to draw it, it says so in the footer.
-func (a *App) toggleNibView() {
-	a.nibViewShown = !a.nibViewShown
-	a.syncListPane()
-	a.syncDocked()
-	if a.nibViewShown && !a.isTwoColumnMode() {
-		a.list.statusMessage = fmt.Sprintf("The nib view needs %d columns", nibViewMinWidth)
-		a.list.statusKind = statusWarn
-	}
-}
-
-// syncListPane tells the list the width its pane is drawn at.
-func (a *App) syncListPane() {
-	a.list.paneWidth = 0
-	if a.isTwoColumnMode() {
-		a.list.paneWidth, _ = calculatePaneWidths(a.width)
-	}
-}
-
 // keyContext reports where a key goes now.
 func (a *App) keyContext() keyContext {
 	inList := func(l list.Model, ctx keyContext) keyContext {
@@ -345,12 +302,12 @@ func (a *App) keyContext() keyContext {
 	}
 	switch a.state {
 	case viewList:
+		if a.dockFocused() {
+			return nibViewContext(a.docked)
+		}
 		return inList(a.list.list, ctxList)
 	case viewExpanded:
-		if a.expanded.focused() == regionRelations {
-			return ctxNibRelations
-		}
-		return ctxNibBody
+		return nibViewContext(a.expanded)
 	case viewTagPicker:
 		return inList(a.tagPicker.list, ctxTagPicker)
 	case viewParentPicker:
@@ -383,6 +340,14 @@ func (a *App) keyContext() keyContext {
 	return ctxList
 }
 
+// nibViewContext is the context of the region of m that keys go to.
+func nibViewContext(m nibViewModel) keyContext {
+	if m.focused() == regionRelations {
+		return ctxNibRelations
+	}
+	return ctxNibBody
+}
+
 // actionState snapshots what the actions' Hint, Label and Ready read.
 func (a *App) actionState() actionState {
 	st := actionState{
@@ -390,14 +355,22 @@ func (a *App) actionState() actionState {
 		prefix:   a.pendingKey,
 		selected: len(a.list.selectedNibs),
 		filtered: a.list.hasActiveFilter() || a.list.list.IsFiltered(),
+		docked:   a.state == viewList && a.dockPlacement() != "",
 	}
-	if a.state == viewExpanded {
-		st.hasNib = a.expanded.nib != nil
-		st.relationsShown = a.expanded.relationsShown()
-		st.onDocument = a.expanded.selectedRelation() == nil
-	} else {
+	view := &a.expanded
+	switch {
+	case a.state == viewExpanded:
+	case a.state == viewList && a.dockFocused():
+		view = &a.docked
+	default:
 		_, st.hasNib = a.list.list.SelectedItem().(nibItem)
+		return st
 	}
+	// The nib view acts on its own nib only, never on the list's marks.
+	st.selected = 0
+	st.hasNib = view.nib != nil
+	st.relationsShown = view.relationsShown()
+	st.onDocument = view.selectedRelation() == nil
 	return st
 }
 
@@ -454,8 +427,28 @@ func (a *App) runAction(act *action) tea.Cmd {
 	case actTagFilter:
 		return a.showView(openTagPickerMsg{})
 	case actNibView:
-		a.toggleNibView()
+		return a.toggleNibView()
+	case actNibPlacement:
+		return a.cycleNibViewPlacement()
+	case actNibScrollDown, actNibScrollUp:
+		a.followCursor()
+		if act.Name == actNibScrollDown {
+			a.docked.scrollBody(actDown)
+		} else {
+			a.docked.scrollBody(actUp)
+		}
 		return nil
+	case actFocusNext, actFocusPrev:
+		if a.state == viewList {
+			a.cycleDockFocus(act.Name == actFocusNext)
+			return nil
+		}
+	case actLeave, actJumpBack:
+		// The docked view has no views of its own to step back through.
+		if a.state == viewList && a.dockFocused() {
+			a.docked.active = false
+			return nil
+		}
 	case actColumns:
 		a.columnPicker = newColumnPickerModel(a.keys.actions, levelViews[a.list.level], a.list.columns, a.width, a.height)
 		a.openModal(viewColumnPicker)
@@ -476,6 +469,9 @@ func (a *App) runAction(act *action) tea.Cmd {
 func (a *App) viewMsg(act actionName) tea.Msg {
 	switch a.state {
 	case viewList:
+		if a.dockFocused() {
+			return a.docked.viewMsg(act)
+		}
 		return a.list.viewMsg(act)
 	case viewExpanded:
 		return a.expanded.viewMsg(act)
@@ -543,7 +539,7 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
-		a.syncListPane()
+		a.syncDock()
 
 		// The view under the palette is drawn too, so it takes the new size.
 		if a.state == viewPalette {
@@ -557,12 +553,12 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.state != viewExpanded {
 			a.expanded, _ = a.expanded.Update(msg)
 		}
-		a.syncDocked()
 
 	case tea.KeyPressMsg:
 		// The key acts on the frame it was typed at, and clearing a status
 		// message can bring the nib view's relations back on screen.
 		a.expanded.focus = a.expanded.focused()
+		a.docked.focus = a.docked.focused()
 		// Clear status messages on any keypress
 		a.list.statusMessage = ""
 		a.list.statusKind = statusOK
@@ -571,7 +567,9 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.handleKey(msg)
 
 	case cursorChangedMsg:
-		a.showDocked(msg.nibID)
+		// msg names the nib under the cursor when it was sent, which a later
+		// move may have left.
+		a.followCursor()
 		return a, nil
 
 	case nibsLoadedMsg:
@@ -1080,7 +1078,12 @@ func (a *App) updateActiveView(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 	switch a.state {
 	case viewList:
+		if _, ok := msg.(actionMsg); ok && a.dockFocused() {
+			a.docked, cmd = a.docked.Update(msg)
+			break
+		}
 		a.list, cmd = a.list.Update(msg)
+		a.followCursor()
 	case viewExpanded:
 		a.expanded, cmd = a.expanded.Update(msg)
 	case viewTagPicker:
@@ -1136,25 +1139,6 @@ func (a *App) collectTagsWithCounts() []tagWithCount {
 	return tags
 }
 
-// renderTwoColumnView renders the list and the docked nib view side by side,
-// with a divider between them, above a full-width footer.
-func (a *App) renderTwoColumnView() string {
-	leftWidth, rightWidth := calculatePaneWidths(a.width)
-
-	// The footer may be several lines tall.
-	footer := a.list.Footer()
-	contentHeight := a.height - max(1, lipgloss.Height(footer))
-
-	leftPane := a.list.pane(leftWidth, contentHeight)
-
-	rightPane := a.docked.render(rightWidth, contentHeight)
-	divider := strings.TrimSuffix(strings.Repeat(ruleStyle.Render(dividerGlyph(a.display.ascii()))+"\n", max(1, contentHeight)), "\n")
-
-	columns := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, divider, rightPane)
-
-	return columns + "\n" + footer
-}
-
 // View renders the current screen in the alt screen.
 func (a *App) View() tea.View {
 	v := tea.NewView(a.render())
@@ -1166,6 +1150,7 @@ func (a *App) View() tea.View {
 func (a *App) render() string {
 	hints := hintRow(a.keys.actions, a.actionState())
 	a.list.hints = hints
+	a.list.dockNote = a.dockNote()
 	a.expanded.hints = hints
 	return a.renderState(a.state)
 }
@@ -1175,10 +1160,7 @@ func (a *App) render() string {
 func (a *App) renderState(state viewState) string {
 	switch state {
 	case viewList:
-		if a.isTwoColumnMode() {
-			return a.renderTwoColumnView()
-		}
-		return a.list.View()
+		return a.renderList()
 	case viewExpanded:
 		return a.expanded.View()
 	case viewTagPicker:
@@ -1232,10 +1214,7 @@ func (a *App) expandedOnScreen() bool {
 func (a *App) getBackgroundView() string {
 	switch a.previousState {
 	case viewList:
-		if a.isTwoColumnMode() {
-			return a.renderTwoColumnView()
-		}
-		return a.list.View()
+		return a.renderList()
 	case viewExpanded:
 		return a.expanded.View()
 	default:
@@ -1255,32 +1234,6 @@ func (a *App) returnToList() tea.Cmd {
 	var cmd tea.Cmd
 	a.list, cmd = a.list.Update(tea.WindowSizeMsg{Width: a.width, Height: a.height})
 	return cmd
-}
-
-// syncDocked shows the nib under the list cursor in the docked view.
-func (a *App) syncDocked() {
-	a.showDocked(a.list.focusedID())
-}
-
-// showDocked shows the nib id in the docked view, or the placeholder when id
-// is "" or does not resolve. It does nothing while the view is not docked.
-func (a *App) showDocked(id string) {
-	if !a.isTwoColumnMode() {
-		return
-	}
-	var n *nib.Nib
-	if id != "" {
-		n, _ = a.backend.GetNib(context.Background(), id)
-	}
-	_, width := calculatePaneWidths(a.width)
-	if n != nil && a.docked.nib != nil && a.docked.nib.ID == n.ID {
-		a.docked.width, a.docked.height = width, a.height
-		a.docked = a.docked.withNib(n)
-	} else {
-		a.docked = newNibViewModel(n, a.backend, a.config, a.display, width, a.height)
-	}
-	// The list keeps the keys while the view is docked.
-	a.docked.active = false
 }
 
 // reportMutationFailures reports a picker's failed mutations in the footer of

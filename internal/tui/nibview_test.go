@@ -283,9 +283,9 @@ func TestTheDockedNibViewDrawsTheMetaBandAndRelations(t *testing.T) {
 	app.Update(tea.WindowSizeMsg{Width: 160, Height: 60})
 	pressKeys(app, "z p")
 	app.list.restoreCursor("hub")
-	_, cmd := app.Update(cursorChangedMsg{nibID: "hub"})
+	_, cmd := app.Update(cursorChangedMsg{})
 	processCmd(app, cmd)
-	if !app.isTwoColumnMode() {
+	if app.dockPlacement() != placementRight {
 		t.Fatal("premise failed: z p did not dock the nib view")
 	}
 	pane := strings.Join(railText(plainView(app)), "\n")

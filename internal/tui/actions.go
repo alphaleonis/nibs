@@ -112,6 +112,9 @@ const (
 	actConfirmNo     actionName = "confirm.no"
 	actHideClosed    actionName = "view.hide_closed"
 	actNibView       actionName = "view.nib"
+	actNibPlacement  actionName = "view.nib_placement"
+	actNibScrollUp   actionName = "view.nib_scroll_up"
+	actNibScrollDown actionName = "view.nib_scroll_down"
 	actColumns       actionName = "view.columns"
 	actViewPick      actionName = "view.pick"
 	actViewNext      actionName = "view.next"
@@ -140,6 +143,7 @@ type actionState struct {
 	filtered       bool   // a tag or text filter narrows the list
 	relationsShown bool   // the nib view draws a related nib
 	onDocument     bool   // the nib view's relations cursor is on a document
+	docked         bool   // the list is on screen with the nib view docked
 }
 
 // action is one named thing a key can do. Dispatch reads the keymap's
@@ -272,12 +276,36 @@ func readyToOpen(st actionState) (bool, string) {
 	return true, ""
 }
 
-// readyOnTargets needs marked nibs or a nib under the cursor.
+// readyOnTargets needs marked nibs or a nib under the cursor. The nib view
+// counts no marks, so its reason names only the nib.
 func readyOnTargets(st actionState) (bool, string) {
-	if st.hasNib || st.selected > 0 {
+	switch {
+	case st.hasNib || st.selected > 0:
 		return true, ""
+	case inNibView(st):
+		return false, "no nib under the cursor"
 	}
 	return false, "no nib under the cursor or selected"
+}
+
+// readyToFocus needs, in the list, a docked nib view and a nib under the
+// cursor. In the nib view it is always ready.
+func readyToFocus(st actionState) (bool, string) {
+	if st.ctx != ctxList {
+		return true, ""
+	}
+	if !st.docked {
+		return false, "the nib view is not docked"
+	}
+	return readyOnNib(st)
+}
+
+// readyDocked needs a docked nib view.
+func readyDocked(st actionState) (bool, string) {
+	if st.docked {
+		return true, ""
+	}
+	return false, "the nib view is not docked"
 }
 
 func readyToJumpBack(st actionState) (bool, string) {
@@ -302,9 +330,11 @@ var defaultActions = []action{
 	{Name: actUnfoldSubtree, Group: "Move", Desc: "unfold the row's subtree", Contexts: []keyContext{ctxList}, Keys: []string{"ctrl+right"}},
 	{Name: actFoldAll, Group: "Move", Desc: "fold every row", Contexts: []keyContext{ctxList}, Keys: []string{"<"}},
 	{Name: actUnfoldAll, Group: "Move", Desc: "unfold every row", Contexts: []keyContext{ctxList}, Keys: []string{">"}},
-	{Name: actFocusNext, Group: "Move", Desc: "focus the next pane", Contexts: nibViewCtx, Keys: []string{"tab"},
-		Hint: func(st actionState) bool { return st.relationsShown }, Label: label("switch")},
-	{Name: actFocusPrev, Group: "Move", Desc: "focus the previous pane", Contexts: nibViewCtx, Keys: []string{"shift+tab"}},
+	{Name: actFocusNext, Group: "Move", Desc: "focus the next pane", Contexts: nibContexts, Keys: []string{"tab"},
+		Hint: func(st actionState) bool { return inNibView(st) && (st.relationsShown || st.docked) }, Label: label("switch"), Ready: readyToFocus},
+	{Name: actFocusPrev, Group: "Move", Desc: "focus the previous pane", Contexts: nibContexts, Keys: []string{"shift+tab"}, Ready: readyToFocus},
+	{Name: actNibScrollDown, Group: "Move", Desc: "scroll the nib view down", Contexts: []keyContext{ctxList}, Keys: []string{"J"}, Ready: readyDocked},
+	{Name: actNibScrollUp, Group: "Move", Desc: "scroll the nib view up", Contexts: []keyContext{ctxList}, Keys: []string{"K"}, Ready: readyDocked},
 	{Name: actPaletteUp, Group: "Move", Desc: "highlight the previous action", Contexts: []keyContext{ctxPalette}, Keys: []string{"up"}},
 	{Name: actPaletteDown, Group: "Move", Desc: "highlight the next action", Contexts: []keyContext{ctxPalette}, Keys: []string{"down"}},
 
@@ -347,6 +377,7 @@ var defaultActions = []action{
 	{Name: actHideClosed, Group: "View", Desc: "hide or show closed nibs", Contexts: []keyContext{ctxList, ctxParentPicker}, Keys: []string{"z h"},
 		Hint: func(st actionState) bool { return st.ctx == ctxParentPicker }, Label: label("toggle closed")},
 	{Name: actNibView, Group: "View", Desc: "show or hide the nib view", Contexts: []keyContext{ctxList}, Keys: []string{"z p"}},
+	{Name: actNibPlacement, Group: "View", Desc: "place the nib view: auto, right or below", Contexts: []keyContext{ctxList}, Keys: []string{"z P"}},
 	{Name: actColumns, Group: "View", Desc: "choose the columns", Contexts: []keyContext{ctxList}, Keys: []string{"z c"}},
 	{Name: actViewPick, Group: "View", Desc: "choose the view", Contexts: []keyContext{ctxList}, Keys: []string{"v"}},
 	{Name: actViewNext, Group: "View", Desc: "show the next view", Contexts: []keyContext{ctxList}},

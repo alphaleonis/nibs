@@ -343,7 +343,7 @@ func TestATerminalWithoutUTF8GetsAnASCIINibView(t *testing.T) {
 	}
 	pressKeys(app, "esc z p")
 	app.Update(tea.WindowSizeMsg{Width: 140, Height: 30})
-	if !app.isTwoColumnMode() {
+	if app.dockPlacement() != placementRight {
 		t.Fatal("premise failed: z p did not dock the nib view")
 	}
 	views["docked at 140 columns"] = stripAnsi(app.View().Content)

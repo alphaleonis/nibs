@@ -60,8 +60,8 @@ func TestNibTextReachesNoViewAsAControlSequence(t *testing.T) {
 	requireNoInjectedEscape(t, "the list", app.View().Content, "Child")
 
 	pressKeys(app, "z p")
-	if !app.isTwoColumnMode() {
-		t.Fatal("premise failed: z p did not show the nib view beside the list")
+	if app.dockPlacement() == "" {
+		t.Fatal("premise failed: z p did not dock the nib view")
 	}
 	// Moving onto the child is what loads it into the docked view.
 	app.list.restoreCursor("evil-p")
@@ -246,7 +246,7 @@ func TestAnIDFromAFileNameIsDrawnStripped(t *testing.T) {
 	requireNoInjectedEscape(t, "the ID column and the copy status line", app.View().Content, "Copied tnib-")
 
 	pressKeys(app, "z p")
-	_, cmd := app.Update(cursorChangedMsg{nibID: evilID})
+	_, cmd := app.Update(cursorChangedMsg{})
 	processCmd(app, cmd)
 	requireNoInjectedEscape(t, "the docked nib view", app.View().Content, "Hostile body.")
 	pressKeys(app, "z p")
