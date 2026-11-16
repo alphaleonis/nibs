@@ -35,14 +35,30 @@ var ErrIDNotFilename = errors.New("unusable nib id")
 // ValidateIDForFilename refuses an id that is not a plain file name: one holding
 // '/' or '\', either of which makes its leading part a directory on some
 // platform (`--prefix ../../` escapes the store), and "." or "..". It is not a
-// charset gate. An id that passes can still fail ValidateIDRoundTrip; Core.Create
-// applies both.
+// charset gate. An id that passes can still fail ValidateIDText or
+// ValidateIDRoundTrip; Core.Create applies all three.
 func ValidateIDForFilename(id string) error {
 	if i := strings.IndexAny(id, `/\`); i >= 0 {
 		return fmt.Errorf("%w %q: an id must not contain the path separator %q — it becomes the nib's filename, so anything before a separator turns into a directory and the id no longer reads back as itself; check --prefix and the store's nibs.prefix", ErrIDNotFilename, safetext.Strip(id), id[i:i+1])
 	}
 	if id == "." || id == ".." {
 		return fmt.Errorf("%w %q: an id must name a file, and %q names a directory entry", ErrIDNotFilename, id, id)
+	}
+	return nil
+}
+
+// ErrIDNotText wraps every ValidateIDText refusal.
+var ErrIDNotText = errors.New("unusable nib id")
+
+// ValidateIDText refuses an id holding a rune safetext.Strip replaces, such as a
+// control character, a bidi or zero-width format character, invalid UTF-8 or a
+// backtick. Such an id would drive the terminal it is printed to, look like
+// another id, or break the code span a message puts around it.
+func ValidateIDText(id string) error {
+	for _, r := range id {
+		if s := string(r); safetext.Strip(s) != s {
+			return fmt.Errorf("%w %q: it holds %U, which nibs cannot show as itself", ErrIDNotText, safetext.Strip(id), r)
+		}
 	}
 	return nil
 }

@@ -760,6 +760,9 @@ func (c *Core) loadNib(path string) (*nib.Nib, error) {
 	if b.ID == "" {
 		return nil, errFilenameNamesNoID
 	}
+	if err := nib.ValidateIDText(b.ID); err != nil {
+		return nil, fmt.Errorf("%w; rename the file", err)
+	}
 
 	// Type and Priority are deliberately not defaulted here: synthesizing them in
 	// memory while computeStoredETag bare-parses the file would diverge the
@@ -1277,6 +1280,10 @@ func (c *Core) Create(b *nib.Nib) error {
 	// comes back holding a nib nobody can name.
 	if err := nib.ValidateIDForFilename(b.ID); err != nil {
 		return err
+	}
+	// The load refuses such an id, so a nib created under one would vanish.
+	if err := nib.ValidateIDText(b.ID); err != nil {
+		return fmt.Errorf("%w; check --prefix and the store's nibs.prefix", err)
 	}
 	if err := nib.ValidateIDRoundTrip(b.ID, b.Slug, readBackPrefix); err != nil {
 		return err
