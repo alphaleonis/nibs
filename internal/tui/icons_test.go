@@ -318,24 +318,46 @@ func TestATerminalWithoutUTF8GetsAnASCIIListView(t *testing.T) {
 	}
 }
 
-// The nib view opens with no resize after it, so its link rows come from the
-// delegate it was built with.
-func TestATerminalWithoutUTF8GetsASCIILinkRows(t *testing.T) {
+// The nib view draws its rules, divider, meta band, relation rows and
+// markdown in ASCII too, expanded with the rail and stacked, and docked.
+func TestATerminalWithoutUTF8GetsAnASCIINibView(t *testing.T) {
 	app := asciiApp(t)
+	stub := app.backend.(displayBackend).inner.(*StubBackend)
+	n := stub.Nibs["nib-2"]
+	n.Body = "## Heading\n\n- one\n- two\n\n> quoted\n\n---\n\n1. first\n\n`code`\n"
+	n.Documents = []string{"docs/plan.md"}
+	n.Tags = []string{"alpha"}
+	n.Estimate = "m"
 	if !focusOn(app, "nib-2") {
 		t.Fatal("premise failed: could not focus nib-2")
 	}
 	pressKeys(app, "enter")
-	if app.state != viewDetail || len(app.detail.links) < 2 {
-		t.Fatalf("premise failed: state = %d with %d links after enter, want the nib view with the parent and the child", app.state, len(app.detail.links))
+	if app.state != viewExpanded || len(app.expanded.groups) != 3 {
+		t.Fatalf("premise failed: state = %d with %d relation groups after enter, want the nib view with Parent, Children and Documents", app.state, len(app.expanded.groups))
 	}
-	rows := stripAnsi(app.detail.linkList.View())
-	if !strings.Contains(rows, "nib-1") || !strings.Contains(rows, "nib-3") {
-		t.Fatalf("premise failed: the link rows lack nib-1 or nib-3:\n%s", rows)
+
+	views := map[string]string{}
+	for _, width := range []int{80, 140} {
+		app.Update(tea.WindowSizeMsg{Width: width, Height: 30})
+		views[fmt.Sprintf("expanded at %d columns", width)] = stripAnsi(app.View().Content)
 	}
-	for i, line := range strings.Split(rows, "\n") {
-		if r, ok := nonASCII(line); ok {
-			t.Errorf("link row %d holds %q (%U):\n%s", i+1, r, r, line)
+	pressKeys(app, "esc z p")
+	app.Update(tea.WindowSizeMsg{Width: 140, Height: 30})
+	if !app.isTwoColumnMode() {
+		t.Fatal("premise failed: z p did not dock the nib view")
+	}
+	views["docked at 140 columns"] = stripAnsi(app.View().Content)
+
+	for name, view := range views {
+		for _, want := range []string{"Heading", "Grandchild", "plan.md"} {
+			if !strings.Contains(view, want) {
+				t.Fatalf("premise failed: the %s lacks %q:\n%s", name, want, view)
+			}
+		}
+		for i, line := range strings.Split(view, "\n") {
+			if r, ok := nonASCII(line); ok {
+				t.Errorf("the %s: line %d holds %q (%U):\n%s", name, i+1, r, r, line)
+			}
 		}
 	}
 }

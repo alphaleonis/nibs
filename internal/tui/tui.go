@@ -31,7 +31,7 @@ type viewState int
 
 const (
 	viewList viewState = iota
-	viewDetail
+	viewExpanded
 	viewTagPicker
 	viewParentPicker
 	viewStatusPicker
@@ -50,10 +50,10 @@ const (
 )
 
 const (
-	// previewMinWidth is the narrowest terminal the nib view is drawn beside
+	// nibViewMinWidth is the narrowest terminal the nib view is docked beside
 	// the list in: calculatePaneWidths then leaves the list 39 cells and the
 	// view 40.
-	previewMinWidth   = 80
+	nibViewMinWidth   = 80
 	RightPaneMaxWidth = 80 // the 80-column text convention
 )
 
@@ -140,8 +140,8 @@ type openParentPickerMsg struct {
 type App struct {
 	state          viewState
 	list           listModel
-	detail         detailModel
-	preview        previewModel
+	expanded       nibViewModel // the nib view at full screen
+	docked         nibViewModel // the nib view beside the list
 	tagPicker      tagPickerModel
 	parentPicker   parentPickerModel
 	statusPicker   statusPickerModel
@@ -156,7 +156,7 @@ type App struct {
 	createModal    createModalModel
 	confirmDialog  confirmDialog
 	palette        paletteModel
-	history        []detailModel // stack of previous detail views for back navigation
+	history        []nibViewModel // the expanded views that links were followed from, the latest last
 	backend        Backend
 	config         *config.Config
 	keys           keymap
@@ -177,7 +177,7 @@ type App struct {
 	previousState viewState
 
 	// Whether the nib view is shown beside the list. It is drawn only while the
-	// terminal is at least previewMinWidth wide.
+	// terminal is at least nibViewMinWidth wide.
 	nibViewShown bool
 
 	// The $EDITOR session in progress: the nib, and its file's mtime at launch.
@@ -196,8 +196,8 @@ type App struct {
 //
 // It applies the tui block of user over the default settings, as loadSettings
 // does. Icons are ascii when the terminal does not display UTF-8, whatever the
-// block sets. With ascii icons the list's rows and rules, and the nib view's
-// link rows, are ASCII too. A user config that did not load, or a tui entry
+// block sets. With ascii icons the list and the nib view draw everything but
+// nib text in ASCII too. A user config that did not load, or a tui entry
 // that was ignored, opens the TUI with a warning in the status line.
 // version is the running binary version, for the update-available indicator.
 // The App reads every nib through displayBackend, the rendering boundary for
@@ -209,7 +209,6 @@ func New(backend Backend, cfg *config.Config, user config.UserLayer, version str
 		backend: backend,
 		config:  cfg,
 		list:    newListModel(backend, cfg),
-		preview: newPreviewModel(nil, 0, 0),
 		version: version,
 	}
 	a.applyUserLayer(user)
@@ -313,7 +312,7 @@ func (a *App) Init() tea.Cmd {
 
 // isTwoColumnMode reports whether the nib view is drawn beside the list.
 func (a *App) isTwoColumnMode() bool {
-	return a.nibViewShown && a.width >= previewMinWidth
+	return a.nibViewShown && a.width >= nibViewMinWidth
 }
 
 // toggleNibView shows or hides the nib view beside the list. Shown in a
@@ -321,8 +320,9 @@ func (a *App) isTwoColumnMode() bool {
 func (a *App) toggleNibView() {
 	a.nibViewShown = !a.nibViewShown
 	a.syncListPane()
+	a.syncDocked()
 	if a.nibViewShown && !a.isTwoColumnMode() {
-		a.list.statusMessage = fmt.Sprintf("The nib view needs %d columns", previewMinWidth)
+		a.list.statusMessage = fmt.Sprintf("The nib view needs %d columns", nibViewMinWidth)
 		a.list.statusKind = statusWarn
 	}
 }
@@ -346,9 +346,9 @@ func (a *App) keyContext() keyContext {
 	switch a.state {
 	case viewList:
 		return inList(a.list.list, ctxList)
-	case viewDetail:
-		if a.detail.linksActive {
-			return inList(a.detail.linkList, ctxNibLinks)
+	case viewExpanded:
+		if a.expanded.focused() == regionRelations {
+			return ctxNibRelations
 		}
 		return ctxNibBody
 	case viewTagPicker:
@@ -391,9 +391,10 @@ func (a *App) actionState() actionState {
 		selected: len(a.list.selectedNibs),
 		filtered: a.list.hasActiveFilter() || a.list.list.IsFiltered(),
 	}
-	if a.state == viewDetail {
-		st.hasNib = a.detail.nib != nil
-		st.linksShown = a.detail.linksSection() != ""
+	if a.state == viewExpanded {
+		st.hasNib = a.expanded.nib != nil
+		st.relationsShown = a.expanded.relationsShown()
+		st.onDocument = a.expanded.selectedRelation() == nil
 	} else {
 		_, st.hasNib = a.list.list.SelectedItem().(nibItem)
 	}
@@ -476,8 +477,8 @@ func (a *App) viewMsg(act actionName) tea.Msg {
 	switch a.state {
 	case viewList:
 		return a.list.viewMsg(act)
-	case viewDetail:
-		return a.detail.viewMsg(act)
+	case viewExpanded:
+		return a.expanded.viewMsg(act)
 	}
 	return nil
 }
@@ -494,7 +495,7 @@ func (a *App) showView(msg tea.Msg) tea.Cmd {
 // Over another modal it keeps the view under that modal, so canceling returns
 // to the list or the nib view.
 func (a *App) openModal(state viewState) {
-	if a.state == viewList || a.state == viewDetail {
+	if a.state == viewList || a.state == viewExpanded {
 		a.previousState = a.state
 	}
 	a.state = state
@@ -551,40 +552,31 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.state = viewPalette
 		}
 
-		if a.isTwoColumnMode() {
-			_, rightWidth := calculatePaneWidths(a.width)
-			a.preview.width = rightWidth
-			a.preview.height = a.height - 2
+		// The expanded view under a modal is drawn too. On screen, it takes the
+		// size as the active view below.
+		if a.state != viewExpanded {
+			a.expanded, _ = a.expanded.Update(msg)
 		}
+		a.syncDocked()
 
 	case tea.KeyPressMsg:
+		// The key acts on the frame it was typed at, and clearing a status
+		// message can bring the nib view's relations back on screen.
+		a.expanded.focus = a.expanded.focused()
 		// Clear status messages on any keypress
 		a.list.statusMessage = ""
 		a.list.statusKind = statusOK
-		a.detail.statusMessage = ""
-		a.detail.statusKind = statusOK
+		a.expanded.statusMessage = ""
+		a.expanded.statusKind = statusOK
 		return a, a.handleKey(msg)
 
 	case cursorChangedMsg:
-		_, rightWidth := calculatePaneWidths(a.width)
-		if msg.nibID != "" {
-			nib, err := a.backend.GetNib(context.Background(), msg.nibID)
-			if err == nil && nib != nil {
-				a.preview = newPreviewModel(nib, rightWidth, a.height-2)
-			}
-		} else {
-			a.preview = newPreviewModel(nil, rightWidth, a.height-2)
-		}
+		a.showDocked(msg.nibID)
 		return a, nil
 
 	case nibsLoadedMsg:
 		a.list, cmd = a.list.Update(msg)
-		_, rightWidth := calculatePaneWidths(a.width)
-		if item, ok := a.list.list.SelectedItem().(nibItem); ok {
-			a.preview = newPreviewModel(item.nib, rightWidth, a.height-2)
-		} else {
-			a.preview = newPreviewModel(nil, rightWidth, a.height-2)
-		}
+		a.syncDocked()
 		return a, cmd
 
 	case updateCheckMsg:
@@ -595,19 +587,14 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case nibsChangedMsg:
-		if a.nibViewOnScreen() {
-			updatedNib, err := a.backend.GetNib(context.Background(), a.detail.nib.ID)
+		if a.expandedOnScreen() {
+			updatedNib, err := a.backend.GetNib(context.Background(), a.expanded.nib.ID)
 			if err != nil || updatedNib == nil {
 				// The nib is gone or unreadable, so any overlay on it closes too.
 				a.state = viewList
 				a.history = nil
 			} else {
-				// Carry the footer across the rebuild: a file changing on disk
-				// does not dismiss a status message.
-				message, kind := a.detail.statusMessage, a.detail.statusKind
-				a.detail = a.initDetailModel(updatedNib)
-				a.detail.statusMessage = message
-				a.detail.statusKind = kind
+				a.expanded = a.expanded.withNib(updatedNib)
 			}
 		}
 		return a, a.list.loadNibs
@@ -664,10 +651,10 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.state = a.previousState
 		clear(a.list.selectedNibs)
-		if a.state == viewDetail && len(msg.nibIDs) == 1 {
+		if a.state == viewExpanded && len(msg.nibIDs) == 1 {
 			updatedNib, _ := a.backend.GetNib(context.Background(), msg.nibIDs[0])
 			if updatedNib != nil {
-				a.detail = a.initDetailModel(updatedNib)
+				a.expanded = a.expanded.withNib(updatedNib)
 			}
 		}
 		a.reportMutationFailures("Status change", "nib", errs)
@@ -706,10 +693,10 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.state = a.previousState
 		clear(a.list.selectedNibs)
-		if a.state == viewDetail && len(msg.nibIDs) == 1 {
+		if a.state == viewExpanded && len(msg.nibIDs) == 1 {
 			updatedNib, _ := a.backend.GetNib(context.Background(), msg.nibIDs[0])
 			if updatedNib != nil {
-				a.detail = a.initDetailModel(updatedNib)
+				a.expanded = a.expanded.withNib(updatedNib)
 			}
 		}
 		a.reportMutationFailures("Type change", "nib", errs)
@@ -742,10 +729,10 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.state = a.previousState
 		clear(a.list.selectedNibs)
-		if a.state == viewDetail && len(msg.nibIDs) == 1 {
+		if a.state == viewExpanded && len(msg.nibIDs) == 1 {
 			updatedNib, _ := a.backend.GetNib(context.Background(), msg.nibIDs[0])
 			if updatedNib != nil {
-				a.detail = a.initDetailModel(updatedNib)
+				a.expanded = a.expanded.withNib(updatedNib)
 			}
 		}
 		a.reportMutationFailures("Priority change", "nib", errs)
@@ -780,10 +767,10 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.state = a.previousState
 		clear(a.list.selectedNibs)
-		if a.state == viewDetail && len(msg.nibIDs) == 1 {
+		if a.state == viewExpanded && len(msg.nibIDs) == 1 {
 			updatedNib, _ := a.backend.GetNib(context.Background(), msg.nibIDs[0])
 			if updatedNib != nil {
-				a.detail = a.initDetailModel(updatedNib)
+				a.expanded = a.expanded.withNib(updatedNib)
 			}
 		}
 		a.reportMutationFailures(msg.field.title+" change", "nib", errs)
@@ -833,10 +820,10 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.state = a.previousState
 		clear(a.list.selectedNibs)
-		if a.state == viewDetail && len(msg.nibIDs) == 1 {
+		if a.state == viewExpanded && len(msg.nibIDs) == 1 {
 			updatedNib, _ := a.backend.GetNib(context.Background(), msg.nibIDs[0])
 			if updatedNib != nil {
-				a.detail = a.initDetailModel(updatedNib)
+				a.expanded = a.expanded.withNib(updatedNib)
 			}
 		}
 		a.reportMutationFailures("Estimate change", "nib", errs)
@@ -869,10 +856,10 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		a.state = a.previousState
-		if a.state == viewDetail {
+		if a.state == viewExpanded {
 			updatedNib, _ := a.backend.GetNib(context.Background(), msg.nibID)
 			if updatedNib != nil {
-				a.detail = a.initDetailModel(updatedNib)
+				a.expanded = a.expanded.withNib(updatedNib)
 			}
 		}
 		a.reportMutationFailures("Blocking change", "link", errs)
@@ -1024,10 +1011,10 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.state = a.previousState
 		clear(a.list.selectedNibs)
-		if a.state == viewDetail && len(msg.nibIDs) == 1 {
+		if a.state == viewExpanded && len(msg.nibIDs) == 1 {
 			updatedNib, _ := a.backend.GetNib(context.Background(), msg.nibIDs[0])
 			if updatedNib != nil {
-				a.detail = a.initDetailModel(updatedNib)
+				a.expanded = a.expanded.withNib(updatedNib)
 			}
 		}
 		a.reportMutationFailures("Parent change", "nib", errs)
@@ -1054,34 +1041,34 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case viewList:
 			a.list.statusMessage = statusMsg
 			a.list.statusKind = statusMsgKind
-		case viewDetail:
-			a.detail.statusMessage = statusMsg
-			a.detail.statusKind = statusMsgKind
+		case viewExpanded:
+			a.expanded.statusMessage = statusMsg
+			a.expanded.statusKind = statusMsgKind
 		}
 
 		return a, nil
 
 	case selectNibMsg:
-		if a.state == viewDetail {
-			a.history = append(a.history, a.detail)
+		if a.state == viewExpanded {
+			a.history = append(a.history, a.expanded)
 		}
-		a.state = viewDetail
-		a.detail = a.initDetailModel(msg.nib)
-		return a, a.detail.Init()
+		a.state = viewExpanded
+		a.expanded = a.newNibView(msg.nib)
+		return a, nil
 
 	case backToListMsg:
-		if len(a.history) > 0 {
-			a.detail = a.history[len(a.history)-1]
-			a.history = a.history[:len(a.history)-1]
-			// The terminal may have been resized since this view was pushed.
-			a.detail, _ = a.detail.Update(tea.WindowSizeMsg{Width: a.width, Height: a.height})
-		} else {
-			a.state = viewList
-			// The list missed any resize that happened in the detail view.
-			a.list, cmd = a.list.Update(tea.WindowSizeMsg{Width: a.width, Height: a.height})
-			return a, cmd
+		if len(a.history) == 0 {
+			return a, a.returnToList()
 		}
+		a.expanded = a.history[len(a.history)-1]
+		a.history = a.history[:len(a.history)-1]
+		// The terminal may have been resized since this view was pushed.
+		a.expanded, _ = a.expanded.Update(tea.WindowSizeMsg{Width: a.width, Height: a.height})
 		return a, nil
+
+	case leaveNibViewMsg:
+		a.history = nil
+		return a, a.returnToList()
 	}
 
 	// Everything not handled above goes to the active view.
@@ -1094,8 +1081,8 @@ func (a *App) updateActiveView(msg tea.Msg) tea.Cmd {
 	switch a.state {
 	case viewList:
 		a.list, cmd = a.list.Update(msg)
-	case viewDetail:
-		a.detail, cmd = a.detail.Update(msg)
+	case viewExpanded:
+		a.expanded, cmd = a.expanded.Update(msg)
 	case viewTagPicker:
 		a.tagPicker, cmd = a.tagPicker.Update(msg)
 	case viewParentPicker:
@@ -1149,8 +1136,8 @@ func (a *App) collectTagsWithCounts() []tagWithCount {
 	return tags
 }
 
-// renderTwoColumnView renders the list and preview side by side above a
-// full-width footer.
+// renderTwoColumnView renders the list and the docked nib view side by side,
+// with a divider between them, above a full-width footer.
 func (a *App) renderTwoColumnView() string {
 	leftWidth, rightWidth := calculatePaneWidths(a.width)
 
@@ -1160,11 +1147,10 @@ func (a *App) renderTwoColumnView() string {
 
 	leftPane := a.list.pane(leftWidth, contentHeight)
 
-	a.preview.width = rightWidth
-	a.preview.height = contentHeight
-	rightPane := a.preview.View()
+	rightPane := a.docked.render(rightWidth, contentHeight)
+	divider := strings.TrimSuffix(strings.Repeat(ruleStyle.Render(dividerGlyph(a.display.ascii()))+"\n", max(1, contentHeight)), "\n")
 
-	columns := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
+	columns := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, divider, rightPane)
 
 	return columns + "\n" + footer
 }
@@ -1180,7 +1166,7 @@ func (a *App) View() tea.View {
 func (a *App) render() string {
 	hints := hintRow(a.keys.actions, a.actionState())
 	a.list.hints = hints
-	a.detail.hints = hints
+	a.expanded.hints = hints
 	return a.renderState(a.state)
 }
 
@@ -1193,8 +1179,8 @@ func (a *App) renderState(state viewState) string {
 			return a.renderTwoColumnView()
 		}
 		return a.list.View()
-	case viewDetail:
-		return a.detail.View()
+	case viewExpanded:
+		return a.expanded.View()
 	case viewTagPicker:
 		return a.tagPicker.View()
 	case viewParentPicker:
@@ -1227,18 +1213,19 @@ func (a *App) renderState(state viewState) string {
 	return ""
 }
 
-// nibViewOnScreen reports whether the nib view is drawn, on its own or under
-// the palette or a modal, the same way render finds the view underneath.
-func (a *App) nibViewOnScreen() bool {
+// expandedOnScreen reports whether the expanded nib view is drawn, on its own
+// or under the palette or a modal, the same way render finds the view
+// underneath.
+func (a *App) expandedOnScreen() bool {
 	state := a.state
 	if state == viewPalette {
 		state = a.palette.origin
 	}
 	switch state {
-	case viewList, viewDetail, viewTagPicker:
-		return state == viewDetail
+	case viewList, viewExpanded, viewTagPicker:
+		return state == viewExpanded
 	}
-	return a.previousState == viewDetail
+	return a.previousState == viewExpanded
 }
 
 // getBackgroundView returns the view to show behind modal pickers
@@ -1249,21 +1236,56 @@ func (a *App) getBackgroundView() string {
 			return a.renderTwoColumnView()
 		}
 		return a.list.View()
-	case viewDetail:
-		return a.detail.View()
+	case viewExpanded:
+		return a.expanded.View()
 	default:
 		return a.list.View()
 	}
 }
 
-// initDetailModel creates a detail model with an empty footer.
-func (a *App) initDetailModel(n *nib.Nib) detailModel {
-	return newDetailModel(n, a.backend, a.config, a.width, a.height, a.display.icons)
+// newNibView returns the expanded view of n, with an empty footer.
+func (a *App) newNibView(n *nib.Nib) nibViewModel {
+	return newNibViewModel(n, a.backend, a.config, a.display, a.width, a.height)
+}
+
+// returnToList shows the list, which missed any resize while it was not on
+// screen.
+func (a *App) returnToList() tea.Cmd {
+	a.state = viewList
+	var cmd tea.Cmd
+	a.list, cmd = a.list.Update(tea.WindowSizeMsg{Width: a.width, Height: a.height})
+	return cmd
+}
+
+// syncDocked shows the nib under the list cursor in the docked view.
+func (a *App) syncDocked() {
+	a.showDocked(a.list.focusedID())
+}
+
+// showDocked shows the nib id in the docked view, or the placeholder when id
+// is "" or does not resolve. It does nothing while the view is not docked.
+func (a *App) showDocked(id string) {
+	if !a.isTwoColumnMode() {
+		return
+	}
+	var n *nib.Nib
+	if id != "" {
+		n, _ = a.backend.GetNib(context.Background(), id)
+	}
+	_, width := calculatePaneWidths(a.width)
+	if n != nil && a.docked.nib != nil && a.docked.nib.ID == n.ID {
+		a.docked.width, a.docked.height = width, a.height
+		a.docked = a.docked.withNib(n)
+	} else {
+		a.docked = newNibViewModel(n, a.backend, a.config, a.display, width, a.height)
+	}
+	// The list keeps the keys while the view is docked.
+	a.docked.active = false
 }
 
 // reportMutationFailures reports a picker's failed mutations in the footer of
-// the view the app returned to. Call it after any detail-model rebuild, which
-// empties the footer.
+// the view the app returned to. Call it after any rebuild of the expanded
+// view, because a new view starts with an empty footer.
 //
 // One failure is shown with its reason, several as a count. unit names what one
 // error is about: "nib", or "link" for the blocking picker, which collects one
@@ -1280,14 +1302,14 @@ func (a *App) reportMutationFailures(action, unit string, errs []error) {
 }
 
 // reportFailure shows an already-composed failure message in the footer of the
-// view on screen. Call it after any detail-model rebuild.
+// view on screen. Call it after any rebuild of the expanded view.
 //
 // Report every failed write. Do not report a failed read that only refreshes
 // what is on screen.
 func (a *App) reportFailure(message string) {
-	if a.state == viewDetail {
-		a.detail.statusMessage = message
-		a.detail.statusKind = statusWarn
+	if a.state == viewExpanded {
+		a.expanded.statusMessage = message
+		a.expanded.statusKind = statusWarn
 		return
 	}
 	a.list.statusMessage = message

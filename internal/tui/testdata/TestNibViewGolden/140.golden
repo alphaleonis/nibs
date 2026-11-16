@@ -1,0 +1,40 @@
+── hub ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+✦ Hub feature                                                                                                                               
+Status ◐ in-progress   Type ✦ feature   Priority ! high   Estimate m   Milestone Wave one   Tags tui views                                  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  BODYTEXT opens the body and links [[rm]].                                                 │ Parent                                        
+                                                                                            │ ▸ ◐ ≡ rp Parent epic                          
+  ## Notes                                                                                  │ Children 2                                    
+                                                                                            │   ○ ▣ rc1 First child                         
+  • one                                                                                     │   ◌ ▣ rc2 Second child                        
+  • two                                                                                     │ Blocked by                                    
+                                                                                            │   ○ ▣ rb Blocker task                         
+                                                                                            │ Blocking                                      
+                                                                                            │   ○ ✱ rd Dependent bug                        
+                                                                                            │ Mentions                                      
+                                                                                            │   ✓ ▣ rm Mentioned note                       
+                                                                                            │ Mentioned by                                  
+                                                                                            │   ○ ▣ rmb Mentioning task                     
+                                                                                            │ Documents                                     
+                                                                                            │   docs/nib-view.md                            
+                                                                                            │                                               
+                                                                                            │                                               
+                                                                                            │                                               
+                                                                                            │                                               
+                                                                                            │                                               
+                                                                                            │                                               
+                                                                                            │                                               
+                                                                                            │                                               
+                                                                                            │                                               
+                                                                                            │                                               
+                                                                                            │                                               
+                                                                                            │                                               
+                                                                                            │                                               
+                                                                                            │                                               
+                                                                                            │                                               
+                                                                                            │                                               
+                                                                                            │                                               
+                                                                                            │                                               
+                                                                                            │                                               
+                                                                                            │                                               
+100%  tab switch  e edit  s status  enter follow  esc back  ? help  q quit

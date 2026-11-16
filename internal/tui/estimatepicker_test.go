@@ -188,9 +188,9 @@ func TestAppEstimatePickerWiring(t *testing.T) {
 	t.Run("detail view estimate action opens the estimate picker", func(t *testing.T) {
 		app, stub := newTestApp()
 		cfg := config.Default()
-		app.state = viewDetail
+		app.state = viewExpanded
 		testNib := &nib.Nib{ID: "nib-1", Title: "Test", Status: "todo", Type: "task", Estimate: "m"}
-		app.detail = newDetailModel(testNib, stub, cfg, 80, 24, iconsUnicode)
+		app.expanded = newNibViewModel(testNib, stub, cfg, display{icons: iconsUnicode}, 80, 24)
 
 		app.runAction(findAction(defaultActions, actEstimate))
 		if app.state != viewEstimatePicker {

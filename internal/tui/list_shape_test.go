@@ -319,8 +319,8 @@ func TestAFirstVisitToAViewKeepsTheNib(t *testing.T) {
 		t.Fatal("premise failed: could not focus t1")
 	}
 	pressKeys(app, "v f enter")
-	if app.state != viewDetail || app.detail.nib.ID != "t1" {
-		t.Errorf("enter after v opened %v in state %d, want t1", app.detail.nib, app.state)
+	if app.state != viewExpanded || app.expanded.nib.ID != "t1" {
+		t.Errorf("enter after v opened %v in state %d, want t1", app.expanded.nib, app.state)
 	}
 }
 

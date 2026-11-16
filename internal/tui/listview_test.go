@@ -235,16 +235,16 @@ func TestTheBottomRuleShowsTheRowPosition(t *testing.T) {
 func TestZPTogglesTheNibView(t *testing.T) {
 	app := sampleApp(t, 140)
 	n := app.list.focusedNib()
-	preview := "Status: " + n.Status
-	if strings.Contains(plainView(app), preview) {
+	meta := "Status " + app.display.icons.status(n.Status) + " " + n.Status
+	if strings.Contains(plainView(app), meta) {
 		t.Fatalf("the nib view is shown before z p:\n%s", plainView(app))
 	}
 	pressKeys(app, "z p")
-	if !strings.Contains(plainView(app), preview) {
+	if !strings.Contains(plainView(app), meta) {
 		t.Errorf("z p did not show the nib view:\n%s", plainView(app))
 	}
 	pressKeys(app, "z p")
-	if strings.Contains(plainView(app), preview) {
+	if strings.Contains(plainView(app), meta) {
 		t.Errorf("a second z p did not hide the nib view:\n%s", plainView(app))
 	}
 }

@@ -52,13 +52,6 @@ func TestAFilteringListTakesQAndQuestionMark(t *testing.T) {
 			return app
 		}, sv.state, sv.filter})
 	}
-	views = append(views, view{"detail links", func(t *testing.T) *App {
-		app := detailOnLinkedNib(t, 2, 120, 40)
-		if !app.detail.linksActive {
-			t.Fatal("premise failed: the detail view did not focus its links")
-		}
-		return app
-	}, viewDetail, func(a *App) list.Model { return a.detail.linkList }})
 
 	for _, v := range views {
 		t.Run(v.name, func(t *testing.T) {
@@ -116,7 +109,7 @@ func frameViews() []frameView {
 			name: "detail",
 			enter: func(t *testing.T, app *App, _ int) {
 				sendKey(app, tea.KeyPressMsg{Code: tea.KeyEnter})
-				if app.state != viewDetail {
+				if app.state != viewExpanded {
 					t.Fatalf("premise failed: expected the detail view, got state %d", app.state)
 				}
 			},
@@ -127,7 +120,7 @@ func frameViews() []frameView {
 			name: "two-column",
 			enter: func(t *testing.T, app *App, width int) {
 				pressKeys(app, "z p")
-				if want := width >= previewMinWidth; app.isTwoColumnMode() != want {
+				if want := width >= nibViewMinWidth; app.isTwoColumnMode() != want {
 					t.Fatalf("premise failed: two-column mode = %v at width %d, want %v", app.isTwoColumnMode(), width, want)
 				}
 			},
@@ -158,7 +151,7 @@ func refuseStatusChange(t *testing.T, app *App, view frameView) {
 	selectStatus(t, app, "completed")
 	held := app.list.statusMessage
 	if view.name == "detail" {
-		held = app.detail.statusMessage
+		held = app.expanded.statusMessage
 	}
 	if want := "Status change failed: " + queueRefusal(); held != want {
 		t.Fatalf("premise failed: the model is not holding the refusal, got %q", held)
@@ -205,7 +198,7 @@ const minSupportedHeight = 8
 // supported floor up to dense, then whatever sparse heights follow.
 //
 // Contiguous at the bottom because that is where this layout's thresholds are.
-// The header, the links box and the body each stop fitting within a few rows of
+// The header, the relations and the body each stop fitting within a few rows of
 // each other, so a sweep that steps over the range decides nothing about it —
 // twice a frame was found broken by hand at a height a sampling sweep jumped
 // clean over. Sparse above, where nothing changes shape and each extra height

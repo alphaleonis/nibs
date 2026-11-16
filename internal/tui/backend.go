@@ -18,6 +18,10 @@ type Backend interface {
 	GetChildren(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error)
 	GetBlockedBy(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error)
 	GetBlocking(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error)
+	// GetMentions returns the nibs obj's body mentions, and GetMentionedBy the
+	// nibs whose bodies mention obj. Both include closed nibs.
+	GetMentions(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error)
+	GetMentionedBy(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error)
 
 	// IsBlocked and IsBlocking consider only active links, and a completed or
 	// scrapped nib is neither blocked nor blocking; see nibcore.Core.IsBlocked.

@@ -156,7 +156,7 @@ func TestThePaletteRunsAnActionInTheViewItWasOpenedFrom(t *testing.T) {
 	app, _ := setupTestApp(t, listKeysNibs())
 	focusOn(app, "nib-4")
 	pressKeys(app, "enter")
-	if app.state != viewDetail {
+	if app.state != viewExpanded {
 		t.Fatalf("premise failed: state = %d, want the nib view", app.state)
 	}
 
@@ -168,7 +168,7 @@ func TestThePaletteRunsAnActionInTheViewItWasOpenedFrom(t *testing.T) {
 		t.Errorf("the status picker edits %v, want [nib-4]", app.statusPicker.nibIDs)
 	}
 	pressKeys(app, "esc")
-	if app.state != viewDetail {
+	if app.state != viewExpanded {
 		t.Errorf("state = %d after esc, want the nib view the palette was opened from", app.state)
 	}
 }
@@ -265,7 +265,7 @@ func overNibView(t *testing.T, open string) (*App, *StubBackend) {
 	app, stub := setupTestApp(t, listKeysNibs())
 	focusOn(app, "nib-4")
 	pressKeys(app, "enter "+open)
-	if app.state == viewDetail || app.state == viewList {
+	if app.state == viewExpanded || app.state == viewList {
 		t.Fatalf("premise failed: %s opened no overlay over the nib view, state = %d", open, app.state)
 	}
 	return app, stub
@@ -285,10 +285,10 @@ func TestAReloadRefreshesTheNibViewUnderAnOverlay(t *testing.T) {
 			processCmd(app, cmd)
 			pressKeys(app, "esc")
 
-			if app.state != viewDetail {
+			if app.state != viewExpanded {
 				t.Fatalf("state = %d after esc, want the nib view", app.state)
 			}
-			if got := app.detail.nib.Title; got != renamed.Title {
+			if got := app.expanded.nib.Title; got != renamed.Title {
 				t.Errorf("the nib view shows %q, want the title on disk %q", got, renamed.Title)
 			}
 		})

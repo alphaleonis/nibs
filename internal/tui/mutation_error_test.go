@@ -33,7 +33,7 @@ const refusalReason = "cannot close tnib-mile: 3 open nibs are still assigned to
 func TestCopyFromTheDetailViewReportsItsOutcomeKind(t *testing.T) {
 	app, _ := setupTestApp(t, pickerTestNibs())
 	sendKey(app, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if app.state != viewDetail {
+	if app.state != viewExpanded {
 		t.Fatalf("premise failed: expected the detail view, got state %d", app.state)
 	}
 	orig := clipboardWriteAll
@@ -41,20 +41,20 @@ func TestCopyFromTheDetailViewReportsItsOutcomeKind(t *testing.T) {
 
 	clipboardWriteAll = func(string) error { return errors.New("no clipboard utilities") }
 	sendKey(app, tea.KeyPressMsg{Code: 'y', Text: "y"})
-	if !strings.Contains(app.detail.statusMessage, "no clipboard utilities") {
-		t.Fatalf("detail footer message = %q, want the copy failure", app.detail.statusMessage)
+	if !strings.Contains(app.expanded.statusMessage, "no clipboard utilities") {
+		t.Fatalf("detail footer message = %q, want the copy failure", app.expanded.statusMessage)
 	}
-	if app.detail.statusKind != statusWarn {
-		t.Errorf("detail statusKind after a failed copy = %v, want statusWarn", app.detail.statusKind)
+	if app.expanded.statusKind != statusWarn {
+		t.Errorf("detail statusKind after a failed copy = %v, want statusWarn", app.expanded.statusKind)
 	}
 
 	clipboardWriteAll = func(string) error { return nil }
 	sendKey(app, tea.KeyPressMsg{Code: 'y', Text: "y"})
-	if !strings.HasPrefix(app.detail.statusMessage, "Copied ") {
-		t.Fatalf("detail footer message = %q, want the copy confirmation", app.detail.statusMessage)
+	if !strings.HasPrefix(app.expanded.statusMessage, "Copied ") {
+		t.Fatalf("detail footer message = %q, want the copy confirmation", app.expanded.statusMessage)
 	}
-	if app.detail.statusKind != statusOK {
-		t.Errorf("detail statusKind after a successful copy = %v, want statusOK", app.detail.statusKind)
+	if app.expanded.statusKind != statusOK {
+		t.Errorf("detail statusKind after a successful copy = %v, want statusOK", app.expanded.statusKind)
 	}
 }
 
@@ -110,7 +110,7 @@ func TestStatusRefusalReachesTheListFooter(t *testing.T) {
 func TestStatusRefusalReachesTheDetailFooter(t *testing.T) {
 	app, stub := setupTestApp(t, pickerTestNibs())
 	sendKey(app, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if app.state != viewDetail {
+	if app.state != viewExpanded {
 		t.Fatalf("premise failed: expected the detail view, got state %d", app.state)
 	}
 	stub.UpdateErr = errors.New(refusalReason)
@@ -121,15 +121,15 @@ func TestStatusRefusalReachesTheDetailFooter(t *testing.T) {
 	}
 	selectStatus(t, app, "completed")
 
-	if app.state != viewDetail {
+	if app.state != viewExpanded {
 		t.Fatalf("expected to return to the detail view, got state %d", app.state)
 	}
 	want := "Status change failed: " + refusalReason
-	if got := app.detail.statusMessage; got != want {
+	if got := app.expanded.statusMessage; got != want {
 		t.Errorf("detail footer message = %q, want %q", got, want)
 	}
-	if app.detail.statusKind != statusWarn {
-		t.Errorf("detail statusKind = %v, want statusWarn — it would render in the success color", app.detail.statusKind)
+	if app.expanded.statusKind != statusWarn {
+		t.Errorf("detail statusKind = %v, want statusWarn — it would render in the success color", app.expanded.statusKind)
 	}
 	if content := app.View().Content; !strings.Contains(content, refusalReason) {
 		t.Errorf("rendered detail view does not carry the reason:\n%s", content)
@@ -246,7 +246,7 @@ func TestSuccessfulStatusChangeReportsNothing(t *testing.T) {
 // went through.
 func TestDetailFooterColorsARefusalAsAWarning(t *testing.T) {
 	n := &nib.Nib{ID: "nib-1", Title: "First", Type: "milestone", Status: "todo"}
-	m := newDetailModel(n, &StubBackend{}, config.Default(), 80, 24, iconsUnicode)
+	m := newNibViewModel(n, &StubBackend{}, config.Default(), display{icons: iconsUnicode}, 80, 24)
 	m.statusMessage = "Status change failed: " + refusalReason
 
 	m.statusKind = statusOK
@@ -287,23 +287,23 @@ func fgSGRParams(c color.Color) string {
 func TestDetailRefusalKindIsClearedOnTheNextKeypress(t *testing.T) {
 	app, stub := setupTestApp(t, pickerTestNibs())
 	sendKey(app, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if app.state != viewDetail {
+	if app.state != viewExpanded {
 		t.Fatalf("premise failed: expected the detail view, got state %d", app.state)
 	}
 	stub.UpdateErr = errors.New(refusalReason)
 	sendKey(app, tea.KeyPressMsg{Code: 's', Text: "s"})
 	selectStatus(t, app, "completed")
-	if app.detail.statusKind != statusWarn {
-		t.Fatalf("premise failed: expected the refusal to be marked as a warning, got %v", app.detail.statusKind)
+	if app.expanded.statusKind != statusWarn {
+		t.Fatalf("premise failed: expected the refusal to be marked as a warning, got %v", app.expanded.statusKind)
 	}
 
 	sendKey(app, tea.KeyPressMsg{Code: tea.KeyDown})
 
-	if got := app.detail.statusMessage; got != "" {
+	if got := app.expanded.statusMessage; got != "" {
 		t.Errorf("detail footer message = %q, want it cleared", got)
 	}
-	if app.detail.statusKind != statusOK {
-		t.Errorf("detail statusKind = %v, want statusOK — the next message would inherit the warning color", app.detail.statusKind)
+	if app.expanded.statusKind != statusOK {
+		t.Errorf("detail statusKind = %v, want statusOK — the next message would inherit the warning color", app.expanded.statusKind)
 	}
 }
 
@@ -486,13 +486,12 @@ func queueRefusal() string {
 	}).Error()
 }
 
-// b1 is what makes ms1's detail view draw the links box, which is the tallest
-// thing in that frame and has its own floor. Without a link the geometry sweeps
-// measured a detail view the links box was never part of.
+// b1 gives ms1's expanded view a relation, so the geometry sweeps measure a
+// view that draws the relations as well as the body.
 //
 // It blocks on the milestone rather than parenting under it because a milestone
 // is not a legal parent here; the queue membership t1 already carries is not a
-// link the detail view resolves.
+// relation the expanded view resolves.
 func queueRefusalNibs() []*nib.Nib {
 	return []*nib.Nib{
 		{ID: "ms1", Title: "Wave one", Type: "milestone", Status: "todo"},
@@ -505,7 +504,7 @@ func queueRefusalNibs() []*nib.Nib {
 // draws the alt screen into a fixed cell grid with wrapping off, so every cell
 // outside it is dropped with no ellipsis and nothing on screen to say anything
 // is missing — which cost the acceptance case its remedy at every width tried.
-// Reaching app.detail.statusMessage is therefore not the property; being inside
+// Reaching app.expanded.statusMessage is therefore not the property; being inside
 // the frame is.
 func TestRefusalIsLegibleAtEveryTerminalWidth(t *testing.T) {
 	const termHeight = 24
@@ -520,7 +519,7 @@ func TestRefusalIsLegibleAtEveryTerminalWidth(t *testing.T) {
 			name: "detail",
 			enter: func(t *testing.T, app *App, _ int) {
 				sendKey(app, tea.KeyPressMsg{Code: tea.KeyEnter})
-				if app.state != viewDetail {
+				if app.state != viewExpanded {
 					t.Fatalf("premise failed: expected the detail view, got state %d", app.state)
 				}
 			},
@@ -531,7 +530,7 @@ func TestRefusalIsLegibleAtEveryTerminalWidth(t *testing.T) {
 			name: "two-column",
 			enter: func(t *testing.T, app *App, width int) {
 				pressKeys(app, "z p")
-				if want := width >= previewMinWidth; app.isTwoColumnMode() != want {
+				if want := width >= nibViewMinWidth; app.isTwoColumnMode() != want {
 					t.Fatalf("premise failed: two-column mode = %v at width %d, want %v", app.isTwoColumnMode(), width, want)
 				}
 			},
@@ -578,7 +577,7 @@ func TestDetailHelpRowSurvivesARefusal(t *testing.T) {
 		t.Fatal("premise failed: could not focus the milestone")
 	}
 	sendKey(app, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if app.state != viewDetail {
+	if app.state != viewExpanded {
 		t.Fatalf("premise failed: expected the detail view, got state %d", app.state)
 	}
 
@@ -600,7 +599,7 @@ func TestDetailHelpRowSurvivesARefusal(t *testing.T) {
 func TestDetailRefusalSurvivesAWatcherTick(t *testing.T) {
 	app, stub := setupTestApp(t, pickerTestNibs())
 	sendKey(app, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if app.state != viewDetail {
+	if app.state != viewExpanded {
 		t.Fatalf("premise failed: expected the detail view, got state %d", app.state)
 	}
 	stub.UpdateErr = errors.New(refusalReason)
@@ -608,7 +607,7 @@ func TestDetailRefusalSurvivesAWatcherTick(t *testing.T) {
 	selectStatus(t, app, "completed")
 
 	want := "Status change failed: " + refusalReason
-	if got := app.detail.statusMessage; got != want {
+	if got := app.expanded.statusMessage; got != want {
 		t.Fatalf("premise failed: detail footer message = %q, want %q", got, want)
 	}
 
@@ -618,11 +617,11 @@ func TestDetailRefusalSurvivesAWatcherTick(t *testing.T) {
 	_, cmd := app.Update(nibsChangedMsg{})
 	processCmd(app, cmd)
 
-	if got := app.detail.statusMessage; got != want {
+	if got := app.expanded.statusMessage; got != want {
 		t.Errorf("detail footer message = %q after a watcher tick, want %q", got, want)
 	}
-	if app.detail.statusKind != statusWarn {
-		t.Errorf("detail statusKind = %v after a watcher tick, want statusWarn — the refusal would turn green", app.detail.statusKind)
+	if app.expanded.statusKind != statusWarn {
+		t.Errorf("detail statusKind = %v after a watcher tick, want statusWarn — the refusal would turn green", app.expanded.statusKind)
 	}
 	if got := frameText(app.View().Content, 120, 40); !strings.Contains(got, want) {
 		t.Errorf("the frame does not carry the refusal after a watcher tick:\n%s", got)
@@ -675,7 +674,7 @@ func TestAnOverlongRefusalIsCappedRatherThanEatingTheView(t *testing.T) {
 			name: "detail",
 			enter: func(t *testing.T, app *App) {
 				sendKey(app, tea.KeyPressMsg{Code: tea.KeyEnter})
-				if app.state != viewDetail {
+				if app.state != viewExpanded {
 					t.Fatalf("premise failed: expected the detail view, got state %d", app.state)
 				}
 			},
@@ -755,11 +754,11 @@ func pickerHostViews() []pickerHostView {
 			enter: func(t *testing.T, app *App) {
 				t.Helper()
 				sendKey(app, tea.KeyPressMsg{Code: tea.KeyEnter})
-				if app.state != viewDetail {
+				if app.state != viewExpanded {
 					t.Fatalf("premise failed: expected the detail view, got state %d", app.state)
 				}
 			},
-			footer: func(app *App) (string, statusKind) { return app.detail.statusMessage, app.detail.statusKind },
+			footer: func(app *App) (string, statusKind) { return app.expanded.statusMessage, app.expanded.statusKind },
 		},
 	}
 }
@@ -1049,7 +1048,7 @@ func TestRefusedEditorWriteReachesTheListFooter(t *testing.T) {
 func TestRefusedEditorWriteReachesTheDetailFooter(t *testing.T) {
 	app, stub := setupTestApp(t, pickerTestNibs())
 	sendKey(app, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if app.state != viewDetail {
+	if app.state != viewExpanded {
 		t.Fatalf("premise failed: expected the detail view, got state %d", app.state)
 	}
 	editorSession(t, app, stub, "nib-1")
@@ -1059,11 +1058,11 @@ func TestRefusedEditorWriteReachesTheDetailFooter(t *testing.T) {
 	processCmd(app, cmd)
 
 	want := editorTextSafeLead + " The store did not accept the edit to nib-1: " + refusalReason
-	if got := app.detail.statusMessage; got != want {
+	if got := app.expanded.statusMessage; got != want {
 		t.Errorf("detail footer message = %q, want %q", got, want)
 	}
-	if app.detail.statusKind != statusWarn {
-		t.Errorf("detail statusKind = %v, want statusWarn", app.detail.statusKind)
+	if app.expanded.statusKind != statusWarn {
+		t.Errorf("detail statusKind = %v, want statusWarn", app.expanded.statusKind)
 	}
 }
 
@@ -1326,7 +1325,7 @@ func TestFailedEditorLaunchIsReported(t *testing.T) {
 func TestFailedEditorLaunchReachesTheDetailFooter(t *testing.T) {
 	app, stub := setupTestApp(t, pickerTestNibs())
 	sendKey(app, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if app.state != viewDetail {
+	if app.state != viewExpanded {
 		t.Fatalf("premise failed: expected the detail view, got state %d", app.state)
 	}
 	editorSession(t, app, stub, "nib-1")
@@ -1336,11 +1335,11 @@ func TestFailedEditorLaunchReachesTheDetailFooter(t *testing.T) {
 	processCmd(app, cmd)
 
 	want := editorNotStartedLead + " The editor could not be started: " + launchErr.Error()
-	if got := app.detail.statusMessage; got != want {
+	if got := app.expanded.statusMessage; got != want {
 		t.Errorf("detail footer message = %q, want %q", got, want)
 	}
-	if app.detail.statusKind != statusWarn {
-		t.Errorf("detail statusKind = %v, want statusWarn", app.detail.statusKind)
+	if app.expanded.statusKind != statusWarn {
+		t.Errorf("detail statusKind = %v, want statusWarn", app.expanded.statusKind)
 	}
 }
 
@@ -1552,7 +1551,7 @@ func TestTheLaunchFailureKeepsItsRemedyInTheDetailFrame(t *testing.T) {
 				app, stub := setupTestApp(t, pickerTestNibs())
 				app.Update(tea.WindowSizeMsg{Width: width, Height: height})
 				sendKey(app, tea.KeyPressMsg{Code: tea.KeyEnter})
-				if app.state != viewDetail {
+				if app.state != viewExpanded {
 					t.Fatalf("premise failed: expected the detail view, got state %d", app.state)
 				}
 				editorSession(t, app, stub, "nib-1")
@@ -1560,7 +1559,7 @@ func TestTheLaunchFailureKeepsItsRemedyInTheDetailFrame(t *testing.T) {
 
 				_, cmd := app.Update(editorFinishedMsg{err: launchErr})
 				processCmd(app, cmd)
-				if app.detail.statusMessage == "" {
+				if app.expanded.statusMessage == "" {
 					t.Fatal("premise failed: the failed launch was not reported to the detail view at all")
 				}
 
@@ -1573,8 +1572,8 @@ func TestTheLaunchFailureKeepsItsRemedyInTheDetailFrame(t *testing.T) {
 						floor, painted)
 				}
 
-				rows := maxStatusFooterLines(app.detail.height)
-				granted := frameText(renderStatusMessage(app.detail.statusMessage, app.detail.statusKind, width, rows, false), width, height)
+				rows := maxStatusFooterLines(app.expanded.height)
+				granted := frameText(renderStatusMessage(app.expanded.statusMessage, app.expanded.statusKind, width, rows, false), width, height)
 				if strings.Contains(granted, remedy) {
 					if !strings.Contains(painted, remedy) {
 						t.Errorf("the status region granted %q at %d row(s) and the frame did not paint it — the composition lost what the message is for:\n%s",

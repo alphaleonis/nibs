@@ -16,7 +16,7 @@ type keyContext uint8
 
 const (
 	ctxList keyContext = iota
-	ctxNibLinks
+	ctxNibRelations
 	ctxNibBody
 	ctxStatusPicker
 	ctxTypePicker
@@ -43,7 +43,7 @@ const (
 
 var keyContextNames = [numKeyContexts]string{
 	ctxList:            "list",
-	ctxNibLinks:        "nib view links",
+	ctxNibRelations:    "nib view relations",
 	ctxNibBody:         "nib view body",
 	ctxStatusPicker:    "status picker",
 	ctxTypePicker:      "type picker",
@@ -133,12 +133,13 @@ const (
 // actionState is what an action's Hint, Label and Ready read: the app as it is
 // when a key arrives.
 type actionState struct {
-	ctx        keyContext
-	prefix     string // the pending prefix, or "" when none is
-	hasNib     bool   // a nib is under the list cursor, or the nib view shows one
-	selected   int    // nibs marked in the list
-	filtered   bool   // a tag or text filter narrows the list
-	linksShown bool   // the nib view draws its links box
+	ctx            keyContext
+	prefix         string // the pending prefix, or "" when none is
+	hasNib         bool   // a nib is under the list cursor, or the nib view shows one
+	selected       int    // nibs marked in the list
+	filtered       bool   // a tag or text filter narrows the list
+	relationsShown bool   // the nib view draws a related nib
+	onDocument     bool   // the nib view's relations cursor is on a document
 }
 
 // action is one named thing a key can do. Dispatch reads the keymap's
@@ -161,13 +162,13 @@ type action struct {
 
 // The context sets that several actions in the table share.
 var (
-	nibContexts   = []keyContext{ctxList, ctxNibLinks, ctxNibBody}
-	nibViewCtx    = []keyContext{ctxNibLinks, ctxNibBody}
+	nibContexts   = []keyContext{ctxList, ctxNibRelations, ctxNibBody}
+	nibViewCtx    = []keyContext{ctxNibRelations, ctxNibBody}
 	listPickers   = []keyContext{ctxStatusPicker, ctxParentPicker, ctxBlockingPicker, ctxPriorityPicker, ctxEstimatePicker, ctxMilestonePicker, ctxAreaPicker, ctxTagPicker}
 	allPickers    = append([]keyContext{ctxTypePicker, ctxModifyPicker, ctxColumnPicker, ctxViewPicker}, listPickers...)
 	browsing      = slices.Concat(nibContexts, allPickers)
 	everyContext  = allKeyContexts()
-	filterTargets = slices.Concat([]keyContext{ctxList, ctxNibLinks}, listPickers)
+	filterTargets = slices.Concat([]keyContext{ctxList}, listPickers)
 	textInputs    = []keyContext{ctxFilterInput, ctxTextInput}
 )
 
@@ -211,8 +212,6 @@ func hintFilter(st actionState) bool {
 	switch st.ctx {
 	case ctxList:
 		return st.selected == 0 && !st.filtered
-	case ctxNibLinks:
-		return false
 	}
 	return true
 }
@@ -225,7 +224,7 @@ func labelOpen(st actionState) string {
 	switch st.ctx {
 	case ctxList:
 		return "open"
-	case ctxNibLinks:
+	case ctxNibRelations:
 		return "follow"
 	case ctxBlockingPicker, ctxColumnPicker:
 		return "apply"
@@ -260,11 +259,15 @@ func readyOnNib(st actionState) (bool, string) {
 	return false, "no nib under the cursor"
 }
 
-// readyToOpen needs a nib under the list cursor. Elsewhere enter chooses a row
-// or follows a link, which needs no nib.
+// readyToOpen needs a nib under the list cursor, and a related nib under the
+// nib view's relations cursor. Elsewhere enter chooses a row, which needs no
+// nib.
 func readyToOpen(st actionState) (bool, string) {
-	if st.ctx == ctxList {
+	switch {
+	case st.ctx == ctxList:
 		return readyOnNib(st)
+	case st.ctx == ctxNibRelations && st.onDocument:
+		return false, "a document is not a nib"
 	}
 	return true, ""
 }
@@ -300,12 +303,12 @@ var defaultActions = []action{
 	{Name: actFoldAll, Group: "Move", Desc: "fold every row", Contexts: []keyContext{ctxList}, Keys: []string{"<"}},
 	{Name: actUnfoldAll, Group: "Move", Desc: "unfold every row", Contexts: []keyContext{ctxList}, Keys: []string{">"}},
 	{Name: actFocusNext, Group: "Move", Desc: "focus the next pane", Contexts: nibViewCtx, Keys: []string{"tab"},
-		Hint: func(st actionState) bool { return st.linksShown }, Label: label("switch")},
+		Hint: func(st actionState) bool { return st.relationsShown }, Label: label("switch")},
 	{Name: actFocusPrev, Group: "Move", Desc: "focus the previous pane", Contexts: nibViewCtx, Keys: []string{"shift+tab"}},
 	{Name: actPaletteUp, Group: "Move", Desc: "highlight the previous action", Contexts: []keyContext{ctxPalette}, Keys: []string{"up"}},
 	{Name: actPaletteDown, Group: "Move", Desc: "highlight the next action", Contexts: []keyContext{ctxPalette}, Keys: []string{"down"}},
 
-	{Name: actOpen, Group: "Go", Desc: "open", Contexts: slices.Concat([]keyContext{ctxList, ctxNibLinks}, allPickers), Keys: []string{"enter"},
+	{Name: actOpen, Group: "Go", Desc: "open", Contexts: slices.Concat([]keyContext{ctxList, ctxNibRelations}, allPickers), Keys: []string{"enter"},
 		Hint: hintOutsideMarking, Label: labelOpen, Ready: readyToOpen},
 	{Name: actLeave, Group: "Go", Desc: "leave, or clear the selection or filter", Contexts: slices.Concat(browsing, []keyContext{ctxConfirm}), Keys: []string{"esc"},
 		Hint: hintLeave, Label: labelLeave},

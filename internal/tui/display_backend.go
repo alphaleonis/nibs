@@ -109,6 +109,14 @@ func (d displayBackend) GetBlocking(ctx context.Context, obj *nib.Nib, filter *m
 	return displayNibs(d.inner.GetBlocking(ctx, obj, filter))
 }
 
+func (d displayBackend) GetMentions(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error) {
+	return displayNibs(d.inner.GetMentions(ctx, obj, filter))
+}
+
+func (d displayBackend) GetMentionedBy(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error) {
+	return displayNibs(d.inner.GetMentionedBy(ctx, obj, filter))
+}
+
 func (d displayBackend) IsBlocked(nibID string) bool  { return d.inner.IsBlocked(nibID) }
 func (d displayBackend) IsBlocking(nibID string) bool { return d.inner.IsBlocking(nibID) }
 

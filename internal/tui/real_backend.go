@@ -45,6 +45,14 @@ func (b *RealBackend) GetBlocking(ctx context.Context, obj *nib.Nib, filter *mod
 	return b.resolver.Nib().Blocking(ctx, obj, filter)
 }
 
+func (b *RealBackend) GetMentions(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error) {
+	return b.resolver.Nib().Mentions(ctx, obj, filter)
+}
+
+func (b *RealBackend) GetMentionedBy(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error) {
+	return b.resolver.Nib().MentionedBy(ctx, obj, filter)
+}
+
 func (b *RealBackend) IsBlocked(nibID string) bool {
 	return b.resolver.Blocking.IsBlocked(nibID)
 }

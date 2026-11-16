@@ -63,10 +63,10 @@ func TestNibTextReachesNoViewAsAControlSequence(t *testing.T) {
 	if !app.isTwoColumnMode() {
 		t.Fatal("premise failed: z p did not show the nib view beside the list")
 	}
-	// Moving onto the child is what loads it into the preview.
+	// Moving onto the child is what loads it into the docked view.
 	app.list.restoreCursor("evil-p")
 	pressKeys(app, "down")
-	requireNoInjectedEscape(t, "the preview", app.View().Content, "Body")
+	requireNoInjectedEscape(t, "the docked nib view", app.View().Content, "Body")
 	pressKeys(app, "z p")
 
 	pickers := []struct {
@@ -93,7 +93,7 @@ func TestNibTextReachesNoViewAsAControlSequence(t *testing.T) {
 
 	app.list.restoreCursor("evil-c")
 	pressKeys(app, "enter")
-	if app.state != viewDetail {
+	if app.state != viewExpanded {
 		t.Fatalf("premise failed: enter opened state %v, want the nib view", app.state)
 	}
 	requireNoInjectedEscape(t, "the nib view", app.View().Content, "Body")
@@ -248,7 +248,7 @@ func TestAnIDFromAFileNameIsDrawnStripped(t *testing.T) {
 	pressKeys(app, "z p")
 	_, cmd := app.Update(cursorChangedMsg{nibID: evilID})
 	processCmd(app, cmd)
-	requireNoInjectedEscape(t, "the preview", app.View().Content, "Hostile body.")
+	requireNoInjectedEscape(t, "the docked nib view", app.View().Content, "Hostile body.")
 	pressKeys(app, "z p")
 
 	// The status and modify pickers show the nib's id under its title, and the
@@ -275,11 +275,11 @@ func TestAnIDFromAFileNameIsDrawnStripped(t *testing.T) {
 		}
 	}
 
-	openOn(t, app, evilID, "enter", viewDetail)
+	openOn(t, app, evilID, "enter", viewExpanded)
 	requireNoInjectedEscape(t, "the nib view's header", app.View().Content, "Hostile body.")
 	pressKeys(app, "esc")
 
-	openOn(t, app, "tnib-e001", "enter", viewDetail)
+	openOn(t, app, "tnib-e001", "enter", viewExpanded)
 	requireNoInjectedEscape(t, "the nib view's child link", app.View().Content, "Aaa hostile id")
 }
 
@@ -303,15 +303,15 @@ func TestAStatusLineQuotingAnIDFromAFileNameIsDrawnStripped(t *testing.T) {
 	}
 	requireNoInjectedEscape(t, "the list's status line", app.View().Content, "failed")
 
-	openOn(t, app, evilID, "enter", viewDetail)
+	openOn(t, app, evilID, "enter", viewExpanded)
 	pressKeys(app, "p")
 	if app.state != viewParentPicker {
 		t.Fatalf("premise failed: p in the nib view opened state %v", app.state)
 	}
 	_, cmd = app.Update(refuse)
 	processCmd(app, cmd)
-	if app.state != viewDetail || !strings.Contains(app.detail.statusMessage, evilID) {
-		t.Fatalf("premise failed: the nib view's status line does not quote %q: %q", evilID, app.detail.statusMessage)
+	if app.state != viewExpanded || !strings.Contains(app.expanded.statusMessage, evilID) {
+		t.Fatalf("premise failed: the nib view's status line does not quote %q: %q", evilID, app.expanded.statusMessage)
 	}
 	requireNoInjectedEscape(t, "the nib view's status line", app.View().Content, "failed")
 }

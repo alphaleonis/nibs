@@ -48,7 +48,7 @@ func TestAKeyTypedAheadReachesThePickerTheKeyBeforeOpened(t *testing.T) {
 func TestAKeyTypedAheadInTheNibViewReachesThePicker(t *testing.T) {
 	app, _ := setupModifyApp(t)
 	pressKeys(app, "enter")
-	if app.state != viewDetail {
+	if app.state != viewExpanded {
 		t.Fatalf("premise failed: state = %d after enter, want the nib view", app.state)
 	}
 	typeAhead(app, "m a")
@@ -127,10 +127,10 @@ func TestAFieldPickerOpenedFromModifyFreesItsKey(t *testing.T) {
 // nib the link leads to, and back returns to the nib the link was followed from.
 func TestAKeyTypedAfterFollowingALinkActsOnTheLinkedNib(t *testing.T) {
 	app := detailOnLinkedNib(t, 2, 120, 40)
-	if !app.detail.linksActive {
-		t.Fatal("premise failed: the links pane is not focused")
+	if app.expanded.focus != regionRelations {
+		t.Fatal("premise failed: the relations are not focused")
 	}
-	target := app.detail.linkList.SelectedItem().(linkItem).link.nib.ID
+	target := app.expanded.selectedRelation().ID
 
 	typeAhead(app, "enter s")
 
@@ -138,7 +138,7 @@ func TestAKeyTypedAfterFollowingALinkActsOnTheLinkedNib(t *testing.T) {
 		t.Fatalf("enter s left state %d on %v, want the status picker on %s", app.state, app.statusPicker.nibIDs, target)
 	}
 	pressKeys(app, "esc backspace")
-	if app.state != viewDetail || app.detail.nib.ID != "hub" {
-		t.Errorf("esc backspace left state %d on %s, want the nib view on hub", app.state, app.detail.nib.ID)
+	if app.state != viewExpanded || app.expanded.nib.ID != "hub" {
+		t.Errorf("esc backspace left state %d on %s, want the nib view on hub", app.state, app.expanded.nib.ID)
 	}
 }

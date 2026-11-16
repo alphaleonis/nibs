@@ -170,12 +170,12 @@ func TestModifyPickerChangesAFieldFromTheNibView(t *testing.T) {
 			app, stub := setupModifyApp(t)
 			focusOn(app, "nib-2")
 			pressKeys(app, "enter")
-			if app.state != viewDetail {
+			if app.state != viewExpanded {
 				t.Fatalf("premise failed: state = %d after enter, want the nib view", app.state)
 			}
 			pickViaModify(t, app, f)
 			assertWritten(t, stub, f, "nib-2")
-			if app.state != viewDetail {
+			if app.state != viewExpanded {
 				t.Errorf("state = %d after choosing, want the nib view", app.state)
 			}
 		})
@@ -247,7 +247,7 @@ func TestEscLeavesTheModifyPicker(t *testing.T) {
 		t.Fatalf("premise failed: state = %d after m, want the modify picker", app.state)
 	}
 	pressKeys(app, "esc")
-	if app.state != viewDetail {
+	if app.state != viewExpanded {
 		t.Errorf("state = %d after esc, want the nib view m was typed in", app.state)
 	}
 }

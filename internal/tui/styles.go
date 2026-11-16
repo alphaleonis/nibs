@@ -76,15 +76,6 @@ func ellipsis(ascii bool) string {
 	return "…"
 }
 
-// blockLines is lipgloss.Height, except that an absent block takes zero rows
-// (lipgloss.Height("") is 1).
-func blockLines(block string) int {
-	if block == "" {
-		return 0
-	}
-	return lipgloss.Height(block)
-}
-
 // applyFilterStyles paints a list's filter prompt and cursor in the primary color.
 func applyFilterStyles(s *list.Styles) {
 	prompt := lipgloss.NewStyle().Foreground(ui.ColorPrimary)
@@ -97,12 +88,6 @@ var (
 	listTitleStyle = lipgloss.NewStyle().
 			Foreground(ui.ColorPrimary).
 			Bold(true)
-
-	detailTitleStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("#fff")).
-				Background(ui.ColorPrimary).
-				Padding(0, 1)
 
 	helpStyle = lipgloss.NewStyle().
 			Foreground(ui.ColorMuted)

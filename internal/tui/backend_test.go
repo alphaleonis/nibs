@@ -141,6 +141,14 @@ func (s *StubBackend) GetBlocking(_ context.Context, _ *nib.Nib, _ *model.NibFil
 	return nil, nil
 }
 
+func (s *StubBackend) GetMentions(_ context.Context, _ *nib.Nib, _ *model.NibFilter) ([]*nib.Nib, error) {
+	return nil, nil
+}
+
+func (s *StubBackend) GetMentionedBy(_ context.Context, _ *nib.Nib, _ *model.NibFilter) ([]*nib.Nib, error) {
+	return nil, nil
+}
+
 func (s *StubBackend) IsBlocked(nibID string) bool {
 	return s.Blocked[nibID]
 }
