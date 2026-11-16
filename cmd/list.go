@@ -375,8 +375,8 @@ Search Syntax (--search/-S):
 		// copies of the rule together.
 		//
 		// An empty startable set is rejected below rather than filtered on: an
-		// empty include list makes filterByField a no-op
-		// (internal/graph/filters.go), so the bare-flag branch would fail open
+		// empty include list matches every status (viewshape.Matches, which
+		// graph.ApplyFilter applies), so the bare-flag branch would fail open
 		// and hand back every unblocked nib of any status — completed and
 		// statusless ones included — as ready work. The explicit -s branch would
 		// meanwhile correctly yield nothing, so the error also keeps the two

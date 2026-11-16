@@ -35,7 +35,7 @@ export function buildTree<T extends TreeNib>(nibs: T[]): TreeNode<T>[] {
  * Picks the lowest-id member of every parent cycle lying wholly inside
  * `nodeMap`, for `buildTree` to promote to a root.
  *
- * Keep the rule in agreement with `promotedCycleRoots` in internal/ui/tree.go.
+ * Keep the rule in agreement with `PromotedCycleRoots` in internal/viewshape/cycle.go.
  * This compares UTF-16 code units and Go compares bytes, so ids holding
  * supplementary-plane characters can promote different members.
  *

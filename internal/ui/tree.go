@@ -2,6 +2,7 @@ package ui
 
 import (
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/viewshape"
 )
 
 // TreeNode represents a node in the nib tree hierarchy.
@@ -43,7 +44,7 @@ func BuildTree(matchedNibs []*nib.Nib, allNibs []*nib.Nib, sortFn func([]*nib.Ni
 
 	// No member of a cycle meets the root rule below, so without a promoted
 	// member the whole cycle is dropped.
-	promoted := promotedCycleRoots(neededNibs)
+	promoted := viewshape.PromotedCycleRoots(neededNibs)
 
 	children := make(map[string][]*nib.Nib)
 	for _, b := range neededNibs {
@@ -73,73 +74,6 @@ func BuildTree(matchedNibs []*nib.Nib, allNibs []*nib.Nib, sortFn func([]*nib.Ni
 	sortFn(roots)
 
 	return buildNodes(roots, children, matchedSet)
-}
-
-// promotedCycleRoots picks the lowest-id member of every parent cycle lying
-// wholly inside nibs, for BuildTree to promote to a root.
-//
-// web/src/lib/tree.ts applies the same rule; keep the two in agreement. Go
-// compares bytes and TypeScript UTF-16 code units, so ids holding
-// supplementary-plane characters can promote different members.
-//
-// Each nib is walked once: unseen -> onPath -> settled.
-func promotedCycleRoots(nibs map[string]*nib.Nib) map[string]bool {
-	const (
-		unseen = iota
-		onPath
-		settled
-	)
-	state := make(map[string]int, len(nibs))
-	promoted := make(map[string]bool)
-
-	for id := range nibs {
-		if state[id] != unseen {
-			continue
-		}
-		// Follow the parent chain until it leaves the set, ends, or revisits
-		// the path.
-		var path []string
-		for cur := id; ; {
-			if state[cur] == onPath {
-				// The cycle is the path from cur onward; entries before it lead
-				// into the cycle.
-				start := 0
-				for i, m := range path {
-					if m == cur {
-						start = i
-						break
-					}
-				}
-				lowest := path[start]
-				for _, m := range path[start+1:] {
-					if m < lowest {
-						lowest = m
-					}
-				}
-				promoted[lowest] = true
-				break
-			}
-			if state[cur] == settled {
-				// Explored already, along with any cycle beyond it.
-				break
-			}
-			state[cur] = onPath
-			path = append(path, cur)
-			b := nibs[cur]
-			if b.Parent == "" {
-				break
-			}
-			if _, ok := nibs[b.Parent]; !ok {
-				break
-			}
-			cur = b.Parent
-		}
-		for _, m := range path {
-			state[m] = settled
-		}
-	}
-
-	return promoted
 }
 
 // addAncestors recursively adds all ancestors of a nib to the needed set.
