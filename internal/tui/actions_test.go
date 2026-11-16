@@ -36,6 +36,9 @@ func keyPress(k string) tea.KeyPressMsg {
 		"delete":     {Code: tea.KeyDelete},
 		"ctrl+c":     {Code: 'c', Mod: tea.ModCtrl},
 		"ctrl+u":     {Code: 'u', Mod: tea.ModCtrl},
+		"ctrl+f":     {Code: 'f', Mod: tea.ModCtrl},
+		"f3":         {Code: tea.KeyF3},
+		"shift+f3":   {Code: tea.KeyF3, Mod: tea.ModShift},
 	}
 	if msg, ok := named[k]; ok {
 		return msg
@@ -251,7 +254,7 @@ func TestGTDoesNothing(t *testing.T) {
 // Keys no action takes in the list do nothing, the list widget's own keys
 // among them.
 func TestRetiredKeysDoNothingInTheList(t *testing.T) {
-	for _, k := range []string{"c", "A", "H", "]", "u", "d", "f", "P", "E", "tab", "shift+tab", "backspace", "esc", "h", "l"} {
+	for _, k := range []string{"c", "A", "H", "]", "u", "d", "P", "E", "tab", "shift+tab", "backspace", "esc", "h", "l"} {
 		t.Run(k, func(t *testing.T) {
 			nibs := make([]*nib.Nib, 0, 60)
 			nibs = append(nibs, listKeysNibs()...)

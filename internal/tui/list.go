@@ -145,6 +145,13 @@ type listModel struct {
 	// clears it when the query changes.
 	closedToggle closedToggle
 
+	// find is the text find.next and find.previous look for, which the rows
+	// draw reversed, or "" for none. findBox is where it is typed while
+	// finding is set.
+	find    string
+	findBox textinput.Model
+	finding bool
+
 	level     viewshape.Level
 	prevLevel viewshape.Level                 // the view shown before level, or level itself
 	views     map[viewshape.Level]*levelState // read through state
@@ -201,6 +208,7 @@ func newListModel(backend Backend, cfg *config.Config) listModel {
 		query:         defaultQuery(cfg),
 		defaultQuery:  defaultQuery(cfg),
 		box:           newFilterBox(),
+		findBox:       newFindBox(),
 		highlight:     -1,
 		selectedNibs:  selectedNibs,
 		level:         viewshape.LevelTree,
@@ -645,9 +653,20 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 		m.followQuery()
 		return m, tea.Batch(cmd, m.cursorChangedCmd(prev))
 
-	case tea.KeyPressMsg:
-		// Only the filter box takes keys; actions do everything else.
-		if !m.editing {
+	case tea.KeyPressMsg, tea.PasteMsg:
+		if m.finding {
+			// The App clears the note a find left for a key press, not a paste.
+			m.statusMessage, m.statusKind = "", statusOK
+			value := m.findBox.Value()
+			m.findBox, cmd = m.findBox.Update(msg)
+			if m.findBox.Value() != value {
+				m.findTyped()
+			}
+			return m, tea.Batch(cmd, m.cursorChangedCmd(prev))
+		}
+		// Only the filter box and the find box take keys; actions do everything
+		// else.
+		if _, key := msg.(tea.KeyPressMsg); key && !m.editing {
 			return m, nil
 		}
 	}
@@ -733,6 +752,16 @@ func (m *listModel) runAction(name actionName) tea.Cmd {
 	if msg := m.viewMsg(name); msg != nil {
 		return func() tea.Msg { return msg }
 	}
+	if m.finding {
+		switch name {
+		case actInputAccept:
+			m.closeFind(true)
+			return nil
+		case actInputCancel:
+			m.closeFind(false)
+			return nil
+		}
+	}
 	switch name {
 	case actUp:
 		m.list.CursorUp()
@@ -748,6 +777,12 @@ func (m *listModel) runAction(name actionName) tea.Cmd {
 		m.list.GoToEnd()
 	case actFilter:
 		m.openBox()
+	case actFind:
+		m.openFind()
+	case actFindNext:
+		m.findAgain(false)
+	case actFindPrevious:
+		m.findAgain(true)
 	case actInputAccept:
 		// In the menu, enter takes the highlighted completion, as on the web.
 		if m.highlight >= 0 && m.highlight < len(m.completions) {
@@ -1051,6 +1086,7 @@ func (m *listModel) updateDelegate(width int) {
 			return columnWidth(m.config, name, m.idWidth)
 		}),
 		selectedNibs: &m.selectedNibs,
+		find:         findNeedle(m.find),
 	})
 }
 
@@ -1262,21 +1298,34 @@ type headerLayout struct {
 }
 
 // headerLayout lays out the header of a pane width cells wide. While a query
-// is typed and the box would get fewer than filterBoxMinWidth cells, the
-// header drops the count.
+// or a find is typed and its box would get fewer than filterBoxMinWidth cells,
+// the header drops the count.
 func (m listModel) headerLayout(width int) headerLayout {
-	if !m.editing {
+	prompt, typing := m.typedPrompt()
+	if !typing {
 		return headerLayout{count: true}
 	}
 	// The count is reserved at its widest, every nib, so the box keeps one
 	// width while the query narrows the list. "0 nibs" is wider than "1 nib".
 	count := max(lipgloss.Width(nibCount(len(m.nibs))), lipgloss.Width(nibCount(0)))
 	// The view's name, the gap before the box, its prompt and its cursor.
-	fixed := lipgloss.Width(levelNames[m.level]) + 2 + lipgloss.Width(m.box.Prompt) + 1
+	fixed := lipgloss.Width(levelNames[m.level]) + 2 + lipgloss.Width(prompt) + 1
 	if box := width - fixed - 2 - count; box >= filterBoxMinWidth {
 		return headerLayout{count: true, box: box + 1}
 	}
 	return headerLayout{box: max(1, width-fixed+1)}
+}
+
+// typedPrompt returns the prompt of the box the header draws while a query
+// or a find is typed, and false while neither is.
+func (m listModel) typedPrompt() (string, bool) {
+	switch {
+	case m.finding:
+		return m.findBox.Prompt, true
+	case m.editing:
+		return m.box.Prompt, true
+	}
+	return "", false
 }
 
 // setPane sets the height the list pane is drawn at, or 0 for the whole
@@ -1297,13 +1346,16 @@ func (m listModel) drawnHeight() int {
 
 // header draws the line under the top rule, width cells wide: the view's name
 // and the query on the left, colored by token, and the count of nibs that
-// match on the right. While a query is typed, the box takes the query's place.
+// match on the right. While a query or a find is typed, its box takes the
+// query's place.
 // A narrow header drops the count first. What still does not fit is cut at
 // the right edge.
 func (m listModel) header(width int) string {
 	layout := m.headerLayout(width)
 	left := viewNameStyle.Render(levelNames[m.level])
 	switch {
+	case m.finding:
+		left += "  " + filterPromptStyle.Render(m.findBox.Prompt) + m.findBoxView(layout.box)
 	case m.editing:
 		text := m.box.Value()
 		left += "  " + filterPromptStyle.Render(m.box.Prompt) +

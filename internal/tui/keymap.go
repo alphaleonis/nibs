@@ -219,7 +219,7 @@ func nodeText(n *yaml.Node) string {
 // every key that types, so an action there may be bound only to keys that do
 // not.
 func typingContext(a *action) (keyContext, bool) {
-	for _, ctx := range []keyContext{ctxFilterInput, ctxFilterBox, ctxFilterMenu, ctxTextInput, ctxPalette} {
+	for _, ctx := range []keyContext{ctxFilterInput, ctxFilterBox, ctxFilterMenu, ctxFindBox, ctxTextInput, ctxPalette} {
 		if slices.Contains(a.Contexts, ctx) {
 			return ctx, true
 		}

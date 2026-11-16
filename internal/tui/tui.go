@@ -301,6 +301,8 @@ func (a *App) keyContext() keyContext {
 			return nibViewContext(a.docked)
 		}
 		switch {
+		case a.list.finding:
+			return ctxFindBox
 		case a.list.editing && len(a.list.completions) > 0:
 			return ctxFilterMenu
 		case a.list.editing:
@@ -360,6 +362,7 @@ func (a *App) actionState() actionState {
 		filtered:    a.list.filtered(),
 		docked:      a.state == viewList && a.dockPlacement() != "",
 		canJumpBack: len(a.jumps) > 0,
+		findText:    a.list.find != "",
 	}
 	view := &a.expanded
 	switch {

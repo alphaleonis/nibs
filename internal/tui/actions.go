@@ -40,6 +40,8 @@ const (
 	// completions, and ctxFilterMenu while it does.
 	ctxFilterBox
 	ctxFilterMenu
+	// ctxFindBox is the list's find box while it is open.
+	ctxFindBox
 	// ctxTextInput is any other focused text box, such as the create modal.
 	ctxTextInput
 	// ctxPalette is the ? overlay, whose query box takes every key no action
@@ -69,6 +71,7 @@ var keyContextNames = [numKeyContexts]string{
 	ctxFilterInput:        "filter input",
 	ctxFilterBox:          "filter box",
 	ctxFilterMenu:         "filter completions",
+	ctxFindBox:            "find box",
 	ctxTextInput:          "text input",
 	ctxPalette:            "action palette",
 }
@@ -142,6 +145,9 @@ const (
 	actCompleteNext     actionName = "filter.complete_next"
 	actCompletePrevious actionName = "filter.complete_previous"
 	actCompleteClose    actionName = "filter.complete_close"
+	actFind             actionName = "find.open"
+	actFindNext         actionName = "find.next"
+	actFindPrevious     actionName = "find.previous"
 	actInputAccept      actionName = "input.accept"
 	actInputCancel      actionName = "input.cancel"
 	actHelp             actionName = "app.help"
@@ -166,6 +172,7 @@ type actionState struct {
 	docked         bool   // the list is on screen with the nib view docked
 	hasParent      bool   // the nib under the list cursor, or the one the nib view shows, has a parent
 	canJumpBack    bool   // the jump history holds a jump
+	findText       bool   // the list has text to find
 }
 
 // action is one named thing a key can do. Dispatch reads the keymap's
@@ -195,7 +202,7 @@ var (
 	browsing      = slices.Concat(nibContexts, allPickers)
 	everyContext  = allKeyContexts()
 	filterTargets = slices.Concat([]keyContext{ctxList}, listPickers)
-	textInputs    = []keyContext{ctxFilterInput, ctxFilterBox, ctxFilterMenu, ctxTextInput}
+	textInputs    = []keyContext{ctxFilterInput, ctxFilterBox, ctxFilterMenu, ctxFindBox, ctxTextInput}
 	// filterBoxes are the list's filter box with its menu closed and open.
 	filterBoxes = []keyContext{ctxFilterBox, ctxFilterMenu}
 )
@@ -275,14 +282,18 @@ func labelLeave(st actionState) string {
 }
 
 func labelAccept(st actionState) string {
-	if st.ctx == ctxTextInput {
+	switch st.ctx {
+	case ctxTextInput:
 		return "create"
+	case ctxFindBox:
+		return "done"
 	}
 	return "apply"
 }
 
 func labelCancel(st actionState) string {
-	if st.ctx == ctxFilterBox {
+	switch st.ctx {
+	case ctxFilterBox, ctxFindBox:
 		return "clear"
 	}
 	return "cancel"
@@ -343,6 +354,13 @@ func readyDocked(st actionState) (bool, string) {
 		return true, ""
 	}
 	return false, "the nib view is not docked"
+}
+
+func readyToFindAgain(st actionState) (bool, string) {
+	if st.findText {
+		return true, ""
+	}
+	return false, "nothing to find"
 }
 
 func readyToJumpBack(st actionState) (bool, string) {
@@ -441,9 +459,14 @@ var defaultActions = []action{
 	{Name: actFilterPriority, Group: "Find", Desc: "filter by priority", Contexts: []keyContext{ctxList}},
 	{Name: actFilterEstimate, Group: "Find", Desc: "filter by estimate", Contexts: []keyContext{ctxList}},
 	{Name: actFilterTags, Group: "Find", Desc: "filter by tags", Contexts: []keyContext{ctxList}},
+	{Name: actFind, Group: "Find", Desc: "find a nib by its title, ID or tags", Contexts: []keyContext{ctxList}, Keys: []string{"f", "ctrl+f"}},
+	{Name: actFindNext, Group: "Find", Desc: "find the next match", Contexts: []keyContext{ctxList, ctxFindBox}, Keys: []string{"f3"},
+		Hint: func(st actionState) bool { return st.ctx == ctxFindBox }, Label: label("next"), Ready: readyToFindAgain},
+	{Name: actFindPrevious, Group: "Find", Desc: "find the previous match", Contexts: []keyContext{ctxList, ctxFindBox}, Keys: []string{"shift+f3"},
+		Hint: func(st actionState) bool { return st.ctx == ctxFindBox }, Label: label("previous"), Ready: readyToFindAgain},
 	{Name: actFilterApply, Group: "Find", Desc: "apply the filter", Contexts: []keyContext{ctxFilterInput, ctxFilterBox}, Keys: []string{"up", "down"}},
 	{Name: actInputAccept, Group: "Find", Desc: "accept", Contexts: textInputs, Keys: []string{"enter"}, Hint: hintAlways, Label: labelAccept},
-	{Name: actInputCancel, Group: "Find", Desc: "cancel, or clear the filter box", Contexts: []keyContext{ctxFilterInput, ctxFilterBox, ctxTextInput}, Keys: []string{"esc"},
+	{Name: actInputCancel, Group: "Find", Desc: "cancel, or clear the filter or find box", Contexts: []keyContext{ctxFilterInput, ctxFilterBox, ctxFindBox, ctxTextInput}, Keys: []string{"esc"},
 		Hint: hintAlways, Label: labelCancel},
 	{Name: actComplete, Group: "Find", Desc: "complete the token", Contexts: filterBoxes, Keys: []string{"tab"}, Hint: hintAlways, Label: label("complete")},
 	{Name: actCompleteNext, Group: "Find", Desc: "highlight the next completion", Contexts: []keyContext{ctxFilterMenu}, Keys: []string{"down"}},

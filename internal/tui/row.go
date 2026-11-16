@@ -74,6 +74,7 @@ type itemDelegate struct {
 	display      display
 	layout       rowLayout
 	selectedNibs *map[string]bool // IDs marked for multi-select
+	find         []rune           // the find text as findNeedle returns it
 }
 
 func (d itemDelegate) Height() int                             { return 1 }
@@ -177,7 +178,7 @@ func (d itemDelegate) renderNib(w io.Writer, m list.Model, index int, item nibIt
 
 	var b strings.Builder
 	b.WriteString(cursor + " " + status + priority + mark + " " + nibType + " ")
-	b.WriteString(treeStyle.Render(item.treePrefix) + titleStyle.Render(title) + pad)
+	b.WriteString(treeStyle.Render(item.treePrefix) + markFound(title, n.Title, d.find, titleStyle) + pad)
 	for _, c := range d.layout.columns {
 		b.WriteString(" " + d.cell(c, item, context))
 	}
@@ -196,20 +197,24 @@ func (d itemDelegate) cell(c shownColumn, item nibItem, context bool) string {
 		if context {
 			style = ui.Muted
 		}
-		return tagsCell(item.nib.Tags, c.width, style, mark)
+		return tagsCell(item.nib.Tags, c.width, style, mark, d.find)
 	}
-	text, style := d.cellText(c.name, item)
+	full, style := d.cellText(c.name, item)
 	if context {
 		style = ui.Muted
 	}
-	text = fitText(text, c.width, mark)
-	return style.Render(text) + strings.Repeat(" ", max(0, c.width-lipgloss.Width(text)))
+	text := fitText(full, c.width, mark)
+	drawn := style.Render(text)
+	if c.name == colID {
+		drawn = markFound(text, full, d.find, style)
+	}
+	return drawn + strings.Repeat(" ", max(0, c.width-lipgloss.Width(text)))
 }
 
 // tagsCell renders tags in exactly width cells: the tags that fit whole, in
 // style, then "+N" for the rest. A first tag that does not fit is cut, ending
-// with mark.
-func tagsCell(tags []string, width int, style lipgloss.Style, mark string) string {
+// with mark. Matches for find are reversed; see markFound.
+func tagsCell(tags []string, width int, style lipgloss.Style, mark string, find []rune) string {
 	tags, _ = stripEach(tags)
 	more := func(hidden int) string {
 		if hidden == 0 {
@@ -235,6 +240,14 @@ func tagsCell(tags []string, width int, style lipgloss.Style, mark string) strin
 		shown, used = []string{cut}, lipgloss.Width(cut)
 	}
 	rest := more(len(tags) - len(shown))
-	cell := style.Render(strings.Join(shown, " ")) + ui.Muted.Render(rest)
+	drawn := style.Render(strings.Join(shown, " "))
+	if find != nil {
+		marked := make([]string, len(shown))
+		for i, tag := range shown {
+			marked[i] = markFound(tag, tags[i], find, style)
+		}
+		drawn = strings.Join(marked, style.Render(" "))
+	}
+	cell := drawn + ui.Muted.Render(rest)
 	return cell + strings.Repeat(" ", max(0, width-used-len(rest)))
 }

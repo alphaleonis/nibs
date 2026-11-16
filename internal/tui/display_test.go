@@ -284,7 +284,7 @@ func TestAnIDFromAFileNameIsDrawnStripped(t *testing.T) {
 
 // The tags column draws each tag whole, without fitText.
 func TestTagsCellStripsEachTag(t *testing.T) {
-	cell := tagsCell([]string{"ok", "tag" + hostile}, 80, tagStyle, "…")
+	cell := tagsCell([]string{"ok", "tag" + hostile}, 80, tagStyle, "…", nil)
 	requireNoInjectedEscape(t, "the tags cell", cell, "tag")
 }
 
