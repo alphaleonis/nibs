@@ -27,6 +27,7 @@ const (
 	ctxTagPicker
 	ctxModifyPicker
 	ctxColumnPicker
+	ctxViewPicker
 	ctxConfirm
 	// ctxFilterInput is a list's filter while it is being typed.
 	ctxFilterInput
@@ -51,6 +52,7 @@ var keyContextNames = [numKeyContexts]string{
 	ctxTagPicker:      "tag picker",
 	ctxModifyPicker:   "modify picker",
 	ctxColumnPicker:   "column picker",
+	ctxViewPicker:     "view picker",
 	ctxConfirm:        "confirm dialog",
 	ctxFilterInput:    "filter input",
 	ctxTextInput:      "text input",
@@ -105,7 +107,9 @@ const (
 	actHideClosed    actionName = "view.hide_closed"
 	actNibView       actionName = "view.nib"
 	actColumns       actionName = "view.columns"
+	actViewPick      actionName = "view.pick"
 	actViewNext      actionName = "view.next"
+	actViewPrevious  actionName = "view.previous"
 	actFilter        actionName = "filter.text"
 	actFilterApply   actionName = "filter.apply"
 	actTagFilter     actionName = "filter.tags"
@@ -154,7 +158,7 @@ var (
 	nibContexts   = []keyContext{ctxList, ctxNibLinks, ctxNibBody}
 	nibViewCtx    = []keyContext{ctxNibLinks, ctxNibBody}
 	listPickers   = []keyContext{ctxStatusPicker, ctxParentPicker, ctxBlockingPicker, ctxPriorityPicker, ctxEstimatePicker, ctxTagPicker}
-	allPickers    = append([]keyContext{ctxTypePicker, ctxModifyPicker, ctxColumnPicker}, listPickers...)
+	allPickers    = append([]keyContext{ctxTypePicker, ctxModifyPicker, ctxColumnPicker, ctxViewPicker}, listPickers...)
 	browsing      = slices.Concat(nibContexts, allPickers)
 	everyContext  = allKeyContexts()
 	filterTargets = slices.Concat([]keyContext{ctxList, ctxNibLinks}, listPickers)
@@ -250,6 +254,15 @@ func readyOnNib(st actionState) (bool, string) {
 	return false, "no nib under the cursor"
 }
 
+// readyToOpen needs a nib under the list cursor. Elsewhere enter chooses a row
+// or follows a link, which needs no nib.
+func readyToOpen(st actionState) (bool, string) {
+	if st.ctx == ctxList {
+		return readyOnNib(st)
+	}
+	return true, ""
+}
+
 // readyOnTargets needs marked nibs or a nib under the cursor.
 func readyOnTargets(st actionState) (bool, string) {
 	if st.hasNib || st.selected > 0 {
@@ -287,7 +300,7 @@ var defaultActions = []action{
 	{Name: actPaletteDown, Group: "Move", Desc: "highlight the next action", Contexts: []keyContext{ctxPalette}, Keys: []string{"down"}},
 
 	{Name: actOpen, Group: "Go", Desc: "open", Contexts: slices.Concat([]keyContext{ctxList, ctxNibLinks}, allPickers), Keys: []string{"enter"},
-		Hint: hintOutsideMarking, Label: labelOpen},
+		Hint: hintOutsideMarking, Label: labelOpen, Ready: readyToOpen},
 	{Name: actLeave, Group: "Go", Desc: "leave, or clear the selection or filter", Contexts: slices.Concat(browsing, []keyContext{ctxConfirm}), Keys: []string{"esc"},
 		Hint: hintLeave, Label: labelLeave},
 	{Name: actJumpBack, Group: "Go", Desc: "jump back", Contexts: nibContexts, Keys: []string{"backspace"}, Ready: readyToJumpBack},
@@ -324,7 +337,9 @@ var defaultActions = []action{
 		Hint: func(st actionState) bool { return st.ctx == ctxParentPicker }, Label: label("toggle closed")},
 	{Name: actNibView, Group: "View", Desc: "show or hide the nib view", Contexts: []keyContext{ctxList}, Keys: []string{"z p"}},
 	{Name: actColumns, Group: "View", Desc: "choose the columns", Contexts: []keyContext{ctxList}, Keys: []string{"z c"}},
-	{Name: actViewNext, Group: "View", Desc: "show the next view", Contexts: []keyContext{ctxList}, Keys: []string{"v"}},
+	{Name: actViewPick, Group: "View", Desc: "choose the view", Contexts: []keyContext{ctxList}, Keys: []string{"v"}},
+	{Name: actViewNext, Group: "View", Desc: "show the next view", Contexts: []keyContext{ctxList}},
+	{Name: actViewPrevious, Group: "View", Desc: "show the previous view", Contexts: []keyContext{ctxList}},
 
 	{Name: actFilter, Group: "Find", Desc: "filter", Contexts: filterTargets, Keys: []string{"/"}, Hint: hintFilter},
 	{Name: actTagFilter, Group: "Find", Desc: "filter by tag", Contexts: []keyContext{ctxList}, Keys: []string{"g t"}},

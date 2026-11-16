@@ -37,8 +37,8 @@ type shownRow struct {
 func shownRows(app *App) []shownRow {
 	var rows []shownRow
 	for _, item := range app.list.list.VisibleItems() {
-		bi := item.(nibItem)
-		rows = append(rows, shownRow{bi.nib.ID, !bi.matched})
+		bi, ok := item.(nibItem)
+		rows = append(rows, shownRow{item.(listRow).base().id, ok && !bi.matched})
 	}
 	return rows
 }
@@ -56,7 +56,7 @@ func TestATreeFilterKeepsAncestorsDimmedInTreeOrder(t *testing.T) {
 
 func TestFlatShowsOnlyMatches(t *testing.T) {
 	app, _ := setupTestApp(t, shapeNibs())
-	pressKeys(app, "v / z e t a")
+	pressKeys(app, "v f / z e t a")
 
 	if app.list.level != viewshape.LevelFlat {
 		t.Fatalf("premise failed: v left the list at level %q", app.list.level)
@@ -207,12 +207,12 @@ func TestSwitchingViewsKeepsEachViewsFoldsAndCursor(t *testing.T) {
 		t.Fatal("premise failed: could not focus f1")
 	}
 	pressKeys(app, "left")
-	pressKeys(app, "v")
+	pressKeys(app, "v f")
 	if !focusOn(app, "t2") {
 		t.Fatal("premise failed: could not focus t2 in Flat")
 	}
 
-	pressKeys(app, "v")
+	pressKeys(app, "v t")
 
 	if app.list.level != viewshape.LevelTree || !app.list.collapsed()["f1"] {
 		t.Errorf("back in %q, folds %v; want Tree with f1 folded", app.list.level, app.list.collapsed())
@@ -267,7 +267,7 @@ func TestTreeReordersAmongTheRowsItShows(t *testing.T) {
 
 func TestFlatRefusesToReorder(t *testing.T) {
 	app, stub := setupTestApp(t, milestoneRootNibs())
-	pressKeys(app, "v")
+	pressKeys(app, "v f")
 	if !focusOn(app, "t2") {
 		t.Fatal("premise failed: could not focus t2")
 	}
@@ -318,7 +318,7 @@ func TestAFirstVisitToAViewKeepsTheNib(t *testing.T) {
 	if !focusOn(app, "t1") {
 		t.Fatal("premise failed: could not focus t1")
 	}
-	pressKeys(app, "v enter")
+	pressKeys(app, "v f enter")
 	if app.state != viewDetail || app.detail.nib.ID != "t1" {
 		t.Errorf("enter after v opened %v in state %d, want t1", app.detail.nib, app.state)
 	}
@@ -333,7 +333,7 @@ func TestSwitchingViewsUnmarksNibsTheViewDoesNotShow(t *testing.T) {
 	if !focusOn(app, "t2") {
 		t.Fatal("premise failed: could not focus t2 in Flat")
 	}
-	pressKeys(app, "space v")
+	pressKeys(app, "space v t")
 	if got := slices.Sorted(maps.Keys(app.list.selectedNibs)); !slices.Equal(got, []string{"t2"}) {
 		t.Errorf("marked in Tree = %v, want [t2]", got)
 	}
@@ -348,7 +348,7 @@ func TestAFirstVisitPutsTheCursorOnTheFirstRowWhenTheNibHasNoRow(t *testing.T) {
 	if got := selectedID(app); got != "f1" {
 		t.Fatalf("premise failed: the cursor is on %q, want f1", got)
 	}
-	pressKeys(app, "v")
+	pressKeys(app, "v f")
 	if got := selectedID(app); got != "t1" {
 		t.Errorf("the cursor is on %q in Flat, want the first row t1", got)
 	}

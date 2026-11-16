@@ -88,10 +88,46 @@ var (
 )
 
 func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list.Item) {
-	item, ok := listItem.(nibItem)
-	if !ok {
-		return
+	switch item := listItem.(type) {
+	case nibItem:
+		d.renderNib(w, m, index, item)
+	case sectionItem:
+		d.renderSection(w, m, index, item)
 	}
+}
+
+// renderSection draws the row of a section no nib heads: its fold mark and
+// its label, muted, with an area's color as a dot where a nib row draws its
+// type. It has no columns.
+func (d itemDelegate) renderSection(w io.Writer, m list.Model, index int, item sectionItem) {
+	ascii := d.display.ascii()
+	cursor := " "
+	labelStyle := ui.Muted.Bold(true)
+	if index == m.Index() {
+		cursor = cursorStyle.Render(ui.GlyphCursor(ascii))
+		labelStyle = labelStyle.Foreground(ui.ColorPrimary)
+	}
+	dot := " "
+	if item.color != "" {
+		dot = inColor(item.color, sectionDot(ascii))
+	}
+	room := d.layout.width - rowLeadWidth - lipgloss.Width(item.treePrefix)
+	label := fitText(item.label, room, ellipsis(ascii))
+	// A nib row's space after the cursor, its three marks and the space after them.
+	line := cursor + "     " + dot + " " + ui.TreeLine.Render(item.treePrefix) + labelStyle.Render(label)
+	_, _ = fmt.Fprint(w, clipToWidth(line, m.Width()))
+}
+
+// sectionDot returns the mark an area's row draws in the area's color.
+func sectionDot(ascii bool) string {
+	if ascii {
+		return "o"
+	}
+	return "●"
+}
+
+// renderNib draws the row of a nib.
+func (d itemDelegate) renderNib(w io.Writer, m list.Model, index int, item nibItem) {
 	n := item.nib
 	icons := d.display.icons
 	ascii := d.display.ascii()

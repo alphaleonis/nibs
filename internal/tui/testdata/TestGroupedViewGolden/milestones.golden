@@ -1,0 +1,24 @@
+── Nibs - sample-project ───────────────────────────────────────────────────────────────────────────
+Milestones  -status:closed                                                                   70 nibs
+▌ ◐‼  ⚑ ▾ v1.0 MVP Launch                                                                       m001
+  ◐!◆ ≡ ├─ ▾ User Authentication                                                                e001
+  ◐   ✦ │  ├─ ▾ OAuth2 social login                                            auth             f002
+  ◐   ▣ │  │  └─   GitHub OAuth provider integration                                            t005
+  ○   ✦ │  ├─ ▾ Password reset flow                                                             f003
+  ○   ▣ │  │  ├─   Design password reset email template                                         t006
+  ○   ▣ │  │  └─   Implement token generation and expiry                                        t007
+  ◌↓  ▣ │  ├─   Write authentication API documentation    docs                                  t008
+  ○‼  ✱ │  ├─   Session tokens not invalidated on passwo… security             auth             b002
+  ○!  ✱ │  └─   OAuth callback URL mismatch in productio…                                       b001
+  ◐!◆ ≡ ├─ ▾ Task Management Core                                                               e002
+  ✓!  ✦ │  ├─ ▾ CRUD operations for tasks                                                       f004
+  ○!  △ │  │  └─   Research concurrent task-edit conflic… perf                                  r002
+  ◐   ✦ │  ├─ ▾ Task assignment and ownership                                                   f005
+  ○ ● ▣ │  │  └─   Build assignment notification emails                                         t013
+  ○   ✦ │  ├─ ▾ Task prioritization and sorting                                                 f006
+  ○   ▣ │  │  ├─   Implement drag-and-drop reordering                                           t014
+  ○   ▣ │  │  └─   Add priority-based auto-sorting                                              t015
+  ◌↓  ✦ │  ├─ ▾ Subtask and checklist support                                                   f007
+  ◌   ▣ │  │  ├─   Enforce recursive depth limit                                                t016
+─────────────────────────────────────────────────────────────────────────────────────────── 1 / 72 ─
+n create  e edit  enter open  / filter  ? help  q quit

@@ -9,6 +9,7 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/viewshape"
 )
 
 // acceleratorOf returns the key the rendered view shows before the row that
@@ -134,6 +135,11 @@ var pickerCases = []pickerCase{
 		view: func(a *App) string { return a.modifyPicker.View() },
 		rows: func(*App) []string { return []string{"priority", "estimate"} },
 	},
+	{
+		name: "view", ctx: ctxViewPicker, open: "v", choose: "enter",
+		view: func(a *App) string { return a.viewPicker.View() },
+		rows: func(*App) []string { return []string{"Tree", "Flat", "Milestones", "Areas"} },
+	},
 }
 
 // openPicker returns an app with tc's picker open on nib-4.
@@ -186,6 +192,7 @@ type pickerOutcome struct {
 	TagFilter   string
 	CreateType  string
 	PriorityFor []string
+	Level       viewshape.Level
 }
 
 func outcomeOf(app *App, stub *StubBackend) pickerOutcome {
@@ -195,6 +202,7 @@ func outcomeOf(app *App, stub *StubBackend) pickerOutcome {
 		Parents:   stub.SetParentCalls,
 		Blocks:    stub.AddBlockingCalls,
 		TagFilter: app.list.tagFilter,
+		Level:     app.list.level,
 	}
 	if app.state == viewCreateModal {
 		o.CreateType = app.createModal.nibType
@@ -257,6 +265,8 @@ func openedState(tc pickerCase) viewState {
 		return viewTagPicker
 	case ctxModifyPicker:
 		return viewModifyPicker
+	case ctxViewPicker:
+		return viewViewPicker
 	}
 	return viewTypePicker
 }

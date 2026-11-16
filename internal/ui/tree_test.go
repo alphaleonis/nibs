@@ -446,7 +446,8 @@ func TestTreePrefixes(t *testing.T) {
 		open,
 		"└─ " + leaf,
 	}
-	if got := TreePrefixes(rows, collapsed, false); !slices.Equal(got, want) {
+	isFolded := func(r viewshape.Row) bool { return collapsed[r.NibID] }
+	if got := TreePrefixes(rows, isFolded, false); !slices.Equal(got, want) {
 		t.Errorf("prefixes differ\n got: %q\nwant: %q", got, want)
 	}
 }
@@ -458,7 +459,7 @@ func TestTreePrefixesDrawsAPipeForAnAncestorWithASiblingBelow(t *testing.T) {
 		{NibID: "t1", Depth: 2},
 		{NibID: "f2", Depth: 1},
 	}
-	got := TreePrefixes(rows, nil, false)
+	got := TreePrefixes(rows, func(viewshape.Row) bool { return false }, false)
 	if want := "│  └─ " + CollapseIndicatorLeaf; got[2] != want {
 		t.Errorf("t1's prefix = %q, want %q", got[2], want)
 	}

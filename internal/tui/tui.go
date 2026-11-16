@@ -39,6 +39,7 @@ const (
 	viewEstimatePicker
 	viewModifyPicker
 	viewColumnPicker
+	viewViewPicker
 	viewCreateModal
 	viewCreateTypePicker
 	viewConfirmDialog
@@ -158,6 +159,7 @@ type App struct {
 	estimatePicker estimatePickerModel
 	modifyPicker   modifyPickerModel
 	columnPicker   columnPickerModel
+	viewPicker     viewPickerModel
 	createModal    createModalModel
 	confirmDialog  confirmDialog
 	palette        paletteModel
@@ -174,7 +176,6 @@ type App struct {
 	userSnapshot config.UserConfigSnapshot
 	width        int
 	height       int
-	program      *tea.Program // receives watcher events; see Run
 
 	// The keys typed so far of a sequence such as "g g", or "" when none are.
 	pendingKey string
@@ -229,7 +230,7 @@ func (a *App) applyUserLayer(user config.UserLayer) {
 	a.keys, a.display, a.ignored, a.settingsSource = s.keys, s.display, s.ignored, s.source
 	a.userSnapshot = user.Snapshot
 	a.list.setDisplay(s.display)
-	a.list.setColumns(s.columns[treeView])
+	a.list.setColumns(s.columns)
 	if user.Failure != nil {
 		a.list.statusMessage = "Warning: " + user.Failure.Message()
 		a.list.statusKind = statusWarn
@@ -245,7 +246,7 @@ func (a *App) applyUserLayer(user config.UserLayer) {
 // that changed since the TUI read it, the TUI reads the file again, and the
 // command it returns reloads the nibs.
 func (a *App) chooseColumns(view string, columns []columnName) tea.Cmd {
-	a.list.setColumns(columns)
+	a.list.setViewColumns(view, columns)
 	if a.settingsSource == "" {
 		a.reportFailure("The columns apply until you quit: the OS gives no place for a user config")
 		return nil
@@ -342,6 +343,8 @@ func (a *App) keyContext() keyContext {
 		return ctxModifyPicker
 	case viewColumnPicker:
 		return ctxColumnPicker
+	case viewViewPicker:
+		return ctxViewPicker
 	case viewCreateModal:
 		return ctxTextInput
 	case viewConfirmDialog:
@@ -426,8 +429,13 @@ func (a *App) runAction(act *action) tea.Cmd {
 		return nil
 	case actColumns:
 		a.previousState = a.state
-		a.columnPicker = newColumnPickerModel(a.keys.actions, treeView, a.list.columns, a.width, a.height)
+		a.columnPicker = newColumnPickerModel(a.keys.actions, levelViews[a.list.level], a.list.columns, a.width, a.height)
 		a.state = viewColumnPicker
+		return nil
+	case actViewPick:
+		a.previousState = a.state
+		a.viewPicker = newViewPickerModel(a.keys, a.list.level, a.list.prevLevel, a.width, a.height)
+		a.state = viewViewPicker
 		return nil
 	}
 	return a.updateActiveView(actionMsg{name: act.Name})
@@ -682,6 +690,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.chooseColumns(msg.view, msg.columns)
 
 	case closeColumnPickerMsg:
+		a.state = a.previousState
+		return a, nil
+
+	case viewChosenMsg:
+		a.state = a.previousState
+		prev := a.list.focusedRowID()
+		a.list.showLevel(msg.level)
+		return a, a.list.cursorChangedCmd(prev)
+
+	case closeViewPickerMsg:
 		a.state = a.previousState
 		return a, nil
 
@@ -998,6 +1016,8 @@ func (a *App) updateActiveView(msg tea.Msg) tea.Cmd {
 		a.modifyPicker, cmd = a.modifyPicker.Update(msg)
 	case viewColumnPicker:
 		a.columnPicker, cmd = a.columnPicker.Update(msg)
+	case viewViewPicker:
+		a.viewPicker, cmd = a.viewPicker.Update(msg)
 	case viewBlockingPicker:
 		a.blockingPicker, cmd = a.blockingPicker.Update(msg)
 	case viewCreateModal:
@@ -1089,6 +1109,8 @@ func (a *App) renderState(state viewState) string {
 		return a.modifyPicker.ModalView(a.getBackgroundView(), a.width, a.height)
 	case viewColumnPicker:
 		return a.columnPicker.ModalView(a.getBackgroundView(), a.width, a.height)
+	case viewViewPicker:
+		return a.viewPicker.ModalView(a.getBackgroundView(), a.width, a.height)
 	case viewBlockingPicker:
 		return a.blockingPicker.ModalView(a.getBackgroundView(), a.width, a.height)
 	case viewCreateModal:
@@ -1259,24 +1281,32 @@ func Run(backend Backend, cfg *config.Config, user config.UserLayer, version str
 	app := New(backend, cfg, user, version)
 	p := tea.NewProgram(app)
 
-	app.program = p
-
 	if err := backend.StartWatching(); err != nil {
 		return err
 	}
 	defer backend.StopWatching()
 
-	eventCh, unsubscribe := backend.Subscribe()
-	defer unsubscribe()
-
-	go func() {
-		for range eventCh {
-			if app.program != nil {
-				app.program.Send(nibsChangedMsg{})
-			}
-		}
-	}()
+	stop := forwardStoreChanges(backend, func(msg tea.Msg) { p.Send(msg) })
+	defer stop()
 
 	_, err := p.Run()
 	return err
+}
+
+// forwardStoreChanges sends a nibsChangedMsg through send each time backend
+// reports a change to the nibs or to the declared areas, until stop is called.
+func forwardStoreChanges(backend Backend, send func(tea.Msg)) (stop func()) {
+	nibEvents, stopNibs := backend.Subscribe()
+	areaEvents, stopAreas := backend.SubscribeAreas()
+	for _, events := range []<-chan struct{}{nibEvents, areaEvents} {
+		go func() {
+			for range events {
+				send(nibsChangedMsg{})
+			}
+		}()
+	}
+	return func() {
+		stopNibs()
+		stopAreas()
+	}
 }

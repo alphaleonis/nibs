@@ -11,42 +11,95 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/safetext"
 	"github.com/alphaleonis/nibs/internal/ui"
 	"github.com/alphaleonis/nibs/internal/viewshape"
 )
 
-// nibItem is a list.Item for one row of the list.
-type nibItem struct {
-	nib         *nib.Nib
+// rowBase is what every row of the list has.
+type rowBase struct {
+	id          string // see rowIDOf
 	depth       int
 	treePrefix  string
-	matched     bool // false for an ancestor shown only as context
 	hasChildren bool
 	collapsed   bool
-	isBlocked   bool
-	isBlocking  bool
-	facts       rowFacts
+}
+
+func (b rowBase) base() rowBase { return b }
+
+// listRow is a row of the list: a nibItem or a sectionItem.
+type listRow interface {
+	list.Item
+	base() rowBase
+}
+
+// nibItem is a list.Item for the row of one nib.
+type nibItem struct {
+	rowBase
+	nib        *nib.Nib
+	matched    bool // false for an ancestor shown only as context
+	isBlocked  bool
+	isBlocking bool
+	facts      rowFacts
 }
 
 func (i nibItem) Title() string       { return i.nib.Title }
 func (i nibItem) Description() string { return i.nib.ID + " · " + i.nib.Status }
 func (i nibItem) FilterValue() string { return i.nib.Title + " " + i.nib.ID }
 
-// levelState is what one view of the list keeps while the TUI runs.
-type levelState struct {
-	cursor    string          // the nib under the cursor when the view was left
-	collapsed map[string]bool // the ids of the folded rows
+// sectionItem is the row of a section that no nib heads: a declared area, or
+// a leftover section such as Backlog.
+type sectionItem struct {
+	rowBase
+	key   string // the section's key, as viewshape.Row.Section holds it
+	label string
+	color string // the area's declared color, or ""
 }
 
-// levels are the views view.next steps through, in order.
-var levels = []viewshape.Level{viewshape.LevelTree, viewshape.LevelFlat}
+func (i sectionItem) FilterValue() string { return i.label }
 
-// levelNames are the names the header gives the views.
+// sectionRowPrefix leads the id of a section row that no nib heads. A nib's id
+// comes from its file name, which holds no "/", so no nib has such an id.
+const sectionRowPrefix = "/section:"
+
+// rowIDOf returns the id of the list row that shows r: the nib's id, or for a
+// section no nib heads, sectionRowPrefix and the section's key.
+func rowIDOf(r viewshape.Row) string {
+	if r.NibID != "" {
+		return r.NibID
+	}
+	return sectionRowPrefix + r.Section
+}
+
+// levelState is what one view of the list keeps while the TUI runs.
+type levelState struct {
+	cursor    string          // the id of the row under the cursor when the view was left
+	collapsed map[string]bool // the ids of the folded nib rows
+	// collapsedSections holds the keys of the folded sections no nib heads.
+	collapsedSections map[string]bool
+}
+
+// levels are the views in the order the view picker lists them and
+// view.next steps through them.
+var levels = []viewshape.Level{viewshape.LevelTree, viewshape.LevelFlat, viewshape.LevelMilestones, viewshape.LevelAreas}
+
+// levelNames are the names the header and the view picker give the views.
 var levelNames = map[viewshape.Level]string{
-	viewshape.LevelTree: "Tree",
-	viewshape.LevelFlat: "Flat",
+	viewshape.LevelTree:       "Tree",
+	viewshape.LevelFlat:       "Flat",
+	viewshape.LevelMilestones: "Milestones",
+	viewshape.LevelAreas:      "Areas",
+}
+
+// levelViews are the names tui.columns gives the views.
+var levelViews = map[viewshape.Level]string{
+	viewshape.LevelTree:       treeView,
+	viewshape.LevelFlat:       flatView,
+	viewshape.LevelMilestones: milestonesView,
+	viewshape.LevelAreas:      areasView,
 }
 
 // keepOrder is the list's filter. Rows reach the list already shaped for the
@@ -83,9 +136,11 @@ type listModel struct {
 	idWidth int                 // the widest ID as rows show it, over every nib in the store
 	facts   map[string]rowFacts // each nib's row facts, from the last load
 
-	// columns are the columns the rows show after the title, in any order;
-	// set through setColumns.
-	columns []columnName
+	// columns are the columns the current view's rows show after the title,
+	// in any order, and columnsByView those of each view by its name in
+	// tui.columns. Set both through setColumns.
+	columns       []columnName
+	columnsByView map[string][]columnName
 
 	// paneWidth is the width the list pane is drawn at, or 0 for the whole
 	// terminal. The App sets it while the nib view takes part of the width.
@@ -94,11 +149,13 @@ type listModel struct {
 	tagFilter     string
 	hideCompleted bool // hides every closed status, not only completed
 
-	level viewshape.Level
-	views map[viewshape.Level]*levelState // read through state
+	level     viewshape.Level
+	prevLevel viewshape.Level                 // the view shown before level, or level itself
+	views     map[viewshape.Level]*levelState // read through state
 
-	nibs []*nib.Nib          // every nib, from the last load
-	byID map[string]*nib.Nib // nibs by id
+	nibs  []*nib.Nib          // every nib, from the last load
+	byID  map[string]*nib.Nib // nibs by id
+	areas *area.Vocabulary    // the declared areas, from the last load
 
 	// unfolded is the rows the view shows with every row unfolded, from the
 	// last reshape.
@@ -158,8 +215,10 @@ func newListModel(backend Backend, cfg *config.Config) listModel {
 		hideCompleted: cfg.HideCompleted(),
 		selectedNibs:  selectedNibs,
 		level:         viewshape.LevelTree,
+		prevLevel:     viewshape.LevelTree,
 		views:         make(map[viewshape.Level]*levelState),
 		columns:       defaultColumns[treeView],
+		columnsByView: defaultColumns,
 		title:         fmt.Sprintf("Nibs - %s", cfg.GetProjectName()),
 	}
 	return m
@@ -167,6 +226,7 @@ func newListModel(backend Backend, cfg *config.Config) listModel {
 
 type nibsLoadedMsg struct {
 	nibs    []*nib.Nib
+	areas   *area.Vocabulary
 	idWidth int
 	facts   map[string]rowFacts
 }
@@ -192,21 +252,42 @@ func (m listModel) loadNibs() tea.Msg {
 	for _, b := range nibs {
 		idWidth = max(idWidth, lipgloss.Width(m.display.id(b.ID)))
 	}
-	return nibsLoadedMsg{nibs: nibs, idWidth: idWidth, facts: rowFactsOf(nibs, m.config)}
+	return nibsLoadedMsg{nibs: nibs, areas: m.backend.Areas(), idWidth: idWidth, facts: rowFactsOf(nibs, m.config)}
 }
 
 // state returns the current view's state.
 func (m listModel) state() *levelState {
 	st, ok := m.views[m.level]
 	if !ok {
-		st = &levelState{collapsed: make(map[string]bool)}
+		st = &levelState{collapsed: make(map[string]bool), collapsedSections: make(map[string]bool)}
 		m.views[m.level] = st
 	}
 	return st
 }
 
-// collapsed returns the ids of the current view's folded rows.
+// collapsed returns the ids of the current view's folded nib rows.
 func (m listModel) collapsed() map[string]bool { return m.state().collapsed }
+
+// folded reports whether the current view folds r.
+func (m listModel) folded(r viewshape.Row) bool {
+	if r.NibID != "" {
+		return m.collapsed()[r.NibID]
+	}
+	return m.state().collapsedSections[r.Section]
+}
+
+// setFold folds or unfolds the row of id in the current view.
+func (m listModel) setFold(id string, fold bool) {
+	folds, key := m.collapsed(), id
+	if section, ok := strings.CutPrefix(id, sectionRowPrefix); ok {
+		folds, key = m.state().collapsedSections, section
+	}
+	if fold {
+		folds[key] = true
+	} else {
+		delete(folds, key)
+	}
+}
 
 // filter is the metadata filter that the tag filter and hiding closed nibs
 // make.
@@ -231,12 +312,15 @@ func (m listModel) textQuery() string {
 
 // shapeView is the current view as viewshape shapes it.
 func (m listModel) shapeView() viewshape.View {
+	st := m.state()
 	return viewshape.View{
-		Level:     m.level,
-		Filter:    m.filter(),
-		Match:     textMatch(m.textQuery()),
-		Collapsed: m.collapsed(),
-		Sort:      viewshape.SortOrder,
+		Level:             m.level,
+		Filter:            m.filter(),
+		Match:             textMatch(m.textQuery()),
+		Collapsed:         st.collapsed,
+		CollapsedSections: st.collapsedSections,
+		Sort:              viewshape.SortOrder,
+		Areas:             m.areas,
 	}
 }
 
@@ -248,6 +332,7 @@ func (m *listModel) load(msg nibsLoadedMsg, focus string) {
 	for _, b := range msg.nibs {
 		m.byID[b.ID] = b
 	}
+	m.areas = msg.areas
 	m.facts = msg.facts
 	m.idWidth = msg.idWidth
 
@@ -273,17 +358,18 @@ func (m *listModel) load(msg nibsLoadedMsg, focus string) {
 // text query does not count, so typing one keeps every fold.
 func (m *listModel) pruneFolds() error {
 	for level, st := range m.views {
-		rows, err := viewshape.Shape(m.nibs, viewshape.View{Level: level, Filter: m.filter(), Sort: viewshape.SortOrder})
+		rows, err := viewshape.Shape(m.nibs, viewshape.View{Level: level, Filter: m.filter(), Sort: viewshape.SortOrder, Areas: m.areas})
 		if err != nil {
 			return err
 		}
 		parents := make(map[string]bool)
 		for _, r := range rows {
 			if r.HasChildren {
-				parents[r.NibID] = true
+				parents[rowIDOf(r)] = true
 			}
 		}
 		maps.DeleteFunc(st.collapsed, func(id string, _ bool) bool { return !parents[id] })
+		maps.DeleteFunc(st.collapsedSections, func(key string, _ bool) bool { return !parents[sectionRowPrefix+key] })
 	}
 	return nil
 }
@@ -294,7 +380,7 @@ func (m *listModel) pruneFolds() error {
 func (m *listModel) pruneMarks() {
 	keep := make(map[string]bool, len(m.unfolded))
 	for _, r := range m.unfolded {
-		if !r.Dimmed {
+		if r.NibID != "" && !r.Dimmed {
 			keep[r.NibID] = true
 		}
 	}
@@ -311,13 +397,13 @@ func (m listModel) inView() func(*nib.Nib) bool {
 	return func(n *nib.Nib) bool { return ids[n.ID] }
 }
 
-// reshape shapes the rows again and keeps the cursor on focus, or else on its
-// nearest ancestor that is shown.
+// reshape shapes the rows again and keeps the cursor on the row of focus, or
+// else on its nearest ancestor that is shown. focus is a row id; see rowIDOf.
 func (m *listModel) reshape(focus string) {
 	v := m.shapeView()
 	rows, err := viewshape.Shape(m.nibs, v)
 	if err == nil {
-		v.Collapsed = nil
+		v.Collapsed, v.CollapsedSections = nil, nil
 		m.unfolded, err = viewshape.Shape(m.nibs, v)
 	}
 	if err == nil {
@@ -335,24 +421,27 @@ func (m *listModel) reshape(focus string) {
 	}
 	m.shapedQuery = m.textQuery()
 
-	prefixes := ui.TreePrefixes(rows, m.collapsed(), m.display.ascii())
+	prefixes := ui.TreePrefixes(rows, m.folded, m.display.ascii())
 	items := make([]list.Item, 0, len(rows))
 	for i, r := range rows {
-		n := m.byID[r.NibID]
-		if n == nil {
-			// Only a section row has no nib, and Tree and Flat draw no sections.
+		base := rowBase{
+			id:          rowIDOf(r),
+			depth:       r.Depth,
+			treePrefix:  prefixes[i],
+			hasChildren: r.HasChildren,
+			collapsed:   r.HasChildren && m.folded(r),
+		}
+		if r.NibID == "" {
+			items = append(items, m.newSectionItem(base, r.Section))
 			continue
 		}
 		items = append(items, nibItem{
-			nib:         n,
-			depth:       r.Depth,
-			treePrefix:  prefixes[i],
-			matched:     !r.Dimmed,
-			hasChildren: r.HasChildren,
-			collapsed:   r.HasChildren && m.collapsed()[r.NibID],
-			isBlocked:   m.backend.IsBlocked(n.ID),
-			isBlocking:  m.backend.IsBlocking(n.ID),
-			facts:       m.facts[n.ID],
+			rowBase:    base,
+			nib:        m.byID[r.NibID],
+			matched:    !r.Dimmed,
+			isBlocked:  m.backend.IsBlocked(r.NibID),
+			isBlocking: m.backend.IsBlocking(r.NibID),
+			facts:      m.facts[r.NibID],
 		})
 	}
 	// Under a filter, SetItems hands back the command that matches the rows
@@ -361,6 +450,24 @@ func (m *listModel) reshape(focus string) {
 		m.list, _ = m.list.Update(cmd())
 	}
 	m.restoreCursor(focus)
+}
+
+// newSectionItem returns the row of the section key, which no nib heads. An
+// area's row is labeled with the area's own name, because it is drawn inside
+// its parent's. The label is stripped, because areas.yml can hold any text.
+func (m listModel) newSectionItem(base rowBase, key string) sectionItem {
+	item := sectionItem{rowBase: base, key: key, label: safetext.StripBounded(key)}
+	switch key {
+	case viewshape.BacklogSection:
+		item.label = "Backlog"
+	case viewshape.NoAreaSection:
+		item.label = "No area"
+	default:
+		if node := m.areas.Get(key); node != nil {
+			item.label, item.color = safetext.StripBounded(node.Name), node.Color
+		}
+	}
+	return item
 }
 
 // countMatches is the rows of rows that show a nib matching the view.
@@ -381,37 +488,48 @@ func (m *listModel) followQuery() {
 	if query == m.shapedQuery {
 		return
 	}
-	m.reshape(m.focusedID())
+	m.reshape(m.focusedRowID())
 	m.pruneMarks()
 	if query == "" {
 		return
 	}
 	for i, item := range m.list.VisibleItems() {
-		if item.(nibItem).matched {
+		if item, ok := item.(nibItem); ok && item.matched {
 			m.list.Select(i)
 			return
 		}
 	}
 }
 
-// nextLevel shows the view after the current one in levels, with the cursor
-// and folds that view had. A view shown for the first time keeps the cursor on
-// the same nib, or puts it on the first row when that nib has no row there.
-func (m *listModel) nextLevel() {
-	focus := m.focusedID()
+// showLevel shows level with the cursor and folds it had, and its columns. A
+// view shown for the first time keeps the cursor on the same row, or puts it on
+// the first row when that row is not in it.
+func (m *listModel) showLevel(level viewshape.Level) {
+	if level == m.level {
+		return
+	}
+	focus := m.focusedRowID()
 	m.state().cursor = focus
-	i := slices.Index(levels, m.level)
-	m.level = levels[(i+1)%len(levels)]
+	m.prevLevel, m.level = m.level, level
+	m.columns = m.columnsByView[levelViews[level]]
+	m.updateDelegate(m.width)
 	_, visited := m.views[m.level]
 	if visited {
 		m.reshape(m.state().cursor)
 	} else {
 		m.reshape(focus)
-		if m.focusedID() != focus {
+		if m.focusedRowID() != focus {
 			m.list.Select(0)
 		}
 	}
 	m.pruneMarks()
+}
+
+// stepLevel shows the view step places after the current one in levels,
+// wrapping around at either end.
+func (m *listModel) stepLevel(step int) {
+	i := slices.Index(levels, m.level)
+	m.showLevel(levels[(i+step+len(levels))%len(levels)])
 }
 
 func (m *listModel) setTagFilter(tag string) {
@@ -436,7 +554,7 @@ func (m *listModel) hasActiveFilter() bool {
 func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 	var cmd tea.Cmd
 
-	prev := m.focusedID()
+	prev := m.focusedRowID()
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -494,13 +612,32 @@ func (m listModel) focusedID() string {
 	return ""
 }
 
-// cursorChangedCmd reports the nib under the cursor when it is not prev, or
-// returns nil.
+// focusedRowID is the id of the row under the cursor, or "" when the list is
+// empty; see rowIDOf.
+func (m listModel) focusedRowID() string {
+	if row, ok := m.focusedRow(); ok {
+		return row.id
+	}
+	return ""
+}
+
+// focusedRow returns the row under the cursor; ok is false when the list is
+// empty.
+func (m listModel) focusedRow() (row rowBase, ok bool) {
+	if item, ok := m.list.SelectedItem().(listRow); ok {
+		return item.base(), true
+	}
+	return rowBase{}, false
+}
+
+// cursorChangedCmd reports the nib under the cursor when the cursor has left
+// the row of prev, or returns nil. A section row reports no nib.
 func (m listModel) cursorChangedCmd(prev string) tea.Cmd {
-	id := m.focusedID()
-	if id == "" || id == prev {
+	row := m.focusedRowID()
+	if row == "" || row == prev {
 		return nil
 	}
+	id := m.focusedID()
 	return func() tea.Msg { return cursorChangedMsg{nibID: id} }
 }
 
@@ -528,13 +665,6 @@ func (m listModel) focusedNib() *nib.Nib {
 		return item.nib
 	}
 	return nil
-}
-
-// focusedItem returns the row under the cursor; ok is false when the list is
-// empty.
-func (m listModel) focusedItem() (item nibItem, ok bool) {
-	item, ok = m.list.SelectedItem().(nibItem)
-	return item, ok
 }
 
 // runAction does what the named action does in the list.
@@ -576,39 +706,43 @@ func (m *listModel) runAction(name actionName) tea.Cmd {
 	case actFoldRow:
 		m.foldRow()
 	case actUnfoldRow:
-		if item, ok := m.focusedItem(); ok && item.hasChildren && item.collapsed {
-			delete(m.collapsed(), item.nib.ID)
-			m.reshape(item.nib.ID)
+		if row, ok := m.focusedRow(); ok && row.hasChildren && row.collapsed {
+			m.setFold(row.id, false)
+			m.reshape(row.id)
 		}
 	case actFoldSubtree:
 		// Fold every descendant, not the row itself.
-		if item, ok := m.focusedItem(); ok && item.hasChildren {
-			for _, r := range m.descendants(item.nib.ID) {
+		if row, ok := m.focusedRow(); ok && row.hasChildren {
+			for _, r := range m.descendants(row.id) {
 				if r.HasChildren {
-					m.collapsed()[r.NibID] = true
+					m.setFold(rowIDOf(r), true)
 				}
 			}
-			m.reshape(item.nib.ID)
+			m.reshape(row.id)
 		}
 	case actUnfoldSubtree:
-		if item, ok := m.focusedItem(); ok && item.hasChildren {
-			for _, r := range m.descendants(item.nib.ID) {
-				delete(m.collapsed(), r.NibID)
+		if row, ok := m.focusedRow(); ok && row.hasChildren {
+			for _, r := range m.descendants(row.id) {
+				m.setFold(rowIDOf(r), false)
 			}
-			m.reshape(item.nib.ID)
+			m.reshape(row.id)
 		}
 	case actFoldAll:
 		for _, r := range m.unfolded {
 			if r.HasChildren {
-				m.collapsed()[r.NibID] = true
+				m.setFold(rowIDOf(r), true)
 			}
 		}
-		m.reshape(m.focusedID())
+		m.reshape(m.focusedRowID())
 	case actUnfoldAll:
-		clear(m.collapsed())
-		m.reshape(m.focusedID())
+		st := m.state()
+		clear(st.collapsed)
+		clear(st.collapsedSections)
+		m.reshape(m.focusedRowID())
 	case actViewNext:
-		m.nextLevel()
+		m.stepLevel(1)
+	case actViewPrevious:
+		m.stepLevel(-1)
 	case actOpen:
 		if n := m.focusedNib(); n != nil {
 			return func() tea.Msg { return selectNibMsg{nib: n} }
@@ -710,18 +844,18 @@ func (m *listModel) runAction(name actionName) tea.Cmd {
 
 // foldRow folds an expanded row, or else moves the cursor to its parent row.
 func (m *listModel) foldRow() {
-	item, ok := m.focusedItem()
+	row, ok := m.focusedRow()
 	if !ok {
 		return
 	}
-	if item.hasChildren && !item.collapsed {
-		m.collapsed()[item.nib.ID] = true
-		m.reshape(item.nib.ID)
+	if row.hasChildren && !row.collapsed {
+		m.setFold(row.id, true)
+		m.reshape(row.id)
 		return
 	}
 	items := m.list.Items()
 	for i := m.list.Index() - 1; i >= 0; i-- {
-		if items[i].(nibItem).depth < item.depth {
+		if items[i].(listRow).base().depth < row.depth {
 			m.list.Select(i)
 			return
 		}
@@ -731,7 +865,7 @@ func (m *listModel) foldRow() {
 // descendants returns the rows beneath the row of id when every row is
 // unfolded, or nil when the view shows no row for id.
 func (m listModel) descendants(id string) []viewshape.Row {
-	i := slices.IndexFunc(m.unfolded, func(r viewshape.Row) bool { return r.NibID == id })
+	i := slices.IndexFunc(m.unfolded, func(r viewshape.Row) bool { return rowIDOf(r) == id })
 	if i < 0 {
 		return nil
 	}
@@ -843,10 +977,19 @@ func (m *listModel) updateDelegate(width int) {
 	})
 }
 
-// setColumns sets the columns the rows show after the title.
-func (m *listModel) setColumns(columns []columnName) {
-	m.columns = columns
+// setColumns sets the columns each view's rows show after the title, by the
+// view's name in tui.columns.
+func (m *listModel) setColumns(byView map[string][]columnName) {
+	m.columnsByView = byView
+	m.columns = byView[levelViews[m.level]]
 	m.updateDelegate(m.width)
+}
+
+// setViewColumns sets the columns the rows of view show after the title.
+func (m *listModel) setViewColumns(view string, columns []columnName) {
+	byView := maps.Clone(m.columnsByView)
+	byView[view] = columns
+	m.setColumns(byView)
 }
 
 // setDisplay sets how rows show a nib. Call it before the first load, which
@@ -861,7 +1004,7 @@ func (m *listModel) setDisplay(d display) {
 func (m *listModel) restoreCursor(id string) {
 	items := m.list.VisibleItems()
 	indexOf := func(id string) int {
-		return slices.IndexFunc(items, func(item list.Item) bool { return item.(nibItem).nib.ID == id })
+		return slices.IndexFunc(items, func(item list.Item) bool { return item.(listRow).base().id == id })
 	}
 	for _, candidate := range append([]string{id}, m.ancestors(id)...) {
 		if i := indexOf(candidate); i >= 0 {
@@ -874,16 +1017,16 @@ func (m *listModel) restoreCursor(id string) {
 	}
 }
 
-// ancestors returns the ids of the rows above id that it is nested under when
-// every row is unfolded, nearest first. When the view shows no row for id, it
-// returns id's parents by their links instead.
+// ancestors returns the ids of the rows above the row of id that it is nested
+// under when every row is unfolded, nearest first. When the view shows no row
+// for id, it returns the ids of the nib's parents by their links instead.
 func (m listModel) ancestors(id string) []string {
 	var ids []string
-	if i := slices.IndexFunc(m.unfolded, func(r viewshape.Row) bool { return r.NibID == id }); i >= 0 {
+	if i := slices.IndexFunc(m.unfolded, func(r viewshape.Row) bool { return rowIDOf(r) == id }); i >= 0 {
 		depth := m.unfolded[i].Depth
 		for j := i - 1; j >= 0 && depth > 0; j-- {
 			if r := m.unfolded[j]; r.Depth < depth {
-				ids = append(ids, r.NibID)
+				ids = append(ids, rowIDOf(r))
 				depth = r.Depth
 			}
 		}
@@ -1170,6 +1313,11 @@ func (m listModel) dispatchBlockMove(up bool) tea.Cmd {
 	// row a move passes there is rarely the sibling it passes.
 	if m.level == viewshape.LevelFlat {
 		return refuseReorderCmd(reorderReasonFlat)
+	}
+	// A move writes the parent order, and a grouped view draws its rows in
+	// sections that order does not follow.
+	if m.level == viewshape.LevelMilestones || m.level == viewshape.LevelAreas {
+		return refuseReorderCmd(reorderReasonGrouped)
 	}
 	// A text filter can hide the rows a move passes, so the web refuses it too.
 	if m.textQuery() != "" {

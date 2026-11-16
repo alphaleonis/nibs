@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 )
@@ -34,6 +35,10 @@ type Backend interface {
 
 	ReorderNib(ctx context.Context, id string, afterID, beforeID *string, first *bool) (*nib.Nib, error)
 
+	// Areas returns the store's declared area vocabulary, which may be empty
+	// but is never nil.
+	Areas() *area.Vocabulary
+
 	Root() string
 	// ReloadAfterEdit reloads the store after an external editor save and stamps
 	// the nib's updated_at, which a file-level edit does not set.
@@ -41,5 +46,9 @@ type Backend interface {
 
 	StartWatching() error
 	StopWatching()
+	// Subscribe ticks events when nibs change, until cancel is called.
 	Subscribe() (events <-chan struct{}, cancel func())
+	// SubscribeAreas ticks events when the declared area vocabulary changes,
+	// until cancel is called.
+	SubscribeAreas() (events <-chan struct{}, cancel func())
 }

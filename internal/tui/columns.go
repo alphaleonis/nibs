@@ -60,16 +60,25 @@ var columnDescriptions = map[columnName]string{
 	colID:        "the ID",
 }
 
-// treeView names the tree view in tui.columns.
-const treeView = "tree"
+// The names tui.columns gives the views.
+const (
+	treeView       = "tree"
+	flatView       = "flat"
+	milestonesView = "milestones"
+	areasView      = "areas"
+)
 
 // columnViews are the views tui.columns may name.
-var columnViews = []string{treeView}
+var columnViews = []string{treeView, flatView, milestonesView, areasView}
 
 // defaultColumns are the columns a view shows while tui.columns does not name
-// it.
+// it. Flat shows the parent because it draws no nesting, and a grouped view
+// shows the other grouping because its own is the section a row is in.
 var defaultColumns = map[string][]columnName{
-	treeView: {colTags, colID},
+	treeView:       {colTags, colID},
+	flatView:       {colParent, colTags, colID},
+	milestonesView: {colTags, colArea, colID},
+	areasView:      {colTags, colMilestone, colID},
 }
 
 // Widths of the columns that do not take the width of a vocabulary or of the

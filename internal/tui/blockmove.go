@@ -45,6 +45,7 @@ const (
 	reorderReasonAtBottom         = "Already at the bottom"
 	reorderReasonInParentCycle    = "Can't move: that nib is in a parent cycle — run nibs check"
 	reorderReasonFlat             = "Can't move in Flat: switch to Tree to reorder"
+	reorderReasonGrouped          = "Can't move in this view yet: switch to Tree to reorder"
 	reorderReasonTextFilter       = "Can't move while a text filter is on: clear it to reorder"
 
 	reorderReasonNoSiblings       = "Can't move: that nib has no siblings to move among"

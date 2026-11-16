@@ -117,12 +117,12 @@ func CollapseIndicatorCollapsed(ascii bool) string { return glyphCollapseCollaps
 func CollapseIndicatorExpanded(ascii bool) string  { return glyphCollapseExpanded(ascii) }
 
 // TreePrefixes returns the tree connectors and the fold mark each of rows is
-// drawn with, in display order. A row is folded when collapsed holds its nib's
-// id and it has children. ascii draws them in ASCII.
+// drawn with, in display order. A row is folded when it has children and
+// folded reports it. ascii draws them in ASCII.
 //
 // rows are the rows a view shows, so a row's siblings are the rows at its depth
 // up to the next shallower row.
-func TreePrefixes(rows []viewshape.Row, collapsed map[string]bool, ascii bool) []string {
+func TreePrefixes(rows []viewshape.Row, folded func(viewshape.Row) bool, ascii bool) []string {
 	// last[i] reports whether no sibling follows rows[i]. Scanning upward,
 	// laterAt[d] holds whether a row at depth d follows before a shallower one.
 	last := make([]bool, len(rows))
@@ -158,7 +158,7 @@ func TreePrefixes(rows []viewshape.Row, collapsed map[string]bool, ascii bool) [
 			}
 		}
 		switch {
-		case r.HasChildren && collapsed[r.NibID]:
+		case r.HasChildren && folded(r):
 			b.WriteString(CollapseIndicatorCollapsed(ascii))
 		case r.HasChildren:
 			b.WriteString(CollapseIndicatorExpanded(ascii))

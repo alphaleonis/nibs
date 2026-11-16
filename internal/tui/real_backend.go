@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -86,6 +87,10 @@ func (b *RealBackend) ReorderNib(ctx context.Context, id string, afterID, before
 	return b.resolver.Mutation().ReorderNib(ctx, id, afterID, beforeID, first, nil, nil, model.OrderScopeParent)
 }
 
+func (b *RealBackend) Areas() *area.Vocabulary {
+	return b.core.Areas()
+}
+
 func (b *RealBackend) Root() string {
 	return b.core.Root()
 }
@@ -113,4 +118,8 @@ func (b *RealBackend) StopWatching() {
 // Subscribe uses the signal-only subscription: the TUI never reads a payload.
 func (b *RealBackend) Subscribe() (events <-chan struct{}, cancel func()) {
 	return b.core.SubscribeSignal()
+}
+
+func (b *RealBackend) SubscribeAreas() (events <-chan struct{}, cancel func()) {
+	return b.core.SubscribeAreas()
 }

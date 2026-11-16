@@ -5,6 +5,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/alphaleonis/nibs/internal/area"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -21,6 +22,11 @@ type StubBackend struct {
 	Nibs    map[string]*nib.Nib
 	AllNibs []*nib.Nib
 	RootDir string
+	// AreaVocab is what Areas returns; nil stands for the empty vocabulary.
+	AreaVocab *area.Vocabulary
+	// AreaEvents is the channel the last SubscribeAreas returned, for a test
+	// to tick.
+	AreaEvents chan struct{}
 
 	// Call recording
 	UpdateCalls         []stubUpdateCall
@@ -230,6 +236,13 @@ func (s *StubBackend) ReorderNib(_ context.Context, id string, afterID, beforeID
 	return &nib.Nib{ID: id}, nil
 }
 
+func (s *StubBackend) Areas() *area.Vocabulary {
+	if s.AreaVocab == nil {
+		return &area.Vocabulary{}
+	}
+	return s.AreaVocab
+}
+
 func (s *StubBackend) Root() string {
 	return s.RootDir
 }
@@ -247,6 +260,13 @@ func (s *StubBackend) StartWatching() error {
 }
 
 func (s *StubBackend) StopWatching() {}
+
+func (s *StubBackend) SubscribeAreas() (events <-chan struct{}, cancel func()) {
+	ch := make(chan struct{}, 1)
+	s.AreaEvents = ch
+	var once sync.Once
+	return ch, func() { once.Do(func() { close(ch) }) }
+}
 
 func (s *StubBackend) Subscribe() (events <-chan struct{}, cancel func()) {
 	ch := make(chan struct{})

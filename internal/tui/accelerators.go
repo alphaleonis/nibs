@@ -11,9 +11,9 @@ import (
 // them when their hint offers none.
 var acceleratorPool = strings.Split("1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ", "")
 
-// freeAccelerators returns acceleratorPool without the keys an action of table
-// in ctx takes, either as a whole binding or as the first key of a sequence.
-func freeAccelerators(table []action, ctx keyContext) []string {
+// takenKeys returns the keys an action of table in ctx takes, either as a
+// whole binding or as the first key of a sequence.
+func takenKeys(table []action, ctx keyContext) map[string]bool {
 	taken := map[string]bool{}
 	for _, a := range table {
 		if !slices.Contains(a.Contexts, ctx) {
@@ -23,6 +23,13 @@ func freeAccelerators(table []action, ctx keyContext) []string {
 			taken[strings.Fields(binding)[0]] = true
 		}
 	}
+	return taken
+}
+
+// freeAccelerators returns acceleratorPool without the keys an action of table
+// in ctx takes; see takenKeys.
+func freeAccelerators(table []action, ctx keyContext) []string {
+	taken := takenKeys(table, ctx)
 	free := make([]string, 0, len(acceleratorPool))
 	for _, k := range acceleratorPool {
 		if !taken[k] {

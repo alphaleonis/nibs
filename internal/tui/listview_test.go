@@ -77,8 +77,8 @@ type viewRow struct {
 	line string // without color
 }
 
-// visibleRows pairs the rows on the list's current page with their lines on
-// screen, which start under the top rule and the header.
+// visibleRows pairs the nib rows on the list's current page with their lines
+// on screen, which start under the top rule and the header.
 func visibleRows(t *testing.T, app *App) []viewRow {
 	t.Helper()
 	lines := strings.Split(plainView(app), "\n")
@@ -86,7 +86,9 @@ func visibleRows(t *testing.T, app *App) []viewRow {
 	start, end := l.Paginator.GetSliceBounds(len(l.VisibleItems()))
 	var rows []viewRow
 	for i, item := range l.VisibleItems()[start:end] {
-		rows = append(rows, viewRow{item: item.(nibItem), line: lines[2+i]})
+		if item, ok := item.(nibItem); ok {
+			rows = append(rows, viewRow{item: item, line: lines[2+i]})
+		}
 	}
 	if len(rows) == 0 {
 		t.Fatal("premise failed: the list shows no rows")

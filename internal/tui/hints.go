@@ -39,8 +39,8 @@ func hintRowWithin(table []action, st actionState, width int) string {
 
 // hintItems renders each hint of the hint line. After a pending prefix they are
 // what can follow the prefix; otherwise they are the actions active in st.ctx
-// whose Hint holds, each with its first key. Hints follow actionGroups order,
-// then table order.
+// that are ready and whose Hint holds, each with its first key. Hints follow
+// actionGroups order, then table order.
 func hintItems(table []action, st actionState) []string {
 	var hints []string
 	add := func(key, text string) {
@@ -55,7 +55,7 @@ func hintItems(table []action, st actionState) []string {
 			}
 			continue
 		}
-		if a.Hint != nil && len(a.Keys) > 0 && a.Hint(st) {
+		if a.Hint != nil && len(a.Keys) > 0 && a.Hint(st) && isReady(a, st) {
 			add(a.Keys[0], hintLabel(a, st))
 		}
 	}
@@ -63,6 +63,15 @@ func hintItems(table []action, st actionState) []string {
 		hints = slices.Insert(hints, 0, helpKeyStyle.Render(st.prefix)+helpStyle.Render(" then"))
 	}
 	return hints
+}
+
+// isReady reports whether a can run in st.
+func isReady(a *action, st actionState) bool {
+	if a.Ready == nil {
+		return true
+	}
+	ok, _ := a.Ready(st)
+	return ok
 }
 
 // actionsByGroup returns the actions in table active in ctx, in actionGroups
