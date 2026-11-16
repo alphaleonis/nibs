@@ -176,8 +176,8 @@ func TestEscLeavesTheModifyPicker(t *testing.T) {
 	}
 }
 
-// A reload while the picker is open moves the list cursor by index onto
-// another nib.
+// A reload while the picker is open moves the list cursor onto another nib when
+// the nib under it closes, because the list hides closed nibs.
 func TestModifyPickerChangesTheNibItShowsAfterAReload(t *testing.T) {
 	for _, f := range modifyFields {
 		t.Run(f.name, func(t *testing.T) {
@@ -187,9 +187,9 @@ func TestModifyPickerChangesTheNibItShowsAfterAReload(t *testing.T) {
 			if app.state != viewModifyPicker {
 				t.Fatalf("premise failed: state = %d after m, want the modify picker", app.state)
 			}
-			first := &nib.Nib{ID: "nib-0", Title: "Zero", Type: "task", Status: "todo", Order: "0"}
-			stub.AllNibs = append([]*nib.Nib{first}, stub.AllNibs...)
-			stub.Nibs[first.ID] = first
+			closed := *stub.Nibs["nib-3"]
+			closed.Status = "completed"
+			stub.AllNibs[2], stub.Nibs["nib-3"] = &closed, &closed
 			_, cmd := app.Update(nibsChangedMsg{})
 			processCmdNonBlocking(app, cmd)
 			if got := selectedID(app); got == "nib-3" {

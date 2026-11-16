@@ -20,6 +20,13 @@ func blockTestNibs() []*nib.Nib {
 	}
 }
 
+// focusMilestone shows Flat, because Tree draws no row for a milestone, and
+// advances the cursor to the milestone targetID. Returns true if located.
+func focusMilestone(app *App, targetID string) bool {
+	pressKeys(app, "v")
+	return focusOn(app, targetID)
+}
+
 // focusOn advances the list cursor to the row whose nib ID matches targetID.
 // Returns true if located.
 func focusOn(app *App, targetID string) bool {

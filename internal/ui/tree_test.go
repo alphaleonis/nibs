@@ -5,10 +5,10 @@ import (
 	"slices"
 	"sort"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/viewshape"
 )
 
 func TestBuildTree(t *testing.T) {
@@ -415,187 +415,51 @@ func TestBuildTreeCyclePromotionContract(t *testing.T) {
 	}
 }
 
-func TestFlattenTreeFiltered(t *testing.T) {
-	// Build a tree:
-	// m1 (milestone)
-	//   ├── e1 (epic)
-	//   │   ├── t1 (task)
-	//   │   └── t2 (task)
-	//   └── e2 (epic)
-	// t3 (orphan task)
-
-	tree := []*TreeNode{
-		{
-			Nib: &nib.Nib{ID: "m1", Title: "Milestone 1"}, Matched: true,
-			Children: []*TreeNode{
-				{
-					Nib: &nib.Nib{ID: "e1", Title: "Epic 1"}, Matched: true,
-					Children: []*TreeNode{
-						{Nib: &nib.Nib{ID: "t1", Title: "Task 1"}, Matched: true},
-						{Nib: &nib.Nib{ID: "t2", Title: "Task 2"}, Matched: true},
-					},
-				},
-				{Nib: &nib.Nib{ID: "e2", Title: "Epic 2"}, Matched: true},
-			},
-		},
-		{Nib: &nib.Nib{ID: "t3", Title: "Task 3"}, Matched: true},
+func TestTreePrefixes(t *testing.T) {
+	// e1
+	// ├─ f1 (folded)
+	// └─ f2
+	//    ├─ t1
+	//    └─ t2
+	// t3
+	// e2
+	// └─ t4
+	rows := []viewshape.Row{
+		{NibID: "e1", HasChildren: true},
+		{NibID: "f1", Depth: 1, HasChildren: true},
+		{NibID: "f2", Depth: 1, HasChildren: true},
+		{NibID: "t1", Depth: 2},
+		{NibID: "t2", Depth: 2},
+		{NibID: "t3"},
+		{NibID: "e2", HasChildren: true},
+		{NibID: "t4", Depth: 1},
 	}
-
-	t.Run("no collapsed nodes returns all items", func(t *testing.T) {
-		items := FlattenTreeFiltered(tree, nil, false)
-		expectedIDs := []string{"m1", "e1", "t1", "t2", "e2", "t3"}
-		if len(items) != len(expectedIDs) {
-			t.Fatalf("expected %d items, got %d", len(expectedIDs), len(items))
-		}
-		for i, id := range expectedIDs {
-			if items[i].Nib.ID != id {
-				t.Errorf("item %d: expected ID %s, got %s", i, id, items[i].Nib.ID)
-			}
-		}
-	})
-
-	t.Run("collapse parent hides children", func(t *testing.T) {
-		collapsed := map[string]bool{"e1": true}
-		items := FlattenTreeFiltered(tree, collapsed, false)
-		// e1 is collapsed, so t1 and t2 are hidden
-		expectedIDs := []string{"m1", "e1", "e2", "t3"}
-		if len(items) != len(expectedIDs) {
-			t.Fatalf("expected %d items, got %d", len(expectedIDs), len(items))
-		}
-		for i, id := range expectedIDs {
-			if items[i].Nib.ID != id {
-				t.Errorf("item %d: expected ID %s, got %s", i, id, items[i].Nib.ID)
-			}
-		}
-	})
-
-	t.Run("collapse grandparent hides all descendants", func(t *testing.T) {
-		collapsed := map[string]bool{"m1": true}
-		items := FlattenTreeFiltered(tree, collapsed, false)
-		// m1 is collapsed, so e1, t1, t2, e2 are all hidden
-		expectedIDs := []string{"m1", "t3"}
-		if len(items) != len(expectedIDs) {
-			t.Fatalf("expected %d items, got %d", len(expectedIDs), len(items))
-		}
-		for i, id := range expectedIDs {
-			if items[i].Nib.ID != id {
-				t.Errorf("item %d: expected ID %s, got %s", i, id, items[i].Nib.ID)
-			}
-		}
-	})
-
-	t.Run("collapse leaf has no effect", func(t *testing.T) {
-		collapsed := map[string]bool{"t1": true}
-		items := FlattenTreeFiltered(tree, collapsed, false)
-		// t1 has no children, so collapsing it changes nothing
-		expectedIDs := []string{"m1", "e1", "t1", "t2", "e2", "t3"}
-		if len(items) != len(expectedIDs) {
-			t.Fatalf("expected %d items, got %d", len(expectedIDs), len(items))
-		}
-	})
-
-	t.Run("HasChildren and Collapsed flags", func(t *testing.T) {
-		collapsed := map[string]bool{"e1": true}
-		items := FlattenTreeFiltered(tree, collapsed, false)
-
-		// m1 has children, expanded
-		if !items[0].HasChildren {
-			t.Error("m1 should have HasChildren=true")
-		}
-		if items[0].Collapsed {
-			t.Error("m1 should have Collapsed=false")
-		}
-
-		// e1 has children, collapsed
-		if !items[1].HasChildren {
-			t.Error("e1 should have HasChildren=true")
-		}
-		if !items[1].Collapsed {
-			t.Error("e1 should have Collapsed=true")
-		}
-
-		// e2 is a leaf (no children)
-		if items[2].HasChildren {
-			t.Error("e2 should have HasChildren=false")
-		}
-
-		// t3 is a leaf
-		if items[3].HasChildren {
-			t.Error("t3 should have HasChildren=false")
-		}
-	})
-
-	t.Run("collapse indicators in prefix", func(t *testing.T) {
-		collapsed := map[string]bool{"e1": true}
-		items := FlattenTreeFiltered(tree, collapsed, false)
-
-		// m1 (root, has children, expanded) - prefix should end with expanded indicator
-		if !strings.HasSuffix(items[0].TreePrefix, CollapseIndicatorExpanded(false)) {
-			t.Errorf("m1 prefix should end with expanded indicator, got %q", items[0].TreePrefix)
-		}
-
-		// e1 (nested, has children, collapsed) - prefix should end with collapsed indicator
-		if !strings.HasSuffix(items[1].TreePrefix, CollapseIndicatorCollapsed(false)) {
-			t.Errorf("e1 prefix should end with collapsed indicator, got %q", items[1].TreePrefix)
-		}
-
-		// e2 (nested, leaf) - prefix should end with leaf indicator
-		if !strings.HasSuffix(items[2].TreePrefix, CollapseIndicatorLeaf) {
-			t.Errorf("e2 prefix should end with leaf indicator, got %q", items[2].TreePrefix)
-		}
-
-		// t3 (root, leaf) - prefix should end with leaf indicator
-		if !strings.HasSuffix(items[3].TreePrefix, CollapseIndicatorLeaf) {
-			t.Errorf("t3 prefix should end with leaf indicator, got %q", items[3].TreePrefix)
-		}
-	})
-
-	t.Run("tree prefixes correct after collapse", func(t *testing.T) {
-		// Collapse e1, so only m1, e1(collapsed), e2, t3 are visible
-		collapsed := map[string]bool{"e1": true}
-		items := FlattenTreeFiltered(tree, collapsed, false)
-
-		// e1 is first child (not last) under m1: should have ├─ connector
-		if !strings.Contains(items[1].TreePrefix, "├─") {
-			t.Errorf("e1 should have ├─ connector, got %q", items[1].TreePrefix)
-		}
-
-		// e2 is last child under m1: should have └─ connector
-		if !strings.Contains(items[2].TreePrefix, "└─") {
-			t.Errorf("e2 should have └─ connector, got %q", items[2].TreePrefix)
-		}
-	})
+	collapsed := map[string]bool{"f1": true, "t3": true}
+	open, folded, leaf := CollapseIndicatorExpanded(false), CollapseIndicatorCollapsed(false), CollapseIndicatorLeaf
+	want := []string{
+		open,
+		"├─ " + folded,
+		"└─ " + open,
+		"   ├─ " + leaf,
+		"   └─ " + leaf,
+		leaf,
+		open,
+		"└─ " + leaf,
+	}
+	if got := TreePrefixes(rows, collapsed, false); !slices.Equal(got, want) {
+		t.Errorf("prefixes differ\n got: %q\nwant: %q", got, want)
+	}
 }
 
-func TestCollectParentIDs(t *testing.T) {
-	tree := []*TreeNode{
-		{
-			Nib: &nib.Nib{ID: "m1"},
-			Children: []*TreeNode{
-				{
-					Nib: &nib.Nib{ID: "e1"},
-					Children: []*TreeNode{
-						{Nib: &nib.Nib{ID: "t1"}},
-					},
-				},
-			},
-		},
-		{Nib: &nib.Nib{ID: "t2"}},
+func TestTreePrefixesDrawsAPipeForAnAncestorWithASiblingBelow(t *testing.T) {
+	rows := []viewshape.Row{
+		{NibID: "e1", HasChildren: true},
+		{NibID: "f1", Depth: 1, HasChildren: true},
+		{NibID: "t1", Depth: 2},
+		{NibID: "f2", Depth: 1},
 	}
-
-	ids := make(map[string]bool)
-	CollectParentIDs(tree, ids)
-
-	if !ids["m1"] {
-		t.Error("m1 should be a parent")
-	}
-	if !ids["e1"] {
-		t.Error("e1 should be a parent")
-	}
-	if ids["t1"] {
-		t.Error("t1 should not be a parent")
-	}
-	if ids["t2"] {
-		t.Error("t2 should not be a parent")
+	got := TreePrefixes(rows, nil, false)
+	if want := "│  └─ " + CollapseIndicatorLeaf; got[2] != want {
+		t.Errorf("t1's prefix = %q, want %q", got[2], want)
 	}
 }

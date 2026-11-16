@@ -52,6 +52,9 @@ func Render() (string, error) {
 		if c.View.Sort != viewshape.SortOrder {
 			return "", fmt.Errorf("case %q: sort %q has no web counterpart in this module", c.Name, c.View.Sort)
 		}
+		if c.View.Match != nil {
+			return "", fmt.Errorf("case %q: a Match test has no web counterpart in this module", c.Name)
+		}
 		b.WriteString("  {\n")
 		fmt.Fprintf(&b, "    name: %s,\n", jsString(c.Name))
 		fmt.Fprintf(&b, "    note: %s,\n", jsString(c.Note))

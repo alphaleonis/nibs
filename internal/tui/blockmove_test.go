@@ -134,7 +134,7 @@ func TestBlockMovable_SingleItemUnderParent(t *testing.T) {
 	tree := buildTestTree()
 	effective := []*nib.Nib{tree[0].Children[1].Nib} // A2
 
-	siblings, start, end, reason := blockMovable(effective, tree)
+	siblings, start, end, reason := blockMovable(effective, tree, nil)
 	if reason != "" {
 		t.Fatalf("expected a movable block for single item under parent, refused: %s", reason)
 	}
@@ -152,7 +152,7 @@ func TestBlockMovable_TwoContiguousSiblings(t *testing.T) {
 	tree := buildTestTree()
 	effective := []*nib.Nib{tree[0].Children[0].Nib, tree[0].Children[1].Nib} // A1, A2
 
-	siblings, start, end, reason := blockMovable(effective, tree)
+	siblings, start, end, reason := blockMovable(effective, tree, nil)
 	if reason != "" {
 		t.Fatalf("expected a movable block for two contiguous siblings, refused: %s", reason)
 	}
@@ -171,7 +171,7 @@ func TestBlockMovable_GapBetweenSiblings(t *testing.T) {
 	tree := buildTestTree()
 	effective := []*nib.Nib{tree[0].Nib, tree[2].Nib} // A, C (B in between)
 
-	_, _, _, reason := blockMovable(effective, tree)
+	_, _, _, reason := blockMovable(effective, tree, nil)
 	if reason != reorderReasonNotContiguous {
 		t.Errorf("expected %q for sibling gap, got %q", reorderReasonNotContiguous, reason)
 	}
@@ -182,7 +182,7 @@ func TestBlockMovable_MultipleParents(t *testing.T) {
 	tree := buildTestTree()
 	effective := []*nib.Nib{tree[0].Children[0].Nib, tree[2].Children[0].Nib} // A1, C1
 
-	_, _, _, reason := blockMovable(effective, tree)
+	_, _, _, reason := blockMovable(effective, tree, nil)
 	if reason != reorderReasonDifferentParents {
 		t.Errorf("expected %q for items under different parents, got %q", reorderReasonDifferentParents, reason)
 	}
@@ -195,7 +195,7 @@ func TestBlockMovable_RootMixedWithChild(t *testing.T) {
 	// Note: effectiveSelection would drop A1 here since A is its ancestor; this
 	// test asserts blockMovable's own invariant when given mixed-scope input.
 
-	_, _, _, reason := blockMovable(effective, tree)
+	_, _, _, reason := blockMovable(effective, tree, nil)
 	if reason != reorderReasonDifferentParents {
 		t.Errorf("expected %q for root + child mix, got %q", reorderReasonDifferentParents, reason)
 	}
@@ -211,7 +211,7 @@ func TestBlockMovable_ItemNotAmongSiblings(t *testing.T) {
 
 	effective := []*nib.Nib{tree[0].Children[0].Nib, stray} // A1, A3
 
-	_, _, _, reason := blockMovable(effective, tree)
+	_, _, _, reason := blockMovable(effective, tree, nil)
 	if reason != reorderReasonNotAmongSiblings {
 		t.Errorf("expected %q, got %q", reorderReasonNotAmongSiblings, reason)
 	}
@@ -221,7 +221,7 @@ func TestBlockMovable_ItemNotAmongSiblings(t *testing.T) {
 func TestBlockMovable_NoSiblings(t *testing.T) {
 	effective := []*nib.Nib{{ID: "A"}, {ID: "B"}}
 
-	_, _, _, reason := blockMovable(effective, nil)
+	_, _, _, reason := blockMovable(effective, nil, nil)
 	if reason != reorderReasonNoSiblings {
 		t.Errorf("expected %q, got %q", reorderReasonNoSiblings, reason)
 	}
@@ -321,7 +321,7 @@ func TestBlockMovable_PromotedCycleRootNamesTheCycle(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tree := requireCycleTree(t, tt)
 
-			_, _, _, reason := blockMovable(nibsByID(tt.nibs, tt.effectiveIDs...), tree)
+			_, _, _, reason := blockMovable(nibsByID(tt.nibs, tt.effectiveIDs...), tree, nil)
 			if reason != reorderReasonInParentCycle {
 				t.Errorf("expected %q, got %q", reorderReasonInParentCycle, reason)
 			}
@@ -348,7 +348,7 @@ func TestSingleReorderCmd_PromotedCycleRootNamesTheCycle(t *testing.T) {
 			tree := requireCycleTree(t, tt)
 			target := nibsByID(tt.nibs, tt.effectiveIDs...)[0]
 			// Mirror listModel.findSiblings, the caller's sibling source.
-			siblings := siblingsFromTree(tree, treeResolvedParentID(target, tree))
+			siblings := siblingsFromTree(tree, treeResolvedParentID(target, tree), nil)
 
 			for _, up := range []bool{true, false} {
 				cmd := singleReorderCmd(target, siblings, tree, up)
@@ -371,7 +371,7 @@ func TestSingleReorderCmd_PromotedCycleRootNamesTheCycle(t *testing.T) {
 }
 
 // Behavior: the refusal holds under the filtered tree the list actually builds.
-// loadNibs hands ui.BuildTree the matched nibs plus the full set, and
+// listModel.load hands ui.BuildTree the matched nibs plus the full set, and
 // addAncestors closes that set upward — so a cycle reached only as ancestor
 // context of a matched nib is still whole, still promoted, and still named as
 // the cause. The cases above all build trees where matched == all, which is the
@@ -394,12 +394,12 @@ func TestPromotedCycleRoot_EntersAsAncestorContext(t *testing.T) {
 		t.Fatalf("expected %q to be present as unmatched ancestor context, got %+v", "a", node)
 	}
 
-	if _, _, _, reason := blockMovable([]*nib.Nib{a}, tree); reason != reorderReasonInParentCycle {
+	if _, _, _, reason := blockMovable([]*nib.Nib{a}, tree, nil); reason != reorderReasonInParentCycle {
 		t.Errorf("blockMovable: expected %q, got %q", reorderReasonInParentCycle, reason)
 	}
 
 	// Mirror listModel.findSiblings, the caller's sibling source.
-	siblings := siblingsFromTree(tree, treeResolvedParentID(a, tree))
+	siblings := siblingsFromTree(tree, treeResolvedParentID(a, tree), nil)
 	for _, up := range []bool{true, false} {
 		cmd := singleReorderCmd(a, siblings, tree, up)
 		if cmd == nil {
@@ -427,7 +427,7 @@ func TestSingleReorderCmd_UnpromotedCycleMemberStillMoves(t *testing.T) {
 		t.Fatalf("BuildTree did not promote %q to root level; roots are %v", "a", rootIDs(tree))
 	}
 	target := nibsByID(nibs, "b")[0]
-	siblings := siblingsFromTree(tree, treeResolvedParentID(target, tree))
+	siblings := siblingsFromTree(tree, treeResolvedParentID(target, tree), nil)
 	if want := []string{"b", "c"}; !equalStrings(idsOf(siblings), want) {
 		t.Fatalf("siblings = %v, want %v", idsOf(siblings), want)
 	}
@@ -484,11 +484,11 @@ func rootIDs(tree []*ui.TreeNode) []string {
 func TestBlockMovable_EmptyEffective(t *testing.T) {
 	tree := buildTestTree()
 
-	_, _, _, reason := blockMovable(nil, tree)
+	_, _, _, reason := blockMovable(nil, tree, nil)
 	if reason != reorderReasonNothingSelected {
 		t.Errorf("expected %q for nil effective set, got %q", reorderReasonNothingSelected, reason)
 	}
-	_, _, _, reason = blockMovable([]*nib.Nib{}, tree)
+	_, _, _, reason = blockMovable([]*nib.Nib{}, tree, nil)
 	if reason != reorderReasonNothingSelected {
 		t.Errorf("expected %q for empty effective set, got %q", reorderReasonNothingSelected, reason)
 	}

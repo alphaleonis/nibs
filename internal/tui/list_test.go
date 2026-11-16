@@ -8,6 +8,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/ui"
+	"github.com/alphaleonis/nibs/internal/viewshape"
 )
 
 // makeTestNibs creates n nibs with sequential IDs and titles, all todo/task.
@@ -446,6 +447,7 @@ func TestFindSiblings(t *testing.T) {
 			},
 		},
 	}
+	m.unfolded = []viewshape.Row{{NibID: "parent"}, {NibID: "c1", Depth: 1}, {NibID: "c2", Depth: 1}, {NibID: "c3", Depth: 1}}
 
 	t.Run("findSiblings returns all children of parent", func(t *testing.T) {
 		sibs := m.findSiblings(&nib.Nib{ID: "c2", Parent: "parent"})
@@ -471,54 +473,4 @@ func TestFindSiblings(t *testing.T) {
 			t.Errorf("expected nil with nil tree, got %v", sibs)
 		}
 	})
-}
-
-// caterpillarTree returns one root whose chain of spine nodes each carry a leaf
-// sibling, depth levels deep: 2*depth edges in all.
-func caterpillarTree(depth int) []*ui.TreeNode {
-	root := &ui.TreeNode{Nib: &nib.Nib{ID: "spine-0"}}
-	spine := root
-	for i := 1; i <= depth; i++ {
-		next := &ui.TreeNode{Nib: &nib.Nib{ID: fmt.Sprintf("spine-%d", i)}}
-		leaf := &ui.TreeNode{Nib: &nib.Nib{ID: fmt.Sprintf("leaf-%d", i)}}
-		spine.Children = []*ui.TreeNode{next, leaf}
-		spine = next
-	}
-	return []*ui.TreeNode{root}
-}
-
-func TestWalkTreeEdgesVisitsEachEdgeOnce(t *testing.T) {
-	const depth = 20
-	children := make(map[string]bool)
-	visits := 0
-	walkTreeEdges(caterpillarTree(depth), func(_, child *ui.TreeNode) {
-		visits++
-		children[child.Nib.ID] = true
-	})
-
-	if visits != 2*depth || len(children) != 2*depth {
-		t.Errorf("visits = %d over %d distinct children, want %d over %d (one per edge)",
-			visits, len(children), 2*depth, 2*depth)
-	}
-}
-
-func TestBuildParentMapMapsEveryChildToItsParent(t *testing.T) {
-	const depth = 4
-	got := make(map[string]string)
-	buildParentMap(caterpillarTree(depth), got)
-
-	want := make(map[string]string)
-	for i := 1; i <= depth; i++ {
-		parent := fmt.Sprintf("spine-%d", i-1)
-		want[fmt.Sprintf("spine-%d", i)] = parent
-		want[fmt.Sprintf("leaf-%d", i)] = parent
-	}
-	if len(got) != len(want) {
-		t.Errorf("parent map has %d entries, want %d: %v", len(got), len(want), got)
-	}
-	for child, parent := range want {
-		if got[child] != parent {
-			t.Errorf("parent of %s = %q, want %q", child, got[child], parent)
-		}
-	}
 }

@@ -1,8 +1,6 @@
 ── Nibs - sample-project ───────────────────────────────────────────────────────
-Tree  -status:closed                                                     70 nibs
-▌ ◐‼  ⚑   v1.0 MVP Launch                                                   m001
-  ◌   ⚑   v1.1 Team Collaboration                                           m002
-  ○   ▣   Write database migration strategy doc        docs                 t034
+Tree  -status:closed                                                     68 nibs
+▌ ○   ▣   Write database migration strategy doc        docs                 t034
   ○↓  ▣   Accessibility audit                          a11y                 t035
   ○!● ▣   Security penetration testing                 security             t036
   ◐   ▣   Update npm dependencies to latest                                 t037
@@ -20,5 +18,7 @@ Tree  -status:closed                                                     70 nibs
   ◐   ✱   Search results not updating after task dele…                      b012
   ○!  ✱   File upload fails for names with special ch… i18n                 b013
   ○‼  ✱   Race condition in concurrent task updates                         b014
-─────────────────────────────────────────────────────────────────────── 1 / 71 ─
+  ○   ✱   Dropdown menu z-index conflict with modal    ux                   b015
+  ○   ≡ ▾ API & Integrations                                                e004
+─────────────────────────────────────────────────────────────────────── 1 / 69 ─
 n create  e edit  enter open  / filter  ? help  q quit

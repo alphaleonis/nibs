@@ -87,6 +87,9 @@ type Row struct {
 type View struct {
 	Level  Level
 	Filter Filter
+	// Match is a test a nib must also pass to match, beside Filter, or nil to
+	// add none.
+	Match func(*nib.Nib) bool
 	// Collapsed holds the ids of the nibs whose rows hide their descendants.
 	Collapsed map[string]bool
 	// CollapsedSections holds the keys of the sections no nib heads whose rows
@@ -95,6 +98,12 @@ type View struct {
 	Sort              Sort
 	// Areas is the declared vocabulary LevelAreas draws its sections from.
 	Areas *area.Vocabulary
+}
+
+// Matches reports whether n matches v: it passes v.Filter and v.Match. A row
+// whose nib does not match is shown only as context, or not at all.
+func (v View) Matches(n *nib.Nib) bool {
+	return Matches(n, v.Filter) && (v.Match == nil || v.Match(n))
 }
 
 // Shape returns the rows v shows for nibs, in display order.
@@ -112,7 +121,7 @@ func Shape(nibs []*nib.Nib, v View) ([]Row, error) {
 	matched := make(map[string]bool, len(ordered))
 	for _, b := range ordered {
 		byID[b.ID] = b
-		if Matches(b, v.Filter) {
+		if v.Matches(b) {
 			matched[b.ID] = true
 		}
 	}

@@ -139,7 +139,7 @@ func enterFrameView(t *testing.T, view frameView, width, height int) *App {
 	t.Helper()
 	app := setupRealBackendApp(t, queueRefusalNibs())
 	app.Update(tea.WindowSizeMsg{Width: width, Height: height})
-	if !focusOn(app, "ms1") {
+	if !focusMilestone(app, "ms1") {
 		t.Fatal("premise failed: could not focus the milestone")
 	}
 	if view.enter != nil {

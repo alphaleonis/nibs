@@ -258,7 +258,7 @@ func asciiApp(t *testing.T) *App {
 	}
 	user, path := writeUserConfig(t, "tui:\n  icons: nerd\n  short_ids: maybe\n")
 	app := New(stub, config.Default(), config.UserLayer{Config: user, Path: path}, "dev")
-	app.list.collapsedIDs["nib-5"] = true
+	app.list.collapsed()["nib-5"] = true
 	app.list.updateAvailable, app.list.updateLatest = true, "v9.9.9"
 	initCmd := app.Init()
 	app.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
@@ -291,7 +291,7 @@ func TestATerminalWithoutUTF8GetsAnASCIIListView(t *testing.T) {
 		t.Fatal("premise failed: could not focus nib-2")
 	}
 	pressKeys(app, "left space")
-	if !app.list.collapsedIDs["nib-2"] {
+	if !app.list.collapsed()["nib-2"] {
 		t.Fatal("premise failed: left did not fold nib-2")
 	}
 	for _, width := range []int{60, 100, 160} {

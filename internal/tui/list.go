@@ -3,20 +3,24 @@ package tui
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/alphaleonis/nibs/internal/config"
-	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/ui"
+	"github.com/alphaleonis/nibs/internal/viewshape"
 )
 
-// nibItem is a list.Item for one row of the nib tree.
+// nibItem is a list.Item for one row of the list.
 type nibItem struct {
 	nib         *nib.Nib
+	depth       int
 	treePrefix  string
 	matched     bool // false for an ancestor shown only as context
 	hasChildren bool
@@ -29,6 +33,43 @@ type nibItem struct {
 func (i nibItem) Title() string       { return i.nib.Title }
 func (i nibItem) Description() string { return i.nib.ID + " · " + i.nib.Status }
 func (i nibItem) FilterValue() string { return i.nib.Title + " " + i.nib.ID }
+
+// levelState is what one view of the list keeps while the TUI runs.
+type levelState struct {
+	cursor    string          // the nib under the cursor when the view was left
+	collapsed map[string]bool // the ids of the folded rows
+}
+
+// levels are the views view.next steps through, in order.
+var levels = []viewshape.Level{viewshape.LevelTree, viewshape.LevelFlat}
+
+// levelNames are the names the header gives the views.
+var levelNames = map[viewshape.Level]string{
+	viewshape.LevelTree: "Tree",
+	viewshape.LevelFlat: "Flat",
+}
+
+// keepOrder is the list's filter. Rows reach the list already shaped for the
+// query, so it keeps every row in its place.
+func keepOrder(_ string, targets []string) []list.Rank {
+	ranks := make([]list.Rank, len(targets))
+	for i := range targets {
+		ranks[i] = list.Rank{Index: i}
+	}
+	return ranks
+}
+
+// textMatch returns the test a nib passes when its title or ID holds query in
+// any letter case, or nil for an empty query.
+func textMatch(query string) func(*nib.Nib) bool {
+	if query == "" {
+		return nil
+	}
+	q := strings.ToLower(query)
+	return func(n *nib.Nib) bool {
+		return strings.Contains(strings.ToLower(n.Title), q) || strings.Contains(strings.ToLower(n.ID), q)
+	}
+}
 
 // listModel is the model for the nib list view
 type listModel struct {
@@ -53,8 +94,24 @@ type listModel struct {
 	tagFilter     string
 	hideCompleted bool // hides every closed status, not only completed
 
-	collapsedIDs map[string]bool
-	tree         []*ui.TreeNode // from the last load, for re-flattening
+	level viewshape.Level
+	views map[viewshape.Level]*levelState // read through state
+
+	nibs []*nib.Nib          // every nib, from the last load
+	byID map[string]*nib.Nib // nibs by id
+
+	// unfolded is the rows the view shows with every row unfolded, from the
+	// last reshape.
+	unfolded []viewshape.Row
+	// shapedQuery is the text query the rows were last shaped for.
+	shapedQuery string
+	// unqueriedCount is the nibs that match the view without the text query.
+	unqueriedCount int
+
+	// tree holds the nibs the tag and closed filters match, and their
+	// ancestors. Reorders move a nib among its siblings in it that the view
+	// has a row for.
+	tree []*ui.TreeNode
 
 	display display // how rows show a nib; set through setDisplay
 
@@ -87,6 +144,7 @@ func newListModel(backend Backend, cfg *config.Config) listModel {
 	l.SetShowFilter(false)
 	l.SetShowPagination(false)
 	l.SetFilteringEnabled(true)
+	l.Filter = keepOrder
 	l.SetShowHelp(false)
 	l.SetStatusBarItemName("nib", "nibs")
 	l.FilterInput.Prompt = "/"
@@ -99,7 +157,8 @@ func newListModel(backend Backend, cfg *config.Config) listModel {
 		config:        cfg,
 		hideCompleted: cfg.HideCompleted(),
 		selectedNibs:  selectedNibs,
-		collapsedIDs:  make(map[string]bool),
+		level:         viewshape.LevelTree,
+		views:         make(map[viewshape.Level]*levelState),
 		columns:       defaultColumns[treeView],
 		title:         fmt.Sprintf("Nibs - %s", cfg.GetProjectName()),
 	}
@@ -107,10 +166,9 @@ func newListModel(backend Backend, cfg *config.Config) listModel {
 }
 
 type nibsLoadedMsg struct {
-	items   []ui.FlatItem
+	nibs    []*nib.Nib
 	idWidth int
 	facts   map[string]rowFacts
-	tree    []*ui.TreeNode
 }
 
 type errMsg struct {
@@ -126,42 +184,234 @@ func (m listModel) Init() tea.Cmd {
 }
 
 func (m listModel) loadNibs() tea.Msg {
-	var filter *model.NibFilter
-	if m.tagFilter != "" || m.hideCompleted {
-		filter = &model.NibFilter{}
-		if m.tagFilter != "" {
-			filter.Tags = []string{m.tagFilter}
-		}
-		if m.hideCompleted {
-			filter.ExcludeStatus = m.config.ClosedStatusNames()
-		}
-	}
-
-	filteredNibs, err := m.backend.ListNibs(context.Background(), filter)
+	nibs, err := m.backend.ListNibs(context.Background(), nil)
 	if err != nil {
 		return errMsg{err}
 	}
-
-	// Do not filter: treeResolvedParentID reads a parent absent from the tree as
-	// nonexistent, so every ancestor must be present.
-	allNibs, err := m.backend.ListNibs(context.Background(), nil)
-	if err != nil {
-		return errMsg{err}
-	}
-
-	sortFn := func(nibs []*nib.Nib) {
-		nib.SortByOrder(nibs)
-	}
-
-	tree := ui.BuildTree(filteredNibs, allNibs, sortFn)
-	items := ui.FlattenTreeFiltered(tree, m.collapsedIDs, m.display.ascii())
-
 	idWidth := 0
-	for _, b := range allNibs {
+	for _, b := range nibs {
 		idWidth = max(idWidth, lipgloss.Width(m.display.id(b.ID)))
 	}
+	return nibsLoadedMsg{nibs: nibs, idWidth: idWidth, facts: rowFactsOf(nibs, m.config)}
+}
 
-	return nibsLoadedMsg{items: items, idWidth: idWidth, facts: rowFactsOf(allNibs, m.config), tree: tree}
+// state returns the current view's state.
+func (m listModel) state() *levelState {
+	st, ok := m.views[m.level]
+	if !ok {
+		st = &levelState{collapsed: make(map[string]bool)}
+		m.views[m.level] = st
+	}
+	return st
+}
+
+// collapsed returns the ids of the current view's folded rows.
+func (m listModel) collapsed() map[string]bool { return m.state().collapsed }
+
+// filter is the metadata filter that the tag filter and hiding closed nibs
+// make.
+func (m listModel) filter() viewshape.Filter {
+	var f viewshape.Filter
+	if m.tagFilter != "" {
+		f.Tags = []string{m.tagFilter}
+	}
+	if m.hideCompleted {
+		f.ExcludeStatus = m.config.ClosedStatusNames()
+	}
+	return f
+}
+
+// textQuery is the text filter's query, or "" while there is none.
+func (m listModel) textQuery() string {
+	if m.list.FilterState() == list.Unfiltered {
+		return ""
+	}
+	return m.list.FilterValue()
+}
+
+// shapeView is the current view as viewshape shapes it.
+func (m listModel) shapeView() viewshape.View {
+	return viewshape.View{
+		Level:     m.level,
+		Filter:    m.filter(),
+		Match:     textMatch(m.textQuery()),
+		Collapsed: m.collapsed(),
+		Sort:      viewshape.SortOrder,
+	}
+}
+
+// load takes the nibs of a load and shapes the rows for them, keeping the
+// cursor on focus.
+func (m *listModel) load(msg nibsLoadedMsg, focus string) {
+	m.nibs = msg.nibs
+	m.byID = make(map[string]*nib.Nib, len(msg.nibs))
+	for _, b := range msg.nibs {
+		m.byID[b.ID] = b
+	}
+	m.facts = msg.facts
+	m.idWidth = msg.idWidth
+
+	f := m.filter()
+	var matched []*nib.Nib
+	for _, b := range msg.nibs {
+		if viewshape.Matches(b, f) {
+			matched = append(matched, b)
+		}
+	}
+	m.tree = ui.BuildTree(matched, msg.nibs, nib.SortByOrder)
+
+	if err := m.pruneFolds(); err != nil {
+		m.err = err
+		return
+	}
+	m.reshape(focus)
+	m.pruneMarks()
+}
+
+// pruneFolds forgets the fold of each row that has no children to hide under
+// the metadata filter, so a row that gains children later starts unfolded. The
+// text query does not count, so typing one keeps every fold.
+func (m *listModel) pruneFolds() error {
+	for level, st := range m.views {
+		rows, err := viewshape.Shape(m.nibs, viewshape.View{Level: level, Filter: m.filter(), Sort: viewshape.SortOrder})
+		if err != nil {
+			return err
+		}
+		parents := make(map[string]bool)
+		for _, r := range rows {
+			if r.HasChildren {
+				parents[r.NibID] = true
+			}
+		}
+		maps.DeleteFunc(st.collapsed, func(id string, _ bool) bool { return !parents[id] })
+	}
+	return nil
+}
+
+// pruneMarks unmarks the nibs that have no matching row in the view, as the
+// web drops them from its selection when the filter or the nibs change. A fold
+// keeps every mark, so call it after a reshape for any other reason.
+func (m *listModel) pruneMarks() {
+	keep := make(map[string]bool, len(m.unfolded))
+	for _, r := range m.unfolded {
+		if !r.Dimmed {
+			keep[r.NibID] = true
+		}
+	}
+	maps.DeleteFunc(m.selectedNibs, func(id string, _ bool) bool { return !keep[id] })
+}
+
+// inView returns the test a nib passes when the view has a row for it, folded
+// or not.
+func (m listModel) inView() func(*nib.Nib) bool {
+	ids := make(map[string]bool, len(m.unfolded))
+	for _, r := range m.unfolded {
+		ids[r.NibID] = true
+	}
+	return func(n *nib.Nib) bool { return ids[n.ID] }
+}
+
+// reshape shapes the rows again and keeps the cursor on focus, or else on its
+// nearest ancestor that is shown.
+func (m *listModel) reshape(focus string) {
+	v := m.shapeView()
+	rows, err := viewshape.Shape(m.nibs, v)
+	if err == nil {
+		v.Collapsed = nil
+		m.unfolded, err = viewshape.Shape(m.nibs, v)
+	}
+	if err == nil {
+		m.unqueriedCount = countMatches(m.unfolded)
+		if v.Match != nil {
+			v.Match = nil
+			var unqueried []viewshape.Row
+			unqueried, err = viewshape.Shape(m.nibs, v)
+			m.unqueriedCount = countMatches(unqueried)
+		}
+	}
+	if err != nil {
+		m.err = err
+		return
+	}
+	m.shapedQuery = m.textQuery()
+
+	prefixes := ui.TreePrefixes(rows, m.collapsed(), m.display.ascii())
+	items := make([]list.Item, 0, len(rows))
+	for i, r := range rows {
+		n := m.byID[r.NibID]
+		if n == nil {
+			// Only a section row has no nib, and Tree and Flat draw no sections.
+			continue
+		}
+		items = append(items, nibItem{
+			nib:         n,
+			depth:       r.Depth,
+			treePrefix:  prefixes[i],
+			matched:     !r.Dimmed,
+			hasChildren: r.HasChildren,
+			collapsed:   r.HasChildren && m.collapsed()[r.NibID],
+			isBlocked:   m.backend.IsBlocked(n.ID),
+			isBlocking:  m.backend.IsBlocking(n.ID),
+			facts:       m.facts[n.ID],
+		})
+	}
+	// Under a filter, SetItems hands back the command that matches the rows
+	// with keepOrder. Running it here shows the rows before the next draw.
+	if cmd := m.list.SetItems(items); cmd != nil {
+		m.list, _ = m.list.Update(cmd())
+	}
+	m.restoreCursor(focus)
+}
+
+// countMatches is the rows of rows that show a nib matching the view.
+func countMatches(rows []viewshape.Row) int {
+	n := 0
+	for _, r := range rows {
+		if r.NibID != "" && !r.Dimmed {
+			n++
+		}
+	}
+	return n
+}
+
+// followQuery shapes the rows again when the text query has changed since the
+// last shape. A new query puts the cursor on its first match.
+func (m *listModel) followQuery() {
+	query := m.textQuery()
+	if query == m.shapedQuery {
+		return
+	}
+	m.reshape(m.focusedID())
+	m.pruneMarks()
+	if query == "" {
+		return
+	}
+	for i, item := range m.list.VisibleItems() {
+		if item.(nibItem).matched {
+			m.list.Select(i)
+			return
+		}
+	}
+}
+
+// nextLevel shows the view after the current one in levels, with the cursor
+// and folds that view had. A view shown for the first time keeps the cursor on
+// the same nib, or puts it on the first row when that nib has no row there.
+func (m *listModel) nextLevel() {
+	focus := m.focusedID()
+	m.state().cursor = focus
+	i := slices.Index(levels, m.level)
+	m.level = levels[(i+1)%len(levels)]
+	_, visited := m.views[m.level]
+	if visited {
+		m.reshape(m.state().cursor)
+	} else {
+		m.reshape(focus)
+		if m.focusedID() != focus {
+			m.list.Select(0)
+		}
+	}
+	m.pruneMarks()
 }
 
 func (m *listModel) setTagFilter(tag string) {
@@ -186,7 +436,7 @@ func (m *listModel) hasActiveFilter() bool {
 func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 	var cmd tea.Cmd
 
-	prevIndex := m.list.Index()
+	prev := m.focusedID()
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -196,38 +446,14 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 		m.updateDelegate(msg.Width)
 
 	case nibsLoadedMsg:
-		m.tree = msg.tree
-
-		// Prune collapsed IDs that are no longer parents in the tree.
-		if len(m.collapsedIDs) > 0 {
-			validIDs := make(map[string]bool)
-			ui.CollectParentIDs(m.tree, validIDs)
-			for id := range m.collapsedIDs {
-				if !validIDs[id] {
-					delete(m.collapsedIDs, id)
-				}
-			}
-		}
-
-		m.facts = msg.facts
-		items := m.listItems(msg.items)
-		// Under an applied filter SetItems clears the visible set and returns
-		// the command that re-matches it.
-		cmd = m.list.SetItems(items)
-		m.idWidth = msg.idWidth
-
+		focus := prev
 		if m.selectByID != "" {
-			for i, item := range items {
-				if bi, ok := item.(nibItem); ok && bi.nib.ID == m.selectByID {
-					m.list.Select(i)
-					break
-				}
-			}
+			focus = m.selectByID
 			m.selectByID = ""
 		}
-
+		m.load(msg, focus)
 		m.updateDelegate(m.width)
-		return m, cmd
+		return m, m.cursorChangedCmd(prev)
 
 	case errMsg:
 		m.err = msg.err
@@ -235,7 +461,8 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 
 	case actionMsg:
 		cmd = m.runAction(msg.name)
-		return m, tea.Batch(cmd, m.cursorChangedCmd(prevIndex))
+		m.followQuery()
+		return m, tea.Batch(cmd, m.cursorChangedCmd(prev))
 
 	case tea.KeyPressMsg:
 		// Only a filter being typed takes keys; actions do everything else.
@@ -246,21 +473,35 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 
 	// The input scrolls its query by the width it has when a key arrives.
 	m.sizeFilterInput(m.drawnWidth())
-	m.list, cmd = m.list.Update(msg)
-	return m, tea.Batch(cmd, m.cursorChangedCmd(prevIndex))
+	if m.list.FilterState() == list.Filtering {
+		// The list's own update returns a command that matches the rows it
+		// holds now, which would replace the rows followQuery shapes. So the
+		// input alone takes the message.
+		m.list.FilterInput, cmd = m.list.FilterInput.Update(msg)
+	} else {
+		m.list, cmd = m.list.Update(msg)
+	}
+	m.followQuery()
+	return m, tea.Batch(cmd, m.cursorChangedCmd(prev))
 }
 
-// cursorChangedCmd reports the nib under the cursor when the cursor has left
-// prevIndex, or returns nil.
-func (m listModel) cursorChangedCmd(prevIndex int) tea.Cmd {
-	if m.list.Index() == prevIndex {
+// focusedID is the id of the nib under the cursor, or "" when the list is
+// empty.
+func (m listModel) focusedID() string {
+	if n := m.focusedNib(); n != nil {
+		return n.ID
+	}
+	return ""
+}
+
+// cursorChangedCmd reports the nib under the cursor when it is not prev, or
+// returns nil.
+func (m listModel) cursorChangedCmd(prev string) tea.Cmd {
+	id := m.focusedID()
+	if id == "" || id == prev {
 		return nil
 	}
-	item, ok := m.list.SelectedItem().(nibItem)
-	if !ok {
-		return nil
-	}
-	return func() tea.Msg { return cursorChangedMsg{nibID: item.nib.ID} }
+	return func() tea.Msg { return cursorChangedMsg{nibID: id} }
 }
 
 // targets returns the marked nibs' IDs, or the ID of the nib under the cursor
@@ -311,46 +552,63 @@ func (m *listModel) runAction(name actionName) tea.Cmd {
 		m.list.GoToStart()
 	case actBottom:
 		m.list.GoToEnd()
-	case actFilter, actFilterApply, actInputAccept, actInputCancel:
+	case actInputAccept, actFilterApply:
+		// A query that matches nothing leaves nothing to browse, so accepting
+		// it clears it.
+		if m.list.FilterState() == list.Filtering && len(m.list.Items()) == 0 {
+			m.list.ResetFilter()
+			return nil
+		}
+		cmd, _ := browseList(&m.list, name)
+		return cmd
+	case actFilter:
+		// The list turns off its own filter key while it has no rows, and an
+		// applied query can come to match none.
+		if m.list.FilterState() == list.FilterApplied {
+			m.list.SetFilterState(list.Filtering)
+			return textinput.Blink
+		}
+		cmd, _ := browseList(&m.list, name)
+		return cmd
+	case actInputCancel:
 		cmd, _ := browseList(&m.list, name)
 		return cmd
 	case actFoldRow:
-		return m.foldRow()
+		m.foldRow()
 	case actUnfoldRow:
 		if item, ok := m.focusedItem(); ok && item.hasChildren && item.collapsed {
-			delete(m.collapsedIDs, item.nib.ID)
-			return m.reflattenTree()
+			delete(m.collapsed(), item.nib.ID)
+			m.reshape(item.nib.ID)
 		}
 	case actFoldSubtree:
-		// Collapse every descendant, not the node itself.
+		// Fold every descendant, not the row itself.
 		if item, ok := m.focusedItem(); ok && item.hasChildren {
-			if node := ui.FindNode(m.tree, item.nib.ID); node != nil {
-				ui.CollectParentIDs(node.Children, m.collapsedIDs)
-				return m.reflattenTree()
+			for _, r := range m.descendants(item.nib.ID) {
+				if r.HasChildren {
+					m.collapsed()[r.NibID] = true
+				}
 			}
+			m.reshape(item.nib.ID)
 		}
 	case actUnfoldSubtree:
 		if item, ok := m.focusedItem(); ok && item.hasChildren {
-			if node := ui.FindNode(m.tree, item.nib.ID); node != nil {
-				var removeCollapsed func([]*ui.TreeNode)
-				removeCollapsed = func(nodes []*ui.TreeNode) {
-					for _, child := range nodes {
-						delete(m.collapsedIDs, child.Nib.ID)
-						removeCollapsed(child.Children)
-					}
-				}
-				removeCollapsed(node.Children)
-				return m.reflattenTree()
+			for _, r := range m.descendants(item.nib.ID) {
+				delete(m.collapsed(), r.NibID)
 			}
+			m.reshape(item.nib.ID)
 		}
 	case actFoldAll:
-		if m.tree != nil {
-			ui.CollectParentIDs(m.tree, m.collapsedIDs)
-			return m.reflattenTree()
+		for _, r := range m.unfolded {
+			if r.HasChildren {
+				m.collapsed()[r.NibID] = true
+			}
 		}
+		m.reshape(m.focusedID())
 	case actUnfoldAll:
-		clear(m.collapsedIDs)
-		return m.reflattenTree()
+		clear(m.collapsed())
+		m.reshape(m.focusedID())
+	case actViewNext:
+		m.nextLevel()
 	case actOpen:
 		if n := m.focusedNib(); n != nil {
 			return func() tea.Msg { return selectNibMsg{nib: n} }
@@ -450,27 +708,38 @@ func (m *listModel) runAction(name actionName) tea.Cmd {
 	return nil
 }
 
-// foldRow collapses an expanded row, or else selects its parent.
-func (m *listModel) foldRow() tea.Cmd {
+// foldRow folds an expanded row, or else moves the cursor to its parent row.
+func (m *listModel) foldRow() {
 	item, ok := m.focusedItem()
 	if !ok {
-		return nil
+		return
 	}
 	if item.hasChildren && !item.collapsed {
-		m.collapsedIDs[item.nib.ID] = true
-		return m.reflattenTree()
+		m.collapsed()[item.nib.ID] = true
+		m.reshape(item.nib.ID)
+		return
 	}
-	parentMap := make(map[string]string)
-	buildParentMap(m.tree, parentMap)
-	if parentID, ok := parentMap[item.nib.ID]; ok && parentID != "" {
-		for i, li := range m.list.Items() {
-			if bi, ok := li.(nibItem); ok && bi.nib.ID == parentID {
-				m.list.Select(i)
-				break
-			}
+	items := m.list.Items()
+	for i := m.list.Index() - 1; i >= 0; i-- {
+		if items[i].(nibItem).depth < item.depth {
+			m.list.Select(i)
+			return
 		}
 	}
-	return nil
+}
+
+// descendants returns the rows beneath the row of id when every row is
+// unfolded, or nil when the view shows no row for id.
+func (m listModel) descendants(id string) []viewshape.Row {
+	i := slices.IndexFunc(m.unfolded, func(r viewshape.Row) bool { return r.NibID == id })
+	if i < 0 {
+		return nil
+	}
+	end := i + 1
+	for end < len(m.unfolded) && m.unfolded[end].Depth > m.unfolded[i].Depth {
+		end++
+	}
+	return m.unfolded[i+1 : end]
 }
 
 // leave clears the selection, else the tag filter, else the text filter.
@@ -554,11 +823,8 @@ func (m *listModel) openParentPicker() tea.Cmd {
 	}
 	types := make([]string, 0, len(ids))
 	for _, id := range ids {
-		for _, item := range m.list.Items() {
-			if bi, ok := item.(nibItem); ok && bi.nib.ID == id {
-				types = append(types, bi.nib.EffectiveType())
-				break
-			}
+		if n := m.byID[id]; n != nil {
+			types = append(types, n.EffectiveType())
 		}
 	}
 	msg := openParentPickerMsg{nibIDs: ids, nibTitle: title, nibTypes: types}
@@ -590,89 +856,45 @@ func (m *listModel) setDisplay(d display) {
 	m.updateDelegate(m.width)
 }
 
-// listItems wraps flattened tree nodes as list rows.
-func (m *listModel) listItems(flat []ui.FlatItem) []list.Item {
-	items := make([]list.Item, len(flat))
-	for i, fi := range flat {
-		items[i] = nibItem{
-			nib:         fi.Nib,
-			treePrefix:  fi.TreePrefix,
-			matched:     fi.Matched,
-			hasChildren: fi.HasChildren,
-			collapsed:   fi.Collapsed,
-			isBlocked:   m.backend.IsBlocked(fi.Nib.ID),
-			isBlocking:  m.backend.IsBlocking(fi.Nib.ID),
-			facts:       m.facts[fi.Nib.ID],
-		}
+// restoreCursor puts the cursor on the row of id, or else on the row of its
+// nearest ancestor. A cursor past the last row moves to the last row.
+func (m *listModel) restoreCursor(id string) {
+	items := m.list.VisibleItems()
+	indexOf := func(id string) int {
+		return slices.IndexFunc(items, func(item list.Item) bool { return item.(nibItem).nib.ID == id })
 	}
-	return items
-}
-
-// reflattenTree rebuilds the items from the cached tree after a collapse
-// change, keeping the cursor on the same nib or its nearest visible ancestor.
-// It returns the command SetItems returns, which re-matches an applied filter.
-func (m *listModel) reflattenTree() tea.Cmd {
-	if m.tree == nil {
-		return nil
-	}
-
-	var currentNibID string
-	if item, ok := m.list.SelectedItem().(nibItem); ok {
-		currentNibID = item.nib.ID
-	}
-
-	items := m.listItems(ui.FlattenTreeFiltered(m.tree, m.collapsedIDs, m.display.ascii()))
-	cmd := m.list.SetItems(items)
-
-	if currentNibID != "" {
-		m.restoreCursor(currentNibID, items)
-	}
-	return cmd
-}
-
-// restoreCursor selects nibID, or else its nearest ancestor present in items.
-func (m *listModel) restoreCursor(nibID string, items []list.Item) {
-	for i, item := range items {
-		if bi, ok := item.(nibItem); ok && bi.nib.ID == nibID {
+	for _, candidate := range append([]string{id}, m.ancestors(id)...) {
+		if i := indexOf(candidate); i >= 0 {
 			m.list.Select(i)
 			return
 		}
 	}
+	if len(items) > 0 && m.list.Index() >= len(items) {
+		m.list.Select(len(items) - 1)
+	}
+}
 
-	parentMap := make(map[string]string)
-	buildParentMap(m.tree, parentMap)
-
-	currentID := nibID
-	for {
-		parentID, ok := parentMap[currentID]
-		if !ok || parentID == "" {
-			break
-		}
-		for i, item := range items {
-			if bi, ok := item.(nibItem); ok && bi.nib.ID == parentID {
-				m.list.Select(i)
-				return
+// ancestors returns the ids of the rows above id that it is nested under when
+// every row is unfolded, nearest first. When the view shows no row for id, it
+// returns id's parents by their links instead.
+func (m listModel) ancestors(id string) []string {
+	var ids []string
+	if i := slices.IndexFunc(m.unfolded, func(r viewshape.Row) bool { return r.NibID == id }); i >= 0 {
+		depth := m.unfolded[i].Depth
+		for j := i - 1; j >= 0 && depth > 0; j-- {
+			if r := m.unfolded[j]; r.Depth < depth {
+				ids = append(ids, r.NibID)
+				depth = r.Depth
 			}
 		}
-		currentID = parentID
+		return ids
 	}
-}
-
-// buildParentMap maps each child ID in the tree to its parent's ID.
-func buildParentMap(nodes []*ui.TreeNode, m map[string]string) {
-	walkTreeEdges(nodes, func(parent, child *ui.TreeNode) {
-		m[child.Nib.ID] = parent.Nib.ID
-	})
-}
-
-// walkTreeEdges calls visit once for every parent-child edge in the tree.
-func walkTreeEdges(nodes []*ui.TreeNode, visit func(parent, child *ui.TreeNode)) {
-	for _, node := range nodes {
-		for _, child := range node.Children {
-			visit(node, child)
-		}
-		walkTreeEdges(node.Children, visit)
+	seen := map[string]bool{id: true}
+	for n := m.byID[id]; n != nil && n.Parent != "" && !seen[n.Parent]; n = m.byID[n.Parent] {
+		seen[n.Parent] = true
+		ids = append(ids, n.Parent)
 	}
+	return ids
 }
 
 func (m listModel) View() string {
@@ -798,9 +1020,9 @@ func (m listModel) headerParts(width int) headerParts {
 	// The count is reserved at its widest, so the input keeps one width while
 	// the query narrows the list: the unfiltered count, or "0 nibs" when that
 	// is "1 nib".
-	count := max(lipgloss.Width(nibCount(len(m.matchedFilterValues()))), lipgloss.Width(nibCount(0)))
+	count := max(lipgloss.Width(nibCount(m.unqueriedCount)), lipgloss.Width(nibCount(0)))
 	// The view's name, the gap before the input, its prompt and its cursor.
-	fixed := lipgloss.Width("Tree") + 2 + lipgloss.Width(m.list.FilterInput.Prompt) + 1
+	fixed := lipgloss.Width(levelNames[m.level]) + 2 + lipgloss.Width(m.list.FilterInput.Prompt) + 1
 	for _, p := range []headerParts{{tokens: true, count: true}, {tokens: true}} {
 		used := fixed
 		if p.tokens && tokens > 0 {
@@ -837,7 +1059,7 @@ func (m listModel) drawnWidth() int {
 // tokens next. What still does not fit is cut at the right edge.
 func (m listModel) header(width int) string {
 	parts := m.headerParts(width)
-	left := viewNameStyle.Render("Tree")
+	left := viewNameStyle.Render(levelNames[m.level])
 	if tokens := m.filterTokens(); parts.tokens && len(tokens) > 0 {
 		left += "  " + filterTokenStyle.Render(strings.Join(tokens, " "))
 	}
@@ -881,32 +1103,9 @@ func (m listModel) filterTokens() []string {
 	return tokens
 }
 
-// matchCount is the nibs that match the filter, in folded subtrees too,
-// leaving out ancestors shown only as context.
-func (m listModel) matchCount() int {
-	values := m.matchedFilterValues()
-	if term := m.list.FilterValue(); m.list.FilterState() != list.Unfiltered && term != "" {
-		return len(m.list.Filter(term, values))
-	}
-	return len(values)
-}
-
-// matchedFilterValues returns what the text filter matches against for each
-// nib in the tree that is not shown only as context.
-func (m listModel) matchedFilterValues() []string {
-	var values []string
-	var walk func([]*ui.TreeNode)
-	walk = func(nodes []*ui.TreeNode) {
-		for _, n := range nodes {
-			if n.Matched {
-				values = append(values, nibItem{nib: n.Nib}.FilterValue())
-			}
-			walk(n.Children)
-		}
-	}
-	walk(m.tree)
-	return values
-}
+// matchCount is the nibs that match the filter, in folded rows too, leaving
+// out ancestors shown only as context.
+func (m listModel) matchCount() int { return countMatches(m.unfolded) }
 
 // Footer renders the list footer: the selection count, the status message or
 // else the hint row, and the update indicator.
@@ -949,13 +1148,13 @@ func (m listModel) updateIndicator() string {
 	return "  " + style.Render(text)
 }
 
-// findSiblings returns the children of n's parent in tree order, or the roots
-// when n has no parent the tree can resolve.
+// findSiblings returns the children of n's parent that the view has a row for,
+// in tree order, or those roots when n has no parent the tree can resolve.
 func (m *listModel) findSiblings(n *nib.Nib) []*nib.Nib {
 	if m.tree == nil {
 		return nil
 	}
-	return siblingsFromTree(m.tree, treeResolvedParentID(n, m.tree))
+	return siblingsFromTree(m.tree, treeResolvedParentID(n, m.tree), m.inView())
 }
 
 // dispatchBlockMove moves the effective selection one sibling up or down:
@@ -967,6 +1166,15 @@ func (m *listModel) findSiblings(n *nib.Nib) []*nib.Nib {
 //
 // No path returns nil, so a refusal is never a silent keypress.
 func (m listModel) dispatchBlockMove(up bool) tea.Cmd {
+	// Flat orders every nib by an order key that ranks only siblings, so the
+	// row a move passes there is rarely the sibling it passes.
+	if m.level == viewshape.LevelFlat {
+		return refuseReorderCmd(reorderReasonFlat)
+	}
+	// A text filter can hide the rows a move passes, so the web refuses it too.
+	if m.textQuery() != "" {
+		return refuseReorderCmd(reorderReasonTextFilter)
+	}
 	focused, _ := m.list.SelectedItem().(nibItem)
 
 	effective := effectiveSelection(m.selectedNibs, m.tree)
@@ -983,7 +1191,7 @@ func (m listModel) dispatchBlockMove(up bool) tea.Cmd {
 		return singleReorderCmd(target, m.findSiblings(target), m.tree, up)
 	}
 
-	siblings, startIdx, endIdx, reason := blockMovable(effective, m.tree)
+	siblings, startIdx, endIdx, reason := blockMovable(effective, m.tree, m.inView())
 	if reason != "" {
 		return refuseReorderCmd(reason)
 	}

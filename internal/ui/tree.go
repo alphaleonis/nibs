@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"strings"
+
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/viewshape"
 )
@@ -108,92 +110,64 @@ func buildNodes(nibs []*nib.Nib, children map[string][]*nib.Nib, matchedSet map[
 // treeIndent is the cell width of one tree connector.
 const treeIndent = 3
 
-// FlatItem represents a flattened tree node with rendering context.
-// Used by TUI to render tree structure in a flat list.
-type FlatItem struct {
-	Nib         *nib.Nib
-	Depth       int    // 0 = root, 1+ = nested
-	IsLast      bool   // last child at this level
-	Matched     bool   // true if nib matched filter (vs. shown for context)
-	TreePrefix  string // pre-computed tree prefix
-	HasChildren bool   // true if this node has children in the tree
-	Collapsed   bool   // true if this node is collapsed (children hidden)
-}
-
 // CollapseIndicatorLeaf pads a leaf to the width of the collapse indicators.
 const CollapseIndicatorLeaf = "  "
 
 func CollapseIndicatorCollapsed(ascii bool) string { return glyphCollapseCollapsed(ascii) }
 func CollapseIndicatorExpanded(ascii bool) string  { return glyphCollapseExpanded(ascii) }
 
-// FlattenTreeFiltered converts a tree into a flat slice, skipping children of collapsed nodes.
-// collapsedIDs is the set of node IDs whose children should be hidden. ascii
-// draws the tree prefixes in ASCII.
-func FlattenTreeFiltered(nodes []*TreeNode, collapsedIDs map[string]bool, ascii bool) []FlatItem {
-	var items []FlatItem
-	flattenNodesFiltered(nodes, 0, nil, collapsedIDs, ascii, &items)
-	return items
-}
+// TreePrefixes returns the tree connectors and the fold mark each of rows is
+// drawn with, in display order. A row is folded when collapsed holds its nib's
+// id and it has children. ascii draws them in ASCII.
+//
+// rows are the rows a view shows, so a row's siblings are the rows at its depth
+// up to the next shallower row.
+func TreePrefixes(rows []viewshape.Row, collapsed map[string]bool, ascii bool) []string {
+	// last[i] reports whether no sibling follows rows[i]. Scanning upward,
+	// laterAt[d] holds whether a row at depth d follows before a shallower one.
+	last := make([]bool, len(rows))
+	var laterAt []bool
+	for i := len(rows) - 1; i >= 0; i-- {
+		d := rows[i].Depth
+		for len(laterAt) <= d {
+			laterAt = append(laterAt, false)
+		}
+		last[i] = !laterAt[d]
+		laterAt[d] = true
+		clear(laterAt[d+1:])
+	}
 
-// flattenNodesFiltered recursively flattens tree nodes, skipping children of collapsed nodes.
-func flattenNodesFiltered(nodes []*TreeNode, depth int, ancestry []bool, collapsedIDs map[string]bool, ascii bool, items *[]FlatItem) {
-	for i, node := range nodes {
-		isLast := i == len(nodes)-1
-		hasChildren := len(node.Children) > 0
-		isCollapsed := hasChildren && collapsedIDs[node.Nib.ID]
-
-		var prefix string
-		if depth > 0 {
-			for _, wasLast := range ancestry {
-				if wasLast {
-					prefix += glyphTreeSpace(ascii)
+	prefixes := make([]string, len(rows))
+	// lastAt[d] is last for the nearest row above at depth d.
+	var lastAt []bool
+	for i, r := range rows {
+		lastAt = append(lastAt[:min(r.Depth, len(lastAt))], last[i])
+		var b strings.Builder
+		if r.Depth > 0 {
+			for _, ancestorLast := range lastAt[1:r.Depth] {
+				if ancestorLast {
+					b.WriteString(glyphTreeSpace(ascii))
 				} else {
-					prefix += glyphTreePipe(ascii)
+					b.WriteString(glyphTreePipe(ascii))
 				}
 			}
-			if isLast {
-				prefix += glyphTreeLastBranch(ascii)
+			if last[i] {
+				b.WriteString(glyphTreeLastBranch(ascii))
 			} else {
-				prefix += glyphTreeBranch(ascii)
+				b.WriteString(glyphTreeBranch(ascii))
 			}
 		}
-
-		if isCollapsed {
-			prefix += CollapseIndicatorCollapsed(ascii)
-		} else if hasChildren {
-			prefix += CollapseIndicatorExpanded(ascii)
-		} else {
-			prefix += CollapseIndicatorLeaf
+		switch {
+		case r.HasChildren && collapsed[r.NibID]:
+			b.WriteString(CollapseIndicatorCollapsed(ascii))
+		case r.HasChildren:
+			b.WriteString(CollapseIndicatorExpanded(ascii))
+		default:
+			b.WriteString(CollapseIndicatorLeaf)
 		}
-
-		*items = append(*items, FlatItem{
-			Nib:         node.Nib,
-			Depth:       depth,
-			IsLast:      isLast,
-			Matched:     node.Matched,
-			TreePrefix:  prefix,
-			HasChildren: hasChildren,
-			Collapsed:   isCollapsed,
-		})
-
-		if hasChildren && !isCollapsed {
-			var newAncestry []bool
-			if depth > 0 {
-				newAncestry = append(ancestry, isLast)
-			}
-			flattenNodesFiltered(node.Children, depth+1, newAncestry, collapsedIDs, ascii, items)
-		}
+		prefixes[i] = b.String()
 	}
-}
-
-// CollectParentIDs collects IDs of all nodes that have children into the provided map.
-func CollectParentIDs(nodes []*TreeNode, ids map[string]bool) {
-	for _, node := range nodes {
-		if len(node.Children) > 0 {
-			ids[node.Nib.ID] = true
-			CollectParentIDs(node.Children, ids)
-		}
-	}
+	return prefixes
 }
 
 // FindNode searches the tree for a node with the given nib ID.

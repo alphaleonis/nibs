@@ -44,6 +44,8 @@ const (
 	reorderReasonAtTop            = "Already at the top"
 	reorderReasonAtBottom         = "Already at the bottom"
 	reorderReasonInParentCycle    = "Can't move: that nib is in a parent cycle — run nibs check"
+	reorderReasonFlat             = "Can't move in Flat: switch to Tree to reorder"
+	reorderReasonTextFilter       = "Can't move while a text filter is on: clear it to reorder"
 
 	reorderReasonNoSiblings       = "Can't move: that nib has no siblings to move among"
 	reorderReasonNotAmongSiblings = "Can't move: the selection does not match its parent's list"
@@ -51,10 +53,11 @@ const (
 )
 
 // blockMovable checks whether the effective selection can move as a contiguous
-// block. Returns the parent's ordered sibling slice and the inclusive
-// [startIdx, endIdx] range of the block within it. reason is empty when the
-// block can move; otherwise it explains the refusal.
-func blockMovable(effective []*nib.Nib, tree []*ui.TreeNode) (siblings []*nib.Nib, startIdx, endIdx int, reason string) {
+// block among the siblings keep picks, as siblingsFromTree does. Returns the
+// parent's ordered sibling slice and the inclusive [startIdx, endIdx] range of
+// the block within it. reason is empty when the block can move; otherwise it
+// explains the refusal.
+func blockMovable(effective []*nib.Nib, tree []*ui.TreeNode, keep func(*nib.Nib) bool) (siblings []*nib.Nib, startIdx, endIdx int, reason string) {
 	if len(effective) == 0 {
 		return nil, 0, 0, reorderReasonNothingSelected
 	}
@@ -74,7 +77,7 @@ func blockMovable(effective []*nib.Nib, tree []*ui.TreeNode) (siblings []*nib.Ni
 		}
 	}
 
-	siblings = siblingsFromTree(tree, parentID)
+	siblings = siblingsFromTree(tree, parentID, keep)
 	if len(siblings) == 0 {
 		return nil, 0, 0, reorderReasonNoSiblings
 	}
@@ -108,7 +111,7 @@ func blockMovable(effective []*nib.Nib, tree []*ui.TreeNode) (siblings []*nib.Ni
 // membership; keep the two in agreement.
 //
 // Membership matches resolution because ui.BuildTree adds every ancestor from
-// the unfiltered nib set loadNibs passes it.
+// the unfiltered nib set listModel.load passes it.
 //
 // For a nib promoted out of a parent cycle this returns a parent whose children
 // no longer hold the nib. Callers that report a refusal consult inParentCycle to
@@ -139,24 +142,23 @@ func inParentCycle(n *nib.Nib, tree []*ui.TreeNode) bool {
 	return ui.FindNode([]*ui.TreeNode{node}, n.Parent) != nil
 }
 
-// siblingsFromTree returns the ordered siblings under the given parent ID.
-// When parentID is empty, returns the tree's top-level nodes. Returns nil when
-// the parent can't be located.
-func siblingsFromTree(tree []*ui.TreeNode, parentID string) []*nib.Nib {
-	if parentID == "" {
-		out := make([]*nib.Nib, len(tree))
-		for i, node := range tree {
-			out[i] = node.Nib
+// siblingsFromTree returns the ordered siblings under the given parent ID that
+// keep picks, or every one when keep is nil. When parentID is empty, returns the
+// tree's top-level nodes. Returns nil when the parent can't be located.
+func siblingsFromTree(tree []*ui.TreeNode, parentID string, keep func(*nib.Nib) bool) []*nib.Nib {
+	nodes := tree
+	if parentID != "" {
+		node := ui.FindNode(tree, parentID)
+		if node == nil {
+			return nil
 		}
-		return out
+		nodes = node.Children
 	}
-	node := ui.FindNode(tree, parentID)
-	if node == nil {
-		return nil
-	}
-	out := make([]*nib.Nib, len(node.Children))
-	for i, child := range node.Children {
-		out[i] = child.Nib
+	out := make([]*nib.Nib, 0, len(nodes))
+	for _, node := range nodes {
+		if keep == nil || keep(node.Nib) {
+			out = append(out, node.Nib)
+		}
 	}
 	return out
 }

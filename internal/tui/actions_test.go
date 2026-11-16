@@ -150,12 +150,12 @@ func TestAngleBracketsFoldAndUnfoldEveryRow(t *testing.T) {
 	app, _ := setupTestApp(t, listKeysNibs())
 	rows := len(app.list.list.Items())
 	pressKeys(app, "<")
-	if !app.list.collapsedIDs["nib-1"] || len(app.list.list.Items()) != rows-1 {
-		t.Fatalf("after <: collapsed %v, %d rows, want nib-1 folded and %d rows", app.list.collapsedIDs, len(app.list.list.Items()), rows-1)
+	if !app.list.collapsed()["nib-1"] || len(app.list.list.Items()) != rows-1 {
+		t.Fatalf("after <: collapsed %v, %d rows, want nib-1 folded and %d rows", app.list.collapsed(), len(app.list.list.Items()), rows-1)
 	}
 	pressKeys(app, ">")
-	if len(app.list.collapsedIDs) != 0 || len(app.list.list.Items()) != rows {
-		t.Errorf("after >: collapsed %v, %d rows, want none folded and %d rows", app.list.collapsedIDs, len(app.list.list.Items()), rows)
+	if len(app.list.collapsed()) != 0 || len(app.list.list.Items()) != rows {
+		t.Errorf("after >: collapsed %v, %d rows, want none folded and %d rows", app.list.collapsed(), len(app.list.list.Items()), rows)
 	}
 }
 
@@ -238,7 +238,7 @@ func TestRetiredKeysDoNothingInTheList(t *testing.T) {
 			pressKeys(app, "down")
 			before := selectedID(app)
 			page := app.list.list.Paginator.Page
-			folded := len(app.list.collapsedIDs)
+			folded := len(app.list.collapsed())
 			hide := app.list.hideCompleted
 
 			_, cmd := app.Update(keyPress(k))
@@ -255,7 +255,7 @@ func TestRetiredKeysDoNothingInTheList(t *testing.T) {
 			if got := selectedID(app); got != before || app.list.list.Paginator.Page != page {
 				t.Errorf("%s moved the cursor from %q to %q (page %d to %d)", k, before, got, page, app.list.list.Paginator.Page)
 			}
-			if len(app.list.collapsedIDs) != folded || app.list.hideCompleted != hide {
+			if len(app.list.collapsed()) != folded || app.list.hideCompleted != hide {
 				t.Errorf("%s changed the folds or the closed filter", k)
 			}
 		})

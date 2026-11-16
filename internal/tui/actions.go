@@ -105,6 +105,7 @@ const (
 	actHideClosed    actionName = "view.hide_closed"
 	actNibView       actionName = "view.nib"
 	actColumns       actionName = "view.columns"
+	actViewNext      actionName = "view.next"
 	actFilter        actionName = "filter.text"
 	actFilterApply   actionName = "filter.apply"
 	actTagFilter     actionName = "filter.tags"
@@ -323,6 +324,7 @@ var defaultActions = []action{
 		Hint: func(st actionState) bool { return st.ctx == ctxParentPicker }, Label: label("toggle closed")},
 	{Name: actNibView, Group: "View", Desc: "show or hide the nib view", Contexts: []keyContext{ctxList}, Keys: []string{"z p"}},
 	{Name: actColumns, Group: "View", Desc: "choose the columns", Contexts: []keyContext{ctxList}, Keys: []string{"z c"}},
+	{Name: actViewNext, Group: "View", Desc: "show the next view", Contexts: []keyContext{ctxList}, Keys: []string{"v"}},
 
 	{Name: actFilter, Group: "Find", Desc: "filter", Contexts: filterTargets, Keys: []string{"/"}, Hint: hintFilter},
 	{Name: actTagFilter, Group: "Find", Desc: "filter by tag", Contexts: []keyContext{ctxList}, Keys: []string{"g t"}},

@@ -270,7 +270,7 @@ func TestFoldingKeepsTheMatchCount(t *testing.T) {
 		t.Fatal("premise failed: could not focus tnib-f020")
 	}
 	pressKeys(app, "left")
-	if !app.list.collapsedIDs["tnib-f020"] {
+	if !app.list.collapsed()["tnib-f020"] {
 		t.Fatal("premise failed: left did not fold tnib-f020")
 	}
 	if after := headerCount(t, app); after != before {

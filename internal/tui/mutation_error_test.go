@@ -350,7 +350,7 @@ func TestMilestoneQueueRefusalReachesTheFooter(t *testing.T) {
 			{ID: "ms1", Title: "Wave one", Type: "milestone", Status: "todo"},
 			{ID: "t1", Title: "Still open", Type: "task", Status: "todo", Milestone: "ms1", MilestoneOrder: "a0"},
 		})
-		if !focusOn(app, "ms1") {
+		if !focusMilestone(app, "ms1") {
 			t.Fatal("could not focus the milestone")
 		}
 
@@ -384,7 +384,7 @@ func TestMilestoneQueueRefusalReachesTheFooter(t *testing.T) {
 			{ID: "t1", Title: "Still open", Type: "task", Status: "todo", Milestone: "ms1", MilestoneOrder: "a0"},
 			{ID: "t2", Title: "Also open", Type: "task", Status: "todo", Milestone: "ms2", MilestoneOrder: "a0"},
 		})
-		if !focusOn(app, "ms1") {
+		if !focusMilestone(app, "ms1") {
 			t.Fatal("could not focus the first milestone")
 		}
 		sendKey(app, tea.KeyPressMsg{Code: ' ', Text: " "})
@@ -421,7 +421,7 @@ func TestMilestoneRetypeRefusalReachesTheFooter(t *testing.T) {
 		{ID: "ms1", Title: "Wave one", Type: "milestone", Status: "todo"},
 		{ID: "t1", Title: "Assigned work", Type: "task", Status: "todo", Milestone: "ms1", MilestoneOrder: "a0"},
 	})
-	if !focusOn(app, "ms1") {
+	if !focusMilestone(app, "ms1") {
 		t.Fatal("could not focus the milestone")
 	}
 
@@ -543,7 +543,7 @@ func TestRefusalIsLegibleAtEveryTerminalWidth(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/%d", view.name, width), func(t *testing.T) {
 				app := setupRealBackendApp(t, queueRefusalNibs())
 				app.Update(tea.WindowSizeMsg{Width: width, Height: termHeight})
-				if !focusOn(app, "ms1") {
+				if !focusMilestone(app, "ms1") {
 					t.Fatal("premise failed: could not focus the milestone")
 				}
 				if view.enter != nil {
@@ -574,7 +574,7 @@ func TestRefusalIsLegibleAtEveryTerminalWidth(t *testing.T) {
 func TestDetailHelpRowSurvivesARefusal(t *testing.T) {
 	app := setupRealBackendApp(t, queueRefusalNibs())
 	app.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	if !focusOn(app, "ms1") {
+	if !focusMilestone(app, "ms1") {
 		t.Fatal("premise failed: could not focus the milestone")
 	}
 	sendKey(app, tea.KeyPressMsg{Code: tea.KeyEnter})

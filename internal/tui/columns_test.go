@@ -195,7 +195,7 @@ func TestAColumnChoiceReloadsAUserConfigChangedSinceLoad(t *testing.T) {
 		t.Fatal("premise failed: could not focus tnib-f020")
 	}
 	pressKeys(app, "left")
-	if !app.list.collapsedIDs["tnib-f020"] {
+	if !app.list.collapsed()["tnib-f020"] {
 		t.Fatal("premise failed: left did not fold tnib-f020")
 	}
 	if err := os.WriteFile(path, []byte(commentedUserConfig+"  keys:\n    nib.create: N\n"), 0o644); err != nil {
@@ -207,7 +207,7 @@ func TestAColumnChoiceReloadsAUserConfigChangedSinceLoad(t *testing.T) {
 	if got := app.keys.firstKey(actCreate); got != "N" {
 		t.Errorf("nib.create is bound to %q, want the reloaded N", got)
 	}
-	if !app.list.collapsedIDs["tnib-f020"] {
+	if !app.list.collapsed()["tnib-f020"] {
 		t.Error("the reload lost the fold")
 	}
 	if line := rowLine(t, app, "tnib-t036"); strings.Contains(line, "security") {

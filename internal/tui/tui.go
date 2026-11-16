@@ -491,10 +491,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case nibsLoadedMsg:
 		a.list, cmd = a.list.Update(msg)
 		_, rightWidth := calculatePaneWidths(a.width)
-		if len(msg.items) == 0 {
-			a.preview = newPreviewModel(nil, rightWidth, a.height-2)
-		} else if item, ok := a.list.list.SelectedItem().(nibItem); ok {
+		if item, ok := a.list.list.SelectedItem().(nibItem); ok {
 			a.preview = newPreviewModel(item.nib, rightWidth, a.height-2)
+		} else {
+			a.preview = newPreviewModel(nil, rightWidth, a.height-2)
 		}
 		return a, cmd
 
